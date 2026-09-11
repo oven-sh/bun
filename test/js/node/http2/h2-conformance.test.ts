@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import diagnosticsChannel from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -938,6 +939,317 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
 }
 
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
+
+// RFC 9113 §5.1.1: every stream an endpoint opens (client HEADERS) or reserves (server
+// PUSH_PROMISE) must carry a higher id than the ones it sent before; nghttp2 peers ignore a frame
+// that opens a lower id, so the request it carried never gets a response. User code that runs while
+// request()/pushStream() is working (a header value's toString(), a diagnostics_channel subscriber)
+// may itself call request()/pushStream(), so none of it may run between taking an id and writing
+// the frame that carries it: header values are coerced before the id is taken, and the channels are
+// published after the frame is written.
+describe("request()/pushStream() run no user code between taking a stream id and writing its frame (RFC 9113 §5.1.1)", () => {
+  function valueThatReenters(reenter: () => void) {
+    let reentered = false;
+    return {
+      toString() {
+        if (!reentered) {
+          reentered = true;
+          reenter();
+        }
+        return "outer";
+      },
+    };
+  }
+
+  // Drives `issueOuter` against a raw server and reports the HEADERS stream ids in wire order plus
+  // the ids the two requests ended up with. `requestInner` makes the nested request.
+  async function clientHeadersOrder(
+    issueOuter: (client: http2.ClientHttp2Session, requestInner: () => void) => any,
+    requestBeforeConnect = false,
+  ) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      if (!requestBeforeConnect) await once(client, "connect");
+      let inner: any;
+      const outer = issueOuter(client, () => {
+        inner = client.request({ ":path": "/inner" });
+        inner.on("error", () => {});
+        inner.end();
+      });
+      outer.on("error", () => {});
+      outer.end();
+      await Promise.all([
+        raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1),
+        raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3),
+      ]);
+      return {
+        wireOrder: raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId),
+        ids: { inner: inner.id, outer: outer.id },
+      };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  const headerForms: [string, (probe: object) => any][] = [
+    ["an object value", probe => ({ ":path": "/outer", "x-probe": probe })],
+    ["an array element", probe => ({ ":path": "/outer", "x-probe": ["first", probe] })],
+    ["a value in the raw [name, value] array form", probe => [":path", "/outer", "x-probe", probe]],
+    ["an array element in the raw array form", probe => [":path", "/outer", "x-probe", ["first", probe]]],
+  ];
+
+  const requestWithReenteringValue =
+    (makeOuterHeaders: (probe: object) => any) => (client: http2.ClientHttp2Session, requestInner: () => void) =>
+      client.request(makeOuterHeaders(valueThatReenters(requestInner)));
+
+  // The nested request is made while the outer one is still being prepared, so it goes first.
+  test.each(headerForms)(
+    "a request() made while coercing %s is sent first, on the lower id",
+    async (_, makeOuterHeaders) => {
+      expect(await clientHeadersOrder(requestWithReenteringValue(makeOuterHeaders))).toEqual({
+        wireOrder: [1, 3],
+        ids: { inner: 1, outer: 3 },
+      });
+    },
+  );
+
+  test("requests made before the session connected are coerced when made, so the nested one is queued first", async () => {
+    expect(await clientHeadersOrder(requestWithReenteringValue(headerForms[0][1]), true)).toEqual({
+      wireOrder: [1, 3],
+      ids: { inner: 1, outer: 3 },
+    });
+  });
+
+  // 'http2.client.stream.created' is published once the outer request is on the wire, or queued
+  // (node does the same), so a request made by a subscriber comes second either way.
+  test.each([
+    ["connected", false],
+    ["still connecting", true],
+  ])(
+    "a request() made from a 'http2.client.stream.created' subscriber on a %s session is sent second, on the higher id",
+    async (_, requestBeforeConnect) => {
+      let requestInner: (() => void) | null = null;
+      const subscriber = ({ headers }: any) => {
+        if (headers[":path"] !== "/outer" || requestInner === null) return;
+        const fn = requestInner;
+        requestInner = null;
+        fn();
+      };
+      diagnosticsChannel.subscribe("http2.client.stream.created", subscriber);
+      try {
+        expect(
+          await clientHeadersOrder((client, inner) => {
+            requestInner = inner;
+            return client.request({ ":path": "/outer" });
+          }, requestBeforeConnect),
+        ).toEqual({ wireOrder: [1, 3], ids: { outer: 1, inner: 3 } });
+      } finally {
+        diagnosticsChannel.unsubscribe("http2.client.stream.created", subscriber);
+      }
+    },
+  );
+
+  // A queued request's sentHeaders object is reachable until the queue drains; the block that is
+  // eventually sent is the one request() was given (node sends a snapshot taken in request() too),
+  // so a value added to sentHeaders in the meantime is never coerced, let alone sent.
+  test("the block of a request queued before connect is fixed when request() is made", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const outer = client.request({ ":path": "/outer", "x-plain": "given to request()" });
+      outer.on("error", () => {});
+      outer.end();
+      let coercions = 0;
+      outer.sentHeaders["x-late"] = valueThatReenters(() => {
+        coercions++;
+        const inner = client.request({ ":path": "/inner" });
+        inner.on("error", () => {});
+        inner.end();
+      });
+      await raw.waitFor(f => f.type === FrameType.HEADERS);
+      // PING as a barrier: its ACK arrives after anything else the connect flush wrote.
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect({
+        headersStreamIds: raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId),
+        coercions,
+      }).toEqual({ headersStreamIds: [1], coercions: 0 });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // End to end against a real peer: with the blocks encoded in wire order, both requests are
+  // answered and each one carries its own headers.
+  test("both the nested and the outer request are answered by an http2 server", async () => {
+    const echoServer = http2.createServer();
+    echoServer.on("stream", (stream: any, headers: any) => {
+      const response: any = { ":status": 200, "x-echo-path": headers[":path"] };
+      if ("x-probe" in headers) response["x-echo-probe"] = headers["x-probe"];
+      stream.respond(response);
+      stream.end();
+    });
+    echoServer.listen(0, "127.0.0.1");
+    await once(echoServer, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(echoServer.address() as net.AddressInfo).port}`);
+    const sessionError = new Promise<never>((_, reject) => client.on("error", reject));
+    try {
+      await once(client, "connect");
+      const answered = (req: any) =>
+        new Promise<any>((resolve, reject) => {
+          req.on("response", (h: any) => resolve({ id: req.id, path: h["x-echo-path"], probe: h["x-echo-probe"] }));
+          req.on("error", reject);
+          req.resume();
+          req.end();
+        });
+      let innerAnswered!: Promise<any>;
+      const probe = valueThatReenters(() => {
+        innerAnswered = answered(client.request({ ":path": "/inner" }));
+      });
+      const outer = client.request({ ":path": "/outer", "x-probe": probe });
+      const outerAnswered = answered(outer);
+      // Coercion happens on a copy: sentHeaders still holds the value as given, like node.
+      expect(outer.sentHeaders["x-probe"]).toBe(probe);
+      expect(await Promise.race([Promise.all([innerAnswered, outerAnswered]), sessionError])).toEqual([
+        { id: 1, path: "/inner", probe: undefined },
+        { id: 3, path: "/outer", probe: "outer" },
+      ]);
+    } finally {
+      client.destroy();
+      echoServer.close();
+    }
+  });
+
+  // Serves one request whose handler runs `issueOuterPush(push)` (where `push(headers, label)`
+  // pushes and records the id that push ended up with) and reports the promised ids a raw client
+  // saw in its PUSH_PROMISE frames, in wire order, plus the recorded ids.
+  async function pushOrder(issueOuterPush: (push: (headers: any, label: "inner" | "outer") => void) => void) {
+    const pushServer = http2.createServer();
+    pushServer.on("sessionError", () => {});
+    const pushedIds = Promise.withResolvers<Record<string, number>>();
+    pushServer.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      const ids: Record<string, number> = {};
+      const push = (headers: any, label: "inner" | "outer") =>
+        stream.pushStream(headers, (err: Error | null, pushed: any) => {
+          if (err) return pushedIds.reject(err);
+          pushed.on("error", () => {});
+          pushed.respond({ ":status": 200 });
+          pushed.end();
+          ids[label] = pushed.id;
+          if ("inner" in ids && "outer" in ids) pushedIds.resolve(ids);
+        });
+      issueOuterPush(push);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    pushServer.listen(0, "127.0.0.1");
+    await once(pushServer, "listening");
+    const c = await RawH2.connect((pushServer.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      // PUSH_PROMISE payload: 4-byte promised stream id, then the header block.
+      const promisedId = (f: Frame) => f.payload.readUInt32BE(0) & 0x7fffffff;
+      await Promise.all([
+        c.waitFor(f => f.type === FrameType.PUSH_PROMISE && promisedId(f) === 2),
+        c.waitFor(f => f.type === FrameType.PUSH_PROMISE && promisedId(f) === 4),
+      ]);
+      return {
+        wireOrder: c.frames.filter(f => f.type === FrameType.PUSH_PROMISE).map(promisedId),
+        ids: await pushedIds.promise,
+      };
+    } finally {
+      c.destroy();
+      pushServer.close();
+    }
+  }
+
+  test("a pushStream() made while coercing another push's header value is reserved and announced first", async () => {
+    expect(
+      await pushOrder(push => {
+        const probe = valueThatReenters(() => push({ ":path": "/inner" }, "inner"));
+        push({ ":path": "/outer", "x-probe": probe }, "outer");
+      }),
+    ).toEqual({ wireOrder: [2, 4], ids: { inner: 2, outer: 4 } });
+  });
+
+  // 'http2.server.stream.created' for a pushed stream is published once its PUSH_PROMISE is on the
+  // wire (node does the same), so a push made by a subscriber comes second.
+  test("a pushStream() made from a 'http2.server.stream.created' subscriber is announced second, on the higher id", async () => {
+    let pushInner: (() => void) | null = null;
+    const subscriber = ({ headers }: any) => {
+      if (headers[":path"] !== "/outer" || pushInner === null) return;
+      const fn = pushInner;
+      pushInner = null;
+      fn();
+    };
+    diagnosticsChannel.subscribe("http2.server.stream.created", subscriber);
+    try {
+      expect(
+        await pushOrder(push => {
+          pushInner = () => push({ ":path": "/inner" }, "inner");
+          push({ ":path": "/outer" }, "outer");
+        }),
+      ).toEqual({ wireOrder: [2, 4], ids: { outer: 2, inner: 4 } });
+    } finally {
+      diagnosticsChannel.unsubscribe("http2.server.stream.created", subscriber);
+    }
+  });
+
+  // Since the values are coerced before anything is allocated or encoded, a throwing coercion
+  // surfaces where node surfaces it (synchronously, from the call itself) and the session is still
+  // usable: previously the half-encoded block desynced the HPACK table and the session died with
+  // COMPRESSION_ERROR.
+  test("a throwing header value coercion throws from request()/pushStream() and leaves the session usable", async () => {
+    const boom = () => ({
+      toString(): string {
+        throw new RangeError("boom");
+      },
+    });
+    const pushOutcome = Promise.withResolvers<string>();
+    const pushServer = http2.createServer();
+    pushServer.on("stream", (stream: any) => {
+      try {
+        stream.pushStream({ ":path": "/p", "x-a": boom() }, () => {});
+        pushOutcome.resolve("returned");
+      } catch (e: any) {
+        pushOutcome.resolve(`threw ${e.name}: ${e.message}`);
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    pushServer.listen(0, "127.0.0.1");
+    await once(pushServer, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(pushServer.address() as net.AddressInfo).port}`);
+    const sessionError = new Promise<never>((_, reject) => client.on("error", reject));
+    try {
+      // Still connecting: the request would be queued, but its values are coerced right away.
+      expect(() => client.request({ ":path": "/x", "x-a": boom() })).toThrow(new RangeError("boom"));
+      const req = client.request({ ":path": "/" });
+      const status = new Promise<number>((resolve, reject) => {
+        req.on("response", (h: any) => resolve(h[":status"]));
+        req.on("error", reject);
+        req.resume();
+        req.end();
+      });
+      expect(await Promise.race([Promise.all([status, pushOutcome.promise]), sessionError])).toEqual([
+        200,
+        "threw RangeError: boom",
+      ]);
+    } finally {
+      client.destroy();
+      pushServer.close();
+    }
+  });
+});
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {
   let deferredServer: http2.Http2Server;

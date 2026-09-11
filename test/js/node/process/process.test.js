@@ -1828,6 +1828,97 @@ describe("process.exitCode", () => {
     );
   });
 
+  // The entry module above rejects the entry promise itself. The cases below
+  // are rejections the event loop reports later (no listener, default
+  // --unhandled-rejections mode). Node raises those as uncaught exceptions,
+  // which set process.exitCode = 1 before 'exit' is emitted and skip
+  // 'beforeExit'. Expected values were taken from node v26.
+  it("unhandled rejection reported by the event loop", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      Promise.reject(new Error("oops"));
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
+  it("unhandled rejection from a later event loop turn", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      setImmediate(() => {
+        Promise.reject(new Error("oops"));
+      });
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
+  it("unhandled rejection replaces a process.exitCode set earlier", async () => {
+    await runInlineFixture(
+      `
+      process.exitCode = 5;
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      Promise.reject(new Error("oops"));
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
+  it("an exit listener can change the code set by an unhandled rejection", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => {
+        console.log("exit", code, process.exitCode);
+        process.exitCode = 98;
+      });
+
+      Promise.reject(new Error("oops"));
+    `,
+      "exit 1 1\n",
+      98,
+    );
+  });
+
+  it("an exit listener can change the code set by an uncaught exception from the event loop", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => {
+        console.log("exit", code, process.exitCode);
+        process.exitCode = 98;
+      });
+
+      setImmediate(() => {
+        throw new Error("oops");
+      });
+    `,
+      "exit 1 1\n",
+      98,
+    );
+  });
+
+  it("a rejection consumed by an unhandledRejection listener leaves the exit code alone", async () => {
+    await runInlineFixture(
+      `
+      process.on("unhandledRejection", (err) => console.log("unhandledRejection", err.message));
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      Promise.reject(new Error("oops"));
+    `,
+      "unhandledRejection oops\nbeforeExit 0 undefined\nexit 0 undefined\n",
+      0,
+    );
+  });
+
   it("exitsOnExitCodeSet", async () => {
     await runInlineFixture(
       `

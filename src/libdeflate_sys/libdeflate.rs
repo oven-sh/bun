@@ -76,11 +76,7 @@ bun_opaque::opaque_ffi! {
     pub struct Compressor;
 }
 
-/// The one-shot compressors return 0 when the output did not fit. Report that
-/// as [`Status::InsufficientSpace`] so a caller cannot read it as an empty
-/// result. Sizing the output with `*_compress_bound` makes 0 unreachable for an
-/// input that holds still, but an input another thread writes during the call
-/// can still outgrow the bound.
+/// libdeflate's one-shot compressors return 0 when the output did not fit.
 #[inline]
 fn compress_result(read: usize, written: usize) -> Result {
     Result {

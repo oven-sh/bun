@@ -819,44 +819,26 @@ describe("crc32", () => {
 });
 
 describe("libdeflate one-shot", () => {
-  // libdeflate reads the input twice: it costs the deflate block from the
-  // first pass, compares that cost against the output buffer once, then emits
-  // the block in a second pass with no further bounds check. Bun sizes the
-  // output with the compress bound, so the cost always fits for an input that
-  // holds still. An input another thread rewrites between the two passes can
-  // outgrow the bound, and the emit pass then wrote past the buffer. Only a
-  // sanitizer sees that write, so the race test needs one.
+  // The fixture explains the race. Only a sanitizer sees the stray write.
   it.skipIf(!isASAN)(
     "does not overrun the output when a writer races the input",
     async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts")],
-        env: {
-          ...bunEnv,
-          // Symbolizing a sanitizer report costs several seconds, which is
-          // longer than the budget for this test.
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
-        },
+        // symbolize=0: symbolizing a sanitizer report takes longer than the test may run.
+        env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
         stdout: "pipe",
         stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // Whether the race fires within the call budget is luck, so `refused` is
-      // reported but not asserted. Surviving it is the point.
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toMatchObject({ compressed: true });
-      expect(exitCode).toBe(0);
-      // Booting a worker under a sanitizer costs about 3s before the race even
-      // starts, so this one needs more than the default ceiling.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
     },
+    // A debug sanitizer build needs about 3s to boot the worker, before the race starts.
     20_000,
   );
 
   it("compresses an input that holds still", () => {
-    // The bound covers every stable input, so the one-shot path never reports
-    // "insufficient space" here, whatever the data looks like.
     for (const input of [
       new Uint8Array(0),
       new Uint8Array([0]),

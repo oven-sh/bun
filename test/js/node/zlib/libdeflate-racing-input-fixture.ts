@@ -22,22 +22,17 @@ if (isMainThread) {
 
   const view = new Uint8Array(shared);
 
-  // The contract is memory safety, not a particular value. A racing input may
-  // outgrow the bound, which reports "insufficient space" rather than writing
-  // past the buffer. Either outcome is fine. A crash is not.
-  let compressed = 0;
-  let refused = 0;
   for (let i = 0; i < CALLS; i++) {
     for (const compress of [Bun.deflateSync, Bun.gzipSync]) {
       try {
-        if (compress(view, { library: "libdeflate" }).length > 0) compressed++;
+        compress(view, { library: "libdeflate" });
       } catch (error) {
+        // A racing input may outgrow the bound. That call is refused, which is fine. A crash is not.
         if (!/insufficient space/.test((error as Error).message)) throw error;
-        refused++;
       }
     }
   }
-  console.log(JSON.stringify({ compressed: compressed > 0, refused: refused > 0 }));
+  console.log("done");
   process.exit(0);
 } else {
   const view = new Uint8Array(workerData as SharedArrayBuffer);

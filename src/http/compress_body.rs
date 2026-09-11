@@ -84,7 +84,7 @@ pub(crate) fn compress_into(
 }
 
 /// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
-/// when the bound exceeds the shared buffer or no compressor can be allocated — caller falls back to
+/// when the bound exceeds the shared buffer, no compressor can be allocated, or the output did not fit — caller falls back to
 /// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
@@ -121,9 +121,6 @@ fn compress_libdeflate_fast(
     };
 
     let result = compressor.compress(input, shared_buffer, enc);
-    // `InsufficientSpace` means the output outgrew the bound, which an input
-    // another thread rewrote during the call can do. Fall back to streaming
-    // zlib, which bounds every write by `avail_out`.
     (result.status == Status::Success).then_some(result.written)
 }
 

@@ -1,6 +1,6 @@
 import { serve, type ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "node:path";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
@@ -577,46 +577,42 @@ test("every ServerWebSocket send method delivers the bytes of a SharedArrayBuffe
   const received = { message: [] as Buffer[], ping: [] as Buffer[], pong: [] as Buffer[] };
   const all = Promise.withResolvers<void>();
   const client = new WebSocket(`ws://localhost:${server.port}`);
-  for (const kind of ["message", "ping", "pong"] as const) {
-    client.addEventListener(kind, ({ data }) => {
-      received[kind].push(data);
-      if (received.message.length === 5 && received.ping.length === 1 && received.pong.length === 1) all.resolve();
-    });
-  }
-  client.addEventListener("error", all.reject);
-  client.addEventListener("close", all.reject);
+  try {
+    for (const kind of ["message", "ping", "pong"] as const) {
+      client.addEventListener(kind, ({ data }) => {
+        received[kind].push(data);
+        if (received.message.length === 5 && received.ping.length === 1 && received.pong.length === 1) all.resolve();
+      });
+    }
+    client.addEventListener("error", all.reject);
+    client.addEventListener("close", all.reject);
 
-  await all.promise;
-  expect(client.extensions).toContain("permessage-deflate");
-  expect(received).toEqual({
-    message: Array(5).fill(Buffer.from(payload)),
-    ping: [Buffer.from(control)],
-    pong: [Buffer.from(control)],
-  });
-  client.close();
+    await all.promise;
+    expect(client.extensions).toContain("permessage-deflate");
+    expect(received).toEqual({
+      message: Array(5).fill(Buffer.from(payload)),
+      ping: [Buffer.from(control)],
+      pong: [Buffer.from(control)],
+    });
+  } finally {
+    client.close();
+  }
 });
 
-// libdeflate reads the input twice in one call: it costs the deflate block from
-// the first pass, compares that cost against the room left in the 4 KiB
-// uWS::DeflationStream::reset_buffer once, then emits the block in a second
-// pass with no further bounds check. A worker that rewrites the input between
-// the two passes made the emitted block longer than the cost, so the second
-// pass wrote past that buffer. Only a sanitizer sees that write: without one
-// the stray bytes land in a neighbouring allocation and the run exits 0.
-//
-// Both memory kinds race. Sharing is not the property that matters, so
-// "mmap" (a plain Uint8Array over a MAP_SHARED region) must hold too.
+// The fixture explains the race. Only a sanitizer sees the stray write. "mmap" is a
+// plain Uint8Array over a MAP_SHARED region: a SharedArrayBuffer is not the only racing input.
 describe.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => {
   test.skipIf(!isASAN)(
     "does not overrun the deflate buffer",
     async () => {
+      using dir = tempDir("ws-deflate-race", { "bytes.bin": Buffer.alloc(4000) });
       await using proc = Bun.spawn({
         cmd: [bunExe(), path.join(import.meta.dir, "websocket-shared-buffer-deflate-fixture.ts")],
         env: {
           ...bunEnv,
           MODE: mode,
-          // Symbolizing a sanitizer report costs several seconds, which is
-          // longer than the budget for this test. Raw frames still say it failed.
+          FILE: path.join(String(dir), "bytes.bin"),
+          // symbolize=0: symbolizing a sanitizer report takes longer than the test may run.
           ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
         },
         stdout: "pipe",
@@ -624,13 +620,9 @@ describe.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => 
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stdout.trim()).toBe("done");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      // Booting a worker under a sanitizer costs about 3s before the race even
-      // starts, so this one needs more than the default ceiling.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
     },
+    // A debug sanitizer build needs about 3s to boot the worker, before the race starts.
     20_000,
   );
 });

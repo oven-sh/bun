@@ -1,6 +1,6 @@
 // A Bun.serve WebSocket sends the same bytes with permessage-deflate on while
 // a worker rewrites them. MODE picks the memory another thread can write:
-// "sab" a SharedArrayBuffer view, "mmap" a MAP_SHARED Bun.mmap region.
+// "sab" a SharedArrayBuffer view, "mmap" a MAP_SHARED Bun.mmap region over FILE.
 //
 // uWS hands the payload straight to libdeflate_deflate_compress, which reads
 // the input twice: the first pass costs the deflate block against the space
@@ -9,9 +9,6 @@
 // between a pattern that costs little and a pattern whose symbols are rare in
 // the other pattern's Huffman code. A flip between the two passes makes the
 // emitted block longer than the cost, which writes past that buffer.
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const SIZE = 4000;
@@ -45,10 +42,8 @@ if (isMainThread) {
   let view: Uint8Array;
   let handle: SharedArrayBuffer | string;
   if (mode === "mmap") {
-    const file = join(mkdtempSync(join(tmpdir(), "ws-deflate-")), "bytes.bin");
-    writeFileSync(file, new Uint8Array(SIZE));
-    handle = file;
-    view = Bun.mmap(file, { shared: true });
+    handle = process.env.FILE!;
+    view = Bun.mmap(handle, { shared: true });
   } else {
     const shared = new SharedArrayBuffer(SIZE);
     handle = shared;

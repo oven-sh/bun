@@ -2115,7 +2115,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
-        // Dropped after `_pair_scope`, so the tick queue still drains ahead of the teardown.
+        // Declared first so it drops last: ticks drain ahead of the teardown.
         let _cleanup = CloseTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
@@ -2124,9 +2124,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        // The pair closes as one event: the scope holds the tick queue until
-        // this socket's own close handler, the one with the read error, has run.
         let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
+            // No tick checkpoint between the twin's close handler and this socket's own.
             // SAFETY: the VM owns its event loop for the life of the process.
             let scope =
                 unsafe { jsc::event_loop::EventLoop::enter_scope(handlers.vm.event_loop()) };

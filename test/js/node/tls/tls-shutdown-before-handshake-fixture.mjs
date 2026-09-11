@@ -28,10 +28,10 @@ process.on("uncaughtException", error => {
 // TLS backend, a plaintext service on a TLS port, a middlebox. allowHalfOpen
 // keeps it from closing when our FIN arrives, so the client's event list stays
 // independent of the peer's teardown.
-async function stalledPeer() {
+async function stalledPeer(allowHalfOpen = true) {
   const sawFin = Promise.withResolvers();
   let accepted;
-  const server = net.createServer({ allowHalfOpen: true }, socket => {
+  const server = net.createServer({ allowHalfOpen }, socket => {
     accepted = socket;
     socket.on("data", () => {});
     socket.on("error", () => {});
@@ -105,13 +105,24 @@ if (mode === "end" || mode === "destroySoon") {
   // starts a handshake on. Shutting it down shuts the wrapped stream down. One
   // report per method, each on a wrap and a stream of its own.
   const transport = process.argv[3];
+  // "peer-closes": the peer closes when the FIN arrives. "refused": nothing listens.
+  // Both close the stream under the wrap, and the wrap closes with it.
+  const peerCloses = transport === "peer-closes";
+  const refused = transport === "refused";
 
   async function shutDown(method) {
     const log = [];
-    const peer = transport.startsWith("duplex") ? undefined : await stalledPeer();
+    const peer = transport.startsWith("duplex") || refused ? undefined : await stalledPeer(!peerCloses);
 
     let raw;
-    if (peer === undefined) {
+    if (refused) {
+      const server = net.createServer();
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+      await new Promise(resolve => server.close(resolve));
+      raw = net.connect(port, "127.0.0.1");
+      raw.on("error", error => log.push(`transport error:${error.code}`));
+    } else if (peer === undefined) {
       raw = new Duplex({
         read() {},
         write(chunk, encoding, callback) {
@@ -129,7 +140,7 @@ if (mode === "end" || mode === "destroySoon") {
       raw = new net.Socket();
     } else {
       raw = net.connect(peer.port, "127.0.0.1");
-      if (transport === "connected") await once(raw, "connect");
+      if (transport === "connected" || peerCloses) await once(raw, "connect");
     }
     raw.on("connect", () => log.push("transport connect"));
 
@@ -143,7 +154,8 @@ if (mode === "end" || mode === "destroySoon") {
     const peerSawFin = peer !== undefined && method !== "destroy";
     if (transport === "unconnected" && peerSawFin) raw.connect(peer.port, "127.0.0.1");
 
-    await Promise.all([once(socket, method === "end" ? "finish" : "close"), peerSawFin && peer.sawFin]);
+    const settled = method === "end" && !peerCloses && !refused ? "finish" : "close";
+    await Promise.all([once(socket, settled), peerSawFin && peer.sawFin]);
 
     const { writableFinished, readyState, destroyed } = socket;
     const result = { log: [...log], peerSawFin, writableFinished, readyState, destroyed, transportDestroyed: raw.destroyed };

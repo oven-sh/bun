@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{Interpreter, NodeId, ParseError, unsupported_flag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
@@ -13,11 +13,21 @@ enum State {
     Done,
 }
 
+/// `core::fmt` panics on a precision or width above `u16::MAX`, which an
+/// operand like `1e-70000` would request; no float has more than 1074
+/// fractional digits (the smallest f64 is 2^-1074), so the rest would be zeros.
+const MAX_FIXED_WIDTH_DECIMALS: u32 = 1074;
+
 pub struct Seq {
     state: State,
     start: f32,
     end: f32,
     increment: f32,
+    /// Most decimal places any positional argument was written with
+    /// (`seq 0 0.25 1` → 2); `-w` prints every value with this many.
+    decimals: u32,
+    /// `-w` / `--fixed-width`: zero-pad every value to the same width.
+    fixed_width: bool,
     /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
@@ -31,6 +41,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
+            decimals: 0,
+            fixed_width: false,
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
         }
@@ -81,8 +93,23 @@ impl Seq {
                 continue;
             }
             if arg == b"-w" || arg == b"--fixed-width" {
+                Self::state_mut(interp, cmd).fixed_width = true;
                 idx += 1;
                 continue;
+            }
+            if arg.starts_with(b"-f") || arg == b"--format" {
+                let flag: &'static [u8] = if arg == b"--format" {
+                    b"--format"
+                } else {
+                    b"-f"
+                };
+                return Builtin::fail_parse(
+                    interp,
+                    cmd,
+                    Kind::Seq,
+                    &ParseError::Unsupported(unsupported_flag(flag)),
+                    || Self::state_mut(interp, cmd).state = State::Err,
+                );
             }
             break;
         }
@@ -91,10 +118,14 @@ impl Seq {
         macro_rules! parse_num {
             ($i:expr) => {{
                 let s = Builtin::of(interp, cmd).arg_bytes($i);
-                match parse_f32(s) {
+                let n = match parse_f32(s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
-                }
+                };
+                let decimals = decimal_places(s);
+                let me = Self::state_mut(interp, cmd);
+                me.decimals = me.decimals.max(decimals);
+                n
             }};
         }
 
@@ -159,9 +190,19 @@ impl Seq {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         // Render entirely into a local Vec, then either enqueue it or
         // write_no_io it; we buffer once for simplicity.
-        let (start, end, incr, sep, term) = {
+        let (start, end, incr, sep, term, fixed_width) = {
             let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
+            let fixed_width = me
+                .fixed_width
+                .then(|| FixedWidth::new(me.start, me.end, me.decimals));
+            (
+                me.start,
+                me.end,
+                me.increment,
+                me.separator,
+                me.terminator,
+                fixed_width,
+            )
         };
         let mut out = Vec::new();
         let mut current = start;
@@ -170,9 +211,14 @@ impl Seq {
         } else {
             current >= end
         } {
-            // Rust `{}` for f32 prints the shortest decimal that round-trips
-            // (no exponent, no trailing ".0").
-            let _ = write!(&mut out, "{}", current);
+            let _ = match fixed_width {
+                Some(FixedWidth { width, decimals }) => {
+                    write!(&mut out, "{current:0width$.decimals$}")
+                }
+                // Rust `{}` for f32 prints the shortest decimal that round-trips
+                // (no exponent, no trailing ".0").
+                None => write!(&mut out, "{}", current),
+            };
             out.extend_from_slice(sep.slice());
             let next = current + incr;
             if next == current {
@@ -218,7 +264,48 @@ impl Seq {
     }
 }
 
+/// `-w` layout: `decimals` fraction digits, zero-padded after the sign
+/// (`-05`) to `width`, as in BSD and GNU seq.
+#[derive(Clone, Copy)]
+struct FixedWidth {
+    width: usize,
+    decimals: usize,
+}
+
+impl FixedWidth {
+    /// Every value lies between `start` and `end`, and at a fixed number of
+    /// decimals it prints no wider than the bound on its side of zero.
+    fn new(start: f32, end: f32, decimals: u32) -> Self {
+        let decimals = decimals.min(MAX_FIXED_WIDTH_DECIMALS) as usize;
+        let len = |n: f32| bun_core::fmt::count(format_args!("{n:.decimals$}"));
+        Self {
+            width: len(start).max(len(end)),
+            decimals,
+        }
+    }
+}
+
 #[inline]
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
+}
+
+/// Decimal places a positional argument was written with: `0.25` → 2,
+/// `1e-3` → 3, `2.50e1` → 1. `arg` has already been accepted by `parse_f32`,
+/// so it has the shape `[sign]digits[.digits][e[sign]digits]`.
+fn decimal_places(arg: &[u8]) -> u32 {
+    let (mantissa, exponent) = match bun_core::strings::index_of_any(arg, b"eE") {
+        Some(e) => {
+            // An exponent outside i32 either overflowed to inf (rejected by
+            // the caller) or underflowed to 0, which needs no decimal places.
+            let exponent = bun_core::fmt::parse_decimal::<i32>(&arg[e + 1..]).unwrap_or(0);
+            (&arg[..e], i64::from(exponent))
+        }
+        None => (arg, 0),
+    };
+    let fraction = match bun_core::strings::index_of_char_usize(mantissa, b'.') {
+        Some(dot) => (mantissa.len() - dot - 1) as i64,
+        None => 0,
+    };
+    (fraction - exponent).clamp(0, i64::from(u32::MAX)) as u32
 }

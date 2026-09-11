@@ -544,6 +544,82 @@ describe("bundler", async () => {
     }
   });
 
+  // Inputs are read through the same reader as JS/TS sources, which strips a
+  // UTF-8 BOM and transcodes UTF-16LE. Loaders that emit the file itself must
+  // copy it byte-for-byte even when its first bytes look like a BOM.
+  describe("BOM-prefixed inputs", () => {
+    const bomPayloads = {
+      utf8: Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("hello")]),
+      utf16le: Buffer.from([0xff, 0xfe, ...Buffer.from("hi", "utf16le")]),
+    };
+    // Every loader whose output is the input file copied into outdir.
+    const copyLoaders = [
+      { loader: "file", ext: ".bin", attributes: "" },
+      { loader: "wasm", ext: ".wasm", attributes: "" },
+      { loader: "napi", ext: ".node", attributes: "" },
+      { loader: "sqlite_embedded", ext: ".sqlite", attributes: ' with { type: "sqlite", embed: "true" }' },
+    ];
+    const assets = copyLoaders.flatMap(({ loader, ext, attributes }) =>
+      Object.entries(bomPayloads).map(([encoding, bytes]) => ({
+        name: `${loader}_${encoding}`,
+        ext,
+        attributes,
+        bytes,
+      })),
+    );
+    const files = Object.fromEntries(assets.map(asset => [`/${asset.name}${asset.ext}`, asset.bytes]));
+    const entry = assets
+      .map(asset => `import ${asset.name} from "./${asset.name}${asset.ext}"${asset.attributes};`)
+      .join("\n");
+    const expectedHex = Object.fromEntries(assets.map(asset => [asset.name, asset.bytes.toString("hex")]));
+
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`bun/loader-copy-keeps-bom-bytes-${backend}`, {
+        backend,
+        target: "bun",
+        outdir: "/out",
+        loader: { ".bin": "file" },
+        files: {
+          "/entry.ts": `${entry}\nexport { ${assets.map(asset => asset.name).join(", ")} };`,
+          ...files,
+        },
+        onAfterBundle(api) {
+          // Assets are emitted as `[name]-[hash].[ext]`.
+          const emitted = readdirSync(api.outdir);
+          const emittedHex = Object.fromEntries(
+            assets.map(asset => {
+              const output = emitted.filter(out => out.startsWith(`${asset.name}-`) && out.endsWith(asset.ext));
+              expect(output).toHaveLength(1);
+              return [asset.name, fs.readFileSync(join(api.outdir, output[0])).toString("hex")];
+            }),
+          );
+          expect(emittedHex).toEqual(expectedHex);
+        },
+      });
+    }
+
+    // Text loaders still get the BOM stripped and UTF-16LE transcoded.
+    itBundled("bun/loader-text-converts-bom", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import utf8 from "./utf8.txt";
+          import utf16le from "./utf16le.txt";
+          import { utf8 as utf8Module } from "./utf8.js";
+          import { utf16le as utf16leModule } from "./utf16le.js";
+          console.write(JSON.stringify({ utf8, utf16le, utf8Module, utf16leModule }));
+        `,
+        "/utf8.txt": bomPayloads.utf8,
+        "/utf16le.txt": bomPayloads.utf16le,
+        "/utf8.js": Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from('export const utf8 = "utf8 module";')]),
+        "/utf16le.js": Buffer.from([0xff, 0xfe, ...Buffer.from('export const utf16le = "utf16le module";', "utf16le")]),
+      },
+      run: {
+        stdout: '{"utf8":"hello","utf16le":"hi","utf8Module":"utf8 module","utf16leModule":"utf16le module"}',
+      },
+    });
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

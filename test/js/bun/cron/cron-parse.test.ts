@@ -183,10 +183,11 @@ describe("Bun.cron — end of the Date range", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const expected = [null, null, 8.64e15, null, null, null, 8.64e15, null, true];
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       out: { local: expected, UTC: expected, "America/New_York": expected, "Pacific/Kiritimati": expected },
       stderr: "",
       exitCode: 0,
+      signalCode: null,
     });
   });
 
@@ -220,10 +221,11 @@ describe("Bun.cron — end of the Date range", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const noOccurrence = "Cron expression '* * * * *' has no future occurrences";
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       out: [noOccurrence, noOccurrence],
       stderr: "",
       exitCode: 0,
+      signalCode: null,
     });
   });
 });

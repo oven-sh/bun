@@ -1993,14 +1993,7 @@ function validateWindowSize(windowSize) {
 hideFromStack(validateWindowSize);
 
 function pushToStream(stream, data) {
-  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
-    if (!stream._readableState.ended) {
-      // closed, but not ended, so resume and push null to end the stream
-      stream.resume();
-      stream.push(null);
-    }
-    return;
-  }
+  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) return;
 
   // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
   // is the readable side's backpressure signal, and the reader must readStop()
@@ -2531,7 +2524,10 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      this.push(null);
+      if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+        // For other rstCodes _destroy ends the readable so 'end' is suppressed.
+        this.push(null);
+      }
       const { ending } = this._writableState;
       if (!ending) {
         // If the writable side of the Http2Stream is still open, emit the
@@ -3726,7 +3722,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (stream.listenerCount("error") > 0) {
       if (typeof error === "number") {
         stream.rstCode = error;
-        if (error != 0) {
+        if (error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL) {
           error_instance = streamErrorFromCode(error);
         }
       } else {
@@ -4394,7 +4390,8 @@ class ServerHttp2Session extends Http2Session {
       throw $ERR_INVALID_CHAR("alt");
     }
     origin = origin || "";
-    if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1760
+    if (origin.length + alt.length > MAX_LENGTH) {
       throw $ERR_HTTP2_ALTSVC_LENGTH();
     }
     parser.altsvc(origin, alt, stream);
@@ -5696,8 +5693,8 @@ class ClientHttp2Session extends Http2Session {
       validateSettings(options.settings);
     }
     this.#localSettings = initialLocalSettings(options?.settings);
+    // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({
-      native: nativeSocket,
       context: this,
       options,
       handlers: ClientHttp2Session.#Handlers,

@@ -701,6 +701,50 @@ describe("bunshell", () => {
     TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
   });
 
+  // When `$(...)` is the only word of a command and expands to a command
+  // line, the exit code is that of the command it expanded to, not the
+  // substitution's (bash: `$(echo ./exit7.sh); echo $?` prints 7).
+  describe("cmd subst expanding to the whole command", () => {
+    const exit7 = "console.log('ran'); process.exit(7);";
+
+    TestBuilder.command`$(echo ${BUN} exit7.js)`
+      .file("exit7.js", exit7)
+      .stdout("ran\n")
+      .exitCode(7)
+      .runAsTest("external command");
+
+    TestBuilder.command`$(echo ${BUN} exit7.js) > out.txt`
+      .file("exit7.js", exit7)
+      .fileEquals("out.txt", "ran\n")
+      .exitCode(7)
+      .runAsTest("external command with stdout redirected");
+
+    // With both streams redirected nothing is piped back to the shell, so the
+    // command can only finish through the process exit notification.
+    TestBuilder.command`$(echo ${BUN} exit7.js) &> out.txt`
+      .file("exit7.js", exit7)
+      .fileEquals("out.txt", "ran\n")
+      .exitCode(7)
+      .runAsTest("external command with stdout and stderr redirected");
+
+    TestBuilder.command`$(echo ${BUN} ok.js; exit 5)`
+      .file("ok.js", "console.log('ran');")
+      .stdout("ran\n")
+      .exitCode(0)
+      .runAsTest("failing substitution does not override the command's exit code");
+
+    TestBuilder.command`$(echo ${BUN} exit7.js) || echo fallback`
+      .file("exit7.js", exit7)
+      .stdout("ran\nfallback\n")
+      .runAsTest("external command's exit code drives ||");
+
+    TestBuilder.command`$(echo false)`.exitCode(1).runAsTest("builtin");
+
+    TestBuilder.command`$(echo; exit 3)`
+      .exitCode(3)
+      .runAsTest("substitution expanding to nothing keeps its own exit code");
+  });
+
   describe("tilde_expansion", () => {
     describe("with paths", async () => {
       TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");

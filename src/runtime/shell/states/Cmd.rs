@@ -26,7 +26,10 @@ pub struct Cmd {
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
+    /// `Some` means the exec has reported (`has_finished`, `on_process_exit`).
     pub(crate) exit_code: Option<ExitCode>,
+    /// Status of a sole `$(...)` argv atom; used only if it expands to no words.
+    cmd_subst_exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +219,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            cmd_subst_exit_code: 0,
         }))
     }
 
@@ -345,31 +349,14 @@ impl Cmd {
             match interp.as_cmd_mut(this).state {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
-                    let new_idx = *idx;
-                    // When the sole
-                    // `name_and_args` atom is a `.simple == .cmd_subst`, stash
-                    // `e.out_exit_code` so an empty-argv command consisting
-                    // only of `$(cmd)` propagates `cmd`'s exit code via the
-                    // empty-argv0 branch in `transition_to_exec` (POSIX: "if
-                    // there is no command name, but the command contained a
-                    // command substitution, the command shall complete with
-                    // the exit status of the last command substitution
-                    // performed").
+                    let me = interp.as_cmd_mut(this);
+                    if let [ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))] =
+                        me.ast_node().name_and_args
                     {
-                        let n = interp.as_cmd(this).ast_node();
-                        if new_idx == 1
-                            && n.name_and_args.len() == 1
-                            && matches!(
-                                n.name_and_args[0],
-                                ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
-                            )
-                        {
-                            interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
-                        }
+                        me.cmd_subst_exit_code = out.out_exit_code;
                     }
                     // `out.bounds` splits the expansion into multiple argv
                     // words (glob/IFS).
-                    let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
                         // An empty
                         // expansion that did *not* see a `""` literal pushes
@@ -419,9 +406,7 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
+        // Empty/null argv[0] → nothing to run.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {
@@ -430,7 +415,7 @@ impl Cmd {
                     a[..a.len() - 1].to_vec()
                 }
                 _ => {
-                    let exit = me.exit_code.unwrap_or(0);
+                    let exit = me.cmd_subst_exit_code;
                     let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);
                 }

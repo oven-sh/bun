@@ -68,6 +68,7 @@ test.each([
     "an onread buffer",
     (saw: string[]) => ({ onread: { buffer: Buffer.alloc(64), callback: (n: number) => saw.push(`onread ${n}`) } }),
   ],
+  ["no reader", () => ({})],
 ])(
   "tls.connect({ socket }) over a net.Socket with %s keeps the TLS bytes off the wrapped socket",
   async (_, options) => {
@@ -99,6 +100,7 @@ test.each([
       });
       expect(await promise).toBe("bannerecho:hi");
       expect(saw).toEqual([]);
+      expect(raw.readableLength).toBe(0);
       tlsSocket.destroy();
       await closed;
     } finally {
@@ -106,3 +108,43 @@ test.each([
     }
   },
 );
+
+// Both peers keep their plaintext 'data' listener across the upgrade.
+test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrapped sockets (#32239)", async () => {
+  const saw: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const server = net.createServer(socket => {
+    socket.on("error", reject);
+    let wrapped = false;
+    socket.on("data", data => {
+      if (wrapped) return void saw.push(`server data ${data.length}`);
+      wrapped = true;
+      socket.write("GO", () => {
+        const tlsSocket = new tls.TLSSocket(socket, { isServer: true, secureContext: tls.createSecureContext(certs) });
+        tlsSocket.on("error", reject);
+        tlsSocket.on("data", data => tlsSocket.write("echo:" + data));
+      });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    raw.on("error", reject);
+    let tlsSocket: tls.TLSSocket | undefined;
+    raw.on("data", data => {
+      if (tlsSocket) return void saw.push(`client data ${data.length}`);
+      tlsSocket = tls.connect({ socket: raw, ca: certs.cert, servername: "localhost" });
+      tlsSocket.on("error", reject);
+      tlsSocket.on("secureConnect", () => tlsSocket!.write("hi"));
+      tlsSocket.on("data", data => resolve(String(data)));
+    });
+    raw.write("STARTTLS");
+    expect(await promise).toBe("echo:hi");
+    expect(saw).toEqual([]);
+    const closed = once(tlsSocket!, "close");
+    tlsSocket!.destroy();
+    await closed;
+  } finally {
+    server.close();
+  }
+});

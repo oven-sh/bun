@@ -376,7 +376,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
       "badlink.mjs": `import { nope } from './plain.mjs'; export const x = nope`,
       "throws.mjs": `export const v = 1; throw new Error('eval failure ' + process.env.APP_ID)`,
       "dependent.mjs": `import { v } from './throws.mjs'; export const w = v`,
-      "meta.mjs": `export const resolved = import.meta.resolve('./plain.mjs'); export const req = require('./plain.mjs').yes; export function cacheKeys() { return Object.keys(require.cache).map(k => k.split('/').pop()).sort() }`,
+      "meta.mjs": `export const resolved = import.meta.resolve('./plain.mjs'); export const req = require('./plain.mjs').yes; export function cacheKeys() { return Object.keys(require.cache).map(k => k.split(/[\\\\/]/).pop()).sort() }`,
     });
     const cyc = await ModuleGraph().import(join(dir, "cyc-a.mjs"));
     const primary = await import(join(dir, "cyc-a.mjs"));
@@ -2322,7 +2322,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — specifiers and paths", () 
   test("symlinked module path: one template whether imported via the link or the target (realpath), per graph", async () => {
     const dir = fixture({ "real/x.mjs": `export let n = 0; export const inc = () => ++n` });
     const { symlinkSync } = require("node:fs");
-    symlinkSync(join(dir, "real"), join(dir, "link"));
+    symlinkSync(join(dir, "real"), join(dir, "link"), "junction");
     const g = ModuleGraph();
     const a = await g.import(join(dir, "real/x.mjs")),
       b = await g.import(join(dir, "link/x.mjs"));
@@ -2490,12 +2490,12 @@ describe.skipIf(!enabled)(
   "Bun.unsafe.ModuleGraph — re-entrancy: graphs created/disposed from inside other graphs' evaluation and callbacks",
   () => {
     const dir = fixture({
-      "spawner.mjs": `const inner = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(new URL("./who.mjs", import.meta.url).pathname)).who; export const outerWho = process.env.T; inner.dispose();`,
+      "spawner.mjs": `const inner = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url)))).who; export const outerWho = process.env.T; inner.dispose();`,
       "who.mjs": `export const who = process.env.T`,
       "disposer.mjs": `export function run(other) { other.dispose(); return process.env.T }`,
       "thrower.mjs": `export function later() { setTimeout(() => { throw new Error("e1") }, 0) }`,
       "sync-nested-import.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const G = Bun.unsafe.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "cjs-inner" }, enumerable: true } }) } });
-      export const viaRequireInInner = await g.import(new URL("./who.mjs", import.meta.url).pathname).then(m => m.who); export const mine = require("./who-cjs.cjs").who;`,
+      export const viaRequireInInner = await g.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url))).then(m => m.who); export const mine = require("./who-cjs.cjs").who;`,
       "who-cjs.cjs": `module.exports = { who: process.env.T }`,
     });
     test("a graph whose module top level creates, imports into, and disposes another graph during its own TLA evaluation", async () => {
@@ -2567,7 +2567,7 @@ describe.skipIf(!enabled)(
         return r }`,
         "host.mjs": `const server = Bun.serve({ port: 0, fetch: () => new Response("fetched") });
         const g = new Bun.unsafe.ModuleGraph({ globals: { injectedClone: structuredClone, injectedMicrotask: queueMicrotask, injectedFetch: fetch, injectedStrict: function () { "use strict"; return this === undefined ? "undefined-this" : typeof this }, injectedArrow: x => x * 2, InjectedDate: Date } });
-        const m = await g.import(new URL("./n.mjs", import.meta.url).pathname); console.log(JSON.stringify(await m.run(server.port))); server.stop(true); process.exit(0);`,
+        const m = await g.import(Bun.fileURLToPath(new URL("./n.mjs", import.meta.url))); console.log(JSON.stringify(await m.run(server.port))); server.stop(true); process.exit(0);`,
       });
       const r = Bun.spawnSync([process.execPath, join(dir, "host.mjs")], { cwd: dir, env: { ...process.env } });
       expect(JSON.parse(r.stdout.toString().trim() || "{}")).toEqual({
@@ -2677,7 +2677,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — modules the HOST linked be
     const dir = fixture({
       "shared.mjs": `export const who = process.env.T ?? "host"; export const timerIsGraphs = typeof setTimeout(() => {}, 0) === "object"; export const g = typeof globalThis.__hostOnly`,
       "main.mjs": `globalThis.__hostOnly = 1; const host = await import("./shared.mjs"); const G = Bun.unsafe.ModuleGraph;
-        const a = await new G({ globals: { process: Object.create(process, { env: { value: { T: "A" }, enumerable: true } }) } }).import(new URL("./shared.mjs", import.meta.url).pathname), b = await new G({ globals: { process: Object.create(process, { env: { value: { T: "B" }, enumerable: true } }) } }).import(new URL("./shared.mjs", import.meta.url).pathname);
+        const a = await new G({ globals: { process: Object.create(process, { env: { value: { T: "A" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./shared.mjs", import.meta.url))), b = await new G({ globals: { process: Object.create(process, { env: { value: { T: "B" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./shared.mjs", import.meta.url)));
         console.log(JSON.stringify([host.who, a.who, b.who, host.g, a.g])); process.exit(0)`,
     });
     const r = Bun.spawnSync([process.execPath, join(dir, "main.mjs")], {
@@ -2843,7 +2843,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — debugger / inspector", () 
   test("a graph module with `debugger` statements runs under --inspect without incident (documented: N-API addons, Bun.plugin and node:cluster are process-wide, not per graph)", () => {
     const dir = fixture({
       "d.mjs": `debugger; export const v = process.env.T; export function f() { debugger; return v }`,
-      "run.mjs": `const m = await new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "dbg" }, enumerable: true } }) } }).import(new URL("./d.mjs", import.meta.url).pathname); console.log("ok:" + m.f()); setTimeout(() => process.exit(0), 100);`,
+      "run.mjs": `const m = await new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "dbg" }, enumerable: true } }) } }).import(Bun.fileURLToPath(new URL("./d.mjs", import.meta.url))); console.log("ok:" + m.f()); setTimeout(() => process.exit(0), 100);`,
     });
     const r = Bun.spawnSync([process.execPath, "--inspect=127.0.0.1:0", join(dir, "run.mjs")], {
       env: { ...process.env },
@@ -2944,7 +2944,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — review #2 regressions", ()
       // a <-> b cycle: b's body runs first (while a's slot for b may still be unfilled in some tiers) and reads `a` lazily via a function.
       "a.mjs": `import { readA, tag } from "./b.mjs"; export const a = "a:" + process.env.T; export const viaB = () => readA(); export { tag }`,
       "b.mjs": `import { a } from "./a.mjs"; export const tag = "b:" + process.env.T; export function readA() { let r; for (let i = 0; i < 50; i++) r = a; return r }`,
-      "main.mjs": `const G = Bun.unsafe.ModuleGraph; const path = new URL("./a.mjs", import.meta.url).pathname;
+      "main.mjs": `const G = Bun.unsafe.ModuleGraph; const path = Bun.fileURLToPath(new URL("./a.mjs", import.meta.url));
         const x = await new G({ globals: { process: Object.create(process, { env: { value: { T: "X" }, enumerable: true } }) } }).import(path), y = await new G({ globals: { process: Object.create(process, { env: { value: { T: "Y" }, enumerable: true } }) } }).import(path);
         const out = []; for (let i = 0; i < 400; i++) out.push(x.viaB(), y.viaB());
         console.log(JSON.stringify([x.tag, y.tag, out[0], out[1], out[798], out[799]]));`,

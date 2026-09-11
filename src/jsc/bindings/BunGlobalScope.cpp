@@ -18,6 +18,11 @@ void GlobalScope::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    // Every Bun global clears IsImmutablePrototypeExoticObject from its structure, so user
+    // code can put a Proxy in its prototype chain (jsdom does, for its window). V8 runs
+    // programs against such a chain, so JSC must not reject it.
+    setAllowsProxyInPrototypeChain(true);
+
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             auto& vm = init.vm;

@@ -1952,9 +1952,9 @@ describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
 ])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
-  async function run(mode: string) {
+  async function run(...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
+      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), ...args],
       env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
       stdout: "pipe",
       stderr: "pipe",
@@ -1990,6 +1990,40 @@ describe.each([
     expect(await run("server-end")).toEqual({
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
+    });
+  });
+
+  // new tls.TLSSocket(stream) without isServer: nothing starts a handshake on
+  // it, and until connect() upgrades it the wrapped stream stands in for the
+  // native handle. Node shuts that stream down, a net.Socket once it is connected:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  describe.concurrent.each([
+    ["a connected net.Socket", "connected", []],
+    ["a net.Socket that is still connecting", "connecting", ["transport connect"]],
+    ["a net.Socket that connects later", "unconnected", ["transport connect"]],
+    ["a Duplex", "duplex", ["transport final"]],
+  ])("a client-side wrap of %s", (_name, transport, before) => {
+    it.skipIf(!exe)("end() finishes the writable side and ends the stream", async () => {
+      expect(await run("wrap-end", transport)).toEqual({
+        log: [...before, "finish"],
+        peerSawFin: transport !== "duplex",
+        writableFinished: true,
+        readyState: "readOnly",
+        destroyed: false,
+        transportDestroyed: false,
+      });
+    });
+
+    it.skipIf(!exe)("destroySoon() closes the socket and destroys the stream", async () => {
+      expect(await run("wrap-destroySoon", transport)).toEqual({
+        log: [...before, "finish", "close"],
+        peerSawFin: transport !== "duplex",
+        writableFinished: true,
+        readyState: "closed",
+        destroyed: true,
+        transportDestroyed: true,
+      });
     });
   });
 });

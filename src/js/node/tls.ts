@@ -897,10 +897,20 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  if (!this._handle) return callback();
+  const handle = this._handle;
+  if (!handle) return callback();
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
+  }
+  // A client-side wrap holds the stream it wraps as its handle until connect() upgrades it.
+  if (handle instanceof Duplex) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+    if (handle instanceof NetSocket && handle.pending) {
+      return handle.once("connect", this._final.bind(this, callback));
+    }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+    return handle.end(() => callback());
   }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);

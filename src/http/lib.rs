@@ -4582,7 +4582,10 @@ impl<'a> HTTPClient<'a> {
 
     /// `fetch()` reads the chunks decoded ahead of an invalid one, as in Node.js, which gives a compressed body nothing.
     fn keeps_chunks_ahead_of_invalid_one(&self) -> bool {
-        self.signals.body_receive_mode.is_some() && !self.state.encoding.is_compressed()
+        self.signals.body_receive_mode.is_some()
+            && !self.state.encoding.is_compressed()
+            // A failure that still carries the response head builds the Response: no body can be read from it.
+            && self.state.cloned_metadata.is_none()
     }
 
     pub(crate) fn handle_response_body_chunked_encoding(

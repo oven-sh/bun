@@ -7724,7 +7724,9 @@ declare module "bun" {
        * process exits, and output to an inherited console goes to the new
        * hidden console.
        *
-       * Has no effect with `detached: true`.
+       * Has no effect with `detached: true`. A job object that this process
+       * itself runs in (some CI runners and process supervisors use one) still
+       * applies to the subprocess.
        *
        * @default false
        *

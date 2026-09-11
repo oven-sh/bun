@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use crate::{SocketGroup, SslCtx, us_socket_t};
+use crate::{SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -32,12 +32,6 @@ impl ListenSocket {
         crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(
             self.get_socket(),
         ))
-    }
-
-    /// Group accepted sockets are linked into.
-    pub fn group(&mut self) -> &mut SocketGroup {
-        // SAFETY: self is a valid listen socket; C returns a non-null group.
-        unsafe { &mut *us_listen_socket_group(self) }
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
@@ -86,7 +80,6 @@ impl ListenSocket {
 // `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
-    safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

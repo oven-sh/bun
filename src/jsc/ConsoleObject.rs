@@ -559,10 +559,6 @@ fn message_with_type_and_level_(
     Ok(())
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Bounded iteration
-// ───────────────────────────────────────────────────────────────────────────
-
 /// What [`for_each_limited`] did.
 pub(crate) struct LimitedForEach {
     /// The number of elements passed to the callback.
@@ -572,9 +568,7 @@ pub(crate) struct LimitedForEach {
 }
 
 impl LimitedForEach {
-    /// The number of elements that were not visited, given the `size` the
-    /// collection reports. `size` is a property read, so it can disagree with
-    /// what the walk found. `None` means the count is not known.
+    /// Elements left out, going by the `size` property. `None` when `size` does not say.
     fn hidden_of(&self, size: i32) -> Option<u32> {
         u32::try_from(size)
             .ok()?
@@ -583,9 +577,7 @@ impl LimitedForEach {
     }
 }
 
-/// [`JSValue::for_each`] for a formatter, which prints values it does not
-/// control and so cannot wait for a user iterator to report `done`. The walk
-/// stops after `limit` elements. See `Bun__ConsoleObject__forEachLimited`.
+/// A bounded [`JSValue::for_each`] for formatters. `Bun__ConsoleObject__forEachLimited` has the rules.
 pub(crate) fn for_each_limited(
     iterable: JSValue,
     global: &JSGlobalObject,
@@ -594,9 +586,7 @@ pub(crate) fn for_each_limited(
     callback: jsc::ForEachCallback,
 ) -> JsResult<LimitedForEach> {
     unsafe extern "C" {
-        // safe: `JSGlobalObject` is an opaque handle, `truncated` is a live
-        // `&mut bool` that C++ only writes, and `ctx` is an opaque round-trip
-        // pointer that C++ only forwards to `callback`.
+        // safe: C++ only writes `truncated`, and only forwards `ctx` to `callback`.
         safe fn Bun__ConsoleObject__forEachLimited(
             iterable: JSValue,
             global: &JSGlobalObject,
@@ -700,9 +690,7 @@ struct CollectedRow {
 
 const PADDING: u32 = 1;
 
-/// The number of rows `console.table` reads from an iterable that has no
-/// length of its own, such as a generator. Chrome applies the same limit to
-/// every `console.table` call (`InjectedScript::wrapTable` in V8).
+/// Row budget for an iterable with no element count. Chrome's `console.table` limit (V8 `InjectedScript::wrapTable`).
 const MAX_ROWS_FROM_ITERATOR: u32 = 1000;
 
 impl<'a> TablePrinter<'a> {
@@ -1003,10 +991,7 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                // User code decides when an iterator ends. An array, a typed
-                // array, a Map or a Set has no more rows than it has elements.
-                // Any other iterable gets a row budget. That includes a WeakMap
-                // or an ArrayBuffer, which only user code can make iterable.
+                // Only user code can make a WeakMap or an ArrayBuffer iterable, so they get the budget too.
                 let jstype = ctx.this.jstype;
                 let has_element_count = matches!(jstype, jsc::JSType::Map | jsc::JSType::Set)
                     || (jstype.is_array_like() && jstype != jsc::JSType::ArrayBuffer);
@@ -2826,10 +2811,7 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Writes the marker that ends a truncated Map, Set or iterator
-        /// preview: `... N more items`, or `... more items` when `hidden` is
-        /// `None` because the count is not known. `wrote_entry` tells the
-        /// single-line form whether it needs a separator first.
+        /// Ends a truncated preview with `... N more items`, or `... more items` when `hidden` is `None`.
         fn print_more_entries<const C: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
@@ -2854,10 +2836,7 @@ pub mod formatter {
         }
     }
 
-    /// The number of elements a collection prints before the
-    /// `... N more items` marker. This is the default of node's
-    /// `maxArrayLength`, which node applies to arrays, Maps, Sets and iterator
-    /// previews alike.
+    /// Entries printed before `... N more items`. The default of node's `maxArrayLength`.
     const MAX_ENTRIES_SHOWN: u32 = 100;
 
     // ───────────────────────────────────────────────────────────────────────

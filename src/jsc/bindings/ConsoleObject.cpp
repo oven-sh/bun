@@ -131,13 +131,7 @@ void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& 
 
 }
 
-// A bounded `JSC::forEachInIterable` for the console formatter. That function
-// ends only when the iterator reports `done`, and a replaced `Symbol.iterator`
-// or `next` can withhold it forever. Here a Map or a Set is read from its own
-// storage, which user code cannot redirect. Any other iterable gets at most
-// `limit` protocol steps and is then closed, like `break` closes a for-of loop.
-// `truncated` says whether an element past `limit` exists. Returns the number
-// of elements passed to `callback`.
+// Bounded `JSC::forEachInIterable`: a Map or a Set is read from its own storage, anything else gets `limit` iterator steps and is then closed.
 extern "C" uint32_t Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIterable, JSC::JSGlobalObject* globalObject, uint32_t limit, bool* truncated, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void* ctx, JSC::EncodedJSValue))
 {
     auto& vm = JSC::getVM(globalObject);

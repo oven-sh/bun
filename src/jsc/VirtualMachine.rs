@@ -5439,8 +5439,7 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            // `errors` is whatever the user put on the property, so it can be
-            // an iterable that never ends.
+            // `errors` is user-assigned, so its iterator can be endless.
             const MAX_MEMBERS_PRINTED: u32 = 100;
             match crate::console_object::for_each_limited(
                 errors,

@@ -432,6 +432,7 @@ declare function $ERR_HTTP2_STREAM_ERROR(code): Error;
 declare function $ERR_HTTP2_SESSION_ERROR(code): Error;
 declare function $ERR_HTTP2_PAYLOAD_FORBIDDEN(status): Error;
 declare function $ERR_HTTP2_INVALID_INFO_STATUS(code): RangeError;
+declare function $ERR_HTTP2_TOO_MANY_ORIGINS(maxOriginSetSize: number): Error;
 declare function $ERR_INVALID_URL(input, base?): TypeError;
 declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;

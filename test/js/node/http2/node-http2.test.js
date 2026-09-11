@@ -3797,6 +3797,105 @@ describe("http2 ALTSVC and ORIGIN frame strings are latin-1", () => {
   });
 });
 
+// A server can send ORIGIN frames (RFC 8336) without end. Each new origin is
+// one more entry in session.originSet of the client. node v26.4.0 limits the
+// set to options.maxOriginSetSize entries (CVE-2026-48619). The default is 128.
+// The set starts with the origin of the session itself, so that entry counts.
+describe.concurrent("http2 client maxOriginSetSize", () => {
+  const FRAMES = 13;
+  // originSet.length after each ORIGIN frame of 10 new origins.
+  const sizesAfter = frames => Array.from({ length: frames }, (_, i) => 1 + 10 * (i + 1));
+
+  // Connects to a server that sends FRAMES ORIGIN frames of 10 new origins
+  // each. Resolves when the session closes or when every frame has arrived.
+  // `sizes` has originSet.length at each 'origin' event.
+  async function receiveOriginFrames(options) {
+    const server = http2.createSecureServer(TLS_CERT);
+    server.on("session", session => {
+      let i = 0;
+      for (let frame = 0; frame < FRAMES; frame++) {
+        session.origin(...Array.from({ length: 10 }, () => `https://o${i++}.example.com`));
+      }
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`https://localhost:${server.address().port}`, { ...TLS_OPTIONS, ...options });
+    try {
+      const { promise, resolve } = Promise.withResolvers();
+      const result = { sizes: [], code: undefined, message: undefined };
+      client.on("origin", () => {
+        result.sizes.push(client.originSet.length);
+        if (result.sizes.length === FRAMES) resolve();
+      });
+      client.on("error", err => {
+        result.code = err.code;
+        result.message = err.message;
+      });
+      client.on("close", resolve);
+      await promise;
+      return result;
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  it("destroys the session at the default limit of 128", async () => {
+    // 12 frames give 121 entries. The 13th frame fills the set and goes past it.
+    expect(await receiveOriginFrames()).toEqual({
+      sizes: sizesAfter(12),
+      code: "ERR_HTTP2_TOO_MANY_ORIGINS",
+      message: "The server sent more ORIGIN frames than the allowed number of 128",
+    });
+  });
+
+  it.each([
+    [0, 0],
+    [1.5, 0],
+    [10, 0],
+    [11, 1],
+    [128, 12],
+  ])("maxOriginSetSize %p: %p 'origin' events, then the session error", async (maxOriginSetSize, frames) => {
+    expect(await receiveOriginFrames({ maxOriginSetSize })).toEqual({
+      sizes: sizesAfter(frames),
+      code: "ERR_HTTP2_TOO_MANY_ORIGINS",
+      message: `The server sent more ORIGIN frames than the allowed number of ${maxOriginSetSize}`,
+    });
+  });
+
+  it.each([131, 512, Infinity])("maxOriginSetSize %p: every frame arrives, no error", async maxOriginSetSize => {
+    expect(await receiveOriginFrames({ maxOriginSetSize })).toEqual({
+      sizes: sizesAfter(FRAMES),
+      code: undefined,
+      message: undefined,
+    });
+  });
+
+  it("validates options.maxOriginSetSize before it connects", () => {
+    let connections = 0;
+    const createConnection = () => {
+      connections++;
+      return duplexPair()[0];
+    };
+    const connectWith = maxOriginSetSize => () => {
+      const client = http2.connect("https://localhost", { createConnection, maxOriginSetSize });
+      client.on("error", () => {});
+      client.destroy();
+    };
+    for (const value of [Symbol(), "0", 1n, {}, [], true, false, /s/, () => {}]) {
+      expect(connectWith(value)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    }
+    for (const value of [NaN, -1, -Infinity]) {
+      expect(connectWith(value)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    }
+    expect(connections).toBe(0);
+    // null and undefined select the default.
+    for (const value of [null, undefined]) {
+      expect(connectWith(value)).not.toThrow();
+    }
+    expect(connections).toBe(2);
+  });
+});
+
 it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
   // RFC 9113 Section 8.2.2: connection-specific fields (transfer-encoding,
   // connection, keep-alive, ...) make an HTTP/2 request malformed, and

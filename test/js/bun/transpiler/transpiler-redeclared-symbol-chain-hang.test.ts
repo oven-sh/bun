@@ -30,10 +30,19 @@ async function bench<T>(run: () => T | Promise<T>): Promise<{ ms: number; result
   return { ms, result };
 }
 
+/**
+ * `prefix + 0 + suffix + prefix + 1 + suffix + …`. join() formats the numbers
+ * natively; building 16k strings in a JS loop takes half a second in a debug
+ * build.
+ */
+function numbered(n: number, prefix: string, suffix: string): string {
+  return prefix + [...Array(n).keys()].join(suffix + prefix) + suffix;
+}
+
 test("merged enum declarations transpile in linear time", async () => {
   const n = 16_384;
   const merged = Buffer.alloc(n * 9, "enum E{}\n").toString();
-  const distinct = Array.from({ length: n }, (_, i) => `enum E${i.toString(36)}{}\n`).join("");
+  const distinct = numbered(n, "enum E", "{}\n");
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   transpiler.transformSync("enum Warmup {}");
 
@@ -53,7 +62,7 @@ test("top-level var re-declarations bundle in linear time", async () => {
   const n = 16_384;
   using dir = tempDir("redeclared-var-chain", {
     "same.ts": Buffer.alloc(n * 11, "var x = 1;\n").toString() + "export { x };\n",
-    "distinct.ts": Array.from({ length: n }, (_, i) => `var x${i.toString(36)} = 1;\n`).join("") + "export { x0 };\n",
+    "distinct.ts": numbered(n, "var x", " = 1;\n") + "export { x0 };\n",
   });
   const build = async (file: string) => {
     const result = await Bun.build({ entrypoints: [join(String(dir), file)] });

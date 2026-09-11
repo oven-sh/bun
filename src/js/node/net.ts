@@ -157,7 +157,12 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
+// On the raw half of a shared-fd TLS pair. TLS took over the fd, so the wrapped socket gets nothing
+// from it: no data, no EOF, no read error. The TLS socket reports those and closes the wrapped socket.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// On the TLS socket of that pair: kupgraded holds the raw half.
+const kAdoptedFd = Symbol("kAdoptedFd");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -275,6 +280,16 @@ function onUpgradedClose(self, connection) {
 }
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+}
+// Node's TLSWrap.close() destroys the wrapped socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L684-L688
+// _destroy queues these behind its callback: this socket's 'error', the wrapped socket's 'close', this socket's 'close'.
+function closeRawConnectionNT(self) {
+  const connection = self[kupgraded];
+  if (connection && !connection.destroyed) self[kCloseRawConnection]();
+}
+function closeRawConnectionThenEmitCloseNT(self, hasError) {
+  closeRawConnectionNT(self);
+  process.nextTick(emitCloseNT, self, hasError);
 }
 let addAbortListener;
 function destroyWhenAborted(err) {
@@ -473,7 +488,7 @@ const SocketHandlers: SocketHandler = {
     self[kclosed] = true;
     //socket cannot be used after close
     detachSocket(self);
-    SocketEmitEndNT(self, err);
+    if (!socket[kAdoptedTLSRaw]) SocketEmitEndNT(self, err);
     self.data = null;
   },
   data(socket, buffer) {
@@ -905,7 +920,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data[kclosed] = true;
         //socket cannot be used after close
         detachSocket(data);
-        SocketEmitEndNT(data, err);
+        if (!socket[kAdoptedTLSRaw]) SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
       }
@@ -1369,6 +1384,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    if (socket[kAdoptedTLSRaw]) return;
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -1600,6 +1616,7 @@ function Socket(options?) {
   this._parent = null;
   this._parentWrap = null;
   this[kupgraded] = null;
+  this[kAdoptedFd] = false;
   this[kOnUpgradedClose] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
@@ -2063,6 +2080,7 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
+              this[kAdoptedFd] = true;
               destroyWhenUpgradedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
@@ -2112,6 +2130,7 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
+                  this[kAdoptedFd] = true;
                   destroyWhenUpgradedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
@@ -2197,6 +2216,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
     upgraded.destroy?.();
   }
+  const closeRaw = this[kAdoptedFd] && !upgraded.destroyed;
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2262,9 +2282,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (closeRaw) process.nextTick(closeRawConnectionNT, this);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this, err ? true : false);
+    process.nextTick(closeRaw ? closeRawConnectionThenEmitCloseNT : emitCloseNT, this, err ? true : false);
   }
 
   const server = this._server;
@@ -2458,6 +2479,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
+    this[kAdoptedFd] = true;
     destroyWhenUpgradedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;

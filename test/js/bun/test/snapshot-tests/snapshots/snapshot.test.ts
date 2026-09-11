@@ -891,11 +891,16 @@ test("error snapshots", () => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
   expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    try {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    } catch (e) {
+      (e as Error).message = Bun.stripANSI((e as Error).message);
+      throw e;
+    }
   }).toThrowErrorMatchingInlineSnapshot(`
-"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+"expect(received).toThrowErrorMatchingInlineSnapshot()
 
-\x1B[1mMatcher error\x1B[0m: Received function did not throw
+Matcher error: Received function did not throw
 "
 `);
 });

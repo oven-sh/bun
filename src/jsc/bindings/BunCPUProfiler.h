@@ -16,8 +16,7 @@ bool isCPUProfilerRunning();
 // Start the CPU profiler. collectMarkdown also builds the per-function stats for the markdown report.
 void startCPUProfiler(JSC::VM& vm, bool collectMarkdown = false);
 
-// Fold pending samples into the profile and release the JS objects they
-// reference. Called from the event loop tick. Rate limited to once per 100ms.
+// Folds pending samples into the profile and releases their GC roots. Called from the event loop tick, at most once per 100ms.
 void drainCPUProfilerIfNeeded(JSC::VM& vm);
 
 // Stop the CPU profiler and get profile data in requested formats.

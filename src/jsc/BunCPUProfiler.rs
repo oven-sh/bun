@@ -56,8 +56,7 @@ pub fn start_cpu_profiler(vm: &mut VM, collect_markdown: bool) {
     Bun__startCPUProfiler(vm, collect_markdown);
 }
 
-/// Stops a profiler that `node:inspector` or `Worker.startCpuProfile` started
-/// and never stopped, and frees its profile data. No output is written.
+/// Stops a profiler that was never stopped (inspector or worker sessions) and frees its data.
 pub(crate) fn stop_cpu_profiler_if_running(vm: &mut VM) {
     Bun__stopCPUProfilerIfRunning(vm);
 }

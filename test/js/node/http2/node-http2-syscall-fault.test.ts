@@ -276,38 +276,56 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
 });
 
 describe.skipIf(skip)("node:http2 transport write errors", () => {
+  // A send() the kernel rejects is the only report that the peer is gone: the
+  // transport closes before the read side is polled again. The session and its
+  // request have to report it, and the process must not exit before they do
+  // when the socket is its only handle (the client below starts no timer).
+  //
   // One peer reset gives a different send errno per platform: linux reports
-  // ECONNRESET, darwin EPIPE. Both mean the peer is gone, and node reports
-  // ECONNRESET for it on every platform (it learns of the reset from the read
-  // side, which reports one code everywhere). Inject each errno so the code
-  // the session and the stream report is pinned on every platform.
-  test.each(["EPIPE", "ECONNRESET"])("send → %s is reported as ECONNRESET", async errno => {
+  // ECONNRESET, darwin EPIPE. Node reports ECONNRESET on every platform (it
+  // learns of the reset from the read side, which reports one code everywhere).
+  // Injecting each errno pins the reported code on every platform.
+  //
+  // phase "request": the failing send is a later request() on an idle session.
+  // phase "connect": it is inside the connect flush, which sends the preface
+  // (the first send) and then the queued request's HEADERS (the second).
+  const cases = [
+    { errno: "EPIPE", phase: "request" },
+    { errno: "ECONNRESET", phase: "request" },
+    { errno: "ECONNRESET", phase: "connect" },
+  ];
+  test.each(cases)("send → $errno during the $phase flush is reported as ECONNRESET", async ({ errno, phase }) => {
     // The client runs in a subprocess: the fault rules are process-global, so
     // the raw peer below has to live in a process that is not faulted.
     const fixture = `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const http2 = require("node:http2");
       const state = { streamError: null, sessionError: null, rstCode: null };
-      let streamClosed = false, sessionClosed = false, reported = false;
-      function report() {
-        if (reported || !streamClosed || !sessionClosed) return;
-        reported = true;
-        console.log(JSON.stringify(state));
-        process.exit(0);
-      }
+      const failSends = after =>
+        fault.set({ syscall: "send", action: "errno", errno: process.env.H2_FAULT_ERRNO, after, repeat: -1 });
       const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
       session.on("error", err => (state.sessionError = err.code));
-      session.on("close", () => ((sessionClosed = true), report()));
-      session.on("remoteSettings", () => {
-        // Armed once the preface is out, so only the request's HEADERS write fails.
-        fault.set({ syscall: "send", action: "errno", errno: process.env.H2_FAULT_ERRNO, repeat: -1 });
-        const req = session.request({ ":path": "/" });
+      let req;
+      function request() {
+        req = session.request({ ":path": "/" });
         req.on("error", err => (state.streamError = err.code));
-        req.on("close", () => ((state.rstCode = req.rstCode), (streamClosed = true), report()));
+        req.on("close", () => (state.rstCode = req.rstCode));
         req.resume();
         req.end();
+      }
+      if (process.env.H2_FAULT_PHASE === "connect") {
+        failSends(1);
+        request();
+      } else {
+        session.on("remoteSettings", () => {
+          failSends(0);
+          request();
+        });
+      }
+      process.on("exit", () => {
+        const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
+        console.log(JSON.stringify({ ...state, ...destroyed }));
       });
-      setTimeout(() => ((streamClosed = sessionClosed = true), report()), 5000);
     `;
     const frame = (type: number, flags: number) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
     const server = net.createServer(socket => {
@@ -320,7 +338,7 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
       const port = (server.address() as import("node:net").AddressInfo).port;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno },
+        env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -330,6 +348,8 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
         streamError: "ECONNRESET",
         sessionError: "ECONNRESET",
         rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+        sessionDestroyed: true,
+        streamDestroyed: true,
       });
       expect(exitCode).toBe(0);
     } finally {

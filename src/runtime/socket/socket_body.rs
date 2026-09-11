@@ -932,8 +932,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// ended the connection. A plain close would reach JS as a clean EOF.
     pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
         let socket = self.socket.get();
-        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out. A
-        // Windows send failure it could not classify arrives as 1.
+        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
         if errno > 2 {
             socket.close_with_error_code(dead_transport_close_code(errno));
         } else {

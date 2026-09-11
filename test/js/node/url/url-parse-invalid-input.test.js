@@ -126,7 +126,7 @@ describe("url.parse", () => {
         bunExe(),
         "-e",
         `
-        const url = require("node:url");
+        import url from "node:url";
         for (const thrown of ["nope", 1, null, undefined, Symbol.for("nope")]) {
           const arg = { get constructor() { throw thrown; } };
           for (const fn of [() => url.parse(arg), () => url.resolve(arg, "/a"), () => url.resolve("/a", arg)]) {

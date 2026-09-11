@@ -42,13 +42,7 @@ namespace WebCore {
 // behavior.
 String lowercaseHeaderName(const String&);
 
-// The value of one header, and the buffer that `append` grows.
-//
-// A name with a single value holds it in `m_string` and costs what a String
-// costs. The second value for the same name moves into a StringBuilder, so N
-// appends copy O(N) bytes in total instead of O(N^2): the builder over-allocates
-// and writes each new value into the spare capacity. `string()` hands readers
-// the combined value without a copy, as a substring of that buffer.
+// One header's value. From the second value on it lives in a StringBuilder, so N appends copy O(N) bytes.
 class HeaderValue {
 public:
     HeaderValue() = default;
@@ -60,37 +54,18 @@ public:
         : m_string(WTF::move(value))
     {
     }
-
-    // A copy takes the combined value but never the builder: two header maps
-    // must not append into one buffer.
     HeaderValue(const HeaderValue& other)
         : m_string(other.string())
     {
     }
-    HeaderValue& operator=(const HeaderValue& other)
-    {
-        *this = other.string();
-        return *this;
-    }
     HeaderValue(HeaderValue&&) = default;
+    HeaderValue& operator=(const HeaderValue& other) { return *this = HeaderValue(other); }
     HeaderValue& operator=(HeaderValue&&) = default;
-
-    HeaderValue& operator=(const String& value)
-    {
-        // Assign before dropping the builder. `value` can be the String the
-        // builder owns, which is what `*this = other.string()` passes when a
-        // HeaderValue is assigned to itself.
-        m_string = value;
-        m_builder = nullptr;
-        return *this;
-    }
 
     const String& string() const LIFETIME_BOUND { return m_builder ? m_builder->toStringPreserveCapacity() : m_string; }
     unsigned length() const { return m_builder ? m_builder->length() : m_string.length(); }
 
-    // Returns false, and stores nothing, when the combined value does not fit in
-    // a String. StringBuilder aborts the process on overflow, so the limit is
-    // checked here instead and reported to the caller.
+    // False, with nothing stored, when the combined value would pass String::MaxLength.
     bool append(ASCIILiteral delimiter, const String& value)
     {
         if (static_cast<uint64_t>(length()) + delimiter.length() + value.length() > String::MaxLength)
@@ -115,11 +90,7 @@ public:
     bool operator==(const HeaderValue& other) const { return string() == other.string(); }
 
 private:
-    // A stored header value holds only Latin-1 characters (isValidHTTPHeaderValue)
-    // but the String can still be 16-bit. An 8-bit builder needs half the
-    // buffer. It also never asks for a capacity that a StringImpl cannot hold:
-    // the builder grows by doubling up to String::MaxLength, and a 16-bit
-    // StringImpl holds a few characters less than that, which aborts.
+    // Values are Latin-1 (isValidHTTPHeaderValue). A 16-bit builder can grow to a capacity StringImpl refuses, which aborts.
     static String as8Bit(const String& value)
     {
         if (value.is8Bit())
@@ -248,8 +219,7 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    // The `add` overloads combine a repeated name into one value. They return
-    // false, and store nothing, when that value does not fit in a String.
+    // Every add function returns false, with nothing stored, when the combined value would pass String::MaxLength.
     WEBCORE_EXPORT bool add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;

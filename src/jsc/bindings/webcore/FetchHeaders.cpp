@@ -104,8 +104,6 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
         if (!canWriteResult.releaseReturnValue())
             return {};
 
-        // The combined value does not fit in a String. This is the error JSC
-        // throws for an over-long string: RangeError: Out of memory.
         if (!headers.add(headerName, normalizedValue))
             return Exception { OutOfMemoryError };
         return {};

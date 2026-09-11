@@ -2373,7 +2373,7 @@ pub(crate) fn shell_openat(
         let p = shell_get_path(dir, path, &mut buf)?;
         // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
         // routes through `sys_uv` and already yields a uv-owned fd.
-        return bun_sys::open(p, flags, perm);
+        return bun_sys::open(p, flags, perm).map_err(|e| e.with_path(path.as_bytes()));
     }
     #[cfg(not(windows))]
     {

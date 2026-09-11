@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "f0f60fd2324817dae9656d8bf2fcae25ceaccc37";
+export const WEBKIT_VERSION = "cf1b36ec8703d8e87436094d21d478d358c7d886";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -331,6 +331,8 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
+      // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
+      ...(cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",
@@ -338,6 +340,9 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      // Bun's C++ is compiled with ASSERT_ENABLED=1 when cfg.assertions (release-asan,
+      // release-assertions); WebKit must match or ASSERT-only symbols fail to link.
+      ...(cfg.assertions && cfg.release ? { ENABLE_ASSERTS: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

@@ -1002,6 +1002,13 @@ try {
 } // Automatically released
 ```
 
+When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
+
+```ts
+// Give up if no connection frees up within 5 seconds
+using reserved = await sql.reserve({ signal: AbortSignal.timeout(5000) });
+```
+
 ---
 
 ## LISTEN / NOTIFY (PostgreSQL)
@@ -1351,16 +1358,18 @@ Bun converts MySQL types to JavaScript types:
 | FLOAT, DOUBLE                           | number                   |                                                                                                  |
 | DATE                                    | Date                     | JavaScript Date object                                                                           |
 | DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
-| TIME                                    | number                   | Total of microseconds                                                                            |
+| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours); prepared queries drop fractional seconds   |
 | YEAR                                    | number                   |                                                                                                  |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
 | TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set      |
 | JSON                                    | object/array             | Automatically parsed                                                                             |
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
-| GEOMETRY                                | string                   | Geometry data                                                                                    |
+| GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
 `DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
+
+Bun also sets `time_zone = '+00:00'` on every MySQL connection it opens. The server converts `TIMESTAMP` columns through the session time zone, so this keeps the stored instant equal to the `Date` you bound, and it makes server-side time functions such as `NOW()` and `CURRENT_TIMESTAMP` evaluate in UTC. There is no option to pick a different session time zone yet: a manual `SET time_zone = ...` reaches only the one pooled connection that runs it ([#40254](https://github.com/oven-sh/bun/issues/40254) tracks a per-connection option).
 
 #### Differences from PostgreSQL
 

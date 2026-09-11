@@ -252,7 +252,40 @@ export interface DirectBuild {
    * Linux ASLR/shadow-map collision).
    */
   codegen?: DirectCodegen;
+  /**
+   * Fail the build if any object of this dep still has an undefined
+   * reference to one of `symbols` (llvm-nm over the objects, once they
+   * exist). `except` lists sources, as spelled in `sources`, that may
+   * reference them. Names are matched with and without the Mach-O leading
+   * underscore. The use so far: deps whose allocations bun routes to
+   * mimalloc must not reach the C library's allocator behind its back, see
+   * LIBC_ALLOCATION_SYMBOLS. Skipped when llvm-nm was not found (cfg.nm).
+   */
+  forbidUndefined?: ForbidUndefined;
 }
+
+export interface ForbidUndefined {
+  symbols: readonly string[];
+  except?: readonly string[];
+}
+
+/**
+ * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Only
+ * Linux redirects these to mimalloc globally (deps/mimalloc.ts); on Windows
+ * and macOS a dep reaches mimalloc only through its own allocator hooks, and
+ * a stray malloc() lands on the C runtime heap without anything failing, so
+ * the objects are the one place this is checkable.
+ */
+export const LIBC_ALLOCATION_SYMBOLS: readonly string[] = [
+  "malloc",
+  "calloc",
+  "realloc",
+  "free",
+  "strdup",
+  "_strdup",
+  "wcsdup",
+  "_wcsdup",
+];
 
 export interface DirectCodegen {
   /** Tool source relative to srcDir. Compiled+linked to a host executable. */
@@ -452,7 +485,7 @@ export interface Dependency {
 
   /**
    * Macro name suffix for `bun_dependency_versions.h` — becomes
-   * `BUN_DEP_<macro>` / `BUN_VERSION_<macro>`. The value is derived from
+   * `BUN_VERSION_<macro>`. The value is derived from
    * `source(cfg)`: `github-archive.commit`, `prebuilt.identity`, etc.
    *
    * Omit for deps that shouldn't appear in `process.versions` (e.g.
@@ -495,6 +528,12 @@ export interface ResolvedDep {
    * the source stamp (.ref).
    */
   outputs: string[];
+  /**
+   * Stamps of this dep's `forbidUndefined` checks. Whatever the objects go
+   * into next waits for them: the per-dep archive here when cfg.archiveDeps,
+   * otherwise bun.ts's archive or link.
+   */
+  checks: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -653,6 +692,18 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   n.rule("dep_subst", {
     command: `${cfg.jsRuntime} ${fetchCli} subst $in $out $pairs`,
     description: "subst $out",
+    restat: true,
+  });
+
+  // DirectBuild.forbidUndefined: llvm-nm over the dep's objects, listed in a
+  // response file like the ar rule's (boringssl alone has ~330 of them).
+  // The stamp is only written when nothing is referenced, and (restat) left
+  // alone when it already exists.
+  n.rule("dep_check_undefined", {
+    command: `${cfg.jsRuntime} ${fetchCli} check-undefined $name $nm $out.rsp $out $symbols`,
+    description: "check undefined symbols in $name",
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
     restat: true,
   });
 
@@ -840,6 +891,7 @@ export function resolveDep(
   let libs: string[];
   let objects: string[] = [];
   let outputs: string[];
+  let checks: string[] = [];
 
   if (buildSpec.kind === "nested-cmake") {
     const result = emitNestedCmake(n, cfg, dep.name, buildSpec, {
@@ -862,6 +914,7 @@ export function resolveDep(
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
     objects = result.objects;
+    checks = result.checks;
     // outputs is the "downstream needs me built" signal — for direct deps
     // that's the generated headers + source stamp, NOT the .o files (those
     // are link inputs, not include-order dependencies).
@@ -895,6 +948,7 @@ export function resolveDep(
     defines: provides.defines ?? [],
     sources: resolvedSources,
     outputs,
+    checks,
   };
 }
 
@@ -1085,6 +1139,7 @@ function emitPrebuilt(
     name,
     libs,
     objects: [],
+    checks: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1499,7 +1554,7 @@ function emitDirect(
   name: string,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[]; objects: string[]; headerOutputs: string[] } {
+): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1620,7 +1675,7 @@ function emitDirect(
     const path = typeof s === "string" ? s : s.path;
     const extra = typeof s === "string" ? [] : s.cflags;
     const abs = resolve(srcDir, path);
-    // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's
+    // .asm → nasm() (NASM syntax, x64). .c/.S → cc() (clang's
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().
@@ -1637,6 +1692,8 @@ function emitDirect(
     return isC || isAsm ? cc(n, cfg, abs, opts) : cxx(n, cfg, abs, opts);
   });
 
+  const checks = spec.forbidUndefined === undefined ? [] : emitForbidUndefined(n, cfg, name, spec, objects, buildDir);
+
   // Default: hand the objects straight to bun's link line — no intermediate
   // archive. With cfg.archiveDeps the old per-dep .a is produced instead
   // (useful for bisecting duplicate-symbol issues, since a .a only
@@ -1647,15 +1704,59 @@ function emitDirect(
     // in this branch.
     mkdirSync(buildDir, { recursive: true });
     for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
-    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
     n.phony(name, [lib]);
-    return { libs: [lib], objects: [], headerOutputs: [lib] };
+    return { libs: [lib], objects: [], headerOutputs: [lib], checks };
   }
-  n.phony(name, objects);
+  n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
   // ready. For no-archive direct deps that's the generated header set
   // (subst/literal/codegen) plus the fetch stamp — not the .o files.
-  return { libs: [], objects, headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp] };
+  return {
+    libs: [],
+    objects,
+    headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
+    checks,
+  };
+}
+
+/**
+ * The `forbidUndefined` edge: every object except the `except` sources' goes
+ * in, the stamp comes out. Returns the stamp, or nothing when llvm-nm is
+ * unavailable. The objects are in `spec.sources` order, which is how the
+ * exceptions are mapped onto them.
+ */
+function emitForbidUndefined(
+  n: Ninja,
+  cfg: Config,
+  name: string,
+  spec: DirectBuild,
+  objects: string[],
+  buildDir: string,
+): string[] {
+  const { symbols, except = [] } = spec.forbidUndefined!;
+  assert(symbols.length > 0, `${name}: forbidUndefined.symbols is empty`);
+  const sourcePaths = spec.sources.map(src => (typeof src === "string" ? src : src.path));
+  for (const exception of except) {
+    assert(
+      sourcePaths.includes(exception),
+      `${name}: forbidUndefined.except lists ${exception}, which is not one of its sources`,
+    );
+  }
+  const checked = objects.filter((_, i) => !except.includes(sourcePaths[i]!));
+  assert(checked.length > 0, `${name}: forbidUndefined excepts every source`);
+  if (cfg.nm === undefined) return [];
+
+  mkdirSync(buildDir, { recursive: true });
+  const stamp = resolve(buildDir, ".undefined-symbols-checked");
+  n.build({
+    outputs: [stamp],
+    rule: "dep_check_undefined",
+    inputs: checked,
+    implicitInputs: [fetchCliPath],
+    vars: { name, nm: quote(cfg.nm, cfg.host.os === "windows"), symbols: symbols.join(",") },
+  });
+  return [stamp];
 }
 
 /**

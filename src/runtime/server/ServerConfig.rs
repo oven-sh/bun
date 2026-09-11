@@ -4,6 +4,7 @@ use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
+use bun_ptr::ThisPtr;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
@@ -14,11 +15,12 @@ pub use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
+use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
+use bun_collections::index_sort;
 
 pub struct ServerConfig {
     pub(crate) address: Address,
@@ -61,6 +63,7 @@ pub struct ServerConfig {
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
+    pub(crate) http2: bool,
     pub(crate) http1: bool,
 
     pub(crate) had_routes_object: bool,
@@ -95,6 +98,7 @@ impl Default for ServerConfig {
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -174,6 +178,17 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
+impl RouteMethod {
+    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
+    /// read off the request.
+    pub(crate) fn specific(&self) -> Option<Method> {
+        match self {
+            RouteMethod::Any => None,
+            RouteMethod::Specific(method) => Some(*method),
+        }
+    }
+}
+
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -193,13 +208,6 @@ pub struct StaticRouteEntry {
 impl StaticRouteEntry {
     fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
-    }
-}
-
-impl Drop for StaticRouteEntry {
-    fn drop(&mut self) {
-        // path: Box<[u8]> drops automatically
-        self.route.deref_();
     }
 }
 
@@ -245,7 +253,7 @@ impl ServerConfig {
 
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
-        list.sort_by(|a, b| strings::order(&b.path, &a.path));
+        index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }
@@ -282,6 +290,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -310,89 +319,30 @@ impl ServerConfig {
     }
 }
 
-// NOTE: free `extern "C"` fns are monomorphized per `<SSL, T>` and registered
-// via the raw `c::uws_method_handler` overload.
-
-/// # Safety
-/// `entry` must be a live route pointer that outlives `app` — it is registered
-/// as the uWS userdata and dereferenced from request callbacks for the lifetime
-/// of the app.
-// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
-// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
-// opaque-token forwarding.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) fn apply_static_route<const SSL: bool, T>(
+pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
-    entry: *mut T,
+    entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
-) where
-    T: StaticRouteLike<SSL>,
-{
-    // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
+) {
+    entry.set_server(server);
 
-    // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
-    // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
-    // `T` and dispatch into the trait. Monomorphized per `<SSL, T>`.
-    extern "C" fn handler<const SSL: bool, T: StaticRouteLike<SSL>>(
-        resp: *mut uws::uws_res,
-        req: *mut uws::Request,
-        user_data: *mut core::ffi::c_void,
-    ) {
-        // SAFETY: uWS invokes this with non-null `resp`/`req` for the duration
-        // of the callback; `user_data` is the `entry` pointer registered below,
-        // kept alive by the route table for the lifetime of the app.
-        let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
-        // selects the matching `AnyResponse` variant for the const-generic SSL flag.
-        let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
-        } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
-        };
-        // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
-        // duration of this uWS callback (see invariants established above);
-        // `on_request` only dereferences them while this frame is live.
-        unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
-    }
-
-    extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
-        resp: *mut uws::uws_res,
-        req: *mut uws::Request,
-        user_data: *mut core::ffi::c_void,
-    ) {
-        // SAFETY: see `handler` above.
-        let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
-        } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
-        };
-        // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
-        // the callback's duration — same invariants as `handler` above.
-        unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
-    }
-
-    let user_data = entry.cast::<core::ffi::c_void>();
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(path, Some(head::<SSL, T>), user_data);
+        app.method_this(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
         http_method::Optional::Any => {
-            app.any(path, Some(handler::<SSL, T>), user_data);
+            app.any_this(path, T::on_request, entry);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(method_, path, Some(handler::<SSL, T>), user_data);
+                app.method_this(method_, path, T::on_request, entry);
             }
         }
     }
@@ -408,176 +358,118 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-/// # Safety
-/// `entry` must be a live route pointer that outlives `app` — it is registered
-/// as the uWS userdata and dereferenced from request callbacks for the lifetime
-/// of the app.
-// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
-// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
-// opaque-token forwarding.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) fn apply_static_route_h3<T>(
+/// The route-registration surface shared by `uws::h2::App` and
+/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
+pub(crate) trait MuxApp {
+    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+}
+
+macro_rules! impl_mux_app {
+    ($app:ty) => {
+        impl MuxApp for $app {
+            #[inline]
+            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::method_this(self, m, p, h, this)
+            }
+            #[inline]
+            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::any_this(self, p, h, this)
+            }
+        }
+    };
+}
+impl_mux_app!(uws::h2::App);
+impl_mux_app!(uws::h3::App);
+
+pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
-    app: &mut uws::h3::App,
-    entry: *mut T,
+    app: &mut A,
+    entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
-) where
-    T: StaticRouteLike<false>,
-{
-    // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
-
-    fn handler<T: StaticRouteLike<false>>(
-        route: &mut T,
-        req: &mut uws::h3::Request,
-        resp: &mut uws::h3::Response,
-    ) {
-        // SAFETY: `route` is the `entry` userdata kept alive by the route table.
-        unsafe {
-            T::on_request(
-                route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
-            )
-        };
-    }
-    fn head<T: StaticRouteLike<false>>(
-        route: &mut T,
-        req: &mut uws::h3::Request,
-        resp: &mut uws::h3::Response,
-    ) {
-        // SAFETY: see `handler` above.
-        unsafe {
-            T::on_head_request(
-                route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
-            )
-        };
-    }
+) {
+    entry.set_server(server);
 
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(path, entry, head::<T>);
+        app.method_this(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
-        http_method::Optional::Any => app.any(path, entry, handler::<T>),
+        http_method::Optional::Any => app.any_this(path, T::on_request, entry),
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(method_, path, entry, handler::<T>);
+                app.method_this(method_, path, T::on_request, entry);
             }
         }
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
-/// (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
-/// Receivers are raw `*mut Self` because the route is registered as the uWS
-/// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
-/// `*mut` to mutate state and stash `self` into onAborted callbacks.
-pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
-    /// SAFETY: `this` is a live route pointer for the lifetime of the app.
-    unsafe fn set_server(this: *mut Self, server: AnyServer);
-    /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles
-    /// valid for the duration of the uWS callback.
-    unsafe fn on_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    );
-    /// SAFETY: see `on_request`.
-    unsafe fn on_head_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    );
+/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
+/// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
+/// is the uWS route userdata; the route table holds a ref on it for as long as
+/// it is registered.
+pub(crate) trait StaticRouteLike: Sized + 'static {
+    fn set_server(&self, server: AnyServer);
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
 }
 
-impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live; `server` is a Cell so &mut
-        // is not required.
-        unsafe { (*this).server.set(Some(server)) };
+impl StaticRouteLike for super::StaticRoute {
+    fn set_server(&self, server: AnyServer) {
+        self.server.set(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_request(this, req, resp) }
-    }
-    unsafe fn on_head_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_head_request(this, req, resp) }
-    }
-}
-
-impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).set_server(Some(server)) };
-    }
-    unsafe fn on_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
 
-impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).set_server(Some(server)) };
+impl StaticRouteLike for super::FileRoute {
+    fn set_server(&self, server: AnyServer) {
+        self.set_server(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
 
-impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).server.set(Some(server)) };
+impl StaticRouteLike for super::DirectoryRoute {
+    fn set_server(&self, server: AnyServer) {
+        self.set_server(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
-    ) {
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(this, req, resp)
+    }
+}
+
+impl StaticRouteLike for super::html_bundle::Route {
+    fn set_server(&self, server: AnyServer) {
+        self.server.set(Some(server));
+    }
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(this, req, resp)
+    }
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
         Self::on_head_request(this, req, resp)
     }
 }
@@ -828,9 +720,6 @@ impl ServerConfig {
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(static_) = get_routes_object(global, arg)? {
             let Some(static_obj) = static_.get_object() else {
@@ -851,7 +740,7 @@ impl ServerConfig {
 
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -879,15 +768,13 @@ impl ServerConfig {
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.
 
-            while let Some(key) = iter.next()? {
+            while let Some((key, value)) = iter.next()? {
                 // NOTE: `to_owned_slice_returning_all_ascii` not yet on
                 // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
                 let path: Box<[u8]> = path_vec.into_boxed_slice();
                 // The path Box drops on error.
-
-                let value: JSValue = iter.value;
 
                 if value.is_undefined() {
                     continue;
@@ -1129,10 +1016,6 @@ impl ServerConfig {
             }
         }
 
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
@@ -1171,9 +1054,6 @@ impl ServerConfig {
                 websocket_object,
             )?);
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let number = port_.to_number(global)?;
@@ -1204,20 +1084,13 @@ impl ServerConfig {
             }
             port = p;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_slice(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                // sliced drops at scope end
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         let host = if let Some(h) = arg.get_stringish(global, "hostname")? {
@@ -1226,7 +1099,6 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
@@ -1238,9 +1110,6 @@ impl ServerConfig {
                 }
                 has_hostname = true;
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(unix) = arg.get_stringish(global, "unix")? {
@@ -1255,24 +1124,18 @@ impl ServerConfig {
                 args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
             }
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(id) = arg.get(global, "id")? {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_slice(global)?;
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
                     args.allow_hot = false;
                 }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if opts.allow_bake_config {
@@ -1302,29 +1165,21 @@ impl ServerConfig {
         if let Some(dev) = arg.get(global, "reusePort")? {
             args.reuse_port = dev.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(dev) = arg.get(global, "ipv6Only")? {
             args.ipv6_only = dev.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(v) = arg.get(global, "http3")? {
             args.http3 = v.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
+
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
         }
 
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
@@ -1332,9 +1187,6 @@ impl ServerConfig {
                 args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
                     .expect("int cast") as usize;
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_error) = arg.get_truthy(global, "error")? {
@@ -1347,9 +1199,6 @@ impl ServerConfig {
             // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
             args.on_error = on_error;
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
@@ -1375,9 +1224,6 @@ impl ServerConfig {
             && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
                  \x20 - A routes object:\n\
@@ -1392,10 +1238,6 @@ impl ServerConfig {
                  \x20    }}\n\n\
                  Learn more at https://bun.com/docs/api/http",
             )));
-        } else {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
@@ -1407,15 +1249,9 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let ssl_config = match SSLConfig::from_js(vm, global, item)? {
-                            Some(c) => c,
-                            None => {
-                                if global.has_exception() {
-                                    return Err(JsError::Thrown);
-                                }
-                                // Backwards-compatibility; we ignored empty tls objects.
-                                continue;
-                            }
+                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item)? else {
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
                         };
 
                         if args.ssl_config.is_none() {
@@ -1439,13 +1275,7 @@ impl ServerConfig {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
                     args.ssl_config = Some(ssl_config);
                 }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
-                }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // @compatibility Bun v0.x - v0.2.1
@@ -1454,23 +1284,19 @@ impl ServerConfig {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
                 args.ssl_config = Some(ssl_config);
             }
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
         }
 
-        if args.http3 {
-            if args.ssl_config.is_none() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
-                );
-            }
-        } else if !args.http1 {
+        if args.http3 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+            );
+        }
+        if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable http1 without enabling http3"
+                "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
@@ -1658,17 +1484,6 @@ pub struct FromJSOptions {
     /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
-}
-
-impl Default for FromJSOptions {
-    fn default() -> Self {
-        Self {
-            allow_bake_config: true,
-            is_fetch_required: true,
-            previous_fetch: false,
-            previous_routes: false,
-        }
-    }
 }
 
 pub struct UserRouteBuilder {

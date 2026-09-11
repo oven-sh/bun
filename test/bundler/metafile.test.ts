@@ -800,7 +800,7 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
@@ -1288,5 +1288,42 @@ describe("bun build --metafile-md", () => {
     // Should have node_modules marker in raw data
     expect(content).toContain("[NODE_MODULES:");
     expect(content).toContain("node_modules/lodash");
+  });
+});
+
+describe("bun build --metafile", () => {
+  // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
+  // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
+  test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {
+    using dir = tempDir("metafile-wtf8", {
+      "index.js": `console.log(1);`,
+    });
+
+    // "\355\240\200" is U+D800 in WTF-8, "\377" is not valid UTF-8 at all.
+    // No --outdir: the bundle goes to stdout and only the metafile is written.
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `"$1" build index.js --metafile=meta.json --entry-naming "x$(printf '\\355\\240\\200\\377')-[name].[ext]"`,
+        "sh",
+        bunExe(),
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("console.log(1);");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const bytes = await Bun.file(`${dir}/meta.json`).bytes();
+    // Throws on invalid UTF-8.
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const metafile = JSON.parse(text) as Metafile;
+    expect(Object.keys(metafile.outputs)).toEqual(["./x\uD800\uFFFD-index.js"]);
   });
 });

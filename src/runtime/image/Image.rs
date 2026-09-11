@@ -20,10 +20,11 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
-use bun_core::{ZStr, strings};
+use bun_core::{EncodedSlice, ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
+    JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -129,9 +130,9 @@ pub enum Source {
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
+    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
+    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
+    /// caller roots the value as it does for 2).
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -306,15 +307,6 @@ impl Image {
         Ok(img.to_js(global))
     }
 
-    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
-        self.this_ref.with_mut(|r| r.finalize());
-        // `source` is dropped by Box drop.
-    }
-
     pub(crate) fn estimated_size(&self) -> usize {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
@@ -364,7 +356,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
+        let str = value.to_bun_string(global)?;
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -668,9 +660,10 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
     error_with_code(global, error_code(e), error_message(e))
 }
 
-fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
-    let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
-    let code_js = jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
+fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static ZStr) -> JSValue {
+    let err = EncodedSlice::utf8(msg.as_bytes()).to_error_instance(global);
+    let code_js = bun_core::String::static_(code.as_bytes())
+        .to_js(global)
         .unwrap_or(JSValue::UNDEFINED);
     err.put(global, b"code", code_js);
     err
@@ -758,15 +751,14 @@ impl Image {
                             ))
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
-                    2 => {
+                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
+                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -777,7 +769,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }
@@ -956,10 +948,7 @@ impl Image {
                     obj.put(
                         global,
                         b"format",
-                        jsc::bun_string_jsc::create_utf8_for_js(
-                            global,
-                            format_name(p.format).as_bytes(),
-                        )?,
+                        bun_core::String::static_(format_name(p.format)).to_js(global)?,
                     );
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
@@ -1051,8 +1040,8 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-            if !s.eql_comptime(b"dataurl") {
+            let s = args[0].to_bun_string(global)?;
+            if !s.eq_ascii(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
                 )));
@@ -1081,7 +1070,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+            let str = args[0].to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1864,11 +1853,10 @@ impl PipelineTask {
                         let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
                         buf[..pre.len()].copy_from_slice(pre);
                         let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
-                        let str =
-                            match jsc::bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
-                                Ok(s) => s,
-                                Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                            };
+                        let str = match bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
+                            Ok(s) => s,
+                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                        };
                         promise.resolve(global, str)?;
                     }
                     // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
@@ -1897,12 +1885,12 @@ impl PipelineTask {
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
                         let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::node::PathOrBlob::from_js_no_copy(
+                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
                             global,
                             &mut arg_slice,
                         ) {
                             Ok(p) => p,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
@@ -1923,9 +1911,9 @@ impl PipelineTask {
                 let obj = JSValue::create_empty_object(global, 3);
                 obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                 obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                let fmt_js =
-                    jsc::bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
-                        .unwrap_or(JSValue::UNDEFINED);
+                let fmt_js = bun_core::String::static_(format_name(format))
+                    .to_js(global)
+                    .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }

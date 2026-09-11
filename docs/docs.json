@@ -1,5 +1,4 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "Bun",
   "seo": {
@@ -18,13 +17,6 @@
   "favicon": "/logo/bun.png",
   "icons": {
     "library": "lucide"
-  },
-  "fonts": {
-    "heading": {
-      "family": "Inter Display Bold",
-      "source": "https://mintlify-assets.b-cdn.net/fonts/InterDisplay-Bold.woff2",
-      "format": "woff2"
-    }
   },
   "appearance": {
     "default": "system"

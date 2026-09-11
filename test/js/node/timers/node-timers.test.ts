@@ -45,6 +45,29 @@ it("node.js util.promisify(setInterval) works", async () => {
   expect(end - start).toBeGreaterThan(9);
 });
 
+it("timers expose util.promisify.custom as a lazy accessor without loading node:util first", async () => {
+  // Matches Node's lib/timers.js: an enumerable, non-configurable getter that resolves to timers/promises.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const sym = Symbol.for("nodejs.util.promisify.custom");
+       const shape = fn => { const d = Object.getOwnPropertyDescriptor(fn, sym); return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable }; };
+       const before = [setTimeout, setInterval, setImmediate].map(shape);
+       const tp = require("node:timers/promises");
+       const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
+       console.log(JSON.stringify({ before, same }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const accessor = { get: "function", set: "undefined", enumerable: true, configurable: false };
+  expect(JSON.parse(stdout)).toEqual({ before: [accessor, accessor, accessor], same: [true, true, true] });
+  expect(exitCode).toBe(0);
+});
+
 it("node.js util.promisify(setImmediate) works", async () => {
   const setImmediate = promisify(globalThis.setImmediate);
   await setImmediate();

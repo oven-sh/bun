@@ -22,7 +22,6 @@ const {
   MathMaxApply,
   NumberIsFinite,
   ObjectDefineProperty,
-  ObjectSetPrototypeOf,
   RegExpPrototypeExec,
   SafeStringIterator,
   StringPrototypeCodePointAt,
@@ -59,9 +58,8 @@ let kFirstEventParam;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
-// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so a bare
-// require("node:readline") for cursorTo/clearLine stays cheap. Constructing
-// an Interface always calls setupHistoryManager, so readLines() still loads it.
+// Keep history.js lazy so a bare require("node:readline") for cursorTo/clearLine
+// stays cheap. Constructing an Interface always calls setupHistoryManager.
 let ReplHistory;
 
 const kMaxUndoRedoStackSize = 2048;
@@ -1550,7 +1548,6 @@ __node_module__.exports = {
   kWordRight,
   kWriteToOutput,
   kMultilinePrompt,
-  kRestorePreviousState,
   kAddNewLineOnTTY,
   kLastCommandErrored,
 };

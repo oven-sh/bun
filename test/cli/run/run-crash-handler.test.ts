@@ -1,7 +1,8 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -127,6 +128,27 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// The report header names the CPU features the crash handler detected. On
+// x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
+// x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.
+// AVX is optional. AVX2 and AVX-512 are reported only with AVX, and after it.
+test("the crash report lists the CPU features", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const cpuLine = stderr.split(/\r?\n/).find(line => line.startsWith("CPU: "));
+  if (process.arch === "x64") {
+    expect(cpuLine).toMatch(/^CPU: sse42 popcnt(?: avx(?: avx2)?(?: avx512)?)?$/);
+  } else {
+    expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
+  }
+  expect(exitCode).not.toBe(0);
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
@@ -385,9 +407,18 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(sent).toBe(false);
 });
 
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)
-// must route through the crash handler so they are not silently lost.
+// must route through the crash handler so they are not silently lost. Outside
+// ASAN builds the abort/trap hooks raise the real signal, so these also prove
+// the sigaction registration itself.
 describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
   test.concurrent.each([
     ["abort", "SIGABRT", "abort() called"],
@@ -435,37 +466,6 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(sent).toBe(true);
   });
 
-  // These two tests terminate via SIG_DFL (not via a test hook that calls
-  // suppress_core_dumps_if_necessary()), so on the --coredump-upload CI lane
-  // the runner would flag leaked core files as a hard failure. ulimit -c 0 in
-  // a shell wrapper is inherited by the bun child; the whole describe is
-  // isPosix-gated so /bin/sh is available.
-  const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
-
-  // The above goes via the internal test hook, which under ASAN calls the
-  // handler directly because ASAN owns the fault signals. This case raises the
-  // signal for real to prove the sigaction registration itself; ASAN builds
-  // never install those handlers so skip there.
-  test.skipIf(isASAN).concurrent.each(["SIGABRT", "SIGTRAP"] as const)(
-    "raised %s produces a crash report",
-    async signal => {
-      await using proc = Bun.spawn({
-        cmd: noCoreCmd([
-          bunExe(),
-          "-e",
-          `process.kill(process.pid, "${signal}")`,
-          "--debug-crash-handler-use-trace-string",
-        ]),
-        env: noReportEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-      expect(stderr).toContain("oh no");
-      expect(proc.signalCode).toBe(signal);
-    },
-  );
-
   // process.abort() is a deliberate user action, not a Bun crash. It must still
   // terminate with SIGABRT but must not print a crash report or upload one.
   test.concurrent("process.abort() does not report a crash", async () => {
@@ -497,6 +497,88 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(stderr).not.toContain(server.url.toString());
     expect(proc.signalCode).toBe("SIGABRT");
     expect(sent).toBe(false);
+  });
+});
+
+// process.kill() aimed at the process itself with one of the signals the crash
+// handler is installed for is, like process.abort(), a request to die from that
+// signal. The kernel delivers it inside the kill(2) call, so process._kill has
+// to give the signal its default disposition beforehand; otherwise the crash
+// handler reports the user's own signal as a Bun crash (and uploads it).
+describe.if(isPosix)("process.kill() aimed at the process itself is not reported as a crash", () => {
+  const crashHandlerSignals = ["SIGSEGV", "SIGILL", "SIGBUS", "SIGFPE", "SIGABRT", "SIGTRAP"] as const;
+
+  // The value `exited` resolves to for a death by signal: 128 + the platform's
+  // number for it. Compared instead of `signalCode`, which Bun currently names
+  // with Linux numbering, so on macOS a death from SIGBUS (10 there) reads as
+  // "SIGUSR1".
+  const diedFrom = (signal: (typeof crashHandlerSignals)[number]) => 128 + osConstants.signals[signal];
+
+  // `detached` puts the child in a process group of its own, so that the
+  // process-group forms of kill(2) below cannot reach this test runner.
+  async function run(code: string, { detached = false } = {}) {
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", code, "--debug-crash-handler-use-trace-string"]),
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached,
+    });
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode: proc.exitCode, exited };
+  }
+
+  test.concurrent.each(crashHandlerSignals)(
+    "process.kill(process.pid, %s) dies from the signal silently",
+    async signal => {
+      expect(await run(`process.kill(process.pid, "${signal}")`)).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        exited: diedFrom(signal),
+      });
+    },
+  );
+
+  // pid 0 is the caller's own process group and -pgid names that group by id
+  // (the detached child leads its group, so its pgid is its pid). Both include
+  // the caller, so they are self-sent signals as well.
+  test.concurrent.each([
+    ["process.kill(0, ...)", `process.kill(0, "SIGABRT")`],
+    ["process.kill(-pgid, ...)", `process.kill(-process.pid, "SIGABRT")`],
+  ])("%s aimed at the process's own group dies from the signal silently", async (_name, code) => {
+    expect(await run(code, { detached: true })).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      exited: diedFrom("SIGABRT"),
+    });
+  });
+
+  test.concurrent("a JS listener for the signal still receives it", async () => {
+    expect(
+      await run(
+        `process.on("SIGABRT", () => { console.log("listener ran"); process.exit(0); });
+         process.kill(process.pid, "SIGABRT");
+         setInterval(() => {}, 1 << 30);`,
+      ),
+    ).toEqual({ stdout: "listener ran\n", stderr: "", exitCode: 0, exited: 0 });
+  });
+
+  // Sending one of these signals to another process must leave this process's
+  // crash handler installed: a real abort afterwards is still reported.
+  // (Outside ASAN builds the abort hook raises the real signal.)
+  test.concurrent("sending the signal to another process keeps the crash handler installed", async () => {
+    const { stdout, stderr, exitCode, exited } = await run(
+      `import { crash_handler } from "bun:internal-for-testing";
+       const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1 << 30)"], stdio: ["ignore", "ignore", "ignore"] });
+       process.kill(child.pid, "SIGABRT");
+       console.log(await child.exited);
+       crash_handler.abort();`,
+    );
+    expect(stdout).toBe(`${diedFrom("SIGABRT")}\n`);
+    expect(stderr).toContain("abort() called");
+    expect(stderr).toContain("oh no: Bun has crashed");
+    expect({ exitCode, exited }).toEqual({ exitCode: null, exited: diedFrom("SIGABRT") });
   });
 });
 

@@ -1,4 +1,4 @@
-import { define } from "../../../codegen/class-definitions";
+import { define } from "../../../codegen/class-definitions.ts";
 
 // Native handle classes for node:quic, mirroring Node's internalBinding('quic')
 // Endpoint/Session/Stream objects (node/src/quic/{endpoint,session,streams}.h).
@@ -32,10 +32,6 @@ export default [
       },
       markBusy: {
         fn: "markBusy",
-        length: 1,
-      },
-      ref: {
-        fn: "doRef",
         length: 1,
       },
       setSNIContexts: {
@@ -86,10 +82,6 @@ export default [
       gracefulClose: {
         fn: "gracefulClose",
         length: 1,
-      },
-      silentClose: {
-        fn: "silentClose",
-        length: 0,
       },
       updateKey: {
         fn: "updateKey",

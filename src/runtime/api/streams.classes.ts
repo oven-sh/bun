@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 const rustPaths = {
   Blob: "crate::webcore::byte_blob_loader::Source",
@@ -32,14 +32,6 @@ function source(name) {
       updateRef: {
         fn: "updateRefFromJS",
         length: 1,
-      },
-      onClose: {
-        getter: "getOnCloseFromJS",
-        setter: "setOnCloseFromJS",
-      },
-      onDrain: {
-        getter: "getOnDrainFromJS",
-        setter: "setOnDrainFromJS",
       },
       cancel: {
         fn: "cancelFromJS",
@@ -95,7 +87,8 @@ function source(name) {
     // `owner` roots the GC cell of the peer producing into this source
     // (`producer` backref); `sinkOwner` roots the peer it pipes into
     // (`sink` backref). A chained transform needs both.
-    values: ["pendingPromise", "onCloseCallback", "onDrainCallback", "owner", "sinkOwner"],
+    // `closeAdapter`: the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
+    values: ["pendingPromise", "closeAdapter", "owner", "sinkOwner"],
   });
 }
 

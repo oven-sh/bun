@@ -154,11 +154,9 @@ unsafe extern "C" {
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);
-    pub fn lsquic_conn_abort(c: *mut lsquic_conn);
     pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
-    pub fn lsquic_conn_n_pending_streams(c: *const lsquic_conn) -> c_uint;
     pub fn lsquic_conn_get_sockaddr(
         c: *mut lsquic_conn,
         local: *mut *const sockaddr,
@@ -397,10 +395,6 @@ impl Conn {
     pub fn going_away(&self) {
         // SAFETY: as above.
         unsafe { lsquic_conn_going_away(self.0) }
-    }
-    pub fn abort(&self) {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_abort(self.0) }
     }
     pub fn abort_silent(&self) {
         unsafe extern "C" {

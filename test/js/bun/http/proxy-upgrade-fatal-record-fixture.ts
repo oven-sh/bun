@@ -10,12 +10,16 @@
 // reading it (ASAN: heap-use-after-free in handle_response_metadata).
 //
 // Usage: bun proxy-upgrade-fatal-record-fixture.ts [iterations]
-// Prints one line per iteration, then "probe: <text>" from a fresh request.
+// Prints one line per iteration, then "injected: <n>" (how many connections
+// got the bad record) and "probe: <text>" from a fresh request.
 
 import net from "node:net";
 import { tls as tlsCert } from "harness";
 
 const iterations = Number(process.argv[2] ?? "3");
+// How many connections actually got the bad record. A run where the upgrade
+// fails earlier proves nothing, so the test asserts this count.
+let injected = 0;
 
 // The origin answers the first request with a bare 101 and nothing else.
 using origin = Bun.listen({
@@ -60,8 +64,10 @@ const proxy = net.createServer(client => {
     // Wait for the body generator's first chunk to be queued, so the 101 arm
     // has something for flush_stream to write.
     setTimeout(() => {
+      if (client.destroyed) return;
       client.write(Buffer.concat([held, BAD_RECORD]));
       held = Buffer.alloc(0);
+      injected++;
     }, 500);
   }
 
@@ -124,6 +130,8 @@ for (let i = 0; i < iterations; i++) {
   }
   console.log(outcome);
 }
+
+console.log("injected:", injected);
 
 // A request on a fresh connection proves the process and the HTTP thread are
 // still healthy.

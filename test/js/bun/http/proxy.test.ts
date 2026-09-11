@@ -1418,9 +1418,11 @@ test("a bad record delivered with a 101 through a proxy tunnel does not free the
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) console.error("stderr:", stderr);
   // The request itself may resolve with the 101 or fail on the bad record;
-  // either is fine. What must hold is that the process survives every
-  // iteration and still serves a fresh request.
-  expect(stdout.trim().split("\n")).toHaveLength(iterations + 1);
+  // either is fine. What must hold is that every iteration really received the
+  // bad record, that the process survived it, and that it still serves a fresh
+  // request.
+  expect(stdout.trim().split("\n")).toHaveLength(iterations + 2);
+  expect(stdout).toContain(`injected: ${iterations}\n`);
   expect(stdout).toEndWith("probe: probe-ok\n");
   expect(exitCode).toBe(0);
 }, 30000);

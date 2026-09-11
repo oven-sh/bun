@@ -2149,6 +2149,9 @@ Socket.prototype.connect = function connect(...args) {
   }
 
   this.connecting = true;
+  // A live reconnect replaces the native socket, so the undelivered bytes of the old
+  // connection go away with it, as they do in node.
+  dropOnreadTail(this);
 
   const { path } = options;
   const pipe = !!path;
@@ -2186,6 +2189,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  dropOnreadTail(this);
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -2323,6 +2327,15 @@ Object.defineProperty(Socket.prototype, "pending", {
 // ciphertext queues behind the pending writes (order + callbacks preserved).
 function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
+}
+
+// Node keeps the bytes a paused onread socket has not taken in the kernel, so they go away
+// with the fd. Bun holds them in kOnreadTail, which must not outlive the connection.
+function dropOnreadTail(self) {
+  if (self[kOnreadBuffer] === undefined) return;
+  self[kOnreadTail] = undefined;
+  self[kOnreadPendingEnd] = false;
+  self[kOnreadReadRequested] = false;
 }
 
 function drainOnreadTail(self, fromRead?) {

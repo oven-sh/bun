@@ -2649,6 +2649,58 @@ it("onread: read() redelivers the declined tail without resume()", async () => {
   }
 });
 
+it("onread: a destroyed socket that connects again does not replay the declined tail", async () => {
+  // Node keeps the bytes a false return left behind in the kernel, so they go
+  // away with the fd. The second connection must only see its own bytes.
+  let connections = 0;
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.end(++connections === 1 ? "AAAABBBBCCCC" : "xxxxyyyy");
+  });
+  const calls: [number, string][] = [];
+  let connection = 1;
+  const first = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    client = createConnection({
+      port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          calls.push([connection, buf.toString("latin1", 0, n)]);
+          if (connection === 1) {
+            first.resolve();
+            return false; // leaves "BBBBCCCC" undelivered
+          }
+        },
+      },
+    });
+    client.on("error", first.reject);
+    await first.promise;
+    client.destroy();
+    await once(client, "close");
+
+    connection = 2;
+    client.connect({ port, host: "127.0.0.1" });
+    client.resume();
+    await once(client, "close");
+    expect(calls).toEqual([
+      [1, "AAAA"],
+      [2, "xxxx"],
+      [2, "yyyy"],
+    ]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("onread: a buffer factory that never yields a Uint8Array hands the callback `true`", async () => {
   // Node leaves kBuffer as the literal `true` and passes it through:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L332-L342

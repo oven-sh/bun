@@ -7,6 +7,7 @@
 // reproduces on a plain net.Socket, tracked separately).
 import { once } from "node:events";
 import net from "node:net";
+import { Duplex } from "node:stream";
 import tls, { TLSSocket } from "node:tls";
 
 const mode = process.argv[2];
@@ -16,6 +17,12 @@ function report(extra) {
   console.log(JSON.stringify({ log, ...extra }));
   process.exit(0);
 }
+
+// Ends the run at once, also while a top-level await below is still pending.
+process.on("uncaughtException", error => {
+  console.error(error);
+  process.exit(1);
+});
 
 // Accepts the TCP connection, reads, and never answers the ClientHello: a dead
 // TLS backend, a plaintext service on a TLS port, a middlebox. allowHalfOpen
@@ -93,6 +100,49 @@ if (mode === "end" || mode === "destroySoon") {
   serverSocket?.destroy();
   server.close();
   report({ clientSawFin: true });
+} else if (mode === "wrap-end" || mode === "wrap-destroySoon") {
+  // new TLSSocket(stream) without isServer: a client-side wrap that nothing
+  // starts a handshake on. Shutting it down shuts the wrapped stream down.
+  const method = mode.slice("wrap-".length);
+  const transport = process.argv[3];
+  const peer = transport === "duplex" ? undefined : await stalledPeer();
+
+  let raw;
+  if (transport === "duplex") {
+    raw = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        callback();
+      },
+      final(callback) {
+        log.push("transport final");
+        callback();
+      },
+    });
+  } else if (transport === "unconnected") {
+    raw = new net.Socket();
+  } else {
+    raw = net.connect(peer.port, "127.0.0.1");
+    if (transport === "connected") await once(raw, "connect");
+  }
+  raw.on("connect", () => log.push("transport connect"));
+
+  const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+  socket.on("finish", () => log.push("finish"));
+  socket.on("error", error => log.push(`error:${error.code ?? error.message}`));
+  socket.on("close", () => log.push("close"));
+
+  socket[method]();
+  if (transport === "unconnected") raw.connect(peer.port, "127.0.0.1");
+
+  await Promise.all([once(socket, method === "end" ? "finish" : "close"), peer?.sawFin]);
+
+  const { writableFinished, readyState, destroyed } = socket;
+  const transportDestroyed = raw.destroyed;
+  socket.destroy();
+  raw.destroy();
+  peer?.close();
+  report({ peerSawFin: peer !== undefined, writableFinished, readyState, destroyed, transportDestroyed });
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

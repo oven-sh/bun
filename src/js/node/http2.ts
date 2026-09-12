@@ -5322,20 +5322,14 @@ class ClientHttp2Session extends Http2Session {
       // node.js emits value, origin, streamId
       self.emit("altsvc", value, origin, streamId);
     },
-    origin(self: ClientHttp2Session, origin: string | Array<string> | undefined) {
-      if (!self) return;
-      if (self.encrypted) {
-        const originSet = initOriginSet(self);
-        if ($isArray(origin)) {
-          for (const item of origin) {
-            originSet.add(item);
-          }
-          self.emit("origin", origin);
-        } else if (origin) {
-          originSet.add(origin);
-          self.emit("origin", [origin]);
-        }
+    origin(self: ClientHttp2Session, origins: string[]) {
+      if (!self || !self.encrypted) return;
+      const originSet = initOriginSet(self);
+      for (let i = 0; i < origins.length; i++) {
+        originSet.add(origins[i]);
       }
+      // An ORIGIN frame without origins still emits, with an empty array.
+      self.emit("origin", origins);
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return -1;

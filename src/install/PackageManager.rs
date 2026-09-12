@@ -1068,25 +1068,31 @@ fn configure_env_for_scripts_run(
     // to do that, we re-use the code from bun run
     // this is expensive, it traverses the entire directory tree going up to the root
     // so we really only want to do it when strictly necessary
-    // `RunCommand::configure_env_for_run` fully initializes the slot via out-param.
-    // Transpiler is NOT
-    // all-zero-valid POD, so `zeroed()` is wrong; use MaybeUninit and assume_init after fill.
+    // `RunCommand::configure_env_for_run_without_linker` fully initializes the
+    // slot via out-param. Transpiler is NOT all-zero-valid POD, so `zeroed()`
+    // is wrong; use MaybeUninit and assume_init after fill.
+    //
+    // Nothing transpiles through this `Transpiler` (lifecycle scripts are
+    // spawned through the shell), so skip the bundler-linker setup.
     let mut this_transpiler_slot =
         core::mem::MaybeUninit::<transpiler::Transpiler<'static>>::uninit();
     // `self.env` is `Option<BackRef<Loader>>`; pass the raw pointer so
-    // the shim's `Transpiler::init` reuses the manager's loader instead of
-    // allocating a fresh singleton.
+    // `Transpiler::init` reuses the manager's loader instead of allocating a
+    // fresh singleton. The `npm_*` vars land in that loader, which
+    // `spawn_package_lifecycle_scripts` clones into every script's env.
     let env_ptr: Option<*mut dot_env::Loader> = this.env.map(|p| p.as_ptr());
-    let _ = RunCommand::configure_env_for_run(
+    let _ = RunCommand::configure_env_for_run_without_linker(
+        crate::install_runner_arena(),
         ctx,
         &mut this_transpiler_slot,
         env_ptr,
-        log_level != package_manager_options::LogLevel::Silent,
-        false,
+        crate::ConfigureEnvOptions {
+            log_errors: log_level != package_manager_options::LogLevel::Silent,
+            store_root_fd: false,
+        },
     )?;
-    // SAFETY: the install-tier `RunCommand::configure_env_for_run` shim
-    // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
-    // `Ok` — same contract as the runtime impl (run_command.rs:628).
+    // SAFETY: `configure_env_for_run_without_linker` `.write()`s the slot via
+    // `Transpiler::init` before returning `Ok`.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;

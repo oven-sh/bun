@@ -39,7 +39,7 @@ test("uncaught promise rejection in async test should not hang", async () => {
 
   expect(timeout).toBeFalse();
   expect(output).toContain("test start");
-  // expect(output).toContain("test end"); // the process exits before this executes
+  expect(output).toContain("test end");
   expect(output).toContain("uncaught error");
   expect(exitCode).not.toBe(0);
   expect(output).toMatch(/✗|\(fail\)/);

@@ -609,11 +609,14 @@ pub(crate) mod on_unhandled_rejection {
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
+            let mut has_pending_promise = false;
             if let Some(entry) = entry_ptr {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
+                    } else {
+                        has_pending_promise = sequence.has_pending_promise;
                     }
                 }
             }
@@ -623,6 +626,13 @@ pub(crate) mod on_unhandled_rejection {
                 true,
                 &current_state_data,
             );
+            if has_pending_promise {
+                // The test body returned a promise that hasn't settled. Record
+                // the failure (above) but let the body finish; its own promise
+                // settling (or a timeout) is what enqueues completion.
+                // https://github.com/oven-sh/bun/issues/14644
+                return;
+            }
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // As `RunTestsTask::call`: what advancing the runner threw is

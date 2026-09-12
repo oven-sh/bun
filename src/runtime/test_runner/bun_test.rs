@@ -1155,6 +1155,24 @@ impl BunTest {
 
         done_callback.ensure_still_alive();
 
+        // If the callback returned a pending promise, note it on the sequence
+        // before draining so a rejection drained below is attributed to a
+        // still-running body and does not prematurely enqueue a completion
+        // token (on_unhandled_rejection checks this). Cleared by
+        // `advance_sequence`.
+        if !result.is_empty() {
+            if let Some(promise) = result.as_promise() {
+                // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
+                if unsafe { (*promise).status() } == PromiseStatus::Pending {
+                    // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for this
+                    // field write (no re-entrant `.get()` between here and drop).
+                    if let Some(sequence) = cfg_data.sequence(unsafe { &mut *this }) {
+                        sequence.has_pending_promise = true;
+                    }
+                }
+            }
+        }
+
         // Drain unhandled promise rejections.
         loop {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.

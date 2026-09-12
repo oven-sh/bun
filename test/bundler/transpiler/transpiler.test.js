@@ -6212,3 +6212,94 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("json/toml loader with reserved-word top-level keys", () => {
+  const js = new Bun.Transpiler({ loader: "js" });
+  const reparses = out => {
+    try {
+      js.transformSync(out);
+      return "ok";
+    } catch (e) {
+      return (e.errors ?? [e]).map(x => x.message).join(" | ");
+    }
+  };
+
+  // prettier-ignore
+  const reserved = [
+    "break", "case", "catch", "class", "const", "continue", "debugger",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+    "for", "function", "if", "import", "in", "instanceof", "new", "null",
+    "return", "super", "switch", "this", "throw", "true", "try", "typeof",
+    "var", "void", "while", "with",
+    "implements", "interface", "let", "package", "private", "protected",
+    "public", "static", "yield",
+    "await", "arguments", "eval",
+  ];
+
+  describe.each(reserved)("%s as a top-level key", key => {
+    it("emits valid JS (json)", () => {
+      const out = new Bun.Transpiler().transformSync(JSON.stringify({ [key]: 1 }), "json");
+      expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    });
+
+    it("emits valid JS (toml)", () => {
+      const out = new Bun.Transpiler().transformSync(`${key} = 1`, "toml");
+      expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    });
+  });
+
+  it("aliases reserved-word keys and preserves the exported name", () => {
+    const t = new Bun.Transpiler();
+    expect(t.transformSync('{"if":1,"ok":2}', "json")).toBe(
+      "var _if = 1, ok = 2;\n\nexport {\n  _if as if,\n  ok\n};\nexport default { if: _if, ok };\n",
+    );
+    expect(t.transformSync('{"class":1}', "json")).toBe(
+      "var _class = 1;\n\nexport {\n  _class as class\n};\nexport default { class: _class };\n",
+    );
+    expect(t.transformSync("if = 1", "toml")).toBe(
+      "var _if = 1;\n\nexport {\n  _if as if\n};\nexport default {\n  if: _if\n};\n",
+    );
+  });
+
+  it("emits valid JS when many reserved-word keys are combined", () => {
+    const t = new Bun.Transpiler();
+    const obj = Object.fromEntries(reserved.map((k, i) => [k, i]));
+    obj.plain = 999;
+    const out = t.transformSync(JSON.stringify(obj), "json");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    for (const k of reserved) expect(out).toContain(` as ${k}`);
+    expect(out).toContain("plain");
+  });
+
+  it("still handles non-identifier and default keys", () => {
+    const t = new Bun.Transpiler();
+    const out = t.transformSync('{"b c":1,"default":2,"if":3}', "json");
+    expect(reparses(out)).toBe("ok");
+    expect(out).toContain('b_c as "b c"');
+    expect(out).toContain("_if as if");
+  });
+
+  // prettier-ignore
+  it.each([
+    ['{"if":1,"_if":2}', "var _if = 1, _if2 = 2;", ["_if as if", "_if2 as _if"]],
+    ['{"_if":1,"if":2}', "var _if = 1, _if2 = 2;", ["_if", "_if2 as if"]],
+    ['{"let":1,"_let":2}', "var _let = 1, _let2 = 2;", ["_let as let", "_let2 as _let"]],
+    ['{"b c":1,"b_c":2}', "var b_c = 1, b_c2 = 2;", ['b_c as "b c"', "b_c2 as b_c"]],
+    ['{"if":1,"_if":2,"_if2":3}', "var _if = 1, _if2 = 2, _if22 = 3;", ["_if as if", "_if2 as _if", "_if22 as _if2"]],
+  ])("suffixes a mangled key that collides with a sibling: %s", (src, decl, aliases) => {
+    const out = new Bun.Transpiler().transformSync(src, "json");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    expect(out.split("\n")[0]).toBe(decl);
+    for (const alias of aliases) expect(out).toContain(alias);
+  });
+
+  // `var NaN = NaN;` would shadow the global and export `undefined`.
+  it("does not shadow NaN / Infinity / undefined", () => {
+    const out = new Bun.Transpiler().transformSync("NaN = nan\nInfinity = inf\nundefined = 1\nx = nan", "toml");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    expect(out.split("\n")[0]).toBe("var _NaN = NaN, _Infinity = 1 / 0, _undefined = 1, x = NaN;");
+    for (const alias of ["_NaN as NaN", "_Infinity as Infinity", "_undefined as undefined"]) {
+      expect(out).toContain(alias);
+    }
+  });
+});

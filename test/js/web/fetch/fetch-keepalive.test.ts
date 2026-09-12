@@ -832,6 +832,75 @@ test.concurrent.each(
   expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
 });
 
+// Nothing is in flight on a parked keep-alive connection, so any byte the
+// origin sends there means its framing no longer matches ours; undici, curl and
+// Chromium retire the connection. bun forgave exactly `0\r\n\r\n` (a chunked
+// terminator arriving after a response that had already ended) and handed the
+// connection to the next fetch. The stray bytes are written once the first body
+// has been read, by which time the connection is back in the pool, so they
+// arrive as a separate read on the idle socket. Extra bytes in the same read as
+// the end of the response take a different path (the overshoot tests in
+// fetch.test.ts). Subprocess so the pool is private.
+test.concurrent.each([
+  ["a late chunked terminator", "0\r\n\r\n"],
+  ["an unsolicited response", "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\ninjected"],
+])("an idle pooled connection that receives %s is evicted", async (_, stray) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      let connections = 0;
+      let first;
+      const firstClosed = Promise.withResolvers();
+      const server = net.createServer(sock => {
+        const id = ++connections;
+        if (id === 1) {
+          first = sock;
+          sock.on("close", firstClosed.resolve);
+        }
+        sock.on("error", () => {});
+        let buf = "";
+        let n = 0;
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          while (buf.includes("\\r\\n\\r\\n")) {
+            buf = buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4);
+            const body = id + "." + ++n;
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      const res1 = await fetch(url);
+      const body1 = await res1.text();
+      first.write(${JSON.stringify(stray)});
+      // Eviction closes the connection and the origin sees that. If the bytes
+      // were swallowed nothing ever closes and the test times out here.
+      await firstClosed.promise;
+      const res2 = await fetch(url);
+      const body2 = await res2.text();
+      console.log(JSON.stringify({ body1, body2, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { body1: "1.1", body2: "2.1", connections: 2 },
+    exitCode: 0,
+  });
+});
+
 test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
   function makeServer() {
     let connections = 0;

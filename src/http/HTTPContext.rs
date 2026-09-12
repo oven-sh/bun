@@ -1404,12 +1404,10 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            // trailing zero is fine to ignore
-            if buf == http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY {
-                return;
-            }
-
-            bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
+            bun_core::scoped_log!(
+                HTTPContext,
+                "Unexpected data on idle pooled socket, evicting"
+            );
             HTTPContext::<SSL>::terminate_socket(socket);
 
             return;

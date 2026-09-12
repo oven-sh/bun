@@ -314,17 +314,9 @@ private:
         /* This parser has virtually no overhead */
         WebSocketProtocol<isServer, WebSocketContext<SSL, isServer, USERDATA>>::consume(data, (unsigned int) length, (WebSocketState<isServer> *) webSocketData, s);
 
-        /* Uncorking a closed socekt is fine, in fact it is needed */
+        /* Uncorking a closed socekt is fine, in fact it is needed. If consume() ended the WebSocket, end()
+         * has already uncorked and sent the FIN, or left it to onWritable while data is buffered. */
         asyncSocket->uncork();
-
-        /* If uncorking was successful and we are in shutdown state then send TCP FIN */
-        if (asyncSocket->getBufferedAmount() == 0) {
-            /* We can now be in shutdown state */
-            if (webSocketData->isShuttingDown) {
-                /* Shutting down a closed socket is handled by uSockets and just fine */
-                asyncSocket->shutdown();
-            }
-        }
 
         return s;
     }

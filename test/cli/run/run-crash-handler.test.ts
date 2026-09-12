@@ -1,6 +1,18 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  compileFixture,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -682,3 +694,190 @@ test.if(isWindows)(
     }
   },
 );
+
+// A crash whose innermost frame is inside a third-party native library (a
+// Node-API addon, a bun:ffi library, or something one of them loaded) is a bug
+// in that library. The report has to say so instead of "a bug in Bun", set the
+// `native_module_crash` feature bit in the trace string so bun.report and
+// Sentry can separate these from Bun's own crashes, and encode the library's
+// name into the frame. Before, Linux encoded such a frame as a bun address (so
+// bun.report symbolized it against the bun binary) and macOS dropped it.
+describe("crash inside a native module", () => {
+  let fixture: string | null = null;
+  try {
+    fixture = compileFixture(path.join(import.meta.dir, "crash-in-native-module-fixture.c"));
+  } catch (e) {
+    if (!String((e as Error)?.message ?? e).includes("no C compiler")) throw e;
+  }
+  const fixtureName = fixture ? path.basename(fixture) : "";
+
+  const VLQ_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  // Mirrors bun.report's decoder for the parts of the trace string this test
+  // cares about: the two feature VLQs after the commit hash, then the frames.
+  // A frame is a VLQ offset in bun, except that a VLQ of 1 introduces a name
+  // length, the name and an offset in that image, `_` is a frame outside every
+  // image, `=` is JS, and a VLQ of 0 ends the list. See `encode_trace_string`
+  // and `StackLine::write_encoded` in src/crash_handler/lib.rs.
+  function readVlq(payload: string, i: number): [value: number, next: number] {
+    let value = 0;
+    let shift = 0;
+    for (;;) {
+      const digit = VLQ_ALPHABET.indexOf(payload[i++]);
+      if (digit < 0) throw new Error(`invalid VLQ at offset ${i - 1} of ${JSON.stringify(payload)}`);
+      value += (digit & 31) * 2 ** shift;
+      shift += 5;
+      if (!(digit & 32)) break;
+    }
+    const magnitude = Math.floor(value / 2);
+    return [value % 2 ? -magnitude : magnitude, i];
+  }
+
+  function decodeTraceString(stderr: string) {
+    const banner = stderr.slice(stderr.indexOf("link below:"));
+    const url = banner.match(/\/\d+\.\d+\.\d+\/(\S+)/);
+    if (!url) throw new Error(`no trace string in:\n${stderr}`);
+    const payload = url[1];
+    // platform char, command char, trace string version, 7 chars of commit.
+    expect(payload[2]).toMatch(/^[12]$/);
+    let i = 10;
+    let high: number, low: number;
+    [high, i] = readVlq(payload, i);
+    [low, i] = readVlq(payload, i);
+    const featureNames = crash_handler.getFeatureData().features;
+    const features = featureNames.filter((_, bit) =>
+      bit < 32 ? ((low >>> 0) >>> bit) & 1 : ((high >>> 0) >>> (bit - 32)) & 1,
+    );
+
+    const frames: { object: string; address: number }[] = [];
+    for (;;) {
+      if (i >= payload.length) throw new Error(`unterminated frame list in ${JSON.stringify(payload)}`);
+      if (payload[i] === "_" || payload[i] === "=") {
+        frames.push({ object: payload[i++] === "_" ? "?" : "js", address: 0 });
+        continue;
+      }
+      let address: number;
+      [address, i] = readVlq(payload, i);
+      if (address === 0) break;
+      // The encoder only writes `[A-Za-z0-9._+-]` names, so a frame it wrongly
+      // names after an executable called `bun` cannot look like this.
+      let object = "<bun>";
+      if (address === 1) {
+        let length: number;
+        [length, i] = readVlq(payload, i);
+        object = payload.slice(i, i + length);
+        i += length;
+        [address, i] = readVlq(payload, i);
+      }
+      frames.push({ object, address });
+    }
+    return { features, frames, objects: frames.map(frame => frame.object) };
+  }
+
+  // Everything above the fault is Bun's own code, and it must still be encoded
+  // as bun (not under the executable's file name) for bun.report to remap it.
+  // The Windows version of `segfaultAtPc` has no fault CONTEXT to walk from, so
+  // there the trace is the fault alone.
+  function expectBunCallers(objects: string[]) {
+    expect(objects).not.toContain(path.basename(bunExe()));
+    if (isPosix) expect(objects.slice(1)).toContain("<bun>");
+  }
+
+  const loadFixture = () => `const lib = dlopen(${JSON.stringify(fixture)}, {
+    crash_in_native_module: { args: [], returns: "void" },
+    address_in_system_library: { args: [], returns: "ptr" },
+  });`;
+
+  // `realFault`: the process dies from the re-raised signal like any crashed
+  // process, so on the --coredump-upload lanes it would leave a core file
+  // behind, which the runner reports as a failure. The test hooks suppress
+  // core dumps themselves.
+  async function crashWith(script: string, { realFault = false, load = loadFixture() } = {}) {
+    const bun = [
+      bunExe(),
+      "-e",
+      `const { cc, dlopen } = require("bun:ffi");
+       const { crash_handler } = require("bun:internal-for-testing");
+       ${load}
+       ${script}
+       console.log("SHOULD NOT REACH");`,
+      // Debug builds otherwise symbolize the trace instead of printing the
+      // report a release build prints.
+      "--debug-crash-handler-use-trace-string",
+    ];
+    await using proc = Bun.spawn({
+      cmd: realFault && isPosix ? noCoreCmd(bun) : bun,
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(stderr).toContain("Segmentation fault at address");
+    expect(exitCode).not.toBe(0);
+    return { stderr, ...decodeTraceString(stderr) };
+  }
+
+  // `segfaultAtPc` hands the crash handler a fault whose frame 0 is the given
+  // code address, the way the signal/exception handlers do for a real fault.
+  // That keeps this runnable under ASAN, which owns the fault signals.
+  test.skipIf(!fixture).concurrent("is attributed to the module, not to Bun", async () => {
+    const { stderr, features, objects } = await crashWith(
+      "crash_handler.segfaultAtPc(lib.symbols.crash_in_native_module.ptr);",
+    );
+
+    expect(stderr).toContain(`oh no: Bun has crashed inside the native module "${fixtureName}".`);
+    expect(stderr).toContain("This is most likely a bug in that module, not in Bun.");
+    expect(stderr).not.toContain("This indicates a bug in Bun");
+    expect(objects[0]).toBe(fixtureName);
+    expectBunCallers(objects);
+    expect(features).toContain("native_module_crash");
+    expect(features).toContain("ffi_dlopen");
+  });
+
+  // libc / kernel32 are not to blame for what their callers pass them, so a
+  // fault inside one of them is reported the usual way. The frame still names
+  // the library so the report shows where the fault was.
+  test.skipIf(!fixture).concurrent("a fault inside a system library is still reported as a Bun crash", async () => {
+    const { stderr, features, objects } = await crashWith(
+      "crash_handler.segfaultAtPc(Number(lib.symbols.address_in_system_library()));",
+    );
+
+    expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
+    expect(stderr).not.toContain("inside the native module");
+    // labs() is in libc (ld-musl-*.so.1 on musl), Sleep() in kernel32.
+    expect(objects[0]).toMatch(isWindows ? /^kernel32\.dll$/i : isMacOS ? /^libsystem_/ : /^(libc\.|ld-musl-)/);
+    expectBunCallers(objects);
+    expect(features).not.toContain("native_module_crash");
+  });
+
+  // The real thing: the library faults, the OS delivers it to Bun's handler,
+  // and the fault pc it records is inside the library. ASAN builds do not
+  // install Bun's fault handlers, so there the fault never reaches the report.
+  test.skipIf(!fixture || isASAN).concurrent("a real fault inside the module is attributed to it", async () => {
+    const { stderr, features, objects } = await crashWith("lib.symbols.crash_in_native_module();", {
+      realFault: true,
+    });
+
+    expect(stderr).toContain(`oh no: Bun has crashed inside the native module "${fixtureName}".`);
+    expect(objects[0]).toBe(fixtureName);
+    expect(objects).not.toContain(path.basename(bunExe()));
+    expect(features).toContain("native_module_crash");
+  });
+
+  // C compiled by bun:ffi's cc() runs from anonymous memory: there is no image
+  // to attribute the crash to, so it is reported like a Bun crash. The ffi_cc
+  // bit is the only trace of it in the report.
+  test.concurrent("a fault inside cc() code is reported as a Bun crash with the ffi_cc bit", async () => {
+    // The function hands out its own address: `.ptr` of a cc() function is
+    // not usable for this (it is the pointer's bits read as a double).
+    using dir = tempDir("crash-in-cc", { "f.c": "void* f(void) { return (void*)&f; }" });
+    const { stderr, features, objects } = await crashWith("crash_handler.segfaultAtPc(Number(lib.symbols.f()));", {
+      load: `const lib = cc({ source: ${JSON.stringify(path.join(String(dir), "f.c"))}, symbols: { f: { args: [], returns: "ptr" } } });`,
+    });
+
+    expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
+    expect(objects[0]).toBe("?");
+    expect(features).toContain("ffi_cc");
+    expect(features).not.toContain("native_module_crash");
+  });
+});

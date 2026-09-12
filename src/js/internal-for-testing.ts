@@ -120,7 +120,17 @@ export const cssInternals = {
 
 export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
+  getFeatureData: () => {
+    features: string[];
+    version: string;
+    is_canary: boolean;
+    revision: string;
+    generated_at: number;
+  };
   segfault: () => void;
+  segfaultInDll: () => void;
+  /** Reports a segfault whose frame 0 is `pc`, a code address such as a `bun:ffi` function's `.ptr`. */
+  segfaultAtPc: (pc: number) => void;
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;

@@ -498,7 +498,12 @@ impl PmVersionCommand {
         }
 
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
-        if !current.valid {
+        // `npm version` calls such a version invalid too. Below the limit, `+ 1` cannot wrap.
+        // https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        let version = current.version.min();
+        if !current.valid || version.major.max(version.minor).max(version.patch) > MAX_SAFE_INTEGER
+        {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
                 (BStr::new(current_str),),
@@ -518,7 +523,7 @@ impl PmVersionCommand {
                     break 'blk current_prerelease[..dot_index as usize].to_vec();
                 }
 
-                break 'blk if bun_core::fmt::parse_decimal::<u32>(current_prerelease).is_some() {
+                break 'blk if Self::next_prerelease_number(current_prerelease).is_some() {
                     Vec::new()
                 } else {
                     current_prerelease.to_vec()
@@ -528,6 +533,12 @@ impl PmVersionCommand {
         // `defer allocator.free(prerelease_id)` — handled by Drop.
 
         Self::increment_version(current_str, &current, version_type, &prerelease_id)
+    }
+
+    /// The number after the prerelease identifier `identifier`. `None` when it is not a number
+    /// or `+ 1` does not fit. A u64 like `Tag::order_pre`: a u32 read 20250101123456 as a string.
+    fn next_prerelease_number(identifier: &[u8]) -> Option<u64> {
+        bun_core::fmt::parse_decimal::<u64>(identifier)?.checked_add(1)
     }
 
     fn increment_version(
@@ -613,18 +624,17 @@ impl PmVersionCommand {
 
                     if let Some(dot_index) = strings::last_index_of_char(current_prerelease, b'.') {
                         let number_str = &current_prerelease[(dot_index as usize) + 1..];
-                        let next_num = bun_core::fmt::parse_decimal::<u32>(number_str).unwrap_or(0);
+                        let next_num = Self::next_prerelease_number(number_str).unwrap_or(1);
                         return Ok(fmt_bytes(format_args!(
                             "{}.{}.{}-{}.{}",
                             new_version.major,
                             new_version.minor,
                             new_version.patch,
                             BStr::new(identifier),
-                            next_num + 1
+                            next_num
                         )));
                     } else {
-                        let num = bun_core::fmt::parse_decimal::<u32>(current_prerelease);
-                        if let Some(n) = num {
+                        if let Some(next_num) = Self::next_prerelease_number(current_prerelease) {
                             if !preid.is_empty() {
                                 return Ok(fmt_bytes(format_args!(
                                     "{}.{}.{}-{}.{}",
@@ -632,7 +642,7 @@ impl PmVersionCommand {
                                     new_version.minor,
                                     new_version.patch,
                                     BStr::new(preid),
-                                    n + 1
+                                    next_num
                                 )));
                             } else {
                                 return Ok(fmt_bytes(format_args!(
@@ -640,7 +650,7 @@ impl PmVersionCommand {
                                     new_version.major,
                                     new_version.minor,
                                     new_version.patch,
-                                    n + 1
+                                    next_num
                                 )));
                             }
                         } else {

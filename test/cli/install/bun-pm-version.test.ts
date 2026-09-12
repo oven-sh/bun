@@ -274,6 +274,34 @@ describe.concurrent("bun pm version", () => {
       expect(code5).toBe(0);
     });
 
+    // `npm version` rejects these too (node-semver: "Invalid patch version"). The number used to wrap:
+    // the first three wrote 1.0.0, 1.0.0 and 0.0.0, and the `+ 1` aborted a debug build.
+    it.each([
+      ["1.0.18446744073709551615", "patch"],
+      ["1.18446744073709551615.0", "minor"],
+      ["18446744073709551615.0.0", "major"],
+      ["1.0.18446744073709551615", "prerelease"],
+      ["1.0.9007199254740992", "patch"],
+    ])("rejects %s as the version to increment with %s", async (version, increment) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", increment, "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: "",
+        error: `error: Current version "${version}" is not a valid semver\n`,
+        code: 1,
+        version,
+      });
+    });
+
     it("handles missing package.json like npm", async () => {
       await using testDir = tempDir(`version-${i++}`, {
         "README.md": "# Test project",
@@ -577,6 +605,37 @@ describe.concurrent("bun pm version", () => {
 
       expect(code6).toBe(0);
       expect(output6.trim()).toBe("v1.0.0-4");
+    });
+
+    // The prerelease number used to be read as a u32: 4294967295 wrapped to 0 and a build timestamp
+    // (above 2^32 - 1) counted as 0, so both wrote a version lower than the current one.
+    it.each([
+      ["1.0.0-beta.4294967295", [], "1.0.0-beta.4294967296"],
+      ["1.0.0-4294967295", [], "1.0.0-4294967296"],
+      ["1.0.0-4294967295", ["--preid", "rc"], "1.0.0-rc.4294967296"],
+      ["1.0.0-canary.20250101123456", [], "1.0.0-canary.20250101123457"],
+      ["1.0.0-20250101123456", [], "1.0.0-20250101123457"],
+      ["1.0.0-beta.18446744073709551614", [], "1.0.0-beta.18446744073709551615"],
+      // No larger number fits, so this one counts as a name and gets a new field.
+      ["1.0.0-18446744073709551615", [], "1.0.0-18446744073709551615.1"],
+      ["1.0.9007199254740991-0", [], "1.0.9007199254740991-1"],
+    ])("increments the prerelease number of %s", async (version, flags, expected) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "prerelease", ...flags, "--no-git-tag-version"],
+        testDir,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: `v${expected}\n`,
+        error: "",
+        code: 0,
+        version: expected,
+      });
     });
 
     it("should preserve prerelease identifiers correctly", async () => {

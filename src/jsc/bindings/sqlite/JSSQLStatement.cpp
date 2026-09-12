@@ -213,7 +213,10 @@ public:
     // (Bun__closeAllSQLiteDatabasesForTermination).
     JSC::VM* const vm;
     std::atomic<uint64_t> version;
+    // One ref for the JS Database object (dropped by its GC finalizer), one per JSSQLStatement.
     size_t reference_count;
+    // Index of this entry in the registry; the JS-visible handle.
+    size_t handleIndex = 0;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
     // close(false) with live db.prepare() statements: JS-visible closed, sqlite3_close deferred until they drain.
     bool closed = false;
@@ -229,12 +232,8 @@ public:
     // Defined after JSSQLStatement: needs its definition to inspect `stmt`.
     void closeIfDrained();
 
-    void release()
-    {
-        ASSERT(reference_count > 0);
-        if (--reference_count == 0)
-            closeHandle();
-    };
+    // Defined after the registry: frees this entry and recycles its handle.
+    void release();
 };
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
@@ -242,38 +241,81 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 class SQLiteSingleton {
 public:
     Vector<VersionSqlite3*> databases;
+    // Indices of freed entries, reused by registerDatabase.
+    Vector<size_t> freeHandles;
 };
 
 static SQLiteSingleton* _instance = nullptr;
 static WTF::Lock databasesLock;
 
-static Vector<VersionSqlite3*>& databases()
+static SQLiteSingleton& registry()
 {
     if (!_instance) {
         _instance = new SQLiteSingleton();
-        _instance->databases = Vector<VersionSqlite3*>();
         _instance->databases.reserveInitialCapacity(4);
     }
 
-    return _instance->databases;
+    return *_instance;
 }
 
 static size_t registerDatabase(VersionSqlite3* versionDB)
 {
     WTF::Locker locker { databasesLock };
-    auto& dbs = databases();
-    size_t index = dbs.size();
-    dbs.append(versionDB);
+    auto& instance = registry();
+    size_t index;
+    if (!instance.freeHandles.isEmpty()) {
+        index = instance.freeHandles.takeLast();
+        ASSERT(!instance.databases[index]);
+        instance.databases[index] = versionDB;
+    } else {
+        index = instance.databases.size();
+        instance.databases.append(versionDB);
+    }
+    versionDB->handleIndex = index;
     return index;
+}
+
+static void unregisterDatabase(VersionSqlite3* versionDB)
+{
+    WTF::Locker locker { databasesLock };
+    auto& instance = registry();
+    size_t index = versionDB->handleIndex;
+    ASSERT(index < instance.databases.size() && instance.databases[index] == versionDB);
+    instance.databases[index] = nullptr;
+    instance.freeHandles.append(index);
 }
 
 static VersionSqlite3* databaseForHandle(int32_t handle)
 {
     WTF::Locker locker { databasesLock };
-    auto& dbs = databases();
+    auto& dbs = registry().databases;
     if (handle < 0 || static_cast<size_t>(handle) >= dbs.size())
         return nullptr;
     return dbs[static_cast<size_t>(handle)];
+}
+
+// The finalization target is the JS Database object; its GC finalizer drops the entry's initial ref.
+static size_t registerDatabase(JSC::VM& vm, sqlite3* db, JSC::JSValue finalizationTarget)
+{
+    auto* versionDB = new VersionSqlite3(db, &vm);
+    size_t index = registerDatabase(versionDB);
+    if (finalizationTarget.isObject()) {
+        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell*) -> void {
+            versionDB->release();
+        });
+    }
+    return index;
+}
+
+// The last ref drops on the owning VM's thread after no JS object can name this handle.
+void VersionSqlite3::release()
+{
+    ASSERT(reference_count > 0);
+    if (--reference_count != 0)
+        return;
+    closeHandle();
+    unregisterDatabase(this);
+    delete this;
 }
 
 // Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
@@ -301,7 +343,7 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
-        if (db->vm != exitingVM)
+        if (!db || db->vm != exitingVM)
             continue;
         if (db->db) {
             Bun__sqliteCheckpointForTermination(db->db);
@@ -1327,8 +1369,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = registerDatabase(new VersionSqlite3(db, &vm));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
+    auto index = registerDatabase(vm, db, callFrame->argument(3));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1808,13 +1850,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto* versionDB = new VersionSqlite3(db, &vm);
-    auto index = registerDatabase(versionDB);
-    if (finalizationTarget.isObject()) {
-        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
-            versionDB->release();
-        });
-    }
+    auto index = registerDatabase(vm, db, finalizationTarget);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
 }
 

@@ -320,7 +320,9 @@ declare module "bun:sqlite" {
     /**
      * The underlying `sqlite3` database handle
      *
-     * In native code, this is not a file descriptor, but an index into an array of database handles
+     * In native code, this is not a file descriptor, but an index into an array of database handles.
+     * The index is released once the `Database` is closed and garbage collected, and a later
+     * `Database` can receive the same value.
      */
     readonly handle: number;
 

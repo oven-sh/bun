@@ -2587,6 +2587,96 @@ it("onread: read() after a redundant pause() still redelivers the declined tail"
   }
 });
 
+it("onread: pause() then read() inside the callback keeps delivering", async () => {
+  // https://github.com/oven-sh/bun/issues/42418 - node's read() restarts the
+  // handle (tryReadStart) right after pause() stopped it, so the rest of the
+  // chunk still reaches the callback without a later resume().
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.end("abcdefgh");
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          client!.pause();
+          client!.read();
+          if (received.length === 2) done.resolve();
+        },
+      },
+    });
+    client.on("error", done.reject);
+    client.on("close", () => done.reject(new Error(`closed before all data was delivered: ${received.join("|")}`)));
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: read() then pause() inside the callback stops the delivery", async () => {
+  // The opposite order: pause() is the last word, so the handle stays stopped
+  // until resume() (node's level-triggered handle.reading).
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.on("error", () => {});
+    c.write("abcdefgh");
+  });
+  const received: string[] = [];
+  const firstDelivery = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            client!.read();
+            client!.pause();
+            firstDelivery.resolve();
+          }
+          if (received.length === 3) done.resolve();
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    await new Promise<void>(resolve => serverSockets[0].end("wxyz", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["abcd"]);
+    client.resume();
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh", "wxyz"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("onread: a peer FIN does not redeliver the declined tail before resume()", async () => {
   // The EOF path's read(0) must not restart a flow the callback paused: Node's
   // readStop leaves both the tail and the FIN unread until resume().

@@ -191,7 +191,10 @@ const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
-const kOnreadReadRequested = Symbol("kOnreadReadRequested");
+// Node's `handle.reading` (lib/net.js#L817-L845): pause() clears it, read()/resume() set it.
+// The onread delivery loop stops on this, not on isPaused(), so a pause() followed by a
+// read() inside the callback keeps delivering.
+const kOnreadReading = Symbol("kOnreadReading");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
@@ -607,11 +610,19 @@ const SocketHandlers: SocketHandler = {
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self, handle) {
+  self[kOnreadReading] = false;
   handle?.pause?.();
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
+function readStart(self, handle) {
+  self[kOnreadReading] = true;
+  handle?.resume?.();
+  restorePausedHold(self, handle);
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
@@ -1734,7 +1745,7 @@ function Socket(options?) {
             reportError(e);
           }
           if (self.destroyed) return;
-          if (ret === false || self.isPaused()) {
+          if (ret === false || !self[kOnreadReading]) {
             self[kOnreadTail] = kOnreadEmptyTail;
             readStop(self, self._handle);
           }
@@ -1764,7 +1775,7 @@ function Socket(options?) {
           reportError(e);
         }
         if (self.destroyed) return;
-        if (ret === false || self.isPaused()) {
+        if (ret === false || !self[kOnreadReading]) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
           readStop(self, self._handle);
@@ -2328,9 +2339,12 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
-function drainOnreadTail(self, fromRead?) {
+// The queued tail goes to the callback before the handle reads again. The caller
+// asked for reads, so mark the handle reading now: a pause() before the drain
+// tick clears it again and the tick then delivers nothing.
+function drainOnreadTail(self) {
   if (self[kOnreadTail] === undefined) return false;
-  if (fromRead) self[kOnreadReadRequested] = true;
+  self[kOnreadReading] = true;
   if (!self[kOnreadDraining]) {
     self[kOnreadDraining] = true;
     process.nextTick(drainOnreadTailNT, self);
@@ -2340,20 +2354,17 @@ function drainOnreadTail(self, fromRead?) {
 
 function drainOnreadTailNT(socket) {
   socket[kOnreadDraining] = false;
-  const fromRead = socket[kOnreadReadRequested];
-  socket[kOnreadReadRequested] = false;
   const tail = socket[kOnreadTail];
   if (tail === undefined || socket.destroyed) return;
-  if (!fromRead && socket.isPaused()) return;
+  if (!socket[kOnreadReading]) return;
   socket[kOnreadTail] = undefined;
   socket[kOnreadDeliver](tail);
   if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
   if (socket[kOnreadPendingEnd]) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
-  } else if (fromRead || !socket.isPaused()) {
-    socket._handle?.resume?.();
-    restorePausedHold(socket, socket._handle);
+  } else if (socket[kOnreadReading]) {
+    readStart(socket, socket._handle);
   }
 }
 
@@ -2366,7 +2377,8 @@ Socket.prototype.resume = function resume() {
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
-    this._handle?.resume?.();
+    readStart(this, this._handle);
+    return ret;
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
   restorePausedHold(this, this._handle);
@@ -2468,9 +2480,8 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
-  if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
-    this._handle?.resume?.();
-    restorePausedHold(this, this._handle);
+  if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this)) {
+    readStart(this, this._handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2479,9 +2490,8 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
-  } else if (!drainOnreadTail(this, true)) {
-    socket?.resume?.();
-    restorePausedHold(this, socket);
+  } else if (!drainOnreadTail(this)) {
+    readStart(this, socket);
   }
 };
 

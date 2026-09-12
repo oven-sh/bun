@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
@@ -1638,5 +1638,128 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("fsevents");
     expect(bunLockContent).toContain("@esbuild/linux-arm64");
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+  });
+});
+
+describe("yarn.lock migration scales linearly", () => {
+  // Migration used to consolidate entries and resolve "name@range" specs with
+  // nested linear scans over all entries, making it O(n^2) in the number of
+  // lock entries: a 10k-entry yarn.lock took ~10 seconds of pure CPU while the
+  // equivalent package-lock.json migrated in under 100ms. The bound below is
+  // several times what the hash-map-based migration needs at this size on a
+  // slow machine, and several times below what the quadratic version took.
+  test("large yarn.lock migrates quickly", async () => {
+    const N = 12000;
+    // Only a slice of the lock entries are direct dependencies of the root:
+    // the quadratic consolidation/spec scans were driven by the entry count,
+    // while a huge direct-dependency count exercises the (unrelated,
+    // per-directory) hoisting cost that this test should not measure.
+    const rootDepCount = 100;
+    const integrity = `sha512-${Buffer.alloc(86, "A").toString()}==`;
+    const lines: string[] = ["# yarn lockfile v1", "", ""];
+    const dependencies: Record<string, string> = {};
+    for (let i = 0; i < N; i++) {
+      if (i < rootDepCount) {
+        dependencies[`p${i}`] = "^1.0.0";
+      }
+      lines.push(
+        `p${i}@^1.0.0:`,
+        `  version "1.0.0"`,
+        // Dead local address so nothing ever fetches; migration is CPU-only.
+        `  resolved "http://127.0.0.1:1/p${i}/-/p${i}-1.0.0.tgz#abc"`,
+        `  integrity ${integrity}`,
+        "",
+      );
+    }
+
+    await using tmpDir = tempDir("yarn-migration-large", {
+      "package.json": JSON.stringify({
+        name: "large-test",
+        version: "1.0.0",
+        dependencies,
+      }),
+      "yarn.lock": lines.join("\n"),
+    });
+
+    const start = performance.now();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(tmpDir),
+      env: {
+        ...bunEnv,
+        // A populated machine-wide cache would let the post-migration
+        // metadata pass find manifests for these synthetic names.
+        BUN_INSTALL_CACHE_DIR: join(String(tmpDir), ".bun-cache"),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const elapsed = performance.now() - start;
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    // Only packages reachable from the root survive into bun.lock; the
+    // unreferenced entries still had to be parsed and consolidated above.
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
+    expect(bunLockContent).toContain(`"p0"`);
+    expect(bunLockContent).toContain(`"p${rootDepCount - 1}"`);
+
+    expect(elapsed).toBeLessThan(isDebug || isASAN ? 25_000 : 2_000);
+  }, 150_000);
+
+  test("entries for the same name and version in separate blocks consolidate", async () => {
+    // yarn normally merges these into one "a@^1.0.0, a@~1.0.0:" block, but
+    // separate blocks resolving to the same version must consolidate into a
+    // single package, and every spec must still resolve.
+    await using tmpDir = tempDir("yarn-migration-consolidate", {
+      "package.json": JSON.stringify({
+        name: "consolidate-test",
+        version: "1.0.0",
+        dependencies: { "dup-pkg": "^1.0.0", "consumer-pkg": "^2.0.0" },
+      }),
+      "yarn.lock": `# yarn lockfile v1
+
+
+dup-pkg@^1.0.0:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.3.tgz#aaa"
+  integrity sha512-${Buffer.alloc(86, "B").toString()}==
+
+consumer-pkg@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/consumer-pkg/-/consumer-pkg-2.0.0.tgz#bbb"
+  integrity sha512-${Buffer.alloc(86, "C").toString()}==
+  dependencies:
+    "dup-pkg" "~1.0.2"
+
+dup-pkg@~1.0.2:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.3.tgz#aaa"
+  integrity sha512-${Buffer.alloc(86, "B").toString()}==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(tmpDir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(tmpDir), ".bun-cache"),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
+    // One consolidated dup-pkg package at 1.0.3, resolvable through both specs.
+    expect(bunLockContent.match(/"dup-pkg@1\.0\.3"/g) ?? []).toHaveLength(1);
+    expect(bunLockContent).toContain(`"dup-pkg": "~1.0.2"`);
   });
 });

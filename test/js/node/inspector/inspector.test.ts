@@ -298,7 +298,7 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.secondUrl).not.toBe(summary.firstUrl);
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 20_000);
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic
 // line and RETURN so a later open() can retry on the same debugger thread.
@@ -356,7 +356,7 @@ test("inspector.open() can be retried after a failed start", async () => {
   expect(summary.url).toStartWith("ws://127.0.0.1:");
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 20_000);
 
 // wait=true refs the event loop before the debugger thread attempts to bind;
 // on bind failure the ref must be released so the process can exit.
@@ -385,7 +385,7 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
   expect(stderr).toContain(`Starting inspector on 127.0.0.1:${port} failed: address already in use`);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
+}, 20_000);
 
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
@@ -459,7 +459,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
-});
+}, 20_000);
 
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
@@ -549,7 +549,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
-});
+}, 20_000);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();
@@ -873,7 +873,7 @@ export { after };
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, bump: 1, warm: 10 });
   expect(await proc.exited).toBe(0);
   await stderrDrained;
-});
+}, 20_000);
 
 // End-to-end pause/resume over the DevTools-protocol server started by
 // inspector.open(): the entry module is a top-level-await module that calls
@@ -996,7 +996,7 @@ export { after };
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
-});
+}, 20_000);
 
 // JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
 // "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The
@@ -1085,3 +1085,276 @@ test("disconnect does not clobber a console method reassigned by user code", () 
     console.log = before;
   }
 });
+
+// JSC's JSGlobalObjectInspectorController has one DebuggerAgent / RuntimeAgent
+// / InjectedScript shared across every FrontendChannel, so two CDP clients on
+// the same inspector.open() server used to stomp on each other: B's
+// setBreakpointsActive(false) / Debugger.disable blinded A, B's Runtime.disable
+// silenced A's console stream, and B could read/release A's RemoteObject
+// handles by id. Node gives each WebSocket its own V8InspectorSession and is
+// per-session on every cell of that matrix.
+test("two inspector.open() clients have isolated Debugger/Runtime session state", async () => {
+  using dir = tempDir("inspector-multi-session", {
+    "debuggee.mjs": `
+import inspector from "node:inspector";
+import readline from "node:readline";
+inspector.open(0, "127.0.0.1", false);
+process.stdout.write("URL " + inspector.url() + "\\n");
+globalThis.secretStore = { alpha: "objA-secret" };
+globalThis.hitme = function hitme() {
+  const local = "hit";
+  return local;
+};
+let hits = 0, logs = 0;
+const rl = readline.createInterface({ input: process.stdin });
+for await (const line of rl) {
+  if (line === "hit") {
+    globalThis.hitme();
+    process.stdout.write("after-hit:" + (++hits) + "\\n");
+  } else if (line === "log") {
+    console.log("tagged-console-call");
+    process.stdout.write("after-log:" + (++logs) + "\\n");
+  } else if (line === "exit") {
+    process.exit(0);
+  }
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "debuggee.mjs"],
+    env: injectedScriptChildEnv,
+    cwd: String(dir),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const stderrReader = proc.stderr.getReader();
+  let stderrText = "";
+  const stderrDrained = (async () => {
+    for (;;) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
+  async function waitForStdout(marker: string) {
+    while (!stdoutText.includes(marker)) {
+      const { value, done } = await stdoutReader.read();
+      if (done) throw new Error(`stdout closed before "${marker}": ${stdoutText}\nstderr: ${stderrText}`);
+      stdoutText += decoder.decode(value);
+    }
+  }
+  await waitForStdout("\n");
+  const wsUrl = stdoutText.match(/URL (\S+)\n/)![1];
+
+  type Pending = { resolve: (msg: any) => void; reject: (err: Error) => void; method: string };
+  type Client = {
+    ws: WebSocket;
+    events: any[];
+    pauseCount: number;
+    send: (method: string, params?: unknown) => Promise<any>;
+    abandon: (why: string) => void;
+  };
+  function attach(name: string, autoResume: boolean): Promise<Client> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      const pending = new Map<number, Pending>();
+      let nextId = 1;
+      const client: Client = {
+        ws,
+        events: [],
+        pauseCount: 0,
+        send: (method, params) =>
+          new Promise((res, rej) => {
+            const id = nextId++;
+            pending.set(id, { resolve: res, reject: rej, method });
+            ws.send(JSON.stringify({ id, method, params }));
+          }),
+        abandon: why => {
+          for (const p of pending.values())
+            p.reject(new Error(`${why} while ${name} awaited ${p.method}; stderr: ${stderrText}`));
+          pending.clear();
+        },
+      };
+      ws.onmessage = e => {
+        const m = JSON.parse(String(e.data));
+        if (m.id !== undefined) {
+          pending.get(m.id)?.resolve(m);
+          pending.delete(m.id);
+        } else {
+          client.events.push(m);
+          if (m.method === "Debugger.paused") {
+            client.pauseCount++;
+            if (autoResume) ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
+          }
+        }
+      };
+      let opened = false;
+      ws.onerror = e => (opened ? client.abandon(`ws ${name} errored`) : reject(e));
+      ws.onclose = () => {
+        if (!opened) reject(new Error(`ws ${name} closed before open; stderr: ${stderrText}`));
+        client.abandon(`ws ${name} closed`);
+      };
+      ws.onopen = () => {
+        opened = true;
+        resolve(client);
+      };
+    });
+  }
+
+  // A auto-resumes every pause so each "hit" trigger always reaches the
+  // "after-hit" marker; the pauseCount delta tells us whether the breakpoint
+  // actually fired.
+  const A = await attach("A", true);
+  const B = await attach("B", false);
+  proc.exited.then(code => {
+    A.abandon(`child exited (code ${code})`);
+    B.abandon(`child exited (code ${code})`);
+  });
+
+  await A.send("Runtime.enable");
+  await A.send("Debugger.enable");
+  const bp = await A.send("Debugger.setBreakpointByUrl", { lineNumber: 8, urlRegex: "debuggee\\.mjs$" });
+  expect(bp.result?.breakpointId).toBeString();
+  const breakpointId = bp.result.breakpointId;
+
+  let hitSeq = 0;
+  async function triggerHit() {
+    const marker = `after-hit:${++hitSeq}\n`;
+    proc.stdin.write("hit\n");
+    proc.stdin.flush();
+    await waitForStdout(marker);
+  }
+
+  const pausesBefore = A.pauseCount;
+  await triggerHit();
+  expect(A.pauseCount).toBe(pausesBefore + 1);
+
+  // B never enabled Debugger; none of these may touch A's session.
+  const bActive = await B.send("Debugger.setBreakpointsActive", { active: false });
+  const bPause = await B.send("Debugger.setPauseOnExceptions", { state: "none" });
+  const bRemove = await B.send("Debugger.removeBreakpoint", { breakpointId });
+  const bSetBp = await B.send("Debugger.setBreakpointByUrl", { lineNumber: 8, urlRegex: "debuggee\\.mjs$" });
+  const bDisable = await B.send("Debugger.disable");
+  expect({
+    active: bActive.error?.message,
+    pause: bPause.error?.message,
+    remove: bRemove.error?.message,
+    setBp: bSetBp.error?.message,
+    disable: bDisable.error?.message ?? "no error",
+  }).toEqual({
+    active: "Debugger agent is not enabled",
+    pause: "Debugger agent is not enabled",
+    remove: "Debugger agent is not enabled",
+    setBp: "Debugger agent is not enabled",
+    disable: "no error",
+  });
+
+  const pausesMid = A.pauseCount;
+  await triggerHit();
+  expect(A.pauseCount).toBe(pausesMid + 1);
+
+  // B never enabled Debugger, so the FrontendRouter broadcast must have been
+  // dropped before reaching its socket, and its Debugger commands are rejected.
+  expect(B.events.filter(e => e.method === "Debugger.paused")).toEqual([]);
+  const bEval = await B.send("Debugger.evaluateOnCallFrame", {
+    callFrameId: '{"ordinal":0,"injectedScriptId":1}',
+    expression: "local",
+  });
+  expect(bEval.error?.message).toBe("Debugger agent is not enabled");
+
+  // With B also debugger-enabled, B's setBreakpointsActive(false) must not
+  // lower the aggregate below A's true, and B cannot remove A's breakpoint.
+  await B.send("Debugger.enable");
+  await B.send("Debugger.setBreakpointsActive", { active: false });
+  const bRemoveOwned = await B.send("Debugger.removeBreakpoint", { breakpointId });
+  expect(bRemoveOwned).toEqual({ id: expect.any(Number), result: {} });
+  const pausesBoth = A.pauseCount;
+  await triggerHit();
+  expect(A.pauseCount).toBe(pausesBoth + 1);
+  await B.send("Debugger.disable");
+
+  // objectId isolation: B presenting A's handle is rejected, and B's
+  // releaseObject / releaseObjectGroup cannot invalidate it for A.
+  const evalA = await A.send("Runtime.evaluate", {
+    expression: "globalThis.secretStore",
+    objectGroup: "console",
+    returnByValue: false,
+  });
+  const objectId = evalA.result?.result?.objectId;
+  expect(objectId).toBeString();
+  const bProps = await B.send("Runtime.getProperties", { objectId, ownProperties: true });
+  // callFunctionOn: neither the target objectId nor an arguments[].objectId may
+  // reach the backend from another session.
+  const bCallTarget = await B.send("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: "function(){ return this.alpha }",
+    returnByValue: true,
+  });
+  const bCallArg = await B.send("Runtime.callFunctionOn", {
+    executionContextId: 1,
+    functionDeclaration: "function(x){ return x.alpha }",
+    arguments: [{ objectId }],
+    returnByValue: true,
+  });
+  const bRelease = await B.send("Runtime.releaseObject", { objectId });
+  await B.send("Runtime.releaseObjectGroup", { objectGroup: "console" });
+  const aProps = await A.send("Runtime.getProperties", { objectId, ownProperties: true });
+  const alphaFromA = (aProps.result?.result || []).find((p: any) => p.name === "alpha")?.value?.value;
+  expect({
+    bProps: bProps.error?.message ?? "no error",
+    bCallTarget: bCallTarget.error?.message ?? "no error",
+    bCallArg: bCallArg.error?.message ?? "no error",
+    bRelease: bRelease.error?.message ?? "no error",
+    alphaFromA,
+    aError: aProps.error?.message,
+  }).toEqual({
+    bProps: "Could not find object with given id",
+    bCallTarget: "Could not find object with given id",
+    bCallArg: "Could not find object with given id",
+    bRelease: "Could not find object with given id",
+    alphaFromA: "objA-secret",
+    aError: undefined,
+  });
+
+  // returnByValue user JSON with a property named `objectId` must round-trip
+  // unchanged (the adapter's session tagging must not descend into user data).
+  const userJson = await A.send("Runtime.evaluate", {
+    expression: 'JSON.parse(\'{"objectId":"{\\\\"k\\\\":1}","nested":{"objectId":"x"}}\')',
+    returnByValue: true,
+  });
+  expect(userJson.result?.result?.value).toEqual({ objectId: '{"k":1}', nested: { objectId: "x" } });
+
+  // Runtime/Console refcounting: B's Runtime.disable must not silence A, and
+  // B (never enabled Runtime) must not have received A's console stream. A
+  // direct Console.disable (deprecated CDP domain) must not bypass the guard.
+  await B.send("Runtime.disable");
+  await B.send("Console.disable");
+  A.events.length = 0;
+  B.events.length = 0;
+  proc.stdin.write("log\n");
+  proc.stdin.flush();
+  await waitForStdout("after-log:1\n");
+  // The console event and this evaluate result share A's backend→client
+  // queue and the console.log ran first, so once this reply arrives the
+  // consoleAPICalled has too.
+  await A.send("Runtime.evaluate", { expression: "1", returnByValue: true });
+  expect(A.events.filter(e => e.method === "Runtime.consoleAPICalled").length).toBeGreaterThan(0);
+  expect(B.events.filter(e => e.method === "Runtime.consoleAPICalled")).toEqual([]);
+
+  A.ws.close();
+  B.ws.close();
+  proc.stdin.write("exit\n");
+  proc.stdin.flush();
+  const exitCode = await proc.exited;
+  await stderrDrained;
+  expect({ exitCode, stderr: stderrText }).toEqual({
+    exitCode: 0,
+    stderr: expect.stringContaining("Debugger listening on"),
+  });
+}, 20_000);

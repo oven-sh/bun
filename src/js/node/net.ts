@@ -169,6 +169,17 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
+// Node ref: https://github.com/nodejs/node/blob/main/lib/net.js
+let activeHandles;
+function registerHandle(handle, kind, unrefFlag) {
+  (activeHandles ??= require("internal/active_handles")).registerHandle(handle, kind, unrefFlag);
+}
+function unregisterHandle(handle) {
+  if (activeHandles === undefined) return;
+  activeHandles.unregisterHandle(handle);
+}
+const kHandleKind = Symbol("kHandleKind");
+const kAcceptedHandleKind = Symbol("kAcceptedHandleKind");
 // Set when readStop() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
@@ -265,6 +276,7 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
+  unregisterHandle(self);
 }
 function destroyNT(self, err) {
   self.destroy(err);
@@ -557,6 +569,7 @@ const SocketHandlers: SocketHandler = {
     }
     self._handle = socket;
     self.connecting = false;
+    registerHandle(self, self[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     const options = self[bunTLSConnectOptions];
 
     if (options) {
@@ -1250,6 +1263,9 @@ function onconnection(err, clientHandle) {
     return;
   }
 
+  _socket[kHandleKind] = self[kAcceptedHandleKind] || "TCPSocketWrap";
+  registerHandle(_socket, _socket[kHandleKind], kUserUnrefed);
+
   const bunTLS = _socket[bunTlsSymbol];
   const isTLS = typeof bunTLS === "function";
 
@@ -1290,6 +1306,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
+    registerHandle(self, self[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     $debug("self[kupgraded]", String(self[kupgraded]));
     // Offer a previously-negotiated session for resumption before oncomplete
     // (afterConnect) runs: a user 'connect' listener that writes immediately
@@ -1368,7 +1385,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self } = socket.data;
     if (err) $debug(err);
     if (self[kclosed]) return;
+    // A superseded handle's close (a lost family-autoselection attempt, a raw
+    // handle handed to a TLS wrap) must not mark the still-live socket closed,
+    // end its stream, or swallow the current handle's own close later. A null
+    // _handle is the ordinary post-destroy close: fall through so the tail
+    // work (end delivery, pending-write settlement) still runs.
+    if (self._handle != null && socket !== self._handle) return;
     self[kclosed] = true;
+    unregisterHandle(self);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -2022,6 +2046,7 @@ Socket.prototype.connect = function connect(...args) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
+      this[kHandleKind] = connection[kHandleKind] || "TCPSocketWrap";
       try {
         // reset the underlying writable object when establishing a new connection
         // this is a function on `Duplex`, originally defined on `Writable`
@@ -2062,6 +2087,7 @@ Socket.prototype.connect = function connect(...args) {
               const [raw, tls] = result;
               // replace socket
               connection._handle = raw;
+              unregisterHandle(connection);
               raw[kAdoptedTLSRaw] = true;
               destroyWhenUpgradedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
@@ -2111,6 +2137,7 @@ Socket.prototype.connect = function connect(...args) {
                   const [raw, tls] = result;
                   // replace socket
                   connection._handle = raw;
+                  unregisterHandle(connection);
                   raw[kAdoptedTLSRaw] = true;
                   destroyWhenUpgradedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
@@ -2162,11 +2189,19 @@ Socket.prototype.connect = function connect(...args) {
     initSocketHandle(this);
   }
 
-  if (!pipe) {
-    lookupAndConnect(this, options);
-  } else {
-    validateString(path, "options.path");
-    internalConnect(this, options, path);
+  this[kHandleKind] = pipe ? "PipeWrap" : "TCPSocketWrap";
+  registerHandle(this, this[kHandleKind], kUserUnrefed);
+
+  try {
+    if (!pipe) {
+      lookupAndConnect(this, options);
+    } else {
+      validateString(path, "options.path");
+      internalConnect(this, options, path);
+    }
+  } catch (e) {
+    unregisterHandle(this);
+    throw e;
   }
   return this;
 };
@@ -2176,6 +2211,7 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
 
   this._handle = handle;
   this._handle[owner_symbol] = this;
+  registerHandle(this, this[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
 
   initSocketHandle(this);
 };
@@ -2189,6 +2225,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  unregisterHandle(this);
+  if (this[kupgraded]) unregisterHandle(this[kupgraded]);
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -2407,6 +2445,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
+    registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     return;
   }
   this[kupgraded] = connection;
@@ -2436,6 +2475,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("close", events[3]);
       destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
+      registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
       this.emit(kUpgradeAttached);
       return;
     }
@@ -2457,11 +2497,13 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     }
     const [raw, tlsHandle] = result;
     connection._handle = raw;
+    unregisterHandle(connection);
     raw[kAdoptedTLSRaw] = true;
     destroyWhenUpgradedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
+    registerHandle(this, connection[kHandleKind] || "TCPSocketWrap", kUserUnrefed);
     this.emit(kUpgradeAttached);
   });
 };
@@ -3153,6 +3195,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
       self.destroy($ERR_IP_BLOCKED(address));
       return;
     }
+    self[kHandleKind] = "TCPSocketWrap";
     const req: any = {};
     req.oncomplete = afterConnect;
     req.address = address;
@@ -3184,6 +3227,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
+    self[kHandleKind] = "PipeWrap";
     traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
@@ -3631,6 +3675,7 @@ Server.prototype.close = function close(callback) {
       this._handle.close();
     }
     this._handle = null;
+    unregisterHandle(this);
   }
 
   this._emitCloseIfDrained();
@@ -3997,6 +4042,8 @@ Server.prototype[kRealListen] = function (
 
   this._handle[owner_symbol] = this;
   this._handle.onconnection = onconnection;
+  this[kAcceptedHandleKind] = path ? "PipeWrap" : "TCPSocketWrap";
+  registerHandle(this, path ? "PipeWrap" : "TCPServerWrap", "_unref");
 
   const addr = this.address();
   if (addr && typeof addr === "object") {

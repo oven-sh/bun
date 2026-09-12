@@ -761,6 +761,9 @@ console.log("OK");
       stdout: result.stdout.toString(),
       signalCode: result.signalCode,
       exitCode: result.exitCode,
-    }).toEqual({ name, stdout: "OK\n", signalCode: undefined, exitCode: 0 });
+      // A rejected entry is unlinked and written again. The damaged bytes are
+      // still there, so the run was a cache hit that remapped through them.
+      servedFromDamagedEntry: readFileSync(entry).equals(data),
+    }).toEqual({ name, stdout: "OK\n", signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
   }
 });

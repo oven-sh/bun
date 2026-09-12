@@ -411,6 +411,19 @@ impl FileReader {
                 }
                 return streams::Start::Err(e);
             }
+            #[cfg(unix)]
+            {
+                use bun_io::pipe_reader::PosixFlags;
+                // The kernel refused to poll the fd (a character device such as
+                // `/dev/zero`), so the reader is synchronous from here on and
+                // the ref would root an abandoned stream forever.
+                if need_io_ref && !self.reader().flags.contains(PosixFlags::POLLABLE) {
+                    self.waiting_for_on_reader_done.set(false);
+                    let parent = self.parent();
+                    // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
+                    let _ = unsafe { Source::decrement_count(parent) };
+                }
+            }
         } else {
             #[cfg(unix)]
             {

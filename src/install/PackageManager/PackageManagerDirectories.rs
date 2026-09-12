@@ -1250,7 +1250,8 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     tmpname_buf[tmpname_len + 8] = 0;
     let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
 
-    if let Err(err) = tmpfile.create(tmpname) {
+    // Like yarn itself: 0o666 with the process umask applied.
+    if let Err(err) = tmpfile.create(tmpname, 0o666) {
         bun_core::pretty_errorln!("<r><red>error:<r> failed to create tmpfile: {}", err.name());
         Global::crash();
     }
@@ -1270,15 +1271,6 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
         crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
         file.write_all(&buf).map_err(Error::from)?;
-    }
-
-    #[cfg(unix)]
-    {
-        let _ = sys::fchmod(
-            tmpfile.fd,
-            // chmod 666,
-            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
     }
 
     tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;

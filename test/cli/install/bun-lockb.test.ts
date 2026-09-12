@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
+import { statSync } from "fs";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
@@ -32,9 +33,10 @@ it("should not print anything to stderr when running bun.lockb", async () => {
     }),
   );
 
-  // Run 'bun install' to generate the lockfile
+  // Run 'bun install' to generate the lockfile. The lockfile mode is
+  // `0o777 & ~umask`, so pin the umask for the assertion below.
   const installResult = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: isWindows ? [bunExe(), "install"] : ["sh", "-c", `umask 022 && exec "$0" install`, bunExe()],
     cwd: packageDir,
     env,
   });
@@ -47,7 +49,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   await using file = await open(join(packageDir, "bun.lockb"), "r");
   const stat = await file.stat();
 
-  // in unix, 0o755 == 33261
+  // in unix, 0o755 == 33261 (at umask 022)
   let mode = 33261;
   // ..but windows is different
   if (isWindows) {
@@ -80,6 +82,32 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(stderrOutput).toBe("");
 
   expect(await exited).toBe(0);
+});
+
+// bun.lockb is created `0o777 & ~umask` (it is executable: `./bun.lockb` prints
+// it). It used to get a constant 0o755 from an fchmod after the open.
+it.skipIf(isWindows)("bun.lockb honors umask", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "lockb-umask", workspaces: ["packages/*"], dependencies: { pkg1: "workspace:*" } }),
+    ),
+    write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+  ]);
+
+  await using proc = spawn({
+    cmd: ["sh", "-c", `umask 077 && exec "$0" install`, bunExe()],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+
+  expect((statSync(join(packageDir, "bun.lockb")).mode & 0o777).toString(8)).toBe("700");
 });
 
 it("should continue using a binary lockfile if it exists", async () => {

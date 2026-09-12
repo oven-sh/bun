@@ -153,6 +153,16 @@ describe("new Request() with a GET/HEAD method and a body", () => {
     expect(reads).toBe(1);
   });
 
+  test("a Request built under an exemption can be wrapped again with an init", async () => {
+    // @ts-expect-error Bun accepts a Response as init
+    const fromResponse = new Request("http://example.com/", new Response("from response"));
+    expect(await new Request(fromResponse, { headers: { "x-a": "1" } }).text()).toBe("from response");
+    const unknownMethod = new Request("http://example.com/", { method: "LIST", body: "x" });
+    expect(await new Request(unknownMethod, {}).text()).toBe("x");
+    // An explicit GET in the init still applies the check.
+    expect(() => new Request(unknownMethod, { method: "GET" })).toThrow(new TypeError(message));
+  });
+
   test("a body taken from a Response init is kept (Bun extension)", async () => {
     // @ts-expect-error Bun accepts a Response as init
     const request = new Request("http://example.com/", new Response("from response"));

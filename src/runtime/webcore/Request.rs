@@ -1102,7 +1102,8 @@ impl Request {
                         return Ok(req);
                     }
 
-                    if !fields.contains(Fields::Method) {
+                    let method_from_input = !fields.contains(Fields::Method);
+                    if method_from_input {
                         req.method = request.method;
                         fields.insert(Fields::Method);
                     }
@@ -1144,6 +1145,10 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
+                                // The input passed this check when it was built.
+                                if method_from_input {
+                                    skip_body_check = true;
+                                }
                             }
                         }
                     }

@@ -2673,6 +2673,29 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
+it("EADDRINUSE error names the port that was refused", () => {
+  using first = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response("first"),
+  });
+  let error: any;
+  try {
+    using second = Bun.serve({
+      port: first.port,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("second"),
+    });
+  } catch (e) {
+    error = e;
+  }
+  expect({ code: error?.code, syscall: error?.syscall, port: error?.port }).toEqual({
+    code: "EADDRINUSE",
+    syscall: "listen",
+    port: first.port,
+  });
+});
+
 if (process.platform === "linux")
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {

@@ -219,69 +219,84 @@ yourself with Bun.serve().
     },
     {} as Record<string, HTMLBundle>,
   );
-  var server: Server;
-  getServer: {
-    try {
-      server = Bun.serve({
-        static: staticRoutes,
-        development:
-          env.NODE_ENV !== "production"
-            ? {
-                console: enableConsoleLog,
-                hmr: undefined,
-              }
-            : false,
+  const enableANSIColors = Bun.enableANSIColors;
 
-        hostname,
-        port,
+  // A port somebody asked for stays fixed. Only a default (3000, bunfig `serve.port`) may move.
+  function portIsPinned(refusedPort: number) {
+    return (
+      // --port, --host=<host>:<port> after the entry point
+      port !== undefined ||
+      // bun --port=<port> ./index.html
+      process.execArgv.some(arg => arg === "--port" || arg.startsWith("--port=")) ||
+      // the variables Bun.serve() reads, when one of them is where the port came from
+      [env.BUN_PORT, env.PORT, env.NODE_PORT].some(value => value !== undefined && Number(value) === refusedPort)
+    );
+  }
 
-        // use the default port via existing port detection code.
-        // port: 3000,
-
-        fetch(_req: Request) {
-          return new Response("Not found", { status: 404 });
-        },
-      });
-      break getServer;
-    } catch (error: any) {
-      if (error?.code === "EADDRINUSE") {
-        let defaultPort = port || parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
-        for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
-          try {
-            server = Bun.serve({
-              static: staticRoutes,
-              development:
-                env.NODE_ENV !== "production"
-                  ? {
-                      console: enableConsoleLog,
-                      hmr: undefined,
-                    }
-                  : false,
-
-              hostname,
-
-              // Retry with a different port up to 4 times.
-              port: defaultPort++,
-
-              fetch(_req: Request) {
-                return new Response("Not found", { status: 404 });
-              },
-            });
-            break getServer;
-          } catch (error: any) {
-            if (error?.code === "EADDRINUSE") {
-              continue;
+  function serve(port: number | undefined) {
+    return Bun.serve({
+      static: staticRoutes,
+      development:
+        env.NODE_ENV !== "production"
+          ? {
+              console: enableConsoleLog,
+              hmr: undefined,
             }
-            throw error;
+          : false,
+
+      hostname,
+
+      // undefined: Bun.serve() resolves BUN_PORT/PORT/NODE_PORT, `bun --port`, bunfig `serve.port`, else 3000
+      port,
+
+      fetch(_req: Request) {
+        return new Response("Not found", { status: 404 });
+      },
+    });
+  }
+
+  let portInUse: number | undefined;
+  function listen(): Server | undefined {
+    try {
+      return serve(port);
+    } catch (error: any) {
+      // Anything but a refused bind is a bug worth a stack trace.
+      if (error?.syscall !== "listen") throw error;
+
+      let message: string = error.message;
+      const { code, port: refusedPort } = error;
+      if (code === "EADDRINUSE" && typeof refusedPort === "number" && !portIsPinned(refusedPort)) {
+        const lastCandidate = Math.min(refusedPort + 10, 65535);
+        portInUse = refusedPort;
+        message = `Ports ${refusedPort} to ${lastCandidate} are all in use.`;
+        for (let candidate = refusedPort + 1; candidate <= lastCandidate; candidate++) {
+          try {
+            return serve(candidate);
+          } catch (error: any) {
+            if (error?.syscall !== "listen") throw error;
+            if (error.code !== "EADDRINUSE") {
+              message = error.message;
+              break;
+            }
           }
         }
       }
 
-      throw error;
+      console.error(enableANSIColors ? `\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m ${message}` : `error: ${message}`);
+      // No process.exit(): --watch/--hot keep the process up for the next reload.
+      process.exitCode = 1;
+      return undefined;
     }
   }
+  const server = listen();
+  if (!server) return;
+
+  if (portInUse !== undefined) {
+    const message = `Port ${portInUse} is in use, using port ${server.port} instead.`;
+    console.warn(enableANSIColors ? `\x1b[33mwarn\x1b[0m\x1b[2m:\x1b[0m ${message}` : `warn: ${message}`);
+  }
+
   const elapsed = (performance.now() - initial).toFixed(2);
-  const enableANSIColors = Bun.enableANSIColors;
   function printInitialMessage(isFirst: boolean) {
     let pathnameToPrint;
     if (servePaths.length === 1) {

@@ -15,6 +15,7 @@ import {
   tempDir,
   tls,
 } from "harness";
+import { randomFillSync } from "node:crypto";
 import net from "node:net";
 import { join } from "node:path";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
@@ -4706,3 +4707,67 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+describe.concurrent.each(["tcp", "tls"] as const)(
+  "%s end(data) with a chunk larger than the send buffer",
+  transport => {
+    // end(data) used to do one non-blocking send, drop the rest, and FIN. The
+    // tail must stay queued and the FIN must follow it.
+    const N = 16 * 1024 * 1024;
+
+    async function run(withDrain: boolean) {
+      const payload = randomFillSync(Buffer.allocUnsafe(N));
+      const received = Promise.withResolvers<number>();
+      let got = 0;
+      let mismatchAt = -1;
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+        socket: {
+          data(_, chunk) {
+            if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+            got += chunk.byteLength;
+          },
+          close() {
+            received.resolve(got);
+          },
+        },
+      });
+
+      const clientClosed = Promise.withResolvers<void>();
+      let endReturned = -2;
+      let drains = 0;
+      const afterEnd: number[] = [];
+      const errors: Error[] = [];
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: {
+          open(s) {
+            endReturned = s.end(payload);
+            afterEnd.push(s.write("more"), s.write(undefined as any), s.end("more"), s.end());
+          },
+          data() {},
+          ...(withDrain ? { drain: () => void drains++ } : {}),
+          close: () => clientClosed.resolve(),
+          error: (_, e) => errors.push(e),
+        },
+      });
+
+      const [serverGot] = await Promise.all([received.promise, clientClosed.promise]);
+      expect({ endReturned, afterEnd, serverGot, mismatchAt, errors, drains }).toEqual({
+        endReturned: N,
+        afterEnd: [-1, -1, -1, -1],
+        serverGot: N,
+        mismatchAt: -1,
+        errors: [],
+        drains: 0,
+      });
+    }
+
+    it("delivers the whole chunk before the FIN", () => run(true));
+    it("delivers the whole chunk without a drain handler", () => run(false));
+  },
+);

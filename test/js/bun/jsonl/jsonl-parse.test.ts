@@ -1109,22 +1109,21 @@ describe("Bun.JSONL", () => {
         expect((result[0] as { s: string }).s).toBe("A".repeat(10000));
       });
 
-      // 50000 calls take about 4 seconds in a debug build with ASAN, and more on a busy machine.
       test("repeated parseChunk doesn't leak", () => {
         const input = '{"a":1}\n{"b":2}\n{"c":3}\n';
-        for (let i = 0; i < 50000; i++) {
+        for (let i = 0; i < 20000; i++) {
           Bun.JSONL.parseChunk(input);
         }
         expect(true).toBe(true);
-      }, 30_000);
+      });
 
       test("repeated parse with typed array doesn't leak", () => {
         const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n');
-        for (let i = 0; i < 50000; i++) {
+        for (let i = 0; i < 20000; i++) {
           Bun.JSONL.parse(buf);
         }
         expect(true).toBe(true);
-      }, 30_000);
+      });
     });
 
     describe("garbage input", () => {

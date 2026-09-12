@@ -250,7 +250,7 @@ describe("node:http2 closes its transport after a send() the kernel rejects", ()
   //
   // Each fixture starts no timer, because a timer wakes the loop and hides the first bug. It
   // reports what it saw when the process exits on its own.
-  const bothClosed = { streamClosed: true, sessionClosed: true };
+  const bothClosed = JSON.stringify({ streamClosed: true, sessionClosed: true });
 
   // No injection, so these run on every build and platform. One process holds both ends of the
   // connection. The peer resets and the client writes in the same turn, so the kernel has the
@@ -306,9 +306,11 @@ describe("node:http2 closes its transport after a send() the kernel rejects", ()
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ ...bothClosed, unexpectedErrors: [] });
-      expect(exitCode).toBe(0);
+      expect({ seen: stdout.trim(), stderr, exitCode }).toEqual({
+        seen: JSON.stringify({ streamClosed: true, sessionClosed: true, unexpectedErrors: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 
@@ -349,9 +351,7 @@ describe("node:http2 closes its transport after a send() the kernel rejects", ()
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toEqual(bothClosed);
-        expect(exitCode).toBe(0);
+        expect({ seen: stdout.trim(), stderr, exitCode }).toEqual({ seen: bothClosed, stderr: "", exitCode: 0 });
       } finally {
         for (const socket of accepted) socket.destroy();
         peer.close();
@@ -401,6 +401,8 @@ describe("node:http2 closes its transport after a send() the kernel rejects", ()
       let stdout = "";
       let client: net.Socket | undefined;
       let sentBody = false;
+      // Drained while the loop below reacts to stdout: a full stderr pipe would block the child.
+      const stderrText = proc.stderr.text();
       try {
         for await (const chunk of proc.stdout) {
           stdout += Buffer.from(chunk).toString();
@@ -422,11 +424,9 @@ describe("node:http2 closes its transport after a send() the kernel rejects", ()
             client!.write(frame(0, 0, 1, Buffer.from("body")));
           }
         }
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        const lines = stdout.trim().split("\n");
-        expect(JSON.parse(lines[lines.length - 1])).toEqual(bothClosed);
-        expect(exitCode).toBe(0);
+        const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+        const seen = stdout.trim().split("\n").at(-1);
+        expect({ seen, stderr, exitCode }).toEqual({ seen: bothClosed, stderr: "", exitCode: 0 });
       } finally {
         client?.destroy();
       }

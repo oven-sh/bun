@@ -413,6 +413,25 @@ test("Error.captureStackTrace cannot add stack to a non-extensible object", () =
   expect(Object.getOwnPropertyNames(pathNamespace)).not.toContain("stack");
 });
 
+test("Error.captureStackTrace rejects a WebAssembly GC reference", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+
+  // The reference is permanently non-extensible, and its Structure has no global object.
+  // Node also throws a TypeError here ("invalid_argument": V8 does not count the reference as a JSObject).
+  expectTypeError(() => Error.captureStackTrace(struct), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(struct)).toEqual([]);
+});
+
 test("Error.captureStackTrace cannot overwrite a non-configurable stack", () => {
   for (const writable of [true, false]) {
     const object = {};

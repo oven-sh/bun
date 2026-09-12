@@ -4528,6 +4528,10 @@ JSObject* GlobalObject::lazyRequireCacheObject()
     JSValue result = JSC::profiledCall(this, ProfilingReason::API, function, JSC::getCallData(function), this, ArgList());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    // The builtin reads user-writable globals, so user code can read require.cache again while it runs.
+    if (auto* cache = m_lazyRequireCacheObject.get())
+        return cache;
+
     auto* cache = asObject(result);
     m_lazyRequireCacheObject.set(vm, this, cache);
     return cache;

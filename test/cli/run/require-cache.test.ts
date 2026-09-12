@@ -76,6 +76,36 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a require.cache read from inside its own first read returns the same object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const OriginalSymbol = Symbol;
+          let inner;
+          Object.defineProperty(globalThis, "Symbol", {
+            configurable: true,
+            get() {
+              Object.defineProperty(globalThis, "Symbol", { value: OriginalSymbol, writable: true, configurable: true });
+              inner = require.cache;
+              return OriginalSymbol;
+            },
+          });
+          const outer = require.cache;
+          console.log(typeof inner, inner === outer, require.cache === outer, require("module")._cache === outer);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("object true true true\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("require.cache read near the stack limit throws instead of crashing", async () => {
     await using proc = Bun.spawn({
       cmd: [

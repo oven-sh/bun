@@ -651,8 +651,7 @@ impl ReadableStream {
         })
     }
 
-    /// A locked stand-in for the stream of a body a consumer is still reading. Nothing tells it how
-    /// that read ends, so it stays readable.
+    /// A locked stand-in for the stream of a body a consumer is still reading: it stays readable.
     pub fn in_use(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || ReadableStream__used(global_this, false))
     }

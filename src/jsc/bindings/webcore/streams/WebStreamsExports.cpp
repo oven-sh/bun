@@ -199,9 +199,7 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     stream->m_consumedAsBody = true;
 }
 
-// markConsumedAsBody for the consumer that lifted the whole payload out of a stream nothing had started
-// (Rust `to_any_blob`): no reader or controller will ever run it to its end, so it closes here. With no
-// reader, closing only settles the stream-level closed promise: no script runs and nothing throws.
+// markConsumedAsBody for Rust `to_any_blob`, which took the payload of a stream nothing started: no reader exists to close it.
 extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
@@ -238,9 +236,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
     return JSValue::encode(stream);
 }
 
-// A stand-in for the stream of a body a consumer owns, locked by a reader nothing holds. `consumed`: that
-// consumer already read the body to its end, so the stand-in is closed and disturbed like the real stream.
-// Otherwise the read is still going, and nothing tells the stand-in how it ends: it stays readable.
+// A locked stand-in for a body's stream. `consumed`: the body was read to its end (closed, disturbed), not still being read.
 extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject, bool consumed)
 {
     auto& vm = JSC::getVM(globalObject);

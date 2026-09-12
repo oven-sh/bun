@@ -131,7 +131,8 @@ echo
 
 # See "Behaviour that differs from upstream" in src/react_compiler/DESIGN.md.
 echo "### sites that fix what upstream still gets wrong (keep them) ###"
-git grep -n 'Not in upstream' -- src/react_compiler ':!src/react_compiler/DESIGN.md' || echo "(none)"
+git -C "$repo_root" grep -n 'Not in upstream' -- src/react_compiler ':!src/react_compiler/DESIGN.md' \
+  || echo "(none)"
 echo
 
 echo "When porting is done: echo $new > $ported_file"

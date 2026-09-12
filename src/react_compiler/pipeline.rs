@@ -597,6 +597,12 @@ fn run_hir_passes(
         crate::inference::propagate_scope_dependencies_hir(hir, env)
     );
 
+    // Not in upstream's pass sequence: see the module comment.
+    timed!(
+        "FlattenScopesWithUntrackedPhiInputsHIR",
+        crate::inference::flatten_scopes_with_untracked_phi_inputs_hir(hir, env)
+    );
+
     let mut reactive_fn = timed!(
         "BuildReactiveFunction",
         crate::reactive_scopes::build_reactive_function(hir, env)

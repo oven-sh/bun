@@ -1029,6 +1029,255 @@ describe("bundler", () => {
     },
   });
 
+  // Stub react whose memo cache lives across calls, one cache per component, the
+  // way the cache of a mounted component does. `render` in the entry files below
+  // selects the cache.
+  const stubReactWithPersistentMemoCache = {
+    "/node_modules/react/index.js": `module.exports = {};`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      const caches = new Map();
+      exports.c = size => {
+        const component = globalThis.rendering;
+        if (!caches.has(component)) {
+          caches.set(component, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        }
+        return caches.get(component);
+      };
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+  const renderWithPersistentMemoCache = /* js */ `
+    function render(component, ...args) {
+      globalThis.rendering = component;
+      return component(...args);
+    }
+    const show = value =>
+      value && value.type
+        ? "<" + value.type + ">" + show(value.props.children) + "</" + value.type + ">"
+        : Array.isArray(value)
+          ? "[" + value.map(show) + "]"
+          : String(value);
+  `;
+
+  // A memo scope can reassign, on some paths only, a local that is declared
+  // before it. On the other paths the local keeps the value it had on entry.
+  // That value is not a dependency of the scope, so the scope must not load the
+  // local from the memo cache. Since facebook/react#36732 the counter of a loop
+  // gets a scope that spans the loop, so the loops below need nothing else to
+  // memoize. Each line of output renders one component with a new value on
+  // entry and the dependencies of the scope unchanged, then lets the scope
+  // reassign.
+  itBundled("react-compiler/ScopeDoesNotCacheLocalItCanLeaveUnassigned", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        ${renderWithPersistentMemoCache}
+
+        function TryCatchInLoop(p) {
+          let w = "w0";
+          try {
+            if (p.a) {
+            }
+          } catch (e) {
+            w = <b>{e.message}</b>;
+          }
+          if (p.a > 1) {
+            w = "a>1";
+          }
+          for (let i = 0; i < p.b; i++) {
+            try {
+              w = "loop";
+            } catch (e) {
+              w = e.message;
+            }
+          }
+          return <div>{w}</div>;
+        }
+        function IfInLoop(p) {
+          let w = p.fallback;
+          for (let i = 0; i < p.n; i++) {
+            if (p.on) w = <b>{i}</b>;
+          }
+          return <div>{w}</div>;
+        }
+        function IfInWhileLoop(p) {
+          let w = p.fallback;
+          let i = 0;
+          while (i < p.n) {
+            if (p.on) w = <b>{i}</b>;
+            i++;
+          }
+          return <div>{w}</div>;
+        }
+        function useParameterInLoop(w, n, on) {
+          "use memo";
+          for (let i = 0; i < n; i++) {
+            if (on) w = [i];
+          }
+          return w;
+        }
+        function SelectInForOf(p) {
+          let selected = p.fallback;
+          const rows = [];
+          for (const item of p.items) {
+            if (item.on) selected = item.id;
+            rows.push(<li key={item.id}>{item.id}</li>);
+          }
+          return <ul selected={selected}>{rows}</ul>;
+        }
+        function Switch(p) {
+          let w = p.fallback;
+          const seen = [];
+          switch (p.kind) {
+            case 1:
+              w = "one";
+              seen.push(1);
+              break;
+            case 2:
+              seen.push(2);
+              break;
+          }
+          return <div w={w}>{seen}</div>;
+        }
+        function LabeledBreak(p) {
+          let w = p.fallback;
+          const seen = [];
+          done: {
+            if (p.skip) {
+              seen.push(0);
+              break done;
+            }
+            w = "assigned";
+            seen.push(1);
+          }
+          return <div w={w}>{seen}</div>;
+        }
+        function LogicalAnd(p) {
+          let w = p.fallback;
+          const seen = [];
+          p.on && ((w = "on"), seen.push(1));
+          return <div w={w}>{seen}</div>;
+        }
+        function TryCatch(p) {
+          let w = p.fallback;
+          const seen = [];
+          try {
+            seen.push(p.read());
+            w = "read";
+          } catch (e) {
+            seen.push(0);
+          }
+          return <div w={w}>{seen}</div>;
+        }
+
+        const line = (component, pick, ...calls) =>
+          console.log(component.name + ": " + calls.map(args => show(pick(render(component, ...args)))).join(" "));
+        const children = element => element.props.children;
+        const w = element => element.props.w;
+
+        line(TryCatchInLoop, children, [{ a: 2, b: 0 }], [{ a: 0, b: 0 }], [{ a: 0, b: 1 }], [{ a: 2, b: 0 }]);
+        for (const Loop of [IfInLoop, IfInWhileLoop]) {
+          line(
+            Loop,
+            children,
+            [{ fallback: "f1", n: 0, on: true }],
+            [{ fallback: "f2", n: 0, on: true }],
+            [{ fallback: "f3", n: 2, on: true }],
+            [{ fallback: "f4", n: 2, on: false }],
+            [{ fallback: "f5", n: 2, on: false }],
+          );
+        }
+        line(useParameterInLoop, x => x, ["f1", 0, true], ["f2", 0, true], ["f3", 2, true], ["f4", 2, false], ["f5", 2, false]);
+        const none = [{ id: 1, on: false }];
+        line(
+          SelectInForOf,
+          element => element.props.selected,
+          [{ fallback: "f1", items: none }],
+          [{ fallback: "f2", items: none }],
+          [{ fallback: "f3", items: [{ id: 1, on: true }] }],
+        );
+        line(Switch, w, [{ fallback: "f1", kind: 2 }], [{ fallback: "f2", kind: 2 }], [{ fallback: "f3", kind: 1 }]);
+        line(LabeledBreak, w, [{ fallback: "f1", skip: true }], [{ fallback: "f2", skip: true }], [{ fallback: "f3", skip: false }]);
+        line(LogicalAnd, w, [{ fallback: "f1", on: false }], [{ fallback: "f2", on: false }], [{ fallback: "f3", on: true }]);
+        const fail = () => {
+          throw new Error("fail");
+        };
+        line(TryCatch, w, [{ fallback: "f1", read: fail }], [{ fallback: "f2", read: fail }], [{ fallback: "f3", read: () => 1 }]);
+      `,
+      ...stubReactWithPersistentMemoCache,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        TryCatchInLoop: a>1 w0 loop a>1
+        IfInLoop: f1 f2 <b>1</b> f4 f5
+        IfInWhileLoop: f1 f2 <b>1</b> f4 f5
+        useParameterInLoop: f1 f2 [1] f4 f5
+        SelectInForOf: f1 f2 1
+        Switch: f1 f2 one
+        LabeledBreak: f1 f2 assigned
+        LogicalAnd: f1 f2 on
+        TryCatch: f1 f2 read
+      `,
+    },
+  });
+
+  // The counterpart of the test above: these scopes stay memoized. In the first
+  // the value on entry is the same on every render. The second reads the local,
+  // so the value on entry is a dependency. Each renders twice with the same
+  // props and must return the element of the first render.
+  itBundled("react-compiler/ScopeThatTracksTheValueOnEntryStaysMemoized", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        ${renderWithPersistentMemoCache}
+
+        function ConstantOnEntry(p) {
+          let w = "w0";
+          for (let i = 0; i < p.n; i++) {
+            if (p.on) w = <b>{i}</b>;
+          }
+          return <div>{w}</div>;
+        }
+        function ReadsValueOnEntry(p) {
+          let w = p.fallback;
+          const seen = [];
+          if (p.on) {
+            seen.push(w);
+            w = "on";
+          }
+          return <div w={w}>{seen}</div>;
+        }
+
+        const loop = [{ n: 0, on: true }, { n: 2, on: true }, { n: 2, on: true }, { n: 2, on: false }].map(p =>
+          render(ConstantOnEntry, p),
+        );
+        console.log("ConstantOnEntry: " + loop.map(element => show(element.props.children)).join(" "));
+        console.log("ConstantOnEntry memoized: " + (loop[1] === loop[2]));
+
+        const read = [{ fallback: "f1", on: false }, { fallback: "f2", on: false }, { fallback: "f2", on: false }].map(p =>
+          render(ReadsValueOnEntry, p),
+        );
+        console.log("ReadsValueOnEntry: " + read.map(element => show(element.props.w)).join(" "));
+        console.log("ReadsValueOnEntry memoized: " + (read[1] === read[2]));
+      `,
+      ...stubReactWithPersistentMemoCache,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        ConstantOnEntry: w0 <b>1</b> <b>1</b> w0
+        ConstantOnEntry memoized: true
+        ReadsValueOnEntry: f1 f2 f2
+        ReadsValueOnEntry memoized: true
+      `,
+    },
+  });
+
   // `import()` lowers as a CallExpression whose callee carries the original
   // `EImport` (with `import_record_index`) as a BunOpaque LoadGlobal; codegen
   // reconstructs `E::Import` so the bundler's chunk linkage is preserved.

@@ -58,6 +58,14 @@ rewritten) or an **AST-boundary port** (re-typed onto `bun_ast`).
 `validate_source_locations.rs` and `fixture_utils.rs` are upstream test/debug
 helpers — **not ported**.
 
+One pass has **no upstream file**:
+`inference/flatten_scopes_with_untracked_phi_inputs_hir.rs`. Upstream memoizes a
+scope that can leave a reassigned outer variable at the value it had on entry,
+and does not track that value. The pass stops the memoization of such a scope;
+its module comment has the details. `pipeline.rs` runs it right after
+`propagate_scope_dependencies_hir`. Remove it when upstream tracks the value
+itself.
+
 ## Porting rules
 
 The port is mechanical: the upstream file's control flow, pass ordering,

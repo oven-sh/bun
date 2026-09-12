@@ -738,6 +738,30 @@ describe("EventEmitter error handling", () => {
 
     expect(handled).toBe(true);
   });
+
+  test("errorMonitor is an unregistered Symbol (node parity)", () => {
+    const registered = Symbol.for("events.errorMonitor");
+    expect({
+      sameAsSymbolFor: EventEmitter.errorMonitor === registered,
+      keyFor: Symbol.keyFor(EventEmitter.errorMonitor),
+      description: EventEmitter.errorMonitor.description,
+    }).toEqual({
+      sameAsSymbolFor: false,
+      keyFor: undefined,
+      description: "events.errorMonitor",
+    });
+
+    const ee = new EventEmitter();
+    let fired = false;
+    ee.on(registered, () => (fired = true));
+    expect(() => ee.emit("error", new Error("boom"))).toThrow("boom");
+    expect(fired).toBe(false);
+
+    const ee2 = new EventEmitter();
+    ee2.on(EventEmitter.errorMonitor, () => {});
+    ee2.on(registered, () => {});
+    expect(ee2.listenerCount(EventEmitter.errorMonitor)).toBe(1);
+  });
 });
 
 describe("EventEmitter captureRejections", () => {

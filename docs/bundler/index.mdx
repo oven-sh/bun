@@ -960,7 +960,7 @@ The `naming` field customizes the names and locations of the generated files. It
 
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
-- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hashN]` sets the minimum to `N` characters, where `N` is 1 to 13. `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash. An `N` above 13 prints 13 characters. An `N` below 8 makes it more likely that two outputs print the same characters.
+- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hashN]` sets the minimum to `N` characters, where `N` is 1 to 13. `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash. An `N` above 13 prints 13 characters. An `N` below 8 makes it more likely that two outputs need the extra characters.
 - `[dir]` - The relative path from the project root to the parent directory of the source file.
 - `[target]` - The target the file is built for: `browser`, `bun`, or `node`.
 
@@ -1598,7 +1598,7 @@ Each artifact also contains the following properties:
 | Property    | Description                                                                                                                                                |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images). |
-| `path`      | Absolute path to the file on disk                                                                                                                          |
+| `path`      | Absolute path to the file on disk when `outdir` is set. Without `outdir`, a relative path such as `./index.js`.                                            |
 | `loader`    | The loader used to interpret the file. See [loaders](/bundler/loaders) for how Bun maps file extensions to built-in loaders.                               |
 | `hash`      | The hash of the file contents. Always defined for assets.                                                                                                  |
 | `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                      |

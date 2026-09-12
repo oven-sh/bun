@@ -829,6 +829,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
+    // Before `--cwd` below: a `--watch` restart re-runs this argv from here.
+    if args.flag(b"--watch") {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if let Ok(cwd) = bun_core::getcwd(&mut buf) {
+            bun_core::set_reload_cwd(cwd);
+        }
+    }
+
     // ── --cwd ────────────────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.

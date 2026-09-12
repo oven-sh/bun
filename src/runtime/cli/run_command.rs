@@ -2663,6 +2663,20 @@ impl RunCommand {
         }
 
         if log_errors {
+            // The resolver records a package.json that fails to load (a
+            // syntax error, an unreadable file) in `ctx.log` and returns a
+            // `DirInfo` without it.
+            //
+            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+            // CLI startup), process-lifetime.
+            let log = unsafe { ctx.log() };
+            let has_log_errors = log.has_errors();
+            if has_log_errors {
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+            }
+
             if let Some((path, loader)) = resolved_to_unrunnable_file {
                 bun_core::pretty_error!(
                     "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
@@ -2691,7 +2705,11 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
-                } else {
+                } else if !(has_log_errors && root_dir.enclosing_package_json.is_none()) {
+                    // With no usable package.json and an error that says
+                    // why, the error is the message. "Script not found"
+                    // would claim the script is absent from a file that
+                    // did not load.
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),

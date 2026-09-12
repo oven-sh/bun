@@ -476,6 +476,17 @@ pub mod api {
                 }
             }
 
+            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            pub(crate) fn server_name_bytes(&self) -> &[u8] {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return b"";
+                }
+                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
+                // for `self`'s lifetime.
+                unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes()
+            }
+
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
@@ -615,7 +626,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, checkServerIdentity, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {
@@ -627,7 +638,7 @@ pub mod codegen {
     );
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
-        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
+        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose, checkServerIdentity });
     pub use js_mysql_connection as JSMySQLConnection;
 
     ::bun_jsc::js_class_module!(

@@ -971,4 +971,75 @@ describe.concurrent("bun update --interactive", () => {
     const ws2Json = await Bun.file(join(dir, "packages/workspace2/package.json")).json();
     expect(ws2Json.dependencies["a-dep"]).toBe("catalog:");
   });
+
+  // Issue #39679: every mouse press and release redrew the whole frame, and
+  // with -r the frame was taller than the terminal, so each redraw scrolled a
+  // copy of the prompt line into scrollback.
+  it("does not redraw the prompt on mouse clicks", async () => {
+    await using dir = tempDir("update-interactive-mouse-click", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    });
+
+    await install(dir);
+    // Three SGR mouse clicks (press + release), then Enter with nothing selected.
+    const click = "\x1b[<0;5;5M\x1b[<0;5;5m";
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["--dry-run"],
+      input: click + click + click + "\n",
+    });
+
+    const promptCount = stdout.split("Select packages to update").length - 1;
+    expect(promptCount).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the frame within the terminal height with -r and multiple dependency groups", async () => {
+    const files: Record<string, string> = {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+    };
+    // 20 outdated rows across two dependency groups.
+    for (let i = 0; i < 10; i++) {
+      files[`packages/pkg${i}/package.json`] = JSON.stringify({
+        name: `pkg${i}`,
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        devDependencies: { "a-dep": "1.0.1" },
+      });
+    }
+    await using dir = tempDir("update-interactive-frame-height", files);
+
+    await install(dir);
+    // One wheel-down scroll, then Enter. Without a tty the prompt assumes a
+    // 24-row terminal.
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["-r", "--dry-run"],
+      input: "\x1b[<65;5;5M\n",
+    });
+
+    // The in-place redraw moves the cursor up over the whole frame. It only
+    // stays in place when the frame plus the cursor's resting row fit on
+    // screen, so every cursor-up must stay under the 24-row fallback.
+    const ups = [...stdout.matchAll(/\x1b\[(\d+)A\x1b\[1G/g)].map(m => Number(m[1]));
+    expect(ups.length).toBeGreaterThan(0);
+    for (const n of ups) {
+      expect(n).toBeLessThan(24);
+    }
+
+    // The 20 rows do not fit in the viewport, so the wheel event scrolls.
+    expect(stdout).toContain("more package above");
+    expect(exitCode).toBe(0);
+  });
 });

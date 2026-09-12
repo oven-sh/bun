@@ -1223,3 +1223,12 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+describe("construct", () => {
+  test("new on a plain mock returns an instance of the mock", () => {
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(instance instanceof fn).toBe(true);
+    expect(fn.prototype.constructor).toBe(fn);
+  });
+});

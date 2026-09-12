@@ -2030,6 +2030,134 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // The compiler lowers `a[k] += v` and `a[k]++` to a load and a store that
+  // both read the object and the key, and codegen prints an unnamed temporary
+  // at every site that reads it: `a[i++] += 10` came out as
+  // `a[i++] = a[i++] + 10`. An object or key that does more than read (`i++`,
+  // a call) now leaves the function uncompiled. One that only reads is still
+  // printed at both sites. `client` mode is target=browser, `ssr` mode is
+  // target=bun. `minifySyntax` joins the statements with commas first.
+  for (const target of ["browser", "bun"] as const) {
+    for (const minifySyntax of [false, true]) {
+      itBundled(`react-compiler/MemberUpdateEvaluatesObjectAndKeyOnce-${target}-syntax=${minifySyntax}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            const log = [];
+            let n = 0;
+            const next = () => (log.push("next"), n++);
+            const key = k => (log.push("key:" + k), k);
+            const store = { b: { n: 1 } };
+            const get = k => (log.push("get:" + k), store[k]);
+            const wrap = (...xs) => xs;
+            const Stub = () => null;
+
+            function Body({ arr, start }) {
+              let i = start;
+              const a = [...arr];
+              let b = [...arr];
+              const box = { list: [...arr] };
+              a[i++] += 10;
+              a[next()]++;
+              --a[next()];
+              b[i++] *= 2;
+              box.list[next()] -= 1;
+              a[(log.push("seq"), 3)] **= 2;
+              get("b")[key("n")] *= 2;
+              get("b").n += 5;
+              get("b").n++;
+              return <div>{[a.join(), b.join(), box.list.join(), i, store.b.n].join("|")}</div>;
+            }
+
+            function Handler({ arr }) {
+              const onEvent = () => {
+                const a = [...arr];
+                let b = [...arr];
+                a[next()] += 10;
+                a[next()]++;
+                b[next()] -= 1;
+                get("b")[key("n")] *= 2;
+                get("b").n += 5;
+                --get("b").n;
+                const doubled = (a[key(0)] *= 2);
+                const bump = x => (a[key(x)] += 100);
+                const pre = () => {
+                  return ++a[key(2)];
+                };
+                return [a.join(), b.join(), store.b.n, doubled, bump(1), pre()].join("|");
+              };
+              return <Stub run={onEvent} />;
+            }
+
+            function InCallArgument({ arr }) {
+              const a = [...arr];
+              const r = wrap((a[next()] += 1), next());
+              return <div>{[a.join(), r.join()].join("|")}</div>;
+            }
+
+            function InLoopUpdate({ arr }) {
+              const a = [...arr];
+              for (let j = 0; j < 2; a[next()] += j++) {}
+              return <div>{a.join()}</div>;
+            }
+
+            function Reads({ arr, k }) {
+              const a = [...arr];
+              const o = { v: { w: 2 } };
+              a[k] += 1;
+              a[k + 1]++;
+              a[\`\${k}\`] -= 4;
+              o.v.w *= 7;
+              const r = wrap((a[k] += 1), --o.v.w);
+              return <div>{[a.join(), o.v.w, r.join()].join("|")}</div>;
+            }
+
+            const run = (name, fn) => {
+              n = 0;
+              store.b.n = 1;
+              const value = fn();
+              console.log(name + ": " + value + " [" + log.splice(0).join(" ") + "]");
+            };
+            const arr = [1, 2, 3, 4];
+            run("Body", () => Body({ arr, start: 0 }).props.children);
+            run("Handler", () => Handler({ arr }).props.run());
+            run("InCallArgument", () => InCallArgument({ arr }).props.children);
+            run("InLoopUpdate", () => InLoopUpdate({ arr }).props.children);
+            run("Reads", () => Reads({ arr, k: 0 }).props.children);
+          `,
+          ...jsxCallShapeRuntime,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifySyntax,
+        // What the source prints when nothing compiles it.
+        run: {
+          stdout: `
+            Body: 12,1,3,16|1,4,3,4|1,2,2,4|2|8 [next next next seq get:b key:n get:b get:b]
+            Handler: 22,3,3,4|1,2,2,4|6|22|103|4 [next next next get:b key:n get:b get:b key:0 key:1 key:2]
+            InCallArgument: 2,2,3,4|2,1 [next next]
+            InLoopUpdate: 1,3,3,4 [next next]
+            Reads: -1,3,3,4|13|-1,13 []
+          `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          // Not compiled: the parameter is still the destructuring pattern.
+          expect(out).toContain("function Body({ arr, start })");
+          expect(out).toContain("function Handler({ arr })");
+          expect(out).toContain("function InCallArgument({ arr })");
+          expect(out).toContain("function InLoopUpdate({ arr })");
+          // Compiled: the props object became the parameter `t0`, and the
+          // reads are printed at both sites, as upstream prints them.
+          expect(out).toContain("function Reads(t0)");
+          expect(out).toContain("a[k] = a[k] + 1");
+          expect(out).toContain("a[k + 1] = a[k + 1] + 1");
+          expect(out).toContain("o.v.w = o.v.w * 7");
+        },
+      });
+    }
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

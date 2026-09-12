@@ -365,6 +365,21 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
 
+// Unlike Node, TLS parts over 1 KiB (CA bundles, chains) go into the pool name as a digest; smaller parts keep Node's exact name.
+const kLargePoolKeyPart = 1024;
+const kPoolKeyDigestCacheSize = 8;
+const poolKeyDigests = new Map();
+function compactPoolKeyPart(value) {
+  const text = "" + value;
+  if (text.length <= kLargePoolKeyPart) return text;
+  let digest = poolKeyDigests.$get(text);
+  if (digest === undefined) {
+    if (poolKeyDigests.$size >= kPoolKeyDigestCacheSize) poolKeyDigests.$delete(poolKeyDigests.$keys().next().value);
+    poolKeyDigests.$set(text, (digest = "sha256:" + Bun.SHA256.hash(text, "base64")));
+  }
+  return digest;
+}
+
 /**
  * Gets a unique name for a set of options.
  */
@@ -396,10 +411,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   } = options;
 
   name += ":";
-  if (ca) name += ca;
+  if (ca) name += compactPoolKeyPart(ca);
 
   name += ":";
-  if (cert) name += cert;
+  if (cert) name += compactPoolKeyPart(cert);
 
   name += ":";
   if (clientCertEngine) name += clientCertEngine;
@@ -408,10 +423,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ciphers) name += ciphers;
 
   name += ":";
-  if (key) name += key;
+  if (key) name += compactPoolKeyPart(key);
 
   name += ":";
-  if (pfx) name += pfx;
+  if (pfx) name += compactPoolKeyPart(pfx);
 
   name += ":";
   if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
@@ -429,7 +444,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (secureProtocol) name += secureProtocol;
 
   name += ":";
-  if (crl) name += crl;
+  if (crl) name += compactPoolKeyPart(crl);
 
   name += ":";
   if (honorCipherOrder !== undefined) name += honorCipherOrder;
@@ -438,7 +453,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ecdhCurve) name += ecdhCurve;
 
   name += ":";
-  if (dhparam) name += dhparam;
+  if (dhparam) name += compactPoolKeyPart(dhparam);
 
   name += ":";
   if (secureOptions !== undefined) name += secureOptions;

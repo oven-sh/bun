@@ -2487,6 +2487,39 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    fn print_jsx<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        if self.indent != 0 {
+            return self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, js_type);
+        }
+
+        let mut rendered: Vec<u8> = Vec::new();
+        let result = self.print_as::<Vec<u8>, { Tag::JSX }, ENABLE_ANSI_COLORS>(
+            &mut rendered,
+            value,
+            js_type,
+        );
+
+        // jest's addExtraLineBreaks: a multi-line top-level value is stored as "\n...\n".
+        let multiline = strings::contains_char(&rendered, b'\n');
+        let mut writer = WrappedWriter::new(writer);
+        if multiline {
+            writer.write_all(b"\n");
+        }
+        writer.write_all(&rendered);
+        if multiline {
+            writer.write_all(b"\n");
+        }
+        if writer.failed {
+            self.failed = true;
+        }
+        result
+    }
+
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
@@ -2566,9 +2599,7 @@ impl<'a> Formatter<'a> {
             }
             Tag::NativeCode => self
                 .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::JSX => {
-                self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
+            Tag::JSX => self.print_jsx::<W, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Event => {
                 self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }

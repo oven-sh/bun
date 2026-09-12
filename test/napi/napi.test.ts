@@ -2133,6 +2133,37 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=1 length=0",
       ]);
     });
+
+    // The two ways a buffer becomes untransferable differ in Node. An external buffer only
+    // carries the mark and stays detachable. worker_threads.markAsUntransferable() also sets a
+    // detach key, which bun represents by pinning the buffer.
+    it("still detaches an external buffer, which is marked untransferable", async () => {
+      const output = await checkSameOutput(
+        "test_detach_arraybuffer",
+        "[tests.create_external_arraybuffer_for_transfer(8), tests.create_external_buffer_for_transfer(8).buffer]",
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+      ]);
+    });
+    it("refuses a buffer that worker_threads.markAsUntransferable() marked", async () => {
+      // Not checkSameOutput: Node aborts here ("v8::FromJust Maybe value is Nothing" inside
+      // napi_detach_arraybuffer, from the detach key's TypeError). Bun reports
+      // napi_detachable_arraybuffer_expected (20) and leaves the buffer attached.
+      const output = (
+        await runOn(
+          bunExe(),
+          "test_detach_arraybuffer",
+          '(() => { const ab = new ArrayBuffer(8); require("node:worker_threads").markAsUntransferable(ab); return [ab]; })()',
+        )
+      )
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim();
+      expect(output).toBe(
+        "napi_detach_arraybuffer=20 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=0 length=8",
+      );
+    });
   });
 
   describe("error handling", () => {

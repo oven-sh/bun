@@ -101,6 +101,8 @@ using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
 
 // worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.
+// These set the tag and nothing else. The worker_threads host function in Worker.cpp also pins an
+// ArrayBuffer; napi's external buffers carry the tag alone and stay detachable.
 void markAsUncloneable(JSC::VM&, JSC::JSObject&);
 void markAsUntransferable(JSC::VM&, JSC::JSObject&);
 

@@ -1023,49 +1023,64 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    if let Some(hset) = stream.take_header_set() {
-        let pairs = hset.pairs();
-        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-        const H3_MESSAGE_ERROR: u64 = 0x10e;
-        let has_status = pairs
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
-        let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
-            if let Some(s) = qs.ls() {
-                // reset() only ends the read side when the peer already
-                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                // request streaming a body into a stream nothing will answer.
-                s.reset(H3_MESSAGE_ERROR);
-                s.stop_sending(H3_MESSAGE_ERROR);
+    let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
+    // `stream->uh` is a list (1xx*, final, trailers): drain, don't pop once.
+    enum Claimed {
+        None,
+        Some,
+        Malformed,
+    }
+    let claim_hsets = |qs: &QuicStream| -> Claimed {
+        let mut out = Claimed::None;
+        while let Some(hset) = stream.take_header_set() {
+            out = Claimed::Some;
+            let pairs = hset.pairs();
+            let has_status = pairs
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|kv| kv[0] == b":status")
+                .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+            // A :status in a request is malformed: node's nghttp3 resets the
+            // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
+            // the request unanswered until the idle timeout.
+            if peer_is_client && has_status.is_some() {
+                /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a
+                /// request carrying :status). Matches lsquic's
+                /// `HEC_MESSAGE_ERROR` (lsquic_hq.h:82); 0x105 is
+                /// H3_FRAME_UNEXPECTED, a different code.
+                const H3_MESSAGE_ERROR: u64 = 0x10e;
+                if let Some(s) = qs.ls() {
+                    // reset() only ends the read side when the peer already
+                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                    // request streaming a body into a stream nothing will answer.
+                    s.reset(H3_MESSAGE_ERROR);
+                    s.stop_sending(H3_MESSAGE_ERROR);
+                }
+                qs.mark_reset(H3_MESSAGE_ERROR);
+                return Claimed::Malformed;
             }
-            qs.mark_reset(H3_MESSAGE_ERROR);
-            return;
+            // 1xx interim responses are HINTS (RFC 9114 §4.1).
+            let is_interim = has_status.unwrap_or(false);
+            let kind = if is_interim {
+                QUIC_STREAM_HEADERS_KIND_HINTS
+            } else if qs.mark_headers_received() {
+                QUIC_STREAM_HEADERS_KIND_INITIAL
+            } else {
+                QUIC_STREAM_HEADERS_KIND_TRAILING
+            };
+            if let Some(session) = qs.session_ref() {
+                session.push_event(SessionEvent::StreamHeaders {
+                    stream: ctx.cast(),
+                    pairs,
+                    kind,
+                });
+            }
         }
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = has_status.unwrap_or(false);
-        let kind = if is_interim {
-            QUIC_STREAM_HEADERS_KIND_HINTS
-        } else if qs.mark_headers_received() {
-            QUIC_STREAM_HEADERS_KIND_INITIAL
-        } else {
-            QUIC_STREAM_HEADERS_KIND_TRAILING
-        };
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamHeaders {
-                stream: ctx.cast(),
-                pairs,
-                kind,
-            });
-        }
+        out
+    };
+    if matches!(claim_hsets(qs), Claimed::Malformed) {
+        return;
     }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
@@ -1093,7 +1108,15 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
                 break;
             }
-            _ => break,
+            _ => {
+                // -1 is EWOULDBLOCK or "header set not claimed": the HQ
+                // filter decodes trailers while draining DATA, so claim and
+                // re-read for the FIN behind them.
+                if matches!(claim_hsets(qs), Claimed::Some) {
+                    continue;
+                }
+                break;
+            }
         }
     }
     if got_any {

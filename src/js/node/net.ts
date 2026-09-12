@@ -1839,10 +1839,7 @@ Object.defineProperty(Socket.prototype, "bufferSize", {
   },
 });
 
-// Node reads the handle while one exists and falls back to the value saved in
-// _destroy: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1043-L1045
-// Writers that bypass the JS write path (the node:http2 frame writer) only
-// update the native counter.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1043-L1045
 Object.defineProperty(Socket.prototype, "_bytesDispatched", {
   get: function () {
     const handle = this._handle;

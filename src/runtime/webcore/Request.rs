@@ -1343,10 +1343,12 @@ impl Request {
                             if !fields.contains(Fields::Method) {
                                 req.method = response_init.method;
                                 fields.insert(Fields::Method);
-                                match Self::init_method_is_unknown(global_this, value) {
-                                    Ok(true) => skip_body_check = true,
-                                    Ok(false) => {}
-                                    Err(e) => bail!(Err(e)),
+                                if req.method == Method::GET {
+                                    match Self::init_method_is_unknown(global_this, value) {
+                                        Ok(true) => skip_body_check = true,
+                                        Ok(false) => {}
+                                        Err(e) => bail!(Err(e)),
+                                    }
                                 }
                             }
                         }

@@ -150,8 +150,7 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST / _RATE.
-/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.h#L109-L111
+/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST and NGHTTP2_DEFAULT_GLITCH_RATE.
 const GLITCH_BURST: u32 = 10_000;
 const GLITCH_RATE: u32 = 330;
 
@@ -1823,8 +1822,7 @@ impl Connection {
         }
         let origin = &payload[2..2 + origin_len];
         let value = &payload[2 + origin_len..];
-        // RFC 7838 4 MUST-ignore rules: on stream 0 the origin must be present; on a request
-        // stream it must be empty (the stream's own origin applies).
+        // RFC 7838 §4: the origin must be present on stream 0 and empty on a request stream.
         if (hdr.stream_id == 0 && origin.is_empty()) || (hdr.stream_id != 0 && !origin.is_empty()) {
             return false;
         }

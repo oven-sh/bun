@@ -33,14 +33,6 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-function tryTransferToNativeReadable(stream, options) {
-  const ptr = stream.$bunNativePtr;
-  if (!ptr || ptr === -1) {
-    return undefined;
-  }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
-}
-
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
@@ -559,7 +551,13 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
   // Node acquires the reader at this point, so a locked stream throws here too.
   if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
 
-  const nativeStream = tryTransferToNativeReadable(readableStream, options);
+  // A native stream that no consumer has started hands over its handle instead.
+  const nativeStream = require("internal/streams/native-readable").tryConstructNativeReadable(readableStream, {
+    highWaterMark,
+    encoding,
+    objectMode,
+    signal,
+  });
 
   return (
     nativeStream ||

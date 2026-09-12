@@ -120,6 +120,19 @@ public:
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
+    // A native handle that no consumer has started or claimed: a taker (node:stream's
+    // NativeReadable) may drive it directly. Once materialized or cancelled, the stream's
+    // controller owns the handle and its queue may hold chunks, so the only way to the data is
+    // a reader. A native sink that attached without a reader (m_lockedWithoutReader) owns it too.
+    bool hasPendingNativeSource() const
+    {
+        if (m_bunMode != BunStreamMode::NativePending || m_state != ReadableStreamState::Readable)
+            return false;
+        if (m_reader || m_lockedWithoutReader)
+            return false;
+        JSC::JSValue handle = nativePtrForJS();
+        return handle && handle.isObject();
+    }
 
 private:
     JSReadableStream(JSC::VM&, JSC::Structure*);

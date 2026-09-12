@@ -3,9 +3,17 @@
 // child_process' stderr/out streams go through less hoops.
 //
 // Normally, Readable.fromWeb will wrap the ReadableStream in JavaScript. In
-// Bun, `fromWeb` is able to check if the stream is backed by a native handle,
-// to which it will take this path.
+// Bun, `fromWeb` takes this path instead when the stream is backed by a native
+// handle that no consumer has started yet.
 const Readable = require("internal/streams/readable");
+// https://github.com/oven-sh/bun/pull/12801
+// https://github.com/oven-sh/bun/issues/9555
+// There may be a ReadableStream.Strong handle to the ReadableStream.
+// We can't update those handles to point to the NativeReadable from JS,
+// so this marks the web stream as no longer usable and hands back its native
+// handle. Returns undefined, and marks nothing, when the stream has no handle
+// or a consumer already started it (getReader(), cancel()): the web stream's
+// controller owns the handle then and its queue may already hold chunks.
 const transferToNativeReadable = $newCppFunction(
   "streams/BunStreamConsumers.cpp",
   "jsFunctionTransferToNativeReadableStream",
@@ -53,12 +61,33 @@ interface NativePtr {
 
 let debugId = 0;
 
+// node:child_process stdio: the stream comes straight from Bun.spawn, nothing has started it.
 function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
-  const bunNativePtr = (readableStream as any).$bunNativePtr;
+  const bunNativePtr = transferToNativeReadable(readableStream);
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
+  return fromNativeHandle(bunNativePtr, options);
+}
 
-  const stream = new Readable(options);
+// Readable.fromWeb: undefined unless the stream still had an unstarted handle to give.
+function tryConstructNativeReadable(readableStream: ReadableStream, options): NativeReadable | undefined {
+  const bunNativePtr = transferToNativeReadable(readableStream);
+  if (bunNativePtr === undefined) return undefined;
+  return fromNativeHandle(bunNativePtr, options);
+}
+
+// The handle is claimed before this runs: `new Readable(options)` reads user
+// getters (highWaterMark, signal.aborted) that could otherwise start the stream
+// between the check and the transfer.
+function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
+  let stream;
+  try {
+    stream = new Readable(options);
+  } catch (error) {
+    // The web stream is spent, so nothing else can release the handle.
+    bunNativePtr?.cancel(error);
+    throw error;
+  }
   stream._read = read;
   stream._destroy = destroy;
 
@@ -84,13 +113,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
     // Only used by node:tty on Windows
     stream.$start = ensureConstructed;
   }
-
-  // https://github.com/oven-sh/bun/pull/12801
-  // https://github.com/oven-sh/bun/issues/9555
-  // There may be a ReadableStream.Strong handle to the ReadableStream.
-  // We can't update those handles to point to the NativeReadable from JS
-  // So we instead mark it as no longer usable, and create a new NativeReadable
-  transferToNativeReadable(readableStream);
 
   $debug(`[${stream.debugId}] constructed!`);
 
@@ -277,4 +299,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, tryConstructNativeReadable };

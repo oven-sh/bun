@@ -414,6 +414,10 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->nativeHandleDetached())
         return;
+    // Errored before anything read it (addAbortSignal, ReadableStream__error): no chunk can ever
+    // come out, so a started handle would hold its fd, or stall a child on a full pipe, for nothing.
+    if (stream->m_state != ReadableStreamState::Readable)
+        return;
     JSObject* handle = stream->m_nativePtr.get().getObject();
     if (!handle)
         return;

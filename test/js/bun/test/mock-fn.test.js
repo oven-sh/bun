@@ -1130,8 +1130,11 @@ describe("spyOn", () => {
         expect(Object.getOwnPropertyDescriptor(target, key)).toMatchObject({ writable: true, configurable: false });
         const original = target[key];
         const spy = spyOn(target, key);
-        expect(target[key]).toBe(spy);
-        spy.mockRestore();
+        try {
+          expect(target[key]).toBe(spy);
+        } finally {
+          spy.mockRestore();
+        }
         expect(target[key]).toBe(original);
       }
     });

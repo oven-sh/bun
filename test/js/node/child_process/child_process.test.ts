@@ -812,6 +812,43 @@ it("should call close and exit before process exits", async () => {
   expect(await proc.exited).toBe(0);
 });
 
+it("emits 'disconnect' before 'exit' when the child has an IPC channel", async () => {
+  using dir = tempDir("child-process-ipc-order", {
+    "parent.js": `
+      const { fork } = require("node:child_process");
+      const path = require("node:path");
+
+      const order = [];
+      const child = fork(path.join(__dirname, "child.js"));
+
+      child.on("message", () => {
+        // The child calls process.exit() right after sending this. Block the
+        // loop so the channel EOF and the process exit are both observed in
+        // the same poll batch, which is the interleaving that raced.
+        Bun.sleepSync(100);
+      });
+      child.on("disconnect", () => order.push("disconnect"));
+      child.on("exit", code => order.push("exit:" + code));
+      // 'close' only fires once both of the above have been emitted.
+      child.on("close", () => console.log(order.join(",")));
+    `,
+    "child.js": `
+      process.send("bye");
+      process.exit(3);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "disconnect,exit:3", stderr: "", exitCode: 0 });
+});
+
 it("it accepts stdio passthrough", async () => {
   const package_dir = tmpdirSync();
 

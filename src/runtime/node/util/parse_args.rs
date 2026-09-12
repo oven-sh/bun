@@ -119,7 +119,7 @@ impl fmt::Display for RawNameFormatter<'_> {
         let raw: &String = &self.raw;
         if let Some(optgroup_idx) = token.optgroup_idx {
             let i = optgroup_idx as usize;
-            raw.substring_with_len(i, i + 1).fmt(f)
+            write!(f, "-{}", raw.substring_with_len(i, i + 1))
         } else {
             match token.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => raw.fmt(f),

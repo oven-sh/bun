@@ -403,6 +403,7 @@ pub enum Tag {
 
     JSX,
     Event,
+    MockFunction,
 }
 
 impl Tag {
@@ -478,6 +479,11 @@ impl Tag {
         // If we check an Object has a method table and it does not
         // it will crash
         if js_type != JSType::Object && value.is_callable() {
+            if js_type == JSType::InternalFunction
+                && expect::mock::JSMockFunction__getName(value).is_string()
+            {
+                return Ok(TagResult { tag: Tag::MockFunction, cell: js_type });
+            }
             if value.is_class(global_this) {
                 return Ok(TagResult { tag: Tag::Class, cell: js_type });
             }
@@ -1383,6 +1389,80 @@ impl<'a> Formatter<'a> {
                             printable,
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                         ));
+                    }
+                }
+                Tag::MockFunction => {
+                    let name = expect::mock::JSMockFunction__getName(value);
+                    let name_slice = name.to_slice(self.global_this)?;
+                    let name_bytes = name_slice.slice();
+                    let show_name = !name_bytes.is_empty() && name_bytes != b"jest.fn()";
+
+                    let calls = expect::mock::JSMockFunction__getCalls(self.global_this, value)?;
+                    let has_calls =
+                        calls.js_type().is_array() && calls.get_length(self.global_this)? > 0;
+
+                    if has_calls && self.indent == 0 {
+                        writer.write_all(b"\n");
+                    }
+
+                    writer.write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>").as_bytes());
+                    if show_name {
+                        self.add_for_new_line(b"[MockFunction ]".len() + name_bytes.len());
+                        writer.write_all(b"[MockFunction ");
+                        writer.write_all(name_bytes);
+                        writer.write_all(b"]");
+                    } else {
+                        self.add_for_new_line(b"[MockFunction]".len());
+                        writer.write_all(b"[MockFunction]");
+                    }
+                    writer.write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes());
+
+                    if has_calls {
+                        let results =
+                            expect::mock::JSMockFunction__getReturns(self.global_this, value)?;
+
+                        let prev_quote_strings = self.quote_strings;
+                        self.quote_strings = true;
+                        writer.write_all(b" {\n");
+                        self.indent += 1;
+
+                        let inner: JsResult<()> = (|| {
+                            self.reset_line();
+                            let _ = self.write_indent(writer.ctx);
+                            writer.write_all(b"\"calls\": ");
+                            self.add_for_new_line(b"\"calls\": ".len());
+                            let tag = Tag::get(calls, self.global_this)?;
+                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                tag, writer.ctx, calls, self.global_this,
+                            )?;
+                            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                .expect("unreachable");
+                            writer.write_all(b"\n");
+
+                            self.reset_line();
+                            let _ = self.write_indent(writer.ctx);
+                            writer.write_all(b"\"results\": ");
+                            self.add_for_new_line(b"\"results\": ".len());
+                            let tag = Tag::get(results, self.global_this)?;
+                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                tag, writer.ctx, results, self.global_this,
+                            )?;
+                            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                .expect("unreachable");
+                            writer.write_all(b"\n");
+                            Ok(())
+                        })();
+
+                        self.indent = self.indent.saturating_sub(1);
+                        self.quote_strings = prev_quote_strings;
+                        inner?;
+
+                        let _ = self.write_indent(writer.ctx);
+                        writer.write_all(b"}");
+                        if self.indent == 0 {
+                            writer.write_all(b"\n");
+                        }
+                        self.reset_line();
                     }
                 }
                 Tag::Array => {
@@ -2531,6 +2611,10 @@ impl<'a> Formatter<'a> {
             }
             Tag::Function => self
                 .print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
+            Tag::MockFunction => self
+                .print_as::<W, { Tag::MockFunction }, ENABLE_ANSI_COLORS>(
+                    writer, value, result.cell,
+                ),
             Tag::Class => {
                 self.print_as::<W, { Tag::Class }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }

@@ -1414,6 +1414,7 @@ pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
 pub use bun_windows_sys::externs::GetProcessTimes;
+pub use bun_windows_sys::externs::GetThreadTimes;
 pub use bun_windows_sys::externs::SetEndOfFile;
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).

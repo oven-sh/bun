@@ -23,14 +23,6 @@
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
-#if OS(WINDOWS)
-#include <uv.h>
-#else
-#include <sys/resource.h>
-#if defined(__APPLE__)
-#include <mach/mach.h>
-#endif
-#endif
 
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -74,6 +66,9 @@
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
+
+// The calling thread's CPU times in microseconds (src/jsc/web_worker.rs). False leaves them alone.
+extern "C" bool WebWorker__currentThreadCpuUsage(double* user, double* system);
 
 namespace WebCore {
 using namespace JSC;
@@ -710,6 +705,19 @@ static void resolveCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, S
     handle->resolve(parentCtx.globalObject(), parentCtx.vm(), buildValue(parentCtx.vm(), parentCtx.globalObject()));
 }
 
+// An answer the parent has already. It settles after the loop has polled, as one from the worker does.
+template<typename BuildValue>
+static JSPromise* resolveCrossVMRequestAfterYield(Zig::GlobalObject* globalObject, WorkerMessagingProxy& proxy, BuildValue&& buildValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = proxy.registerCrossVMRequest(vm, promise);
+    globalObject->scriptExecutionContext()->postTaskAfterYield([reqId, protectedProxy = Ref { proxy }, buildValue = std::forward<BuildValue>(buildValue)](ScriptExecutionContext& context) {
+        resolveCrossVMRequest(protectedProxy.get(), reqId, context, buildValue);
+    });
+    return promise;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -752,6 +760,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
+    // Runs on the worker's event loop, as the CPU profile's start and stop do: a worker busy in JavaScript waits (#42354).
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
@@ -773,42 +782,51 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     return JSValue::encode(promise);
 }
 
+static JSObject* createHeapStatisticsObject(VM& vm, JSGlobalObject* globalObject, const WorkerMessagingProxy::HeapStatistics& statistics)
+{
+    double heapSize = static_cast<double>(statistics.size);
+    double capacity = static_cast<double>(statistics.capacity);
+    JSObject* o = constructEmptyObject(globalObject);
+    auto set = [&](ASCIILiteral k, double v) { o->putDirect(vm, Identifier::fromString(vm, k), jsNumber(v)); };
+    set("total_heap_size"_s, heapSize);
+    set("total_heap_size_executable"_s, heapSize / 2.0);
+    set("total_physical_size"_s, capacity);
+    set("total_available_size"_s, capacity > heapSize ? capacity - heapSize : 0);
+    set("used_heap_size"_s, heapSize);
+    set("heap_size_limit"_s, capacity * 10.0);
+    set("malloced_memory"_s, heapSize);
+    set("peak_malloced_memory"_s, capacity);
+    o->putDirect(vm, Identifier::fromString(vm, "does_zap_garbage"_s), jsBoolean(false));
+    set("number_of_native_contexts"_s, 1);
+    set("number_of_detached_contexts"_s, 0);
+    set("total_global_handles_size"_s, 8192);
+    set("used_global_handles_size"_s, 2208);
+    set("external_memory"_s, static_cast<double>(statistics.extraMemory));
+    set("total_allocated_bytes"_s, heapSize);
+    return o;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
 
+    if (auto statistics = worker.contextProxy().heapStatistics()) {
+        return JSValue::encode(resolveCrossVMRequestAfterYield(globalObject, worker.contextProxy(), [statistics = *statistics](VM& pvm, JSGlobalObject* go) -> JSValue {
+            return createHeapStatisticsObject(pvm, go, statistics);
+        }));
+    }
+
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        auto& wvm = workerCtx.vm();
-        double heapSize = static_cast<double>(wvm.heap.size());
-        double capacity = static_cast<double>(wvm.heap.capacity());
-        double extra = static_cast<double>(wvm.heap.extraMemorySize());
-        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
+        auto statistics = WorkerMessagingProxy::HeapStatistics::measure(workerCtx.vm().heap);
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), statistics](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                JSObject* o = constructEmptyObject(go);
-                auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
-                double avail = capacity > heapSize ? capacity - heapSize : 0;
-                set("total_heap_size"_s, heapSize);
-                set("total_heap_size_executable"_s, heapSize / 2.0);
-                set("total_physical_size"_s, capacity);
-                set("total_available_size"_s, avail);
-                set("used_heap_size"_s, heapSize);
-                set("heap_size_limit"_s, capacity * 10.0);
-                set("malloced_memory"_s, heapSize);
-                set("peak_malloced_memory"_s, capacity);
-                o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
-                set("number_of_native_contexts"_s, 1);
-                set("number_of_detached_contexts"_s, 0);
-                set("total_global_handles_size"_s, 8192);
-                set("used_global_handles_size"_s, 2208);
-                set("external_memory"_s, extra);
-                set("total_allocated_bytes"_s, heapSize);
-                return o;
+                return createHeapStatisticsObject(pvm, go, statistics);
             });
         });
     });
@@ -872,52 +890,36 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
+static JSObject* createCpuUsageObject(VM& vm, JSGlobalObject* globalObject, const WorkerMessagingProxy::CpuUsage& usage)
+{
+    JSObject* o = constructEmptyObject(globalObject);
+    o->putDirect(vm, Identifier::fromString(vm, "user"_s), jsNumber(usage.userMicroseconds));
+    o->putDirect(vm, Identifier::fromString(vm, "system"_s), jsNumber(usage.systemMicroseconds));
+    return o;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
+
+    if (auto usage = worker.contextProxy().cpuUsage()) {
+        return JSValue::encode(resolveCrossVMRequestAfterYield(globalObject, worker.contextProxy(), [usage = *usage](VM& pvm, JSGlobalObject* go) -> JSValue {
+            return createCpuUsageObject(pvm, go, usage);
+        }));
+    }
+
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext&) mutable {
-        double user = 0;
-        double sys = 0;
-#if OS(WINDOWS)
-        uv_rusage_t ru;
-        if (uv_getrusage_thread(&ru) == 0) {
-            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
-        }
-#elif defined(__APPLE__)
-        // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
-        // CPU for every worker. Use mach thread_info for this thread only.
-        mach_port_t machThread = mach_thread_self();
-        thread_basic_info_data_t tinfo;
-        mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
-        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
-            user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
-            sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
-        }
-        mach_port_deallocate(mach_task_self(), machThread);
-#else
-        struct rusage ru;
-        memset(&ru, 0, sizeof(ru));
-#if defined(RUSAGE_THREAD)
-        getrusage(RUSAGE_THREAD, &ru);
-#else
-        getrusage(RUSAGE_SELF, &ru);
-#endif
-        user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-        sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
-#endif
-        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), user, sys](ScriptExecutionContext& parentCtx) {
+        WorkerMessagingProxy::CpuUsage measured;
+        WebWorker__currentThreadCpuUsage(&measured.userMicroseconds, &measured.systemMicroseconds);
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), measured](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                JSObject* o = constructEmptyObject(go);
-                o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
-                o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
-                return o;
+                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage(measured).value_or(measured));
             });
         });
     });

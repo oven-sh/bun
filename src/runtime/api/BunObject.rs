@@ -1032,7 +1032,7 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 // HOST_EXPORT(Bun__gc, c)
 pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect(sync)
+    vm.garbage_collect_from_js(sync)
 }
 
 #[bun_jsc::host_fn]

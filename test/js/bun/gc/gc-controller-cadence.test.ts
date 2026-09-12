@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -260,4 +260,31 @@ describe("idle release lets FTL code age out", () => {
     expect(after, stdout).toBeGreaterThan(before! / 2);
     expect(exitCode).toBe(0);
   });
+});
+
+// A leak test reads the footprint right after Bun.gc(true). The allocator hands freed pages back after a purge delay, on
+// its own thread, so what the collection had just freed was still resident then: 250 MB of dead typed arrays left RSS
+// where it was. MADV_FREE (macOS) and ASAN's allocator do not show in RSS either way.
+test.skipIf(!isLinux || isASAN)("Bun.gc(true) returns what it freed to the OS before it returns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const rss = () => process.memoryUsage.rss() / 1048576;
+        let arrays = [];
+        for (let i = 0; i < 2000; i++) arrays.push(new Uint8Array(128 * 1024).fill(1));
+        const held = rss();
+        arrays = null;
+        Bun.gc(true);
+        console.log(JSON.stringify({ released: held - rss() }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout).released).toBeGreaterThan(200);
+  expect(exitCode).toBe(0);
 });

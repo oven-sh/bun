@@ -549,6 +549,69 @@ test.concurrent("binary lockfile trusted dependency entries require an exact nam
   expect(await exited).toBe(0);
 });
 
+test.concurrent("bun pm trust on a binary lockfile keeps one entry per dependency, in place", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+
+  const deps = ["dep-a", "dep-b"];
+  for (const dep of deps) {
+    await mkdir(join(packageDir, dep), { recursive: true });
+    await writeFile(
+      join(packageDir, dep, "package.json"),
+      JSON.stringify({
+        name: dep,
+        version: "1.0.0",
+        scripts: {
+          postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+        },
+      }),
+    );
+  }
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: Object.fromEntries(deps.map(dep => [dep, `file:./${dep}`])),
+      trustedDependencies: deps,
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const lockfileBefore = await file(join(packageDir, "bun.lockb")).bytes();
+
+  // bun.lockb stores the trusted entries as name hashes only, so `bun pm trust`
+  // treats dep-b as untrusted and adds it again. That must neither add a second
+  // entry for it nor move its entry, so the lockfile is written back unchanged.
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "trust", "dep-b"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockfileBefore);
+});
+
 test.concurrent(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
   async () => {
@@ -2889,6 +2952,92 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+    });
+
+    // Same colliding pair as the test above (truncated hash 0x6c4a82d1), this time
+    // with both names present as packages, so anything that keys trusted
+    // dependencies on the truncated hash keeps only one of them.
+    // https://github.com/oven-sh/bun/issues/36386
+    const collidingPair = ["pkg-xjd", "pkg-ztd"] as const;
+
+    async function writeCollidingPair(packageDir: string) {
+      for (const name of collidingPair) {
+        await mkdir(join(packageDir, name), { recursive: true });
+        await writeFile(
+          join(packageDir, name, "package.json"),
+          JSON.stringify({
+            name,
+            version: "1.0.0",
+            scripts: {
+              postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+            },
+          }),
+        );
+      }
+      return {
+        dependencies: Object.fromEntries(collidingPair.map(name => [name, `file:./${name}`])),
+      };
+    }
+
+    async function postinstallsThatRan(packageDir: string) {
+      const ran = await Promise.all(
+        collidingPair.map(name => exists(join(packageDir, "node_modules", name, "postinstall-ran.txt"))),
+      );
+      return collidingPair.filter((_, i) => ran[i]);
+    }
+
+    async function install(packageDir: string, env: Record<string, string>) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+
+    test("trustedDependencies keeps both names of a truncated-hash collision", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const { dependencies } = await writeCollidingPair(packageDir);
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: [...collidingPair] }),
+      );
+
+      const out = await install(packageDir, env);
+      expect(out).not.toContain("Blocked");
+      expect(await postinstallsThatRan(packageDir)).toEqual([...collidingPair]);
+
+      const lockfile = await file(join(packageDir, "bun.lock")).text();
+      const trustedSection = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/)?.[1] ?? "";
+      expect(trustedSection).toContain(`"${collidingPair[0]}"`);
+      expect(trustedSection).toContain(`"${collidingPair[1]}"`);
+    });
+
+    test("adding a truncated-hash-colliding pair to trustedDependencies runs both postinstalls", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const { dependencies } = await writeCollidingPair(packageDir);
+      await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+      let out = await install(packageDir, env);
+      expect(out).toContain("Blocked 2 postinstalls");
+      expect(await postinstallsThatRan(packageDir)).toEqual([]);
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: [...collidingPair] }),
+      );
+
+      out = await install(packageDir, env);
+      expect(out).not.toContain("Blocked");
+      expect(await postinstallsThatRan(packageDir)).toEqual([...collidingPair]);
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {

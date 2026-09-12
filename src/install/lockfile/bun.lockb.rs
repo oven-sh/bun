@@ -259,7 +259,8 @@ pub(crate) fn save(
         if trusted_dependencies.count() > 0 {
             stream.write_all(&HAS_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
-            write_array::<u32>(&mut stream, trusted_dependencies.keys(), PREFIX_U32)?;
+            let hashes = trusted_dependencies.truncated_hashes();
+            write_array::<u32>(&mut stream, &hashes, PREFIX_U32)?;
         } else {
             stream.write_all(&HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
         }
@@ -578,12 +579,8 @@ pub(crate) fn load(
 
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
-                td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-                // The binary lockfile only stores the truncated hashes, not the
-                // names they were computed from. The empty value is the
-                // "name unknown, hash-only match" sentinel.
                 for &hash in &trusted_dependencies_hashes {
-                    td.put_assume_capacity(hash, Box::<[u8]>::default());
+                    td.insert_legacy_hash(hash)?;
                 }
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.

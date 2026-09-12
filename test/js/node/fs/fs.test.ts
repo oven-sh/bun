@@ -1530,6 +1530,69 @@ it("promises.readdir on a large folder withFileTypes", async () => {
   rmSync(huge, { force: true, recursive: true });
 });
 
+// A path that goes through a regular file fails with ENOTDIR on POSIX (Windows reports ENOENT for it,
+// which the ENOENT tests below cover). Node's stat() treats ENOTDIR like ENOENT for throwIfNoEntry: false;
+// its lstat() does not.
+describe.skipIf(isWindows)("throwIfNoEntry: false with ENOTDIR", () => {
+  const enotdir = expect.objectContaining({ code: "ENOTDIR" });
+  const callback = (fn: (...args: any[]) => void, ...args: unknown[]) => {
+    const { promise, resolve } = Promise.withResolvers<[unknown, unknown]>();
+    fn(...args, (err: unknown, stats: unknown) => resolve([err, stats]));
+    return promise;
+  };
+
+  it("stat reports a file in the middle of the path as no entry", async () => {
+    using dir = tempDir("fs-stat-enotdir", { "file.txt": "not a directory" });
+    const under = join(String(dir), "file.txt", "child");
+    const options = { throwIfNoEntry: false };
+
+    expect(statSync(under, options)).toBeUndefined();
+    expect(statSync(under, { ...options, bigint: true })).toBeUndefined();
+    expect(await promises.stat(under, options)).toBeUndefined();
+    expect(await promises.stat(under, { ...options, bigint: true })).toBeUndefined();
+    expect(await callback(fs.stat, under, options)).toEqual([null, undefined]);
+
+    expect(() => statSync(under)).toThrow(expect.objectContaining({ code: "ENOTDIR", syscall: "stat", path: under }));
+    expect(() => statSync(under, { throwIfNoEntry: true })).toThrow(enotdir);
+    await expect(promises.stat(under)).rejects.toMatchObject({ code: "ENOTDIR", syscall: "stat", path: under });
+    expect(await callback(fs.stat, under)).toEqual([enotdir, undefined]);
+  });
+
+  it("stat reports a file with a trailing slash as no entry", async () => {
+    using dir = tempDir("fs-stat-enotdir", { "file.txt": "not a directory" });
+    const trailingSlash = join(String(dir), "file.txt") + "/";
+
+    expect(statSync(trailingSlash, { throwIfNoEntry: false })).toBeUndefined();
+    expect(await promises.stat(trailingSlash, { throwIfNoEntry: false })).toBeUndefined();
+    expect(() => statSync(trailingSlash)).toThrow(enotdir);
+  });
+
+  it("lstat still throws ENOTDIR", async () => {
+    using dir = tempDir("fs-lstat-enotdir", { "file.txt": "not a directory" });
+    const under = join(String(dir), "file.txt", "child");
+    const trailingSlash = join(String(dir), "file.txt") + "/";
+    const options = { throwIfNoEntry: false };
+
+    expect(() => lstatSync(under, options)).toThrow(
+      expect.objectContaining({ code: "ENOTDIR", syscall: "lstat", path: under }),
+    );
+    expect(() => lstatSync(trailingSlash, options)).toThrow(enotdir);
+    await expect(promises.lstat(under, options)).rejects.toMatchObject({ code: "ENOTDIR", syscall: "lstat" });
+    expect(await callback(fs.lstat, under, options)).toEqual([enotdir, undefined]);
+  });
+
+  it("stat still throws errors other than ENOENT and ENOTDIR", async () => {
+    using dir = tempDir("fs-stat-eloop", {});
+    const loop = join(String(dir), "loop");
+    symlinkSync("loop", loop);
+    const options = { throwIfNoEntry: false };
+
+    expect(() => statSync(loop, options)).toThrow(expect.objectContaining({ code: "ELOOP" }));
+    await expect(promises.stat(loop, options)).rejects.toMatchObject({ code: "ELOOP" });
+    expect(await callback(fs.stat, loop, options)).toEqual([expect.objectContaining({ code: "ELOOP" }), undefined]);
+  });
+});
+
 it("statSync throwIfNoEntry", () => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   expect(statSync(path, { throwIfNoEntry: false })).toBeUndefined();

@@ -552,11 +552,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     contextOptions.notContextified = notContextified;
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
+    auto* targetContext = NodeVMGlobalObject::create(vm, contextOptions, importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {

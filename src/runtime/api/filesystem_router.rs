@@ -120,7 +120,8 @@ impl FileSystemRouter {
         }
         let vm = global_this.bun_vm().as_mut();
 
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        // Backs `root_dir_path` until `path_to_use` copies it below.
+        let mut dir_buf = path::path_buffer_pool::get();
         let mut root_dir_path = Utf8Bytes::Borrowed(vm.top_level_dir());
         let mut origin_str = Utf8Bytes::EMPTY;
         let mut asset_prefix_slice = Utf8Bytes::EMPTY;
@@ -146,20 +147,22 @@ impl FileSystemRouter {
             }
             let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
-                // resolve relative path if needed
-                let path_ = root_dir_path_.slice();
-                if path::Platform::AUTO.is_absolute(path_) {
-                    root_dir_path = root_dir_path_;
-                } else {
-                    let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
-                        path::platform::Auto,
-                    >(
+                // Resolve a relative path, and drop `.` and `..` segments from an
+                // absolute one, the way the resolver spells the directories it
+                // caches.
+                let Some(joined) =
+                    path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                         Fs::FileSystem::instance().top_level_dir,
-                        &mut out_buf,
-                        &parts,
-                    ));
-                }
+                        &mut dir_buf[..],
+                        &[root_dir_path_.slice()],
+                    )
+                else {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected dir to resolve to a path of at most {} bytes",
+                        MAX_PATH_BYTES
+                    )));
+                };
+                root_dir_path = Utf8Bytes::Borrowed(joined);
             }
         } else {
             // dir is not optional
@@ -257,20 +260,16 @@ impl FileSystemRouter {
         })
         .expect("unreachable");
 
+        if router
+            .load_routes(
+                &mut log,
+                &root_dir_info,
+                &mut RouterResolver(&mut vm.transpiler.resolver),
+            )
+            .is_err()
         {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
+            return Err(global_this.throw_value(err_value?));
         }
 
         if let Some(origin) = argument.get(global_this, "origin")? {
@@ -487,20 +486,16 @@ impl FileSystemRouter {
             ..Default::default()
         })
         .expect("unreachable");
+        if router
+            .load_routes(
+                &mut log,
+                &root_dir_info,
+                &mut RouterResolver(&mut vm.transpiler.resolver),
+            )
+            .is_err()
         {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
+            return Err(global_this.throw_value(err_value?));
         }
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.

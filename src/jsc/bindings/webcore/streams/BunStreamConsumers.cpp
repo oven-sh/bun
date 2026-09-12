@@ -1636,29 +1636,28 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     if (sink->m_closed)
         return;
     sink->m_closed = true;
-    if (auto* source = sink->source()) {
-        sink->clearSource();
-        source->close(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    auto* source = sink->source();
+    sink->clearSource();
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
-    auto* capability = sink->capabilityPromise();
-    if (!capability || capability->status() != JSPromise::Status::Pending)
-        return;
-    if (reason.toBoolean(globalObject)) {
-        if (auto* stream = sink->stream()) {
-            stream->m_lockedWithoutReader = false;
-            if (stream->m_state == ReadableStreamState::Readable) {
-                Bun::WebStreams::readableStreamError(globalObject, stream, reason);
-                RETURN_IF_EXCEPTION(scope, );
+    if (auto* capability = sink->capabilityPromise(); capability && capability->status() == JSPromise::Status::Pending) {
+        if (reason.toBoolean(globalObject)) {
+            if (auto* stream = sink->stream()) {
+                stream->m_lockedWithoutReader = false;
+                if (stream->m_state == ReadableStreamState::Readable) {
+                    Bun::WebStreams::readableStreamError(globalObject, stream, reason);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
             }
-        }
-        capability->reject(vm, reason);
-        return;
+            capability->reject(vm, reason);
+        } else
+            capability->fulfill(vm, endResult);
+        RETURN_IF_EXCEPTION(scope, );
     }
-    capability->fulfill(vm, endResult);
+    // The source's close() hook runs after the result is settled, like JSDirectStreamController::onClose.
+    if (source)
+        RELEASE_AND_RETURN(scope, source->close(globalObject, reason));
 }
 
 // pull() runs once here: its promise resolving without close()/end() is the end of the body.

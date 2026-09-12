@@ -2104,10 +2104,7 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         pub(crate) fn print_space_before_identifier(&mut self) {
-            // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
-            // been written". Using `> 0` here would skip the space when exactly one
-            // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
-            if self.writer.written() >= 0
+            if self.writer.written() > 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                     || self.writer.written() == self.prev_reg_exp_end)
             {
@@ -7314,6 +7311,7 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
+    /// Bytes written so far. The printer's position fields use -1 for "none".
     pub(crate) written: i32,
     pub(crate) err: Option<crate::Error>,
     pub(crate) orig_err: Option<crate::Error>,
@@ -7323,7 +7321,7 @@ impl<C: WriterContext> Writer<C> {
     pub fn init(ctx: C) -> Self {
         Self {
             ctx,
-            written: -1,
+            written: 0,
             err: None,
             orig_err: None,
         }
@@ -7676,6 +7674,16 @@ impl WriterContext for BufferWriter {
 
 pub type BufferPrinter = Writer<BufferWriter>;
 
+impl BufferPrinter {
+    /// Clears the buffer, the byte counter, and any error from the previous print.
+    pub fn reset(&mut self) {
+        self.ctx.reset();
+        self.written = 0;
+        self.err = None;
+        self.orig_err = None;
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Format / GenerateSourceMap
 // ───────────────────────────────────────────────────────────────────────────
@@ -8006,7 +8014,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(usize::try_from(printer.writer.written()).expect("int cast"))
 }
 
 pub fn print_json<W: WriterTrait>(
@@ -8045,7 +8053,7 @@ pub fn print_json<W: WriterTrait>(
     printer.writer.get_error()?;
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(usize::try_from(printer.writer.written()).expect("int cast"))
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(

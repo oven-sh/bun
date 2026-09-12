@@ -1132,7 +1132,7 @@ impl AsyncModule {
             unsafe { printer_ptr.as_mut() },
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
-        printer.ctx.reset();
+        printer.reset();
         // The writeback must fire at fn exit,
         // *after* the `printer.ctx.get_written()` reads below. Declare the
         // guard immediately after `printer` so it drops last (locals drop in

@@ -4581,20 +4581,19 @@ describe("a client half-close after the request does not truncate a large respon
   });
 });
 
-// The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
-// request-line like llhttp's s_start state. That leniency must stay behind the
-// node-http flag: Bun.serve still rejects a request that does not begin with the
-// request-line.
+// RFC 9112 2.2: a server SHOULD ignore at least one empty line (CRLF) received
+// prior to the request-line. llhttp's s_start state loops on '\r' and '\n'
+// independently, so a leading bare LF or bare CR is tolerated the same way.
 it.each([
   ["CRLF", "\r\n"],
   ["bare LF", "\n"],
   ["bare CR", "\r"],
-])("Bun.serve rejects a leading %s before the request-line", async (_label, prefix) => {
+])("Bun.serve ignores a leading %s before the request-line", async (_label, prefix) => {
   using server = serve({ port: 0, fetch: () => new Response("ok") });
 
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const socket = connect(server.port, "127.0.0.1", () => {
-    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
   });
   let received = "";
   socket.on("data", chunk => {
@@ -4605,7 +4604,7 @@ it.each([
   const statusLine = (await promise).split("\r\n")[0];
   socket.destroy();
 
-  expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
+  expect(statusLine).toBe("HTTP/1.1 200 OK");
 });
 
 // HTTPServerWritable must stop dequeuing from a JS ReadableStream once uWS reports

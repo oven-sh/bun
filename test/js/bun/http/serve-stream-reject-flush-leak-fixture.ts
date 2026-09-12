@@ -8,12 +8,10 @@
 //   1. Go async first (setImmediate) so RequestContext.toAsync() has already
 //      registered the uWS abort handler and doRenderStream is parked on the
 //      pending pull() promise (onResolveStream/onRejectStream wired up).
-//   2. Bump the sink's highWaterMark so write() buffers instead of draining
-//      straight to res.write() — this keeps isHttpWriteCalled() false so
-//      end() takes the tryEnd() path.
-//   3. Write a chunk large enough that tryEnd() hits socket backpressure on
-//      a non-reading client → pending_flush is created + protected.
-//   4. Throw, rejecting the pull() promise → onRejectStream →
+//   2. Write a chunk large enough that res.write() hits socket backpressure
+//      on a non-reading client, then call flush(true) → pending_flush is
+//      created + protected.
+//   3. Throw, rejecting the pull() promise → onRejectStream →
 //      handleRejectStream() with pending_flush still set.
 //
 // Without the fix, protected Promise count grows by ~1 per iteration.
@@ -39,17 +37,16 @@ const server = Bun.serve({
         type: "direct",
         async pull(controller: any) {
           await new Promise<void>(r => setImmediate(() => r()));
-          controller.start({ highWaterMark: CHUNK.length + 1 });
           controller.write(CHUNK);
-          const p = controller.end();
+          const p = controller.flush(true);
           if (p instanceof Promise && Bun.peek.status(p) === "pending") {
             flushPending++;
           }
           // Tear down the client after handleRejectStream has run. The throw
           // below rejects pull()'s promise; onRejectStream → handleRejectStream
           // fires on the microtask queue, then this setImmediate fires on the
-          // next macrotask. Without it the parked tryEnd() write never drains
-          // (client is paused) and uWS won't close the connection.
+          // next macrotask. Without it the parked write never drains (client
+          // is paused) and uWS won't close the connection.
           setImmediate(() => currentSocket?.destroy());
           throw new Error("boom");
         },
@@ -65,10 +62,10 @@ function protectedPromiseCount() {
 
 function oneRequest(): Promise<void> {
   // Raw TCP client that sends the request line and then never reads, so the
-  // server's first body write (tryEnd of 8 MiB) hits backpressure. Windows'
-  // loopback fast-path will absorb the full 8 MiB into the kernel if the
-  // client is draining, so explicitly pause(); the server side destroys the
-  // socket once handleRejectStream has run.
+  // server's 8 MiB body write hits backpressure. Windows' loopback fast-path
+  // will absorb the full 8 MiB into the kernel if the client is draining, so
+  // explicitly pause(); the server side destroys the socket once
+  // handleRejectStream has run.
   return new Promise(resolve => {
     const socket = connect({ port: server.port, host: "127.0.0.1" }, () => {
       socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
@@ -116,7 +113,7 @@ console.log(
 
 // The test must actually exercise the backpressure → pending_flush path.
 if (flushPending < ITERATIONS / 2) {
-  console.error(`insufficient backpressure: only ${flushPending}/${ITERATIONS} end() calls returned a pending promise`);
+  console.error(`insufficient backpressure: only ${flushPending}/${ITERATIONS} flush(true) calls returned a pending promise`);
   process.exit(2);
 }
 // Before the fix: delta ≈ ITERATIONS (every pending_flush stays protected).

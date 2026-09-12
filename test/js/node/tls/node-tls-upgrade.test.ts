@@ -154,19 +154,20 @@ test("new tls.TLSSocket(socket, { isServer: true, onread }) ignores onread and e
     tlsSocket.on("close", resolve);
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
+  let client: tls.TLSSocket | undefined;
   try {
-    const client = tls.connect({
+    client = tls.connect({
       port: (server.address() as net.AddressInfo).port,
       host: "127.0.0.1",
       ca: certs.cert,
       servername: "localhost",
     });
     client.on("error", reject);
-    client.on("secureConnect", () => client.write("hello"));
+    client.on("secureConnect", () => client!.write("hello"));
     await promise;
     expect(log).toEqual(["data 5"]);
-    client.destroy();
   } finally {
+    client?.destroy();
     server.close();
   }
 });

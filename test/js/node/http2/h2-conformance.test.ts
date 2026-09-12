@@ -1939,6 +1939,8 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
   const UNKNOWN = encodeFrame(0xfa, 0, 0, Buffer.from("12345"));
   const ALTSVC = encodeFrame(0x0a, 0, 0, Buffer.concat([Buffer.from([0, 1]), Buffer.from('xh2=":1"')]));
   const ORIGIN = encodeFrame(0x0c, 0, 0, Buffer.concat([Buffer.from([0, 1]), Buffer.from("x")]));
+  const ORIGIN_ON_STREAM = encodeFrame(0x0c, 0, 1, ORIGIN.subarray(9));
+  const ORIGIN_FLAGGED = encodeFrame(0x0c, 0x10, 0, ORIGIN.subarray(9));
   const PROTOCOL_ERROR_SESSION = { code: "ERR_HTTP2_ERROR", message: "Protocol error" };
   const pingFrame = (id: number) => encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, id));
   const isPingAck = (id: number) => (f: Frame) =>
@@ -1983,11 +1985,16 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
     }
   });
 
-  test("client: PRIORITY and unknown frame types", async () => {
-    const kinds = [PRIORITY, UNKNOWN];
+  test.each([
+    ["PRIORITY and unknown frame types", [PRIORITY, UNKNOWN]],
+    // nghttp2 drops an ORIGIN frame that is on a stream or has one of the upper four flag bits set.
+    ["ORIGIN on a stream and ORIGIN with a reserved flag", [ORIGIN_ON_STREAM, ORIGIN_FLAGGED]],
+  ])("client: %s", async (_, kinds) => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     const sessionError = once(client, "error");
+    const origins: unknown[] = [];
+    client.on("origin", o => origins.push(o));
     try {
       await raw.waitFor(f => f.type === FrameType.SETTINGS);
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
@@ -2001,6 +2008,7 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
       );
       const [err] = await sessionError;
       expect({ code: err.code, message: err.message }).toEqual(PROTOCOL_ERROR_SESSION);
+      expect(origins).toEqual([]);
     } finally {
       client.destroy();
       raw.close();

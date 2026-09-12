@@ -1835,7 +1835,7 @@ impl Connection {
         // §2.1: ORIGIN on a non-zero stream is ignored, and like ALTSVC it is server-to-client
         // only - a server receiving it must ignore it. The whole payload is delivered once; the
         // embedder iterates the (2-byte length, origin) entries and surfaces a single event.
-        if hdr.stream_id != 0 || self.is_server {
+        if hdr.stream_id != 0 || self.is_server || hdr.flags & 0xf0 != 0 {
             return self.note_glitch(sink);
         }
         sink.on_origin(payload);

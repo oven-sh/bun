@@ -1,6 +1,18 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -10,6 +22,13 @@ const { getMachOImageZeroOffset } = crash_handler;
 // deliberate crashes must not upload there or the runner pins them on the
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
@@ -188,6 +207,79 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     expect(stdout).toBe("1\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// JSC::initialize() reserves address space for its heaps and crashes with a
+// RELEASE_ASSERT when a reservation fails. ASAN builds skip: bun does not
+// install its signal handlers under ASAN, and ASAN itself needs terabytes of
+// address space, so it does not start under any `ulimit -v` that matters here.
+describe.if(isPosix && !isASAN)("crash while initializing JavaScriptCore", () => {
+  const outOfAddressSpace = "Bun ran out of virtual address space while initializing JavaScriptCore";
+
+  // Linux only: macOS does not enforce RLIMIT_AS. The limit at which JSC's
+  // reservation is the thing that no longer fits depends on the size of the
+  // binary and on what bun's own allocator reserved before it, so walk the
+  // limit up until a run ends that way. Such a run must end with the error
+  // message, not with a crash report.
+  test.if(isLinux)("under a small ulimit -v, exits with an error instead of a crash report", async () => {
+    const outcomes: string[] = [];
+    for (let limitMiB = 256; limitMiB <= 4096; limitMiB += 64) {
+      await using proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          'ulimit -c 0 && ulimit -v "$1" && exec "$2" -e 1',
+          "sh",
+          String(limitMiB * 1024),
+          bunExe(),
+        ],
+        env: noReportEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode === 0) {
+        outcomes.push(`${limitMiB} MiB: started`);
+        continue;
+      }
+      if (!stderr.includes(outOfAddressSpace)) {
+        const summary = stderr.split("\n").find(line => line.includes("panic") || line.includes("error")) ?? "";
+        outcomes.push(`${limitMiB} MiB: exit ${exitCode} (${proc.signalCode}) ${summary}`);
+        continue;
+      }
+
+      expect(stderr).toContain(`Current limit: ${limitMiB * 1024} KB (ulimit -v)`);
+      expect(stderr).toContain("ulimit -v unlimited");
+      expect(stderr).not.toContain("panic");
+      expect(stderr).not.toContain("Bun has crashed");
+      expect(exitCode).toBe(1);
+      return;
+    }
+    throw new Error(`no limit between 256 MiB and 4 GiB ended with the address space error:\n${outcomes.join("\n")}`);
+  });
+
+  // A crash during initialization that the address space does not explain is
+  // a bug. Its report says where it happened. structureHeapSizeInKB must be a
+  // power of two: 3072 trips a RELEASE_ASSERT in the constructor that reserves
+  // the heap, before the reservation.
+  //
+  // Not on Apple Silicon: a release RELEASE_ASSERT there is `brk #0xbb08`, and
+  // macOS 26 kills the process with SIGKILL on that instruction before any
+  // SIGTRAP handler runs (a plain C program with a SIGTRAP handler dies the
+  // same way), so this crash is not observable by the crash handler at all.
+  test.if(!(isMacOS && isArm64))("a crash that the address space does not explain is reported", async () => {
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"]),
+      env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Crashed while initializing JavaScriptCore");
+    expect(stderr).not.toContain(outOfAddressSpace);
+    expect(exitCode).not.toBe(0);
   });
 });
 
@@ -406,13 +498,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
-
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)

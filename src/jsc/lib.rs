@@ -497,6 +497,7 @@ pub fn initialize(options: InitializeOptions) {
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
+    let _action = bun_crash_handler::scoped_action(bun_crash_handler::Action::InitializeJsc);
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.

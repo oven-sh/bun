@@ -1498,10 +1498,9 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
-                // A Windows uv_write is always async: Pending with an empty
-                // outgoing buffer is not backpressure, so keep the source flowing.
-                // A direct JS caller (no source) awaits the promise to know the
-                // bytes reached the file, so it always gets one.
+                // Pending with an empty outgoing buffer is a Windows uv_write in
+                // flight, not backpressure: a stream source keeps flowing, a
+                // direct caller gets the promise so it can await the bytes.
                 if !self.writer.get().is_backed_up()
                     && !matches!(self.source.get(), streams::SourceHandle::None)
                 {

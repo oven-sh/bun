@@ -492,14 +492,23 @@ fn collect_dependencies(
     for (_block_id, block) in &func.body.blocks {
         // Process phis
         for phi in &block.phis {
+            // TS collects an array and stores `new Set(deps)`, which holds each
+            // object once. `deps` is that set. `deps_len` is the array length,
+            // which TS tests before it builds the set.
             let mut deps: Vec<InferredDependency> = Vec::new();
+            let mut deps_len: usize = 0;
             for (_pred_id, operand) in &phi.operands {
                 if let Some(dep) = temporaries.get(operand.identifier) {
                     match dep {
                         Temporary::Aggregate {
                             dependencies: agg, ..
                         } => {
-                            deps.extend(agg.iter().cloned());
+                            deps_len += agg.len();
+                            for dep in agg {
+                                if !contains_same_dependency(&deps, dep) {
+                                    deps.push(dep.clone());
+                                }
+                            }
                         }
                         Temporary::Local {
                             identifier,
@@ -507,24 +516,32 @@ fn collect_dependencies(
                             context,
                             loc,
                         } => {
-                            deps.push(InferredDependency::Local {
+                            deps_len += 1;
+                            let dep = InferredDependency::Local {
                                 identifier: *identifier,
                                 path: path.clone(),
                                 context: *context,
                                 loc: *loc,
-                            });
+                            };
+                            if !contains_same_dependency(&deps, &dep) {
+                                deps.push(dep);
+                            }
                         }
                         Temporary::Global { binding } => {
-                            deps.push(InferredDependency::Global {
+                            deps_len += 1;
+                            let dep = InferredDependency::Global {
                                 binding: binding.clone(),
-                            });
+                            };
+                            if !contains_same_dependency(&deps, &dep) {
+                                deps.push(dep);
+                            }
                         }
                     }
                 }
             }
-            if deps.is_empty() {
+            if deps_len == 0 {
                 continue;
-            } else if deps.len() == 1 {
+            } else if deps_len == 1 {
                 let dep = &deps[0];
                 match dep {
                     InferredDependency::Local {
@@ -1586,6 +1603,39 @@ fn is_optional_dependency_inferred(
 // =============================================================================
 // Equality check for temporaries
 // =============================================================================
+
+/// True when `a` and `b` are copies of one dependency. TS keeps the
+/// dependencies of a phi in a `Set`, which compares object identity. This port
+/// clones where TS shares an object, so it compares every field. Without this
+/// a phi that another phi reaches along many paths holds one copy per path,
+/// and the list grows exponentially with the depth of the control flow.
+fn is_same_dependency(a: &InferredDependency, b: &InferredDependency) -> bool {
+    match (a, b) {
+        (
+            InferredDependency::Global { binding: ab },
+            InferredDependency::Global { binding: bb },
+        ) => ab.name() == bb.name(),
+        (
+            InferredDependency::Local {
+                identifier: a_id,
+                path: a_path,
+                context: a_context,
+                loc: a_loc,
+            },
+            InferredDependency::Local {
+                identifier: b_id,
+                path: b_path,
+                context: b_context,
+                loc: b_loc,
+            },
+        ) => a_id == b_id && a_context == b_context && a_loc == b_loc && a_path == b_path,
+        _ => false,
+    }
+}
+
+fn contains_same_dependency(deps: &[InferredDependency], dep: &InferredDependency) -> bool {
+    deps.iter().any(|d| is_same_dependency(d, dep))
+}
 
 fn is_equal_temporary(a: &InferredDependency, b: &InferredDependency) -> bool {
     match (a, b) {

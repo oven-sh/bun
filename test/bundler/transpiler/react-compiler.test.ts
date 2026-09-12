@@ -2095,6 +2095,45 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(bound);
 });
 
+// ValidateExhaustiveDependencies gives each phi the dependencies of its
+// operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
+// phi held one copy of a dependency for each path that reaches it. Each `if`
+// below merges `v` twice, which doubled the list: 20 of them took 300 MB, 22
+// took 1 GB and 24 took 4 GB.
+test("react-compiler keeps one copy of each dependency of a phi", async () => {
+  // A debug build takes 7 seconds for 20 and 25 seconds for 22.
+  const statements = isDebug || isASAN ? 20 : 22;
+  using dir = tempDir("react-compiler-phi-dependencies", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "ladder.jsx": `
+      export default function App(p) {
+        let v = "init";
+        ${Array.from({ length: statements }, (_, i) => `if (p.a${i}) { log(${i}); } else if (p.b${i}) { v = "s${i}"; }`).join("\n")}
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  const build = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+  };
+
+  const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);
+  expect(ladder.memoized).toBe(true);
+  // Above the empty build: 300 MB to 1 GB without the fix, under 20 MB with it.
+  expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,

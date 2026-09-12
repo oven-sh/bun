@@ -102,6 +102,10 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// Arena recycled between `Bun.{TOML,YAML,JSON5,JSONC,XML}.parse` calls.
+    /// Owned by the VM state, not a `#[thread_local]`: mimalloc does not destroy
+    /// a heap when its creating thread exits, so a TLS-parked one leaked per Worker.
+    pub(crate) text_format_arena: Cell<Option<bun_alloc::Arena>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -247,6 +251,20 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
     unsafe { &(*state).global_dns_data }
+}
+
+/// This thread's [`RuntimeState::text_format_arena`] slot, or `None` when no
+/// VM state is installed on this thread.
+#[inline]
+pub(crate) fn text_format_arena_slot() -> Option<&'static Cell<Option<bun_alloc::Arena>>> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable until `deinit_runtime_state`, which nulls
+    // `RUNTIME_STATE` before freeing the box. Mutation goes through the `Cell`.
+    Some(unsafe { &(*state).text_format_arena })
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
@@ -409,6 +427,7 @@ unsafe fn init_runtime_state(
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        text_format_arena: Cell::new(None),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

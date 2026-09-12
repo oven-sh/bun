@@ -397,6 +397,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
 
+    /// Offsets of `<` tokens where a type-context `skip_type_script_type_arguments` scan
+    /// failed while speculating (log disabled, so a caller restores the lexer and drops
+    /// the error). The outcome depends only on the offset, so a repeat fails at once.
+    /// Without it, each `<` in `a<T<T<T<...` re-scans the rest of the chain (quadratic,
+    /// found by fuzzing). A hash set, not a sorted `Vec`: a failing chain records its
+    /// offsets innermost first. Empty for plain `a < b`: the expression-level variant
+    /// (stricter closer, retried at most once per precedence level) is not recorded.
+    pub(crate) ts_type_args_backtracks:
+        bun_collections::hashbrown::HashSet<u32, bun_wyhash::BuildHasher>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -9733,6 +9743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
+            ts_type_args_backtracks: Default::default(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

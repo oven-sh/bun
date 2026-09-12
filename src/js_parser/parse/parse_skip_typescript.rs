@@ -1409,6 +1409,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // See `P::ts_type_args_backtracks`. The JSX element variant lexes its `>` differently.
+        let memoize = !IS_INSIDE_JSX_ELEMENT
+            && !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION
+            && self.lexer.is_log_disabled;
+        debug_assert!(self.lexer.start <= u32::MAX as usize);
+        let offset = self.lexer.start as u32;
+        if memoize && self.ts_type_args_backtracks.contains(&offset) {
+            return Err(Error::Backtrack);
+        }
+
+        let result = self.skip_type_script_type_arguments_inner::<
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+        >();
+        match result {
+            // Stack and memory exhaustion are not properties of the offset
+            Ok(_) | Err(Error::StackOverflow | Error::Alloc(_)) => {}
+            Err(_) if memoize => {
+                self.ts_type_args_backtracks.insert(offset);
+            }
+            Err(_) => {}
+        }
+        result
+    }
+
+    fn skip_type_script_type_arguments_inner<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer.expect_less_than::<false>()?;
 
         loop {

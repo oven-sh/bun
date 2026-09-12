@@ -2853,9 +2853,8 @@ config:
       expect(YAML.stringify(obj, null, 2)).toBe(expected);
     });
 
-    // `- ` is two columns wide whatever `space` is. A collection that starts on the dash line has its
-    // first entry two columns after the dash, so its later entries go there too. Only a mapping value
-    // is indented by `space`.
+    // `- ` is two columns wide whatever `space` is, so the entries of a collection that starts on the
+    // dash line are two columns after the dash. Only a mapping value is indented by `space`.
     describe("collections nested in a sequence item, at every indent width", () => {
       // These tests are about indentation, so each line is compared without its trailing whitespace.
       const lines = (value: unknown, space: number | string) =>

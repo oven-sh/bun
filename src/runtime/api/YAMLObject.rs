@@ -74,12 +74,11 @@ enum Space {
 enum IndentStep {
     /// One unit of the `space` argument.
     MappingValue,
-    /// `SEQUENCE_ITEM_INDENT`, whatever `space` is. A collection that starts on the dash
-    /// line has its first entry there, and the rest must line up with it.
+    /// `SEQUENCE_ITEM_INDENT`, whatever `space` is.
     SequenceItem,
 }
 
-/// As wide as the `- ` that starts a sequence item.
+/// As wide as `- `: a collection that starts on the dash line keeps its entries aligned.
 const SEQUENCE_ITEM_INDENT: &[u8] = b"  ";
 
 impl Space {

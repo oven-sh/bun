@@ -5814,9 +5814,6 @@ impl VirtualMachine {
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
             f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")
         }
-        fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
-        }
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -5833,7 +5830,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                if frame.is_unknown_source() && is_noisy_builtin(&frame.function_name) {
                     start_index = Some(0);
                     break;
                 }
@@ -5845,9 +5842,7 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_unknown_source(&frame.source_url)
-                        && is_noisy_builtin(&frame.function_name)
-                    {
+                    if frame.is_unknown_source() && is_noisy_builtin(&frame.function_name) {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`
@@ -5870,14 +5865,7 @@ impl VirtualMachine {
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
             for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.starts_with_ascii(b"bun:")
-                    || frame.source_url.starts_with_ascii(b"node:")
-                    || frame.source_url.is_empty()
-                    || frame.source_url.eq_ascii(b"native")
-                    || frame.source_url.eq_ascii(b"unknown")
-                    || frame.source_url.eq_ascii(b"[unknown]")
-                    || frame.source_url.starts_with_ascii(b"[source:")
-                {
+                if !frame.has_user_source() {
                     top_frame_is_builtin = true;
                     continue;
                 }
@@ -5892,6 +5880,9 @@ impl VirtualMachine {
         if frames[top].source_url.eq_ascii(b"[repl]") {
             enable_source_code_preview.set(false);
         }
+
+        // True only when no frame is the user's; `frames[top]`'s JSC source is then builtin or bundled text.
+        let top_frame_is_builtin_code = self.hide_bun_stackframes && frames[top].is_builtin_code();
 
         let already_remapped = frames[top].remapped;
         let resolved = {
@@ -5977,8 +5968,11 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
+            if enable_source_code_preview.get()
+                && !top_frame_is_builtin_code
+                && code.slice().is_empty()
+            {
+                exception.collect_source_lines(error_instance, global, top as u8);
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -6021,8 +6015,9 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+        } else if enable_source_code_preview.get() && !top_frame_is_builtin_code {
+            // No source map (node:vm script, eval, new Function): excerpt `frames[top]`'s JSC source.
+            exception.collect_source_lines(error_instance, global, top as u8);
         }
 
         if frames.len() > 1 {
@@ -6362,10 +6357,7 @@ impl VirtualMachine {
                 let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
                 if self.hide_bun_stackframes {
                     for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.starts_with_ascii(b"bun:")
-                            || frame.source_url.starts_with_ascii(b"node:")
-                        {
+                        if frame.position.is_invalid() || !frame.has_user_source() {
                             continue;
                         }
                         top_frame = Some(frame);
@@ -6793,29 +6785,27 @@ impl VirtualMachine {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
-        let top_frame = frames.first();
+        // GitHub only places the annotation on a file in the checkout.
+        let location_frame = frames
+            .iter()
+            .find(|frame| frame.has_user_source() && !frame.position.is_invalid());
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();
 
-        let mut has_location = false;
-        if let Some(frame) = top_frame {
-            if !frame.position.is_invalid() {
-                let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
-                let _ = write!(
-                    writer,
-                    "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
-                    frame.position.line.one_based(),
-                    frame.position.column.one_based(),
-                );
-                has_location = true;
-            }
-        }
-        if !has_location {
+        if let Some(frame) = location_frame {
+            let source_url = frame.source_url.to_utf8();
+            let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+            let _ = write!(
+                writer,
+                "\n::error file={},line={},col={},title=",
+                bun_core::fmt::github_action_property(file),
+                frame.position.line.one_based(),
+                frame.position.column.one_based(),
+            );
+        } else {
             let _ = writer.write_all(b"\n::error title=");
         }
 
@@ -6859,7 +6849,7 @@ impl VirtualMachine {
             let _ = writer.write_all(b"::");
         }
 
-        if top_frame.is_some() {
+        if !frames.is_empty() {
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get();
             let origin = if vm.is_from_devserver {

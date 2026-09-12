@@ -23,9 +23,15 @@ pub struct ZigStackFrame {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
+    /// A JSC builtin or one of bun's bundled modules; false for frames parsed out of `error.stack`.
+    pub is_builtin: bool,
+
     /// -1 means not set.
     pub jsc_stack_frame_index: i32,
 }
+
+// Mirrors `ZigStackFrame` in headers-handwritten.h.
+bun_core::assert_ffi_layout!(ZigStackFrame, 72, 8);
 
 impl ZigStackFrame {
     pub(crate) fn snapshot(
@@ -58,8 +64,33 @@ impl ZigStackFrame {
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
+        is_builtin: false,
         jsc_stack_frame_index: -1,
     };
+
+    /// `is_builtin`, or a bundled module's URL for a frame parsed out of `error.stack`.
+    pub(crate) fn is_builtin_code(&self) -> bool {
+        let url = &self.source_url;
+        self.is_builtin
+            || url.starts_with_ascii(b"bun:")
+            || url.starts_with_ascii(b"node:")
+            || url.starts_with_ascii(b"internal:")
+    }
+
+    /// Whether JSC could not attribute the frame to a source at all.
+    pub(crate) fn is_unknown_source(&self) -> bool {
+        let url = &self.source_url;
+        url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
+    }
+
+    /// Names a source the user can open; the code frame, caret and GitHub annotation use the first such frame.
+    pub(crate) fn has_user_source(&self) -> bool {
+        let url = &self.source_url;
+        !(self.is_builtin_code()
+            || self.is_unknown_source()
+            || url.eq_ascii(b"native")
+            || url.eq_ascii(b"unknown"))
+    }
 
     /// The frame's source as a report that lists files relative to `dir` (the JUnit
     /// reporter, the GitHub Actions annotation) prints it.

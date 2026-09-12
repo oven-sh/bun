@@ -235,6 +235,8 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    /// A JSC builtin or one of bun's bundled modules; false for frames parsed out of `error.stack`.
+    bool is_builtin;
     int32_t jsc_stack_frame_index;
 
     ZigStackFrame()
@@ -244,10 +246,12 @@ typedef struct ZigStackFrame {
         , code_type {}
         , is_async(false)
         , remapped(false)
+        , is_builtin(false)
         , jsc_stack_frame_index(-1)
     {
     }
 } ZigStackFrame;
+static_assert(sizeof(ZigStackFrame) == 72 && alignof(ZigStackFrame) == 8, "ZigStackFrame layout is mirrored in src/jsc/ZigStackFrame.rs");
 
 typedef struct ZigStackTrace {
     BunString* source_lines_ptr;

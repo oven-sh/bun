@@ -456,3 +456,128 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("code frame of an error thrown inside a bun builtin module", () => {
+  // Frames in bun's bundled modules (`node:*`, `bun:*`, `internal:*`, and the
+  // `src/js/thirdparty` ones that run under a bare name such as `ws`) have no
+  // file to excerpt: the code frame comes from the first user frame below them,
+  // and when there is none, no code frame is printed at all.
+  const codeFrameLines = text => text.split("\n").filter(line => /^\s*(?:\d+|-) \|/.test(line));
+
+  test("points at the caller when a bundled module with a bare name throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { WebSocketServer } = require("ws");
+         try {
+           new WebSocketServer({});
+         } catch (e) {
+           console.log(Bun.inspect(e));
+         }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The throwing frame is in bun's `ws` module; the excerpt and the caret are the caller's.
+    expect(stdout).toContain("at new WebSocketServer (ws:");
+    const frame = codeFrameLines(stdout);
+    expect(frame.at(-1)).toContain("new WebSocketServer({});");
+    const caret = stdout.split("\n")[stdout.split("\n").indexOf(frame.at(-1)) + 1];
+    expect(caret.trim()).toBe("^");
+    expect(caret.indexOf("^")).toBe(frame.at(-1).indexOf("new WebSocketServer"));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("points at the caller when an internal: module throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable } = require("node:stream");
+         try {
+           Readable.from(42);
+         } catch (e) {
+           console.log(Bun.inspect(e));
+         }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The throwing frame is in `internal:streams/from`; the excerpt is the caller's line.
+    expect(stdout).toContain("internal:streams/from");
+    expect(codeFrameLines(stdout).at(-1)).toContain("Readable.from(42)");
+    expect(stdout).toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // `node:worker_threads` builds the value it gives `worker.on("error")` inside
+  // the builtin, from a native event dispatch, so every frame of that error is
+  // in `node:worker_threads`.
+  test("prints no code frame when the worker entry point does not resolve", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker("/does-not-resolve-xyz.mjs");
+         w.on("error", e => console.log(Bun.inspect(e)));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout)).toEqual([]);
+    expect(stdout).toContain("Cannot find module '/does-not-resolve-xyz.mjs'");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("prints no code frame when the worker throws a value that cannot be cloned", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker("throw Symbol('uncloneable')", { eval: true });
+         w.on("error", e => console.log(Bun.inspect(e)));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout)).toEqual([]);
+    expect(stdout).toContain("Symbol(uncloneable)");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The other side of the line: code `eval` compiles when a timer calls it
+  // directly has no source URL and no user frame below it, but it is user code,
+  // so its excerpt (read from JSC, there is no file) stays.
+  test("still excerpts user code that has no source URL and no caller", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("uncaughtException", e => console.log(Bun.inspect(e)));
+         setTimeout(eval, 0, "\\nthrow new Error('from eval, called by a timer')");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout).at(-1)).toContain("throw new Error('from eval, called by a timer')");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

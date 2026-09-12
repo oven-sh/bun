@@ -1508,6 +1508,45 @@ impl NonLocalBinding {
         }
     }
 
+    /// Whether both load the same value. `name()` cannot tell: two symbols can share one.
+    pub fn loads_same_value(&self, other: &Self) -> bool {
+        use bun_ast::E::Special;
+        use bun_ast::ExprData as Data;
+        let (a, b) = match (&self.kind, &other.kind) {
+            (NonLocalKind::BunOpaque(a), NonLocalKind::BunOpaque(b)) => (a, b),
+            (NonLocalKind::BunOpaque(_), _) | (_, NonLocalKind::BunOpaque(_)) => return false,
+            _ => {
+                return match (self.ref_(), other.ref_()) {
+                    (Some(a), Some(b)) => a == b,
+                    // Synthesized by the compiler: the name is all there is.
+                    (None, None) => self.name() == other.name(),
+                    (Some(_), None) | (None, Some(_)) => false,
+                };
+            }
+        };
+        match (a.data, b.data) {
+            // Each `require()` call site has its own import record.
+            (Data::ERequireString(a), Data::ERequireString(b)) => {
+                a.import_record_index == b.import_record_index
+            }
+            (Data::ERequireResolveString(a), Data::ERequireResolveString(b)) => {
+                a.import_record_index == b.import_record_index
+            }
+            (Data::EImportMetaMain(a), Data::EImportMetaMain(b)) => a.inverted == b.inverted,
+            (
+                Data::ESpecial(Special::ResolvedSpecifierString(a)),
+                Data::ESpecial(Special::ResolvedSpecifierString(b)),
+            ) => a == b,
+            (Data::ERequireCallTarget, Data::ERequireCallTarget)
+            | (Data::ERequireResolveCallTarget, Data::ERequireResolveCallTarget)
+            | (Data::ERequireMain, Data::ERequireMain)
+            | (Data::ESpecial(Special::ModuleExports), Data::ESpecial(Special::ModuleExports)) => {
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Returns the original Bun `Ref` this binding came from, or `None` if it
     /// was synthesized during lowering without a source identifier.
     pub fn ref_(&self) -> Option<bun_ast::Ref> {

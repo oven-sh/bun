@@ -628,36 +628,44 @@ impl Execution {
         }
     }
 
+    /// The result this sequence gets when it completes. Pure so the
+    /// `onTestFailed` gate can ask for the outcome before the deferred
+    /// failure modes (assertion counts, failing/todo inversion) are applied
+    /// to `sequence.result` by `on_sequence_completed`.
+    fn resolve_final_result(sequence: &ExecutionSequence) -> Result {
+        let mut result = sequence.result;
+        match sequence.expect_assertions {
+            ExpectAssertions::NotSet => {}
+            ExpectAssertions::AtLeastOne => {
+                if sequence.expect_call_count == 0 && result.is_pass(PendingIs::PendingIsPass) {
+                    result = Result::FailBecauseExpectedHasAssertions;
+                }
+            }
+            ExpectAssertions::Exact(expected) => {
+                if sequence.expect_call_count != expected
+                    && result.is_pass(PendingIs::PendingIsPass)
+                {
+                    result = Result::FailBecauseExpectedAssertionCount;
+                }
+            }
+        }
+        if result == Result::Pending {
+            result = match sequence.entry_mode() {
+                ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
+                ScopeMode::Todo => Result::FailBecauseTodoPassed,
+                _ => Result::Pass,
+            };
+        }
+        result
+    }
+
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
             sequence.started_at.since_now_force_real_time()
         };
-        match sequence.expect_assertions {
-            ExpectAssertions::NotSet => {}
-            ExpectAssertions::AtLeastOne => {
-                if sequence.expect_call_count == 0
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedHasAssertions;
-                }
-            }
-            ExpectAssertions::Exact(expected) => {
-                if sequence.expect_call_count != expected
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedAssertionCount;
-                }
-            }
-        }
-        if sequence.result == Result::Pending {
-            sequence.result = match sequence.entry_mode() {
-                ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
-                ScopeMode::Todo => Result::FailBecauseTodoPassed,
-                _ => Result::Pass,
-            };
-        }
+        sequence.result = Self::resolve_final_result(sequence);
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
@@ -1004,6 +1012,11 @@ fn step_sequence_one(
     Execution::on_entry_started(next_item);
 
     if let Some(cb) = next_item.callback.as_ref() {
+        if next_item.only_on_failure && !Execution::resolve_final_result(sequence).is_fail() {
+            // onTestFailed() callback on a sequence that is not failing: skip it.
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            return Ok(None); // run again
+        }
         group_log::log(format_args!("runSequence queued callback"));
 
         let entry_data = EntryData {

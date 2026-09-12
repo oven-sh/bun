@@ -115,7 +115,7 @@ pub mod js_fns {
     }
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
-    /// (adds `OnTestFinished`).
+    /// (adds `OnTestFinished` and `OnTestFailed`).
     // was a const-generic param (`adt_const_params` is unstable);
     // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
@@ -130,6 +130,8 @@ pub mod js_fns {
         AfterAll,
         #[strum(serialize = "onTestFinished")]
         OnTestFinished,
+        #[strum(serialize = "onTestFailed")]
+        OnTestFailed,
     }
     impl GenericHookTag {
         const fn as_hook_tag(self) -> Option<HookTag> {
@@ -138,8 +140,12 @@ pub mod js_fns {
                 Self::BeforeEach => Some(HookTag::BeforeEach),
                 Self::AfterEach => Some(HookTag::AfterEach),
                 Self::AfterAll => Some(HookTag::AfterAll),
-                Self::OnTestFinished => None,
+                Self::OnTestFinished | Self::OnTestFailed => None,
             }
+        }
+        /// True for the hooks that only register inside a running test.
+        const fn is_test_scoped(self) -> bool {
+            matches!(self, Self::OnTestFinished | Self::OnTestFailed)
         }
         /// Per-variant signature string: the tag name plus `"()"`.
         const fn sig(self) -> &'static [u8] {
@@ -149,6 +155,7 @@ pub mod js_fns {
                 Self::AfterEach => b"afterEach()",
                 Self::AfterAll => b"afterAll()",
                 Self::OnTestFinished => b"onTestFinished()",
+                Self::OnTestFailed => b"onTestFailed()",
             }
         }
     }
@@ -187,11 +194,12 @@ pub mod js_fns {
             let cfg = ExecutionEntryCfg {
                 has_done_parameter,
                 timeout: args.options.timeout,
+                only_on_failure: tag == GenericHookTag::OnTestFailed,
                 ..Default::default()
             };
 
             let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
-                if tag == GenericHookTag::OnTestFinished {
+                if tag.is_test_scoped() {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
                         tag_name
@@ -211,7 +219,7 @@ pub mod js_fns {
 
             match bun_test.phase {
                 Phase::Collection => {
-                    if tag == GenericHookTag::OnTestFinished {
+                    if tag.is_test_scoped() {
                         return Err(global_this.throw(format_args!(
                             "Cannot call {}() outside of a test. It can only be called inside a test.",
                             tag_name
@@ -229,7 +237,7 @@ pub mod js_fns {
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
-                        return Err(if tag == GenericHookTag::OnTestFinished {
+                        return Err(if tag.is_test_scoped() {
                             global_this.throw(format_args!(
                                 "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
                                 tag_name
@@ -266,21 +274,30 @@ pub mod js_fns {
                                 }
                             }
                         }
-                        GenericHookTag::OnTestFinished => 'blk: {
-                            // Find the last entry in the sequence
-                            let Some(mut last_entry) = sequence_ref.active_entry.map(|p| p.as_ptr()) else {
+                        GenericHookTag::OnTestFinished | GenericHookTag::OnTestFailed => 'blk: {
+                            let Some(mut append_point) = sequence_ref.active_entry.map(|p| p.as_ptr()) else {
                                 return Err(global_this.throw(format_args!(
                                     "Cannot call {}() here. Call it inside a test instead.",
                                     tag_name
                                 )));
                             };
+                            // onTestFailed entries append at the tail.
+                            // onTestFinished entries splice before that gated
+                            // tail, whatever the registration order, so every
+                            // finished callback runs (and can still fail the
+                            // test) before the failure gate is evaluated.
+                            let keep_before_gated = tag == GenericHookTag::OnTestFinished;
                             // SAFETY: intrusive linked-list traversal
                             unsafe {
-                                while let Some(next_entry) = (*last_entry).next {
-                                    last_entry = next_entry;
+                                let mut cursor = (*append_point).next;
+                                while let Some(entry) = cursor {
+                                    if !(keep_before_gated && (*entry).only_on_failure) {
+                                        append_point = entry;
+                                    }
+                                    cursor = (*entry).next;
                                 }
                             }
-                            break 'blk last_entry;
+                            break 'blk append_point;
                         }
                         _ => {
                             return Err(global_this.throw(format_args!(
@@ -301,6 +318,10 @@ pub mod js_fns {
                     let new_item_ptr = bun_core::heap::into_raw(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
+                        // A hook entry that fails skips only itself, so the
+                        // remaining onTestFinished/onTestFailed entries still
+                        // run (and the failure gate sees the failed result).
+                        (*new_item_ptr).failure_skip_past = Some(new_item_ptr);
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }
@@ -340,6 +361,7 @@ pub mod js_fns {
         hook!(after_each, AfterEach);
         hook!(after_all, AfterAll);
         hook!(on_test_finished, OnTestFinished);
+        hook!(on_test_failed, OnTestFailed);
     }
 }
 
@@ -1861,6 +1883,8 @@ pub struct ExecutionEntryCfg {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+    /// `onTestFailed()`: run the callback only when the sequence has failed.
+    pub(crate) only_on_failure: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1884,6 +1908,8 @@ pub struct ExecutionEntry {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+    /// `onTestFailed()`: run the callback only when the sequence has failed.
+    pub(crate) only_on_failure: bool,
 
     pub(crate) next: Option<*mut ExecutionEntry>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
@@ -1907,6 +1933,7 @@ impl ExecutionEntry {
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
+            only_on_failure: cfg.only_on_failure,
             timespec: Timespec::EPOCH,
             next: None,
             failure_skip_past: None,

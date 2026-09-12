@@ -100,6 +100,10 @@ declare module "bun:test" {
     function advanceTimersToNextTimer(): typeof vi;
     function runAllTimers(): typeof vi;
     function runOnlyPendingTimers(): typeof vi;
+    function advanceTimersByTimeAsync(milliseconds: number): Promise<typeof vi>;
+    function advanceTimersToNextTimerAsync(): Promise<typeof vi>;
+    function runAllTimersAsync(): Promise<typeof vi>;
+    function runOnlyPendingTimersAsync(): Promise<typeof vi>;
     function getTimerCount(): number;
     function clearAllTimers(): void;
     function isFakeTimers(): boolean;
@@ -165,7 +169,7 @@ declare module "bun:test" {
   /**
    * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
    */
-  export const vi: {
+  export interface VitestUtils {
     /**
      * Create a mock function
      */
@@ -193,10 +197,72 @@ declare module "bun:test" {
     advanceTimersToNextTimer: typeof jest.advanceTimersToNextTimer;
     runAllTimers: typeof jest.runAllTimers;
     runOnlyPendingTimers: typeof jest.runOnlyPendingTimers;
+    advanceTimersByTimeAsync: typeof jest.advanceTimersByTimeAsync;
+    advanceTimersToNextTimerAsync: typeof jest.advanceTimersToNextTimerAsync;
+    runAllTimersAsync: typeof jest.runAllTimersAsync;
+    runOnlyPendingTimersAsync: typeof jest.runOnlyPendingTimersAsync;
     getTimerCount: typeof jest.getTimerCount;
     clearAllTimers: typeof jest.clearAllTimers;
     isFakeTimers: typeof jest.isFakeTimers;
-  };
+    /**
+     * Sets the current system time used by `Date.now()` and `new Date()`.
+     * Call with no argument to restore the real clock.
+     */
+    setSystemTime: typeof setSystemTime;
+    /**
+     * Returns the mocked system time as a `Date`, or `null` when the clock is
+     * not mocked.
+     */
+    getMockedSystemTime(): Date | null;
+    /**
+     * Returns the real system time in milliseconds, even when the clock is
+     * mocked.
+     */
+    getRealSystemTime(): number;
+    /**
+     * Returns `true` if the given value is a mock function created by
+     * `vi.fn()` or `vi.spyOn()`.
+     */
+    isMockFunction(value: unknown): value is Mock<(...args: any[]) => any>;
+    /**
+     * Type helper for mocked functions and modules. At runtime it returns its
+     * argument unchanged.
+     */
+    mocked<T extends (...args: any[]) => any>(
+      item: T,
+      options?: boolean | { partial?: boolean; deep?: boolean },
+    ): Mock<T>;
+    mocked<T>(item: T, options?: boolean | { partial?: boolean; deep?: boolean }): T;
+    /**
+     * Sets an environment variable on `process.env` and remembers the
+     * original value. Pass `undefined` to remove the variable.
+     * Restore with `vi.unstubAllEnvs()`.
+     */
+    stubEnv(name: string, value: string | undefined): VitestUtils;
+    /**
+     * Restores every environment variable changed with `vi.stubEnv()`.
+     */
+    unstubAllEnvs(): VitestUtils;
+    /**
+     * Sets a property on `globalThis` and remembers the original value.
+     * Restore with `vi.unstubAllGlobals()`.
+     */
+    stubGlobal(name: string, value: unknown): VitestUtils;
+    /**
+     * Restores every global changed with `vi.stubGlobal()`.
+     */
+    unstubAllGlobals(): VitestUtils;
+  }
+
+  /**
+   * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
+   */
+  export const vi: VitestUtils;
+
+  /**
+   * Alias of {@link vi}, matching the `vitest` export of the vitest module.
+   */
+  export const vitest: VitestUtils;
 
   interface FunctionLike {
     readonly name: string;
@@ -250,6 +316,10 @@ declare module "bun:test" {
      */
     serial: Describe<T>;
     /**
+     * Alias of {@link Describe.serial}, matching vitest's `describe.sequential`.
+     */
+    sequential: Describe<T>;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -257,6 +327,12 @@ declare module "bun:test" {
      * @param condition if these tests should run
      */
     if(condition: boolean): Describe<T>;
+    /**
+     * Alias of {@link Describe.if}, matching vitest's `describe.runIf`.
+     *
+     * @param condition if these tests should run
+     */
+    runIf(condition: boolean): Describe<T>;
     /**
      * Skips this group of tests, if `condition` is true.
      *
@@ -297,6 +373,15 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export const describe: Describe<[]>;
+  /**
+   * Alias of {@link describe}, matching vitest's `suite` export.
+   */
+  export const suite: Describe<[]>;
+  /**
+   * Accepts a benchmark declaration for vitest compatibility. Bun's test
+   * runner does not execute benchmarks: the callback never runs.
+   */
+  export function bench(label: string, fn: () => void | Promise<unknown>, options?: object): void;
   /**
    * Skips a group of related tests.
    *
@@ -396,6 +481,17 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function onTestFinished(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
+  /**
+   * Runs a function after the test finishes, but only if the test failed.
+   *
+   * Can only be called inside a test, not in `describe` blocks.
+   *
+   * @param fn the function to run
+   */
+  export function onTestFailed(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
@@ -518,6 +614,10 @@ declare module "bun:test" {
      */
     failing: Test<T>;
     /**
+     * Alias of {@link Test.failing}, matching vitest's `test.fails`.
+     */
+    fails: Test<T>;
+    /**
      * Runs the test concurrently with other concurrent tests.
      */
     concurrent: Test<T>;
@@ -527,6 +627,10 @@ declare module "bun:test" {
      */
     serial: Test<T>;
     /**
+     * Alias of {@link Test.serial}, matching vitest's `test.sequential`.
+     */
+    sequential: Test<T>;
+    /**
      * Runs this test, if `condition` is true.
      *
      * This is the opposite of `test.skipIf()`.
@@ -534,6 +638,12 @@ declare module "bun:test" {
      * @param condition if the test should run
      */
     if(condition: boolean): Test<T>;
+    /**
+     * Alias of {@link Test.if}, matching vitest's `test.runIf`.
+     *
+     * @param condition if the test should run
+     */
+    runIf(condition: boolean): Test<T>;
     /**
      * Skips this test, if `condition` is true.
      *

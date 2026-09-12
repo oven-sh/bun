@@ -4,7 +4,7 @@ use bun_threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsResult};
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
@@ -415,8 +415,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
     Ok(frame.this())
 }
 
-#[bun_jsc::host_fn]
-fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn advance_timers_by_time_impl(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<()> {
     error_unless_fake_timers(global)?;
 
     let arg = frame.arguments_as_array::<1>()[0];
@@ -448,6 +447,12 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     CURRENT_TIME.set(global, &target, None);
     advanced?;
 
+    Ok(())
+}
+
+#[bun_jsc::host_fn]
+fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    advance_timers_by_time_impl(global, frame)?;
     Ok(frame.this())
 }
 
@@ -467,6 +472,40 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     FakeTimers::execute_all_timers(global)?;
 
     Ok(frame.this())
+}
+
+// The `*Async` variants run the timers like their sync counterparts, then
+// resolve. Microtasks already flush between fired timers (each timer's
+// event-loop exit drains them); the async variants must keep that flush
+// (vitest semantics, pinned by the chained-timer test in
+// vitest-compat.test.ts), so a future sync-API drain suppression belongs in
+// the four sync host fns above, not in the shared execute paths.
+
+#[bun_jsc::host_fn]
+fn advance_timers_by_time_async(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    advance_timers_by_time_impl(global, frame)?;
+    Ok(JSPromise::resolved_promise_value(global, frame.this()))
+}
+
+#[bun_jsc::host_fn]
+fn advance_timers_to_next_timer_async(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    error_unless_fake_timers(global)?;
+    FakeTimers::execute_next(global)?;
+    Ok(JSPromise::resolved_promise_value(global, frame.this()))
+}
+
+#[bun_jsc::host_fn]
+fn run_only_pending_timers_async(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    error_unless_fake_timers(global)?;
+    FakeTimers::execute_only_pending_timers(global)?;
+    Ok(JSPromise::resolved_promise_value(global, frame.this()))
+}
+
+#[bun_jsc::host_fn]
+fn run_all_timers_async(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    error_unless_fake_timers(global)?;
+    FakeTimers::execute_all_timers(global)?;
+    Ok(JSPromise::resolved_promise_value(global, frame.this()))
 }
 
 #[bun_jsc::host_fn]
@@ -508,6 +547,10 @@ const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("advanceTimersByTime", 1, __jsc_host_advance_timers_by_time),
     ("runOnlyPendingTimers", 0, __jsc_host_run_only_pending_timers),
     ("runAllTimers", 0, __jsc_host_run_all_timers),
+    ("advanceTimersToNextTimerAsync", 0, __jsc_host_advance_timers_to_next_timer_async),
+    ("advanceTimersByTimeAsync", 1, __jsc_host_advance_timers_by_time_async),
+    ("runOnlyPendingTimersAsync", 0, __jsc_host_run_only_pending_timers_async),
+    ("runAllTimersAsync", 0, __jsc_host_run_all_timers_async),
     ("getTimerCount", 0, __jsc_host_get_timer_count),
     ("clearAllTimers", 0, __jsc_host_clear_all_timers),
     ("isFakeTimers", 0, __jsc_host_is_fake_timers),

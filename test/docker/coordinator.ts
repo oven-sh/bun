@@ -17,13 +17,18 @@
  * predicts which services argv's tests need and starts them at launch, so
  * they're healthy by the time the first test asks.
  *
+ * It is also the one place that waits for the docker daemon itself: the agent
+ * can start the shard while dockerd is still coming up, and every request
+ * (prestart or test) blocks on the shared wait below instead of failing on a
+ * one-shot probe.
+ *
  * Lifetime is tied to the runner: stdin is a pipe from it, and EOF means the
  * runner is gone.
  */
 
 import { unlinkSync } from "node:fs";
 import * as net from "node:net";
-import { ensure, type ServiceInfo, type ServiceName } from "./index.ts";
+import { ensure, waitForDockerDaemon, type ServiceInfo, type ServiceName } from "./index.ts";
 import { prestartMap as prestartMapRaw } from "./prestart-map.mjs";
 
 // Keys are paths relative to test/ — that's the shape runner.node.mjs passes
@@ -43,6 +48,30 @@ if (!socketPath) {
 // never proxy to another coordinator whose socket leaked in through the
 // environment.
 delete process.env.BUN_DOCKER_COORDINATOR;
+
+// The shard may start before dockerd has finished coming up (see
+// waitForDockerDaemon); start polling for it right away so the wait overlaps
+// the non-container tests the runner schedules first. The window is well past
+// the latest the daemon has been seen to appear in CI (up by ~7 minutes into
+// the job); once it closes, requests fail immediately, so a host whose daemon
+// never comes up costs the shard one window rather than a full wait per file
+// attempt. The per-request cap is the budget scripts/runner.node.mjs gives the
+// hook that is typically awaiting the request (--timeout = testTimeout / 2 on
+// the release lanes; the ASAN lanes get three times that but run on systemd
+// images, where the daemon has always been up at job start), so a request
+// either gets the daemon or a clear error within the time its caller has
+// anyway, and the 3-minute file budget keeps room for `compose up` and the
+// tests after it. A file whose request hits the cap is retried by the runner,
+// and the retry's request gets a fresh cap against the same shared wait, so a
+// file's four attempts together cover ~6 minutes of daemon lateness from the
+// file's first request (container-backed files are also scheduled late in the
+// shard, see prestart-map.mjs).
+const awaitDockerDaemon = waitForDockerDaemon({
+  windowMs: 10 * 60_000,
+  pollMs: 1_000,
+  log: message => console.log(`coordinator: ${message}`),
+});
+const DAEMON_WAIT_PER_REQUEST_MS = 90_000;
 
 // Collapse concurrent requests for one service onto a single ensureServiceNow(),
 // and remember the last ServiceInfo a successful ensure produced. The full
@@ -97,6 +126,7 @@ async function ensureServiceNow(service: ServiceName): Promise<ServiceInfo> {
 
   console.log(`coordinator: ensuring ${service}`);
   try {
+    await awaitDockerDaemon(DAEMON_WAIT_PER_REQUEST_MS);
     const info = await ensure(service);
     console.log(`coordinator: ${service} ready`);
     lastGood.set(service, info);

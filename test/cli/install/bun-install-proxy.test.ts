@@ -1,43 +1,38 @@
 import { beforeAll, it } from "bun:test";
-import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { promisify } from "util";
-const execAsync = promisify(exec);
-const dockerCLI = dockerExe() as string;
-const SQUID_URL = "http://127.0.0.1:3128";
+import { ensure } from "../../docker/index.ts";
+
+let SQUID_URL: string;
 if (isDockerEnabled()) {
+  // The compose `squid` service is the same ubuntu/squid image this file used
+  // to `docker run` itself on a fixed host port. Going through ensure() means
+  // the shard's coordinator starts it (and waits for the docker daemon if the
+  // job began before it was up) and it gets a free port like every other
+  // test service.
   beforeAll(async () => {
-    async function isSquidRunning() {
-      const text = await fetch(SQUID_URL)
-        .then(res => res.text())
-        .catch(() => {});
-      return text?.includes("squid") ?? false;
+    const squid = await ensure("squid");
+    SQUID_URL = `http://${squid.host}:${squid.ports[3128]}`;
+    // The container counts as healthy once the squid process exists. Like the
+    // isSquidRunning() loop this replaces, wait until it answers HTTP (a plain
+    // GET of the proxy itself gets squid's own error page) before installing
+    // through it.
+    const squidAnswers = async () => {
+      const body = await fetch(SQUID_URL, { signal: AbortSignal.timeout(5_000) }).then(
+        res => res.text(),
+        () => "",
+      );
+      return body.includes("squid");
+    };
+    const deadline = Date.now() + 30_000;
+    while (!(await squidAnswers())) {
+      if (Date.now() > deadline) throw new Error(`squid at ${SQUID_URL} did not answer within 30s`);
+      await Bun.sleep(250);
     }
-    if (!(await isSquidRunning())) {
-      // try to create or error if is already created
-      await execAsync(
-        `${dockerCLI} run -d --name squid-container -e TZ=UTC -p 3128:3128 ubuntu/squid:5.2-22.04_beta`,
-      ).catch(() => {});
-
-      async function waitForSquid(max_wait = 60_000) {
-        const start = Date.now();
-        while (true) {
-          if (await isSquidRunning()) {
-            return;
-          }
-          if (Date.now() - start > max_wait) {
-            throw new Error("Squid did not start in time");
-          }
-
-          await Bun.sleep(1000);
-        }
-      }
-      // wait for squid to start
-      await waitForSquid();
-    }
-  });
+    // Same hook budget as describeWithContainer(): a cold start is a `compose
+    // build` plus `up --wait` with a 180s wait-timeout.
+  }, 240_000);
 
   it("bun install with proxy with big packages", async () => {
     const files = {

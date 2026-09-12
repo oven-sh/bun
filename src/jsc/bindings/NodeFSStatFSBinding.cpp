@@ -22,34 +22,22 @@
 namespace Bun {
 
 class JSStatFSPrototype;
-class JSBigIntStatFSPrototype;
 class JSStatFSConstructor;
-class JSBigIntStatFSConstructor;
 using namespace JSC;
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(callStatFS);
-JSC_DECLARE_HOST_FUNCTION(callBigIntStatFS);
 JSC_DECLARE_HOST_FUNCTION(constructStatFS);
-JSC_DECLARE_HOST_FUNCTION(constructBigIntStatFS);
 
-template<bool isBigInt>
-Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
+// Node has one StatFs class. The number result and the bigint result share it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L705-L722
+static Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
 {
-    if (isBigInt) {
-        return globalObject->m_JSStatFSBigIntClassStructure.getInitializedOnMainThread(globalObject);
-    }
-
     return globalObject->m_JSStatFSClassStructure.getInitializedOnMainThread(globalObject);
 }
 
-template<bool isBigInt>
-JSObject* getStatFSConstructor(Zig::GlobalObject* globalObject)
+static JSObject* getStatFSConstructor(Zig::GlobalObject* globalObject)
 {
-    if (isBigInt) {
-        return globalObject->m_JSStatFSBigIntClassStructure.constructorInitializedOnMainThread(globalObject);
-    }
-
     return globalObject->m_JSStatFSClassStructure.constructorInitializedOnMainThread(globalObject);
 }
 
@@ -90,43 +78,6 @@ private:
     void finishCreation(JSC::VM& vm);
 };
 
-class JSBigIntStatFSPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSBigIntStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSBigIntStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatFSPrototype))) JSBigIntStatFSPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatFSPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-private:
-    JSBigIntStatFSPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm);
-};
-
 class JSStatFSConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -160,74 +111,16 @@ private:
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 0, "StatFs"_s);
+        Base::finishCreation(vm, 8, "StatFs"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     }
 };
 
-class JSBigIntStatFSConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSBigIntStatFSConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
-    {
-        JSBigIntStatFSConstructor* constructor = new (NotNull, JSC::allocateCell<JSBigIntStatFSConstructor>(vm)) JSBigIntStatFSConstructor(vm, structure);
-        constructor->finishCreation(vm, prototype);
-        return constructor;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.internalFunctionSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-private:
-    JSBigIntStatFSConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, callBigIntStatFS, constructBigIntStatFS)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
-    {
-        Base::finishCreation(vm, 0, "BigIntStatFs"_s);
-        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    }
-};
-
-JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto* prototype = JSStatFSPrototype::create(vm, globalObject, JSStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
     auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
 
     // Add property transitions for all statfs fields
-    PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->type, 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bsize"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "frsize"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bfree"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bavail"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "files"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ffree"_s), 0, offset);
-
-    return structure;
-}
-
-JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    auto prototype = JSBigIntStatFSPrototype::create(vm, globalObject, JSBigIntStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
-
-    // Add property transitions for all bigint statfs fields
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->type, 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bsize"_s), 0, offset);
@@ -262,7 +155,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
     JSC::JSValue js_files = JSC::jsNumber(files);
     JSC::JSValue js_ffree = JSC::jsNumber(ffree);
 
-    auto* structure = getStatFSStructure<false>(globalObject);
+    auto* structure = getStatFSStructure(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
     object->putDirectOffset(vm, 0, js_fstype);
@@ -290,7 +183,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* structure = getStatFSStructure<true>(globalObject);
+    auto* structure = getStatFSStructure(globalObject);
     JSC::JSValue js_fstype = JSC::JSBigInt::createFrom(globalObject, fstype);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_bsize = JSC::JSBigInt::createFrom(globalObject, bsize);
@@ -323,57 +216,23 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject
 }
 
 const JSC::ClassInfo JSStatFSPrototype::s_info = { "StatFs"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatFSPrototype) };
-const JSC::ClassInfo JSBigIntStatFSPrototype::s_info = { "BigIntStatFs"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatFSPrototype) };
 const JSC::ClassInfo JSStatFSConstructor::s_info = { "StatFs"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatFSConstructor) };
-const JSC::ClassInfo JSBigIntStatFSConstructor::s_info = { "BigIntStatFs"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatFSConstructor) };
 
-template<bool isBigInt>
-inline JSValue callJSStatFSFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* structure = getStatFSStructure<isBigInt>(defaultGlobalObject(globalObject));
-
-    JSValue type = callFrame->argument(0);
-    JSValue bsize = callFrame->argument(1);
-    JSValue frsize = callFrame->argument(2);
-    JSValue blocks = callFrame->argument(3);
-    JSValue bfree = callFrame->argument(4);
-    JSValue bavail = callFrame->argument(5);
-    JSValue files = callFrame->argument(6);
-    JSValue ffree = callFrame->argument(7);
-
-    auto* object = JSC::JSFinalObject::create(vm, structure);
-
-    object->putDirectOffset(vm, 0, type);
-    object->putDirectOffset(vm, 1, bsize);
-    object->putDirectOffset(vm, 2, frsize);
-    object->putDirectOffset(vm, 3, blocks);
-    object->putDirectOffset(vm, 4, bfree);
-    object->putDirectOffset(vm, 5, bavail);
-    object->putDirectOffset(vm, 6, files);
-    object->putDirectOffset(vm, 7, ffree);
-
-    return object;
-}
-
-template<bool isBigInt>
-inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(constructStatFS, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto* structure = getStatFSStructure<isBigInt>(globalObject);
-    auto* constructor = getStatFSConstructor<isBigInt>(globalObject);
+    auto* structure = getStatFSStructure(globalObject);
+    auto* constructor = getStatFSConstructor(globalObject);
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(lexicalGlobalObject, newTarget));
+        // ShadowRealm functions belong to a different global object.
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStatFSStructure<isBigInt>(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStatFSStructure(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -396,37 +255,15 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
     object->putDirect(vm, Identifier::fromString(vm, "files"_s), files, 0);
     object->putDirect(vm, Identifier::fromString(vm, "ffree"_s), ffree, 0);
 
-    return object;
-}
-
-JSC_DEFINE_HOST_FUNCTION(constructStatFS, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(constructJSStatFSObject<false>(lexicalGlobalObject, callFrame));
-}
-
-JSC_DEFINE_HOST_FUNCTION(constructBigIntStatFS, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(constructJSStatFSObject<true>(lexicalGlobalObject, callFrame));
+    return JSValue::encode(object);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callStatFS, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(callJSStatFSFunction<false>(lexicalGlobalObject, callFrame));
-}
-
-JSC_DEFINE_HOST_FUNCTION(callBigIntStatFS, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(callJSStatFSFunction<true>(lexicalGlobalObject, callFrame));
-}
-
-extern "C" JSC::EncodedJSValue Bun__JSBigIntStatFSObjectConstructor(Zig::GlobalObject* globalobject)
-{
-    return JSValue::encode(globalobject->m_JSStatFSBigIntClassStructure.constructor(globalobject));
-}
-
-extern "C" JSC::EncodedJSValue Bun__JSStatFSObjectConstructor(Zig::GlobalObject* globalobject)
-{
-    return JSValue::encode(globalobject->m_JSStatFSClassStructure.constructor(globalobject));
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwTypeError(lexicalGlobalObject, scope, "Class constructor StatFs cannot be invoked without 'new'"_s);
+    return {};
 }
 
 void JSStatFSPrototype::finishCreation(VM& vm)
@@ -436,28 +273,11 @@ void JSStatFSPrototype::finishCreation(VM& vm)
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
-void JSBigIntStatFSPrototype::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-    Bun::putToStringTagWithoutTransition(vm, this, info());
-}
-
 void initJSStatFSClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSStatFSPrototype::create(init.vm, init.global, JSStatFSPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSStatFSObjectStructure(init.vm, init.global);
+    auto* structure = createJSStatFSObjectStructure(init.vm, init.global, prototype);
     auto* constructor = JSStatFSConstructor::create(init.vm, JSStatFSConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-    init.setPrototype(prototype);
-    init.setStructure(structure);
-    init.setConstructor(constructor);
-}
-
-void initJSBigIntStatFSClassStructure(JSC::LazyClassStructure::Initializer& init)
-{
-    auto* prototype = JSBigIntStatFSPrototype::create(init.vm, init.global, JSBigIntStatFSPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSBigIntStatFSObjectStructure(init.vm, init.global);
-    auto* constructor = JSBigIntStatFSConstructor::create(init.vm, JSBigIntStatFSConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

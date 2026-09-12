@@ -1,6 +1,7 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
 #include <cstdio>
+#include <wtf/NumberOfCores.h>
 
 #if !OS(WINDOWS)
 #include <wtf/WTFConfig.h>
@@ -106,6 +107,156 @@ extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
     return sysinfo.dwNumberOfProcessors;
 #else
     return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+}
+
+#if OS(LINUX)
+#include <sched.h>
+
+static int bun__slurp(const char* path, char* buf, size_t len)
+{
+    int fd;
+    do {
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
+    if (fd < 0)
+        return -1;
+    ssize_t n;
+    do {
+        n = read(fd, buf, len - 1);
+    } while (n == -1 && errno == EINTR);
+    close(fd);
+    if (n < 0)
+        return -1;
+    buf[n] = '\0';
+    return 0;
+}
+
+// cgroup v2: tightest cpu.max on the path from the leaf to the mount root.
+static int bun__cgroup2_constrained_cpu(const char* cgroup_root, const char* buf)
+{
+    char path[4097];
+    char filename[4097];
+    char line[64];
+    long long quota, period;
+    int min_cpus = 0;
+    size_t root_len = strlen(cgroup_root);
+
+    const char* p = buf + 4; /* skip "0::/" */
+    int n = (int)strcspn(p, "\n");
+    snprintf(path, sizeof(path), "%s/%.*s", cgroup_root, n, p);
+
+    while (strncmp(path, cgroup_root, root_len) == 0) {
+        snprintf(filename, sizeof(filename), "%s/cpu.max", path);
+        if (bun__slurp(filename, line, sizeof(line)) == 0
+            && strncmp(line, "max", 3) != 0
+            && sscanf(line, "%lld %lld", &quota, &period) == 2
+            && period > 0 && quota > 0) {
+            int cpus = (int)(quota / period);
+            if (cpus < 1)
+                cpus = 1;
+            if (min_cpus == 0 || cpus < min_cpus)
+                min_cpus = cpus;
+        }
+        if (strcmp(path, cgroup_root) == 0)
+            break;
+        char* slash = strrchr(path, '/');
+        if (slash == NULL)
+            break;
+        *slash = '\0';
+    }
+    return min_cpus;
+}
+
+// cgroup v1: cpu.cfs_{quota,period}_us under the "cpu" (whole-token) controller path.
+static int bun__cgroup1_constrained_cpu(const char* cgroup_root, char* buf)
+{
+    char filename[4097];
+    char line[32];
+    long long quota, period;
+    const char* rel = "";
+    int rel_len = 0;
+
+    for (char* p = buf; p && *p;) {
+        char* ctl = strchr(p, ':');
+        if (!ctl) break;
+        ctl++;
+        char* path = strchr(ctl, ':');
+        if (!path) break;
+        for (char* tok = ctl; tok < path;) {
+            int len = (int)strcspn(tok, ",:");
+            if (len == 3 && strncmp(tok, "cpu", 3) == 0) {
+                path++;
+                if (*path == '/') path++;
+                rel = path;
+                rel_len = (int)strcspn(path, "\n");
+                goto found;
+            }
+            tok += len + 1;
+        }
+        p = strchr(path, '\n');
+        if (p) p++;
+    }
+found:
+    snprintf(filename, sizeof(filename), "%s/cpu/%.*s/cpu.cfs_quota_us", cgroup_root, rel_len, rel);
+    if (bun__slurp(filename, line, sizeof(line)) != 0)
+        return 0;
+    if (sscanf(line, "%lld", &quota) != 1 || quota <= 0)
+        return 0;
+
+    snprintf(filename, sizeof(filename), "%s/cpu/%.*s/cpu.cfs_period_us", cgroup_root, rel_len, rel);
+    if (bun__slurp(filename, line, sizeof(line)) != 0)
+        return 0;
+    if (sscanf(line, "%lld", &period) != 1 || period <= 0)
+        return 0;
+
+    int cpus = (int)(quota / period);
+    return cpus < 1 ? 1 : cpus;
+}
+
+static int bun__cgroup_constrained_cpu(const char* proc_self_cgroup, const char* cgroup_root)
+{
+    char buf[1024];
+    if (bun__slurp(proc_self_cgroup, buf, sizeof(buf)) != 0)
+        return 0;
+    if (strncmp(buf, "0::/", 4) == 0)
+        return bun__cgroup2_constrained_cpu(cgroup_root, buf);
+    return bun__cgroup1_constrained_cpu(cgroup_root, buf);
+}
+#endif
+
+// navigator.hardwareConcurrency / os.availableParallelism(): libuv semantics (floor cgroup quota), not WTF's ceil.
+extern "C" int32_t Bun__availableParallelism()
+{
+#if OS(LINUX)
+    static const int cached = [] {
+        if (const char* root = getenv("BUN_INTERNAL_CGROUP_ROOT")) {
+            // Test-only override: return the fixture's cgroup value, ignore host affinity.
+            char proc_path[4097];
+            snprintf(proc_path, sizeof(proc_path), "%s/proc_self_cgroup", root);
+            int constrained = bun__cgroup_constrained_cpu(proc_path, root);
+            return constrained > 0 ? constrained : 1;
+        }
+
+        long rc = sysconf(_SC_NPROCESSORS_ONLN);
+
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+            long n = CPU_COUNT(&set);
+            if (n > 0 && (rc < 1 || n < rc))
+                rc = n;
+        }
+
+        int constrained = bun__cgroup_constrained_cpu("/proc/self/cgroup", "/sys/fs/cgroup");
+        if (constrained > 0 && (rc < 1 || constrained < rc))
+            rc = constrained;
+
+        return rc < 1 ? 1 : (int)rc;
+    }();
+    return cached;
+#else
+    return WTF::numberOfProcessorCores();
 #endif
 }
 

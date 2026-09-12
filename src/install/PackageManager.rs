@@ -1972,9 +1972,6 @@ pub fn init(
 
     let options = Options {
         global: cli.global,
-        max_concurrent_lifecycle_scripts: cli
-            .concurrent_scripts
-            .unwrap_or((cpu_count * 2) as usize),
         ..Default::default()
     };
 
@@ -2491,15 +2488,7 @@ fn init_with_runtime_once(
 
         wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
-        wr!(
-            options,
-            Options {
-                max_concurrent_lifecycle_scripts: cli
-                    .concurrent_scripts
-                    .unwrap_or((cpu_count * 2) as usize),
-                ..Default::default()
-            }
-        );
+        wr!(options, Options::default());
         wr!(
             active_lifecycle_scripts,
             crate::lifecycle_script_runner::List {

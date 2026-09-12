@@ -7,9 +7,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
-/// Cap on the pretty-printed size of each side of an assertion diff. A value that is reachable N
-/// ways is printed N times, so without a cap a small graph of shared references expands
-/// exponentially and allocates until the machine dies. https://github.com/oven-sh/bun/issues/34178
+/// Cap per side of an assertion diff. Shared (non-cyclic) references are printed once per path,
+/// so a small graph can expand exponentially without it (#34178).
 const MAX_PRETTY_PRINT_BYTES: usize = 1024 * 1024;
 
 const TRUNCATION_NOTICE: &[u8] = b"\n... [value too large, output truncated]";

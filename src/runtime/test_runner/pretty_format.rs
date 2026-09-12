@@ -104,11 +104,8 @@ pub struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
-/// Forwards at most `remaining` bytes to `inner`, then discards the rest and sets `truncated`.
-/// A write never fails because of the cap, so the formatter's infallible-write call sites hold.
-///
-/// `truncated` is shared with the [`Formatter`] because the formatter only sees this writer
-/// through `AsFmt`/`FmtAdapter`, and `core::fmt::Write` has no way to report truncation.
+/// Forwards at most `remaining` bytes to `inner`, then discards the rest and sets `truncated`
+/// (shared with the [`Formatter`], which sees this sink only through `core::fmt::Write`).
 struct CappedWriter<'a> {
     inner: &'a mut dyn bun_io::Write,
     remaining: usize,
@@ -1117,9 +1114,8 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // The visited map only detects cycles, so a value that is reachable N ways is printed N
-        // times and a small graph of shared references expands exponentially (#34178). Stop the
-        // walk once the sink discards what it is given.
+        // Stop the walk once the sink discards output: discarded writes still cost a full
+        // traversal, which is exponential for shared references (#34178).
         if self.output_truncated.is_some_and(Cell::get) {
             self.failed = true;
             return Ok(());

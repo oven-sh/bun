@@ -271,6 +271,7 @@ lD1FqaxxRK5gJNU2mVAgAhdVErLTpbPYEOeN05B4h/AIGMIMn7TfFo4Q
       });
     } finally {
       server.close();
+      await once(server, "close");
     }
   });
 });

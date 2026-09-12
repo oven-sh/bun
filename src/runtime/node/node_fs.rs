@@ -9522,30 +9522,6 @@ pub(crate) fn zig_delete_tree(
                             treat_as_dir = true;
                             continue 'handle_entry;
                         }
-                        #[cfg(target_os = "macos")]
-                        Err(e @ E::EACCES) => {
-                            // Same ancestor-rmdir retry as the directory sites:
-                            // node reports the containing directory's ENOTEMPTY on
-                            // macOS when a file child cannot be unlinked. EPERM is
-                            // NOT converted -- on macOS it can mean "target is a
-                            // directory" and must keep flowing to the caller.
-                            let ancestor = &stack[top_idx];
-                            let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                sub_path
-                            } else {
-                                &ancestor.name
-                            };
-                            if matches!(
-                                dt_delete_dir(
-                                    sys::Dir::borrow(&ancestor.parent_dir),
-                                    ancestor_name
-                                ),
-                                Err(E::ENOTEMPTY | E::EEXIST)
-                            ) {
-                                return Err(dt_err(E::ENOTEMPTY));
-                            }
-                            return Err(dt_err(e));
-                        }
                         // "EPERM because it's a directory" is OS-dependent
                         // (Linux returns EISDIR; macOS returns EPERM). We only
                         // get errno, so forward EPERM as PermissionDenied —

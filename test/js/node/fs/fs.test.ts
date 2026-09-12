@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3520,6 +3521,37 @@ describe("fs.exists", () => {
 });
 
 describe("rm", () => {
+  it.skipIf(!isMacOS || process.getuid?.() === 0)(
+    "preserves a child permission error during recursive removal",
+    async () => {
+      using dir = tempDir("fs-rm-child-eacces", {
+        "sync/locked/file.txt": "sync",
+        "async/locked/file.txt": "async",
+      });
+      const syncRoot = join(String(dir), "sync");
+      const syncLocked = join(syncRoot, "locked");
+      const asyncRoot = join(String(dir), "async");
+      const asyncLocked = join(asyncRoot, "locked");
+      fs.chmodSync(syncLocked, 0o500);
+      fs.chmodSync(asyncLocked, 0o500);
+      try {
+        let syncError: unknown;
+        try {
+          rmSync(syncRoot, { recursive: true, force: true });
+        } catch (error) {
+          syncError = error;
+        }
+        expect(syncError).toMatchObject({ code: "EACCES" });
+        await expect(promises.rm(asyncRoot, { recursive: true, force: true })).rejects.toMatchObject({
+          code: "EACCES",
+        });
+      } finally {
+        fs.chmodSync(syncLocked, 0o700);
+        fs.chmodSync(asyncLocked, 0o700);
+      }
+    },
+  );
+
   it("removes a file", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");

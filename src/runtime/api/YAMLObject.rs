@@ -6,19 +6,64 @@ use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator,
+    JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
+use bun_parsers::yaml::{CustomTaggedNodes, CyclicAliases, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
+    let yaml = jsc::create_host_function_object(
         global_this,
         &[
-            ("parse", __jsc_host_parse, 1),
+            ("parse", __jsc_host_parse, 2),
             ("stringify", __jsc_host_stringify, 3),
         ],
-    )
+    );
+
+    // The tag handlers Bun ships, for the `tags` option of `parse`.
+    let tags = JSValue::create_empty_object(global_this, 1);
+    tags.put(
+        global_this,
+        b"!env",
+        JSFunction::create(
+            global_this,
+            "!env",
+            __jsc_host_env_tag,
+            2,
+            Default::default(),
+        ),
+    );
+    yaml.put(global_this, b"tags", tags);
+
+    yaml
+}
+
+/// `!env NAME` is `process.env.NAME`. `!env [NAME, fallback]` is `fallback`
+/// when `NAME` is not set.
+#[bun_jsc::host_fn]
+fn env_tag(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let node = call_frame.argument(0);
+    let (name, fallback) = if node.is_string() {
+        (node, JSValue::UNDEFINED)
+    } else if node.is_array() {
+        (node.get_index(global, 0)?, node.get_index(global, 1)?)
+    } else {
+        return Err(global.throw_type_error(format_args!(
+            "!env expects a variable name or [name, fallback]"
+        )));
+    };
+    let name = name.to_slice(global)?;
+
+    let env = match global.to_js_value().get(global, "process")? {
+        Some(process) => process.get(global, "env")?,
+        None => None,
+    };
+    let Some(env) = env else {
+        return Ok(fallback);
+    };
+    Ok(env
+        .get_own_truthy(global, name.slice())?
+        .unwrap_or(fallback))
 }
 
 #[bun_jsc::host_fn]
@@ -1021,47 +1066,148 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
-    super::with_text_format_source(
-        global,
-        call_frame,
-        b"input.yaml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::ToString,
-        |arena, log, source| {
-            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
-            // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
-                Ok(root) => root,
-                Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
-                Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
-                Err(YamlParseError::SyntaxError) => {
-                    if !log.msgs.is_empty() {
-                        let first_msg = &log.msgs[0];
-                        let error_text = &first_msg.data.text;
+    // One buffer roots the tag handlers and every collection under
+    // construction: a handler runs arbitrary JS in the middle of the walk.
+    MarkedArgumentBuffer::new(|args| {
+        // Read before the input is borrowed: getters on the options run JS.
+        let custom_tags = CustomTags::from_options(global, call_frame.argument(1), args)?;
+
+        // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
+        super::with_text_format_source(
+            global,
+            call_frame,
+            b"input.yaml",
+            super::BlobOrBufferInput::Bytes,
+            super::NullishInput::ToString,
+            |arena, log, source| {
+                let names: Vec<&[u8]> = custom_tags.entries.iter().map(|t| &*t.name).collect();
+                // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+                // once by pointer identity, so a cyclic graph is fine here.
+                let parsed = match YAML::parse_with_custom_tags(
+                    source,
+                    log,
+                    arena,
+                    CyclicAliases::Allow,
+                    &names,
+                ) {
+                    Ok(parsed) => parsed,
+                    Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+                    Err(YamlParseError::StackOverflow) => {
+                        return Err(global.throw_stack_overflow());
+                    }
+                    Err(YamlParseError::SyntaxError) => {
+                        if !log.msgs.is_empty() {
+                            let first_msg = &log.msgs[0];
+                            let error_text = &first_msg.data.text;
+                            return Err(global.throw_value(global.create_syntax_error_instance(
+                                format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                            )));
+                        }
                         return Err(global.throw_value(global.create_syntax_error_instance(
-                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                            format_args!("YAML Parse error: Unable to parse YAML string"),
                         )));
                     }
-                    return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("YAML Parse error: Unable to parse YAML string"),
-                    )));
+                };
+
+                let mut ctx = ParserCtx {
+                    seen_objects: HashMap::default(),
+                    stack_check: StackCheck::init(),
+                    global,
+                    custom_tags: &custom_tags,
+                    custom_tagged: parsed.custom_tagged,
+                };
+
+                match ctx.to_js(args, parsed.root) {
+                    Ok(value) => Ok(value),
+                    Err(ToJsError::OutOfMemory) => Err(JsError::OutOfMemory),
+                    Err(ToJsError::JsError) => Err(JsError::Thrown),
+                    Err(ToJsError::StackOverflow) => Err(global.throw_stack_overflow()),
                 }
-            };
+            },
+        )
+    })
+}
 
-            let mut ctx = ParserCtx {
-                seen_objects: HashMap::default(),
-                stack_check: StackCheck::init(),
-                global,
-                root,
-                result: JSValue::ZERO,
-            };
+/// The `tags` option of `parse`: `{ "!env": (value, tag) => ... }`. The
+/// parser reports a tagged node by its index in `entries`.
+struct CustomTags {
+    entries: Vec<CustomTag>,
+}
 
-            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
+struct CustomTag {
+    /// The key as written, which the handler receives as its second argument.
+    key: Box<[u8]>,
+    /// The full tag name the parser matches: `!!x` is `tag:yaml.org,2002:x`.
+    name: Box<[u8]>,
+    /// Rooted in the `MarkedArgumentBuffer` for as long as this exists.
+    handler: JSValue,
+}
 
-            Ok(ctx.result)
-        },
-    )
+impl CustomTags {
+    fn from_options(
+        global: &JSGlobalObject,
+        options: JSValue,
+        args: &mut MarkedArgumentBuffer,
+    ) -> JsResult<CustomTags> {
+        let mut entries = Vec::new();
+
+        if options.is_undefined_or_null() {
+            return Ok(CustomTags { entries });
+        }
+        if !options.is_object() {
+            return Err(global.throw_invalid_argument_type_value("options", "object", options));
+        }
+        let tags = match options.get(global, "tags")? {
+            Some(tags) if !tags.is_null() => tags,
+            _ => return Ok(CustomTags { entries }),
+        };
+        if !tags.is_object() {
+            return Err(global.throw_invalid_property_type_value(b"tags", b"object", tags));
+        }
+        args.append(tags);
+
+        let mut iter = JSPropertyIterator::init(
+            global,
+            tags.to_object(global)?,
+            JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+        while let Some(key) = iter.next()? {
+            let handler = iter.value;
+            let key = key.to_owned_slice().into_boxed_slice();
+            if !handler.is_callable() {
+                return Err(global.throw_invalid_property_type_value(&key, b"function", handler));
+            }
+            let name = Self::tag_name(global, &key)?;
+            args.append(handler);
+            entries.push(CustomTag { key, name, handler });
+        }
+
+        Ok(CustomTags { entries })
+    }
+
+    /// A key names a tag the way a document spells it: `!local`, `!!yaml`
+    /// (short for `tag:yaml.org,2002:yaml`), or a full tag URI.
+    fn tag_name(global: &JSGlobalObject, key: &[u8]) -> JsResult<Box<[u8]>> {
+        if let Some(suffix) = key.strip_prefix(b"!!") {
+            if !suffix.is_empty() {
+                return Ok([b"tag:yaml.org,2002:".as_slice(), suffix]
+                    .concat()
+                    .into_boxed_slice());
+            }
+        } else if (key.starts_with(b"!") && key.len() > 1)
+            || bun_core::strings::contains_char(key, b':')
+        {
+            return Ok(key.into());
+        }
+        Err(global.throw_type_error(format_args!(
+            "YAML tag \"{}\" must be a local tag (\"!name\"), a \"!!name\" tag, or a tag URI",
+            bstr::BStr::new(key)
+        )))
+    }
 }
 
 struct ParserCtx<'a> {
@@ -1069,9 +1215,8 @@ struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
-
-    result: JSValue,
+    custom_tags: &'a CustomTags,
+    custom_tagged: CustomTaggedNodes,
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1112,28 +1257,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
-    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
-        // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
-        let root = ctx.root;
-        ctx.result = match ctx.to_js(args, root) {
-            Ok(v) => v,
-            Err(ToJsError::OutOfMemory) => {
-                ctx.result = ctx.global.throw_out_of_memory_value();
-                return;
-            }
-            Err(ToJsError::JsError) => {
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-            Err(ToJsError::StackOverflow) => {
-                let _ = ctx.global.throw_stack_overflow();
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-        };
-    }
-
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
@@ -1150,6 +1273,21 @@ impl<'a> ParserCtx<'a> {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {
                     return Ok(*arr);
+                }
+
+                if let Some(index) = self.custom_tagged.get(&expr) {
+                    // The wrapper the parser put around a custom-tagged node;
+                    // its one item is the node. Remembered under the wrapper's
+                    // identity so aliases to the node get the same result.
+                    let node = self.to_js(args, e_array.slice()[0])?;
+                    let tag = &self.custom_tags.entries[index as usize];
+                    let tag_key = jsc::bun_string_jsc::create_utf8_for_js(self.global, &tag.key)?;
+                    let value =
+                        tag.handler
+                            .call(self.global, JSValue::UNDEFINED, &[node, tag_key])?;
+                    args.append(value);
+                    self.seen_objects.put(key, value)?;
+                    return Ok(value);
                 }
 
                 let arr =

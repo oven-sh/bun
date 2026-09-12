@@ -331,6 +331,13 @@ impl FileSink {
         }
     }
 
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit) for an
+    /// owner that holds the sink through a [`RefPtr`].
+    pub(crate) fn attached_process_exited(this: &RefPtr<FileSink>, status: &SpawnStatus) {
+        // SAFETY: `this` holds a ref, and `as_ptr` is the allocation's own pointer.
+        unsafe { Self::on_attached_process_exit(this.as_ptr(), status) }
+    }
+
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `WritablePending::run`

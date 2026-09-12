@@ -2030,6 +2030,247 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // `o.p++` lowers to a load, an add and a store, and its value is the
+  // temporary that holds the load. Codegen prints an unnamed temporary where it
+  // is read. The store is a statement, so a read after it printed `o.p` again:
+  // `const id = ref.current++` gave `id` the new value. In the body of a
+  // component a later pass names such a temporary (`const t0 = o.p`). No pass
+  // does in a function inside the component (facebook/react#35205). There the
+  // update now lowers to `(t0 = o.p, o.p = t0 + 1, t0)`.
+  //
+  // Each callback runs twice. `compiled` says that the component took a memo
+  // cache.
+  itBundled("react-compiler/PostfixMemberUpdateInNestedFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        import { sizes } from "react/compiler-runtime";
+
+        const Handle = "handle";
+
+        function DeclaratorInit() {
+          const ref = useRef(0);
+          const next = () => {
+            const id = ref.current++;
+            return id;
+          };
+          return <Handle run={next} />;
+        }
+        function ReturnDecrement() {
+          const ref = useRef(5);
+          const next = () => {
+            return ref.current--;
+          };
+          return <Handle run={next} />;
+        }
+        function ExpressionBody() {
+          const ref = useRef(0);
+          return <Handle run={() => ref.current++} />;
+        }
+        function TemplateLiteral() {
+          const newTabIndex = useRef(0);
+          const add = () => \`newTab\${newTabIndex.current++}\`;
+          return <Handle run={add} />;
+        }
+        function PrefixIncrement() {
+          const ref = useRef(0);
+          const next = () => {
+            const id = ++ref.current;
+            return id;
+          };
+          return <Handle run={next} />;
+        }
+        function Statement() {
+          const ref = useRef(0);
+          const next = () => {
+            ref.current++;
+            return ref.current;
+          };
+          return <Handle run={next} />;
+        }
+        function EarlierOperands() {
+          const ref = useRef(0);
+          const next = () => [ref.current, ref.current++, ref.current];
+          return <Handle run={next} />;
+        }
+        function MethodCallArgument() {
+          const ids = useRef([]);
+          const nextId = useRef(0);
+          const add = () => {
+            ids.current.push(nextId.current++);
+            return [...ids.current];
+          };
+          return <Handle run={add} />;
+        }
+        function ComputedMember() {
+          const counts = useRef({ a: 0 });
+          const hit = key => counts.current[key]++;
+          return <Handle run={hit} />;
+        }
+        function ObjectMethod() {
+          const ref = useRef(0);
+          const api = {
+            next() {
+              return ref.current++;
+            },
+          };
+          return <Handle run={() => api.next()} />;
+        }
+        // \`bump\` captures nothing, so the compiler moves it out of the component.
+        function OutlinedFunction() {
+          const bump = counter => counter.n++;
+          return <Handle run={bump} />;
+        }
+        function TemporaryNamesInUse() {
+          const ref = useRef(0);
+          const next = () => {
+            const t0 = String(ref.current);
+            const t1 = ref.current++;
+            const t2 = ref.current++;
+            return [t0, t1, t2];
+          };
+          return <Handle run={next} />;
+        }
+        function LoopBody() {
+          const ref = useRef(0);
+          const next = () => {
+            const out = [];
+            for (let i = 0; i < 2; i++) out.push(ref.current++);
+            return out;
+          };
+          return <Handle run={next} />;
+        }
+        function InnerFunction() {
+          const ref = useRef(0);
+          const next = () => {
+            const inner = () => ref.current++;
+            return [inner(), inner()];
+          };
+          return <Handle run={next} />;
+        }
+        function EarlierSum() {
+          const ref = useRef(0);
+          const next = () => [ref.current + 1, ref.current++];
+          return <Handle run={next} />;
+        }
+        function ForUpdate() {
+          const ref = useRef(0);
+          const next = () => {
+            const seen = [];
+            for (let i = 0; i < 2; ref.current++) seen.push(i++ + ref.current);
+            return seen;
+          };
+          return <Handle run={next} />;
+        }
+        function Conditional() {
+          const ref = useRef(0);
+          return <Handle run={on => (on ? ref.current++ : -1)} />;
+        }
+        function LogicalStatement() {
+          const ref = useRef(0);
+          const next = on => {
+            on && ref.current++;
+            return ref.current;
+          };
+          return <Handle run={next} />;
+        }
+        function SkippedOptionalCall() {
+          const ref = useRef(0);
+          const next = target => [target?.(ref.current++), ref.current];
+          return <Handle run={next} />;
+        }
+        function WhileTest() {
+          const ref = useRef(0);
+          const next = () => {
+            let turns = 0;
+            while (ref.current++ < 3) turns++;
+            return turns;
+          };
+          return <Handle run={next} />;
+        }
+
+        function probe(Component, ...args) {
+          const before = sizes().length;
+          const { run } = Component({}).props;
+          const compiled = sizes().length > before;
+          return { compiled, results: [run(...args), run(...args)] };
+        }
+        const counter = { n: 3 };
+        console.log(JSON.stringify({
+          DeclaratorInit: probe(DeclaratorInit),
+          ReturnDecrement: probe(ReturnDecrement),
+          ExpressionBody: probe(ExpressionBody),
+          TemplateLiteral: probe(TemplateLiteral),
+          PrefixIncrement: probe(PrefixIncrement),
+          Statement: probe(Statement),
+          EarlierOperands: probe(EarlierOperands),
+          MethodCallArgument: probe(MethodCallArgument),
+          ComputedMember: probe(ComputedMember, "a"),
+          ObjectMethod: probe(ObjectMethod),
+          OutlinedFunction: probe(OutlinedFunction, counter),
+          TemporaryNamesInUse: probe(TemporaryNamesInUse),
+          LoopBody: probe(LoopBody),
+          InnerFunction: probe(InnerFunction),
+          EarlierSum: probe(EarlierSum),
+          ForUpdate: probe(ForUpdate),
+          Conditional: probe(Conditional, true),
+          LogicalStatement: probe(LogicalStatement, true),
+          SkippedOptionalCall: probe(SkippedOptionalCall, null),
+          WhileTest: probe(WhileTest),
+        }));
+      `,
+      ...jsxCallShapeRuntime,
+      "/node_modules/react/index.js": /* js */ `
+        exports.useRef = current => ({ current });
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        const sizes = [];
+        exports.c = function useMemoCache(size) {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout)).toEqual({
+          DeclaratorInit: { compiled: true, results: [0, 1] },
+          ReturnDecrement: { compiled: true, results: [5, 4] },
+          ExpressionBody: { compiled: true, results: [0, 1] },
+          TemplateLiteral: { compiled: true, results: ["newTab0", "newTab1"] },
+          PrefixIncrement: { compiled: true, results: [1, 2] },
+          Statement: { compiled: true, results: [1, 2] },
+          // prettier-ignore
+          EarlierOperands: { compiled: true, results: [[0, 0, 1], [1, 1, 2]] },
+          MethodCallArgument: { compiled: true, results: [[0], [0, 1]] },
+          ComputedMember: { compiled: true, results: [0, 1] },
+          ObjectMethod: { compiled: true, results: [0, 1] },
+          OutlinedFunction: { compiled: true, results: [3, 4] },
+          // prettier-ignore
+          TemporaryNamesInUse: { compiled: true, results: [["0", 0, 1], ["2", 2, 3]] },
+          // prettier-ignore
+          LoopBody: { compiled: true, results: [[0, 1], [2, 3]] },
+          // prettier-ignore
+          InnerFunction: { compiled: true, results: [[0, 1], [2, 3]] },
+          // prettier-ignore
+          EarlierSum: { compiled: true, results: [[1, 0], [2, 1]] },
+          // prettier-ignore
+          ForUpdate: { compiled: true, results: [[0, 2], [2, 4]] },
+          Conditional: { compiled: true, results: [0, 1] },
+          LogicalStatement: { compiled: true, results: [1, 2] },
+          // JSON turns the `undefined` of the call that does not happen into `null`.
+          // prettier-ignore
+          SkippedOptionalCall: { compiled: true, results: [[null, 0], [null, 0]] },
+          WhileTest: { compiled: true, results: [3, 0] },
+        });
+      },
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

@@ -307,6 +307,10 @@ pub(crate) struct HirBuilder<'h> {
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
     import_bindings: IndexMap<Ref, VariableBinding>,
+    /// False for the component or hook itself, true for every function inside it.
+    is_nested_function: bool,
+    /// Temporaries that `build` declares with `let` at the top of the function.
+    entry_declarations: Vec<Place>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -325,6 +329,7 @@ impl<'h> HirBuilder<'h> {
         context: Option<IndexMap<Ref, Option<SourceLocation>>>,
         entry_block_kind: Option<BlockKind>,
         used_refs: Option<IndexSet<Ref>>,
+        is_nested_function: bool,
     ) -> Self {
         let entry = env.next_block_id();
         let kind = entry_block_kind.unwrap_or(BlockKind::Block);
@@ -345,6 +350,8 @@ impl<'h> HirBuilder<'h> {
             scope_stack: vec![function_scope],
             context_identifiers,
             import_bindings: IndexMap::new(),
+            is_nested_function,
+            entry_declarations: Vec::new(),
         }
     }
 
@@ -747,6 +754,69 @@ impl<'h> HirBuilder<'h> {
         id
     }
 
+    pub(crate) fn is_nested_function(&self) -> bool {
+        self.is_nested_function
+    }
+
+    /// A promoted temporary that `build` declares with `let` at the top of the
+    /// function. A value block cannot hold a declaration, but it can assign
+    /// this.
+    pub(crate) fn declare_temporary_at_entry(&mut self, loc: Option<SourceLocation>) -> Place {
+        let identifier = self.make_temporary(loc);
+        self.env.promote_temporary(identifier);
+        let place = Place {
+            identifier,
+            effect: Effect::Unknown,
+            reactive: false,
+            loc,
+        };
+        self.entry_declarations.push(place.clone());
+        place
+    }
+
+    /// Puts `let <temporary>` for each `declare_temporary_at_entry` at the
+    /// start of the entry block.
+    fn push_entry_declarations(&mut self) -> Result<(), CompilerError> {
+        if self.entry_declarations.is_empty() {
+            return Ok(());
+        }
+        let mut instructions: HirVec<InstructionId> = AstAlloc::vec();
+        for place in std::mem::take(&mut self.entry_declarations) {
+            let loc = place.loc;
+            let lvalue = Place {
+                identifier: self.make_temporary(loc),
+                effect: Effect::Unknown,
+                reactive: false,
+                loc,
+            };
+            instructions.push(InstructionId(self.instruction_table.len() as u32));
+            self.instruction_table.push(Instruction {
+                id: EvaluationOrder(0),
+                lvalue,
+                value: InstructionValue::DeclareLocal {
+                    lvalue: LValue {
+                        kind: InstructionKind::Let,
+                        place,
+                    },
+                    type_annotation: None,
+                    loc,
+                },
+                loc,
+                effects: None,
+            });
+        }
+        let Some(entry) = self.completed.get_mut(&self.entry) else {
+            return Err(CompilerError::from(CompilerDiagnostic::new(
+                ErrorCategory::Invariant,
+                "Expected the entry block to be complete",
+                None,
+            )));
+        };
+        instructions.extend(entry.instructions.iter().copied());
+        entry.instructions = instructions;
+        Ok(())
+    }
+
     pub(crate) fn record_error(&mut self, error: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(error)
     }
@@ -770,6 +840,8 @@ impl<'h> HirBuilder<'h> {
         ),
         CompilerError,
     > {
+        self.push_entry_declarations()?;
+
         let mut hir = HIR {
             blocks: std::mem::take(&mut self.completed),
             entry: self.entry,

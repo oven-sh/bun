@@ -223,14 +223,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_cwd") == 0) {
-    char *arg0 = {0};
-    size_t *arg1 = {0};
-
-    uv_cwd(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_default_loop") == 0) {
 
     uv_default_loop();

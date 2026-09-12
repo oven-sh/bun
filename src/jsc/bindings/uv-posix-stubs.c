@@ -156,12 +156,6 @@ UV_EXTERN int uv_cpumask_size(void)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_cwd(char* buffer, size_t* size)
-{
-    __bun_throw_not_implemented("uv_cwd");
-    __builtin_unreachable();
-}
-
 UV_EXTERN uv_loop_t* uv_default_loop(void)
 {
     __bun_throw_not_implemented("uv_default_loop");

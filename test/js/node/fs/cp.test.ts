@@ -312,6 +312,316 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
+    test.skipIf(!isLinux)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
+      using root = tempDir("cp-nonutf8", {});
+      const src = join(String(root), "src");
+      fs.mkdirSync(src);
+      const srcBuf = Buffer.from(src + "/");
+      // caf<0xe9> (Latin-1), d<0xe4>r/ (Latin-1 subdir), foo<0xff><0xfe>bar (raw bytes)
+      fs.writeFileSync(Buffer.concat([srcBuf, Buffer.from([0x63, 0x61, 0x66, 0xe9])]), "cafe");
+      fs.writeFileSync(join(src, "ok.txt"), "ok");
+      const sub = Buffer.concat([srcBuf, Buffer.from([0x64, 0xe4, 0x72])]);
+      fs.mkdirSync(sub);
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from("/inner.txt")]), "inner");
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from([0x2f, 0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x62, 0x61, 0x72])]), "w");
+
+      const tree = (d: string) => {
+        const out: Record<string, string> = {};
+        const walk = (cur: Buffer) => {
+          for (const name of fs.readdirSync(cur, { encoding: "buffer" })) {
+            const full = Buffer.concat([cur, Buffer.from("/"), name]);
+            if (fs.lstatSync(full).isDirectory()) walk(full);
+            else out[full.subarray(Buffer.byteLength(d) + 1).toString("hex")] = fs.readFileSync(full, "utf8");
+          }
+        };
+        walk(Buffer.from(d));
+        return out;
+      };
+
+      const cases: [string, Parameters<typeof copy>[2]][] = [
+        ["dest", { recursive: true }],
+        ["dest-filter", { recursive: true, filter: () => true }],
+      ];
+      for (const [destName, opts] of cases) {
+        const dest = join(String(root), destName);
+        await copy(src, dest, opts);
+        expect(tree(dest)).toEqual(tree(src));
+      }
+    });
+
+    test.skipIf(isWindows)(
+      "recursive - valid UTF-8 non-ASCII names reach filter as strings and symlinks resolve",
+      async () => {
+        await using basename = tempDir("cp-utf8-nonascii", {
+          "from/caf\u00e9/sibling.txt": "s",
+          "from/a.txt": "a",
+        });
+        fs.symlinkSync("sibling.txt", join(basename, "from", "caf\u00e9", "link"));
+
+        const seen: string[] = [];
+        await copy(join(basename, "from"), join(basename, "result"), {
+          recursive: true,
+          filter: src => {
+            seen.push(src);
+            return true;
+          },
+        });
+
+        const copiedLink = join(basename, "result", "caf\u00e9", "link");
+        expect({
+          filterSawUtf8: seen.some(s => s.endsWith(join("caf\u00e9", "sibling.txt"))),
+          filterSawMojibake: seen.some(s => s.includes("caf\u00c3\u00a9")),
+          linkTarget: fs.readlinkSync(copiedLink),
+          followed: fs.readFileSync(copiedLink, "utf8"),
+        }).toEqual({
+          filterSawUtf8: true,
+          filterSawMojibake: false,
+          linkTarget: join(basename, "from", "caf\u00e9", "sibling.txt"),
+          followed: "s",
+        });
+      },
+    );
+
+    test.skipIf(!isLinux)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
+      using root = tempDir("cp-nonutf8-merge", {});
+      const src = join(String(root), "src");
+      const dest = join(String(root), "dest");
+      fs.mkdirSync(src);
+      fs.mkdirSync(dest);
+      const name = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(src + "/"), name]), "hello");
+      fs.writeFileSync(join(dest, "keep.txt"), "keep");
+
+      await copy(src, dest, { recursive: true });
+
+      expect({
+        copied: fs.readFileSync(Buffer.concat([Buffer.from(dest + "/"), name]), "utf8"),
+        kept: fs.readFileSync(join(dest, "keep.txt"), "utf8"),
+        entries: fs
+          .readdirSync(dest, { encoding: "buffer" })
+          .map(b => b.toString("hex"))
+          .sort(),
+      }).toEqual({
+        copied: "hello",
+        kept: "keep",
+        entries: [name.toString("hex"), Buffer.from("keep.txt").toString("hex")].sort(),
+      });
+    });
+
+    test.skipIf(!isLinux)("recursive - non-UTF-8 names survive the filter + preserveTimestamps path", async () => {
+      await using basename = tempDir("cp-nonutf8-slow", { "from/ok.txt": "ascii" });
+      const name = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/from/"), name]), "latin1");
+
+      const seen: unknown[] = [];
+      await copy(basename + "/from", basename + "/to", {
+        recursive: true,
+        preserveTimestamps: true,
+        filter: src => {
+          seen.push(src);
+          return true;
+        },
+      });
+
+      expect({
+        filterArgsAreStrings: seen.every(p => typeof p === "string"),
+        filterSawOk: seen.includes(join(basename, "from", "ok.txt")),
+        // The entry whose name is not UTF-8 reaches the filter as a string too
+        // (the byte that is not UTF-8 shows up as U+FFFD); the copy itself
+        // below still uses the exact bytes.
+        filterSawLossyName: seen.includes(join(basename, "from", "caf\ufffd")),
+        entries: fs
+          .readdirSync(basename + "/to", { encoding: "buffer" })
+          .map(b => b.toString("hex"))
+          .sort(),
+        copied: fs.readFileSync(Buffer.concat([Buffer.from(basename + "/to/"), name]), "utf8"),
+      }).toEqual({
+        filterArgsAreStrings: true,
+        filterSawOk: true,
+        filterSawLossyName: true,
+        entries: [name.toString("hex"), Buffer.from("ok.txt").toString("hex")].sort(),
+        copied: "latin1",
+      });
+    });
+
+    test.skipIf(!isLinux)("err.path is a string when a non-UTF-8 entry's type conflicts", async () => {
+      await using basename = tempDir("cp-nonutf8-errpath", { "from/.keep": "", "result/.keep": "" });
+      const dirName = Buffer.from([0x64, 0xe4, 0x72]);
+      const srcDir = Buffer.concat([Buffer.from(basename + "/from/"), dirName]);
+      fs.mkdirSync(srcDir);
+      fs.writeFileSync(Buffer.concat([srcDir, Buffer.from("/x.txt")]), "x");
+      fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/result/"), dirName]), "not a dir");
+
+      const e = await copyShouldThrow(basename + "/from", basename + "/result", { recursive: true });
+      expect({ code: e.code, path: e.path, infoPath: e.info?.path }).toEqual({
+        code: "ERR_FS_CP_DIR_TO_NON_DIR",
+        path: join(basename, "result", "d\ufffdr"),
+        infoPath: join(basename, "result", "d\ufffdr"),
+      });
+    });
+
+    test.skipIf(!isLinux)("recursive - symlink with a non-UTF-8 name is copied", async () => {
+      await using basename = tempDir("cp-nonutf8-linkname", { "from/target.txt": "hello" });
+      const linkName = Buffer.concat([Buffer.from("link"), Buffer.from([0xe9])]);
+      fs.symlinkSync("target.txt", Buffer.concat([Buffer.from(basename + "/from/"), linkName]));
+
+      await copy(basename + "/from", basename + "/to", { recursive: true });
+
+      const copiedLink = Buffer.concat([Buffer.from(basename + "/to/"), linkName]);
+      expect({
+        isSymlink: fs.lstatSync(copiedLink).isSymbolicLink(),
+        followed: fs.readFileSync(copiedLink, "utf8"),
+      }).toEqual({ isSymlink: true, followed: "hello" });
+    });
+
+    test.skipIf(!isLinux)("recursive - symlink whose target is non-UTF-8 is copied byte-exact", async () => {
+      await using basename = tempDir("cp-nonutf8-linktarget", { "from/.keep": "" });
+      const target = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/from/"), target]), "hello");
+      fs.symlinkSync(target, basename + "/from/link");
+
+      await copy(basename + "/from", basename + "/to", { recursive: true });
+
+      // The relative target is resolved against the source directory, so the
+      // copied link is absolute and its final component keeps the raw bytes.
+      expect({
+        linkTarget: fs.readlinkSync(basename + "/to/link", { encoding: "buffer" }).toString("hex"),
+        followed: fs.readFileSync(basename + "/to/link", "utf8"),
+      }).toEqual({
+        linkTarget: Buffer.concat([Buffer.from(basename + "/from/"), target]).toString("hex"),
+        followed: "hello",
+      });
+    });
+
+    test.skipIf(!isLinux)("recursive - verbatimSymlinks keeps a non-UTF-8 relative target as-is", async () => {
+      await using basename = tempDir("cp-nonutf8-verbatim", { "from/.keep": "" });
+      const target = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/from/"), target]), "hello");
+      fs.symlinkSync(target, basename + "/from/link");
+
+      await copy(basename + "/from", basename + "/to", { recursive: true, verbatimSymlinks: true });
+
+      // The target file is copied alongside the link, so the untouched
+      // relative target resolves inside the destination.
+      expect({
+        linkTarget: fs.readlinkSync(basename + "/to/link", { encoding: "buffer" }).toString("hex"),
+        followed: fs.readFileSync(basename + "/to/link", "utf8"),
+      }).toEqual({
+        linkTarget: target.toString("hex"),
+        followed: "hello",
+      });
+    });
+
+    test.skipIf(!isLinux)(
+      "recursive - replacing a dest link does not confuse distinct non-UTF-8 targets for the same path",
+      async () => {
+        await using basename = tempDir("cp-nonutf8-subdir-check", { "from/.keep": "", "to/.keep": "" });
+        // Both targets decode to "d\ufffd", so a lossy comparison would report
+        // one as a subdirectory of the other and refuse to replace the link.
+        const srcTarget = Buffer.concat([Buffer.from(basename + "/d"), Buffer.from([0xe9])]);
+        const destTarget = Buffer.concat([Buffer.from(basename + "/d"), Buffer.from([0xe4]), Buffer.from("/inner")]);
+        fs.mkdirSync(srcTarget);
+        fs.mkdirSync(destTarget, { recursive: true });
+        fs.symlinkSync(srcTarget, basename + "/from/link");
+        fs.symlinkSync(destTarget, basename + "/to/link");
+
+        await copy(basename + "/from", basename + "/to", { recursive: true });
+
+        expect(fs.readlinkSync(basename + "/to/link", { encoding: "buffer" }).toString("hex")).toBe(
+          srcTarget.toString("hex"),
+        );
+      },
+    );
+
+    test.skipIf(!isLinux)(
+      "recursive - relative symlink inside a non-UTF-8 directory resolves against the source tree",
+      async () => {
+        await using basename = tempDir("cp-nonutf8-linkdir", { "from/.keep": "" });
+        const dirName = Buffer.from([0x64, 0xe4, 0x72]);
+        const dir = Buffer.concat([Buffer.from(basename + "/from/"), dirName]);
+        fs.mkdirSync(dir);
+        fs.writeFileSync(Buffer.concat([dir, Buffer.from("/target.txt")]), "hello");
+        fs.symlinkSync("target.txt", Buffer.concat([dir, Buffer.from("/link")]));
+
+        const prevCwd = process.cwd();
+        process.chdir(String(basename));
+        try {
+          await copy("from", "to", { recursive: true });
+        } finally {
+          process.chdir(prevCwd);
+        }
+
+        const copiedLink = Buffer.concat([Buffer.from(basename + "/to/"), dirName, Buffer.from("/link")]);
+        expect({
+          linkTarget: fs.readlinkSync(copiedLink, { encoding: "buffer" }).toString("hex"),
+          followed: fs.readFileSync(copiedLink, "utf8"),
+        }).toEqual({
+          linkTarget: Buffer.concat([dir, Buffer.from("/target.txt")]).toString("hex"),
+          followed: "hello",
+        });
+      },
+    );
+
+    test.skipIf(isWindows)("filter - trailing slash on src/dest does not double the separator", async () => {
+      await using basename = tempDir("cp-trailing", { "from/a.txt": "a" });
+      const seen: [string, string][] = [];
+      await copy(basename + "/from/", basename + "/result/", {
+        recursive: true,
+        filter: (s, d) => (seen.push([s, d]), true),
+      });
+      expect(seen).toContainEqual([basename + "/from/a.txt", basename + "/result/a.txt"]);
+      expect(seen.some(([s]) => s.includes("//"))).toBe(false);
+    });
+
+    test("filter - nested paths are joined the way node joins them, whatever shape src/dest were given in", async () => {
+      await using basename = tempDir("cp-filter-join", { "from/a.txt": "a", "x/.keep": "" });
+      const shapes: [string, string][] = [
+        ["./from", "to1"],
+        ["from/./", "to2"],
+        ["from//", "to3"],
+        // On Windows, existsSync("x/..") is false and mkdirSync("x/..", { recursive: true })
+        // throws ENOENT, so cp's own parent-directory check fails for a dest under "x/..".
+        ...(isWindows
+          ? []
+          : ([
+              ["from", "x/../to4"],
+              ["from", "to5//"],
+            ] as [string, string][])),
+      ];
+      const prevCwd = process.cwd();
+      process.chdir(String(basename));
+      try {
+        for (const [src, dest] of shapes) {
+          const seen: [string, string][] = [];
+          await copy(src, dest, { recursive: true, filter: (s, d) => (seen.push([s, d]), true) });
+          // The root pair is passed through as given; every nested pair is
+          // join(src, name) / join(dest, name), so "./", "//" and "x/.." are
+          // normalized away exactly as path.join does it.
+          expect({ src, dest, nested: seen.filter(([s]) => s !== src) }).toEqual({
+            src,
+            dest,
+            nested: [[join(src, "a.txt"), join(dest, "a.txt")]],
+          });
+        }
+      } finally {
+        process.chdir(prevCwd);
+      }
+    });
+
+    test("err.path is a string when a nested entry's type conflicts", async () => {
+      await using basename = tempDir("cp-errpath", {
+        "from/sub/x.txt": "x",
+        "result/sub": "not a dir",
+      });
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect({ code: e.code, pathType: typeof e.path, path: e.path, infoPathType: typeof e.info?.path }).toEqual({
+        code: "ERR_FS_CP_DIR_TO_NON_DIR",
+        pathType: "string",
+        path: join(basename, "result", "sub"),
+        infoPathType: "string",
+      });
+    });
+
     test("filter - works", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

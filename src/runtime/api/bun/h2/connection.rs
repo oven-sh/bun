@@ -150,6 +150,51 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
+pub const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
+pub const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
+enum ResetBy {
+    Peer,
+    Us,
+}
+
+/// nghttp2_ratelim: `rate` tokens per whole elapsed second, capped at `burst`.
+struct RateLimit {
+    burst: u32,
+    rate: u32,
+    tokens: u32,
+    last_refill: std::time::Instant,
+}
+
+impl RateLimit {
+    fn new(burst: u32, rate: u32) -> Self {
+        RateLimit {
+            burst,
+            rate,
+            tokens: burst,
+            last_refill: std::time::Instant::now(),
+        }
+    }
+
+    /// Returns false once the bucket is empty.
+    fn drain(&mut self) -> bool {
+        let elapsed = self.last_refill.elapsed().as_secs();
+        if elapsed > 0 {
+            let gain = u32::try_from(elapsed)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(self.rate);
+            self.tokens = self.tokens.saturating_add(gain).min(self.burst);
+            self.last_refill += std::time::Duration::from_secs(elapsed);
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -184,6 +229,10 @@ pub trait Sink {
     /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
+    }
+    /// Queried per reset: a GOAWAY sent mid-dispatch counts for the rest of that read.
+    fn goaway_sent(&self) -> bool {
+        false
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
@@ -301,6 +350,12 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
+    /// Inbound RST_STREAM (nghttp2's stream_reset_ratelim; node's streamResetBurst/Rate).
+    stream_reset_limit: RateLimit,
+    /// RST_STREAM this engine sends in reaction to inbound frames (nghttp2 >= 1.67 has one too).
+    sent_reset_limit: RateLimit,
+    /// A bucket ran dry mid-frame; receive() tears the session down between frames.
+    reset_flood: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -339,6 +394,12 @@ impl Connection {
             data_in_flight: None,
             terminated: false,
             obq_ack_pending: 0,
+            stream_reset_limit: RateLimit::new(
+                DEFAULT_STREAM_RESET_BURST,
+                DEFAULT_STREAM_RESET_RATE,
+            ),
+            sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
+            reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -428,6 +489,7 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
+        self.note_reset(sink, ResetBy::Us);
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -554,6 +616,18 @@ impl Connection {
                 };
             }
             offset += total;
+            if self.check_reset_flood(sink) {
+                return Feed {
+                    consumed: offset,
+                    fatal: true,
+                };
+            }
+        }
+        if self.check_reset_flood(sink) {
+            return Feed {
+                consumed: offset,
+                fatal: true,
+            };
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
@@ -776,6 +850,44 @@ impl Connection {
     /// from receive() itself so a peer that never reads cannot reset it.
     pub fn note_outbound_drained(&mut self) {
         self.obq_ack_pending = 0;
+    }
+
+    /// No-op when unchanged: the embedder re-syncs this on every read and must not refill the bucket.
+    pub fn set_stream_reset_limit(&mut self, burst: u32, rate: u32) {
+        let lim = &self.stream_reset_limit;
+        if lim.burst != burst || lim.rate != rate {
+            self.stream_reset_limit = RateLimit::new(burst, rate);
+        }
+    }
+
+    /// Servers only. Our GOAWAY exempts the peer's resets (as in nghttp2) but not ours: the peer
+    /// can keep provoking those.
+    fn note_reset(&mut self, sink: &impl Sink, by: ResetBy) {
+        if !self.is_server || self.reset_flood {
+            return;
+        }
+        let limit = match by {
+            ResetBy::Peer if sink.goaway_sent() => return,
+            ResetBy::Peer => &mut self.stream_reset_limit,
+            ResetBy::Us => &mut self.sent_reset_limit,
+        };
+        if !limit.drain() {
+            self.reset_flood = true;
+        }
+    }
+
+    /// nghttp2 sends INTERNAL_ERROR here; ENHANCE_YOUR_CALM matches note_outbound_ack.
+    fn check_reset_flood(&mut self, sink: &impl Sink) -> bool {
+        if !self.reset_flood || self.terminated {
+            return false;
+        }
+        self.local_connection_error(
+            sink,
+            ErrorCode::EnhanceYourCalm,
+            wire::lib_error::FLOODED,
+            b"too many stream resets",
+        );
+        true
     }
 
     /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
@@ -1651,6 +1763,8 @@ impl Connection {
             && (hdr.stream_id <= self.last_stream_id
                 || hdr.stream_id <= sink.highest_started_stream_id())
         {
+            // nghttp2 charges the ratelim regardless of stream lookup.
+            self.note_reset(sink, ResetBy::Peer);
             return false;
         }
         if on_idle {
@@ -1658,6 +1772,7 @@ impl Connection {
             return true;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
+        self.note_reset(sink, ResetBy::Peer);
         false
     }
 

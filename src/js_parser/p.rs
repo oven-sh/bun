@@ -8400,8 +8400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// A `var` a lowering declares itself (`_init`, `_dec`). Without a renamer
-    /// the printer emits `name` verbatim, so it carries a per-file counter.
+    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
         let name: &'a [u8] = if self.will_use_renamer() {
             name
@@ -8416,8 +8415,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// Hands a generated `var` to the renamers: nested scopes are named from
-    /// `Scope::generated`, a file's top level from `Part::declared_symbols`.
+    /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
     pub(crate) fn declare_temp_var(&mut self, ref_: Ref) {
         let mut scope = self.current_scope_ref();
         // A parameter default has no statement list; its `var` goes outside the function.

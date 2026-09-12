@@ -10,7 +10,7 @@
 // scenario prints one JSON value; `outcome()` turns a promise into
 // { resolved } or { rejected: message }.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
@@ -38,9 +38,9 @@ const prelude = /* js */ `
   const big = ${BIG};
 `;
 
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, wrapper: string[] = []): Promise<unknown> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", prelude + body],
+    cmd: [...wrapper, bunExe(), "-e", prelude + body],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -72,6 +72,88 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
     value: { answer: 42, text: "from the fake" },
     undef: "undefined",
   });
+});
+
+// The switches the runtime launches the browser with. They land in the fake's
+// process.execArgv (bun accepts and ignores them); backend.argv, the fixture
+// path here, comes after them and is the script. The list is the one
+// docs/runtime/webview.mdx publishes. Chrome refuses to start as root with
+// its sandbox on (crbug.com/638180), so on Linux the runtime adds --no-sandbox
+// when it is root itself, and only then.
+const launchSwitches = (userDataDir: unknown, noSandbox: boolean) => [
+  userDataDir,
+  "--remote-debugging-pipe",
+  "--headless",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-gpu",
+  "--disable-extensions",
+  "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  "--disable-renderer-backgrounding",
+  "--disable-ipc-flooding-protection",
+  "--no-startup-window",
+  "--disable-dev-shm-usage",
+  ...(noSandbox ? ["--no-sandbox"] : []),
+];
+// The runtime's root check is compiled in for target_os linux and android.
+const hasRootCheck = isLinux || isAndroid;
+
+test.concurrent("the browser is launched with the documented switches", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    print(await view.evaluate("process.execArgv"));
+    view.close();
+  `);
+  const root = hasRootCheck && process.geteuid!() === 0;
+  expect(result).toEqual(launchSwitches(expect.stringMatching(/^--user-data-dir=.+/), root));
+});
+
+// The test above only sees --no-sandbox when the test run itself is root,
+// which CI is not. A user namespace makes this user root inside it (uid 0 is
+// what getuid() and geteuid() return there) without any privilege, so the
+// positive side of the check is covered wherever unprivileged user namespaces
+// are allowed. The probe runs what the scenario needs, bun spawning bun inside
+// the namespace; where it fails (no unshare, or namespaces disabled, as in
+// most containers) the root run of the test above is the only coverage.
+// -U: new user namespace, -r: map this user to root in it. Short flags, since
+// busybox's unshare has them too.
+const unshare = ["unshare", "-U", "-r"];
+function userNamespaceWorks(): boolean {
+  if (!hasRootCheck) return false;
+  try {
+    const probe = Bun.spawnSync({
+      cmd: [
+        ...unshare,
+        bunExe(),
+        "-e",
+        `process.stdout.write(String(Bun.spawnSync([process.execPath, "-e", "process.stdout.write(String(process.geteuid()))"]).stdout))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return probe.exitCode === 0 && probe.stdout.toString() === "0";
+  } catch {
+    return false;
+  }
+}
+
+(userNamespaceWorks() ? test.concurrent : test.skip)("--no-sandbox is added when bun is root", async () => {
+  // dataStore.directory is passed through as the profile directory, so the
+  // expected list is literal.
+  const result = await runScenario(
+    `
+    const view = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/profile-dir" } });
+    await view.navigate("http://fake/");
+    print({ uid: process.getuid(), euid: process.geteuid(), execArgv: await view.evaluate("process.execArgv") });
+    view.close();
+  `,
+    unshare,
+  );
+  expect(result).toEqual({ uid: 0, euid: 0, execArgv: launchSwitches("--user-data-dir=/profile-dir", true) });
 });
 
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {

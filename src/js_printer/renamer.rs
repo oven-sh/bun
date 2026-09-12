@@ -549,7 +549,14 @@ impl SlotAndCount {
 pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
     pub(crate) symbols: ManuallyDrop<symbol::Map>,
-    pub(crate) names: Box<[Vec<NameStr>]>,
+    /// By source index, then inner index: a row per file of the chunk, grown
+    /// to the highest index named so far. `None` for every other file.
+    pub(crate) names: Box<[Option<Vec<NameStr>>]>,
+    /// Names of the symbols that files of other chunks declare (cross-chunk
+    /// imports). A row that reaches one costs the importing chunk 12 bytes
+    /// per symbol declared before it, and the parser declares a file's
+    /// wrapper (`require_foo`, `init_foo`) after all its other symbols.
+    names_from_other_chunks: HashMap<Ref, NameStr>,
     /// Backs top-level renamed-name slices in `names` and interned keys.
     pub(crate) arena: Bump,
     /// Every name seen in the chunk's root scope → index into `slots`.
@@ -773,14 +780,6 @@ fn intern_into(ids: &mut NameIds, next_id: u32, name: NameStr) -> (u32, bool) {
     }
 }
 
-fn store_name(names: &mut Vec<NameStr>, inner_index: u32, name: NameStr) {
-    let new_len = names.len().max(inner_index as usize + 1);
-    if names.len() < new_len {
-        names.resize(new_len, name_str_empty());
-    }
-    names[inner_index as usize] = name;
-}
-
 impl NameScopes for NumberRenamer {
     fn keep_name(&self, name: &[u8]) -> NameStr {
         NameStr::new(self.arena.alloc_slice_copy(name))
@@ -811,24 +810,29 @@ impl NameScopes for NumberRenamer {
 }
 
 impl NumberRenamer {
-    /// `symbols_in_chunk`: how many symbols the chunk's files declare, to size
-    /// the name table. `symbols` spans the whole bundle and every chunk's
-    /// renamer is alive at once, so sizing from it costs a bundle-sized table
-    /// per chunk.
+    /// `files_in_chunk`: source indices of the chunk's files. Only they get a
+    /// row in `names`, and `ids` and `slots` are sized from the symbols they
+    /// declare. `symbols` spans the whole bundle and every chunk's renamer is
+    /// alive at once, so a table sized from it costs each chunk the whole
+    /// bundle. `names` is still one: it has a slot per file of the bundle.
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
-        symbols_in_chunk: usize,
+        files_in_chunk: &[u32],
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
-        let len = symbols.symbols_for_source.len();
-        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
-            .take(len)
-            .collect();
+        let mut names: Box<[Option<Vec<NameStr>>]> =
+            vec![None; symbols.symbols_for_source.len()].into_boxed_slice();
+        let mut symbols_in_chunk: usize = 0;
+        for &source_index in files_in_chunk {
+            names[source_index as usize] = Some(Vec::new());
+            symbols_in_chunk += symbols.symbols_for_source[source_index as usize].len();
+        }
         let capacity = root_names.len() + symbols_in_chunk / 4;
 
         let mut r = Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
             names,
+            names_from_other_chunks: HashMap::default(),
             arena: Bump::new(),
             ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
             slots: Vec::with_capacity(capacity),
@@ -853,13 +857,33 @@ impl NumberRenamer {
         Ok(r)
     }
 
+    /// The name `ref_` (already followed) has so far, or an empty one.
+    #[inline]
+    fn stored_name(&self, ref_: Ref) -> NameStr {
+        let name = match &self.names[ref_.source_index() as usize] {
+            Some(row) => row.get(ref_.inner_index() as usize),
+            None => self.names_from_other_chunks.get(&ref_),
+        };
+        name.copied().unwrap_or(name_str_empty())
+    }
+
+    fn store_name(&mut self, ref_: Ref, name: NameStr) {
+        let Some(row) = &mut self.names[ref_.source_index() as usize] else {
+            self.names_from_other_chunks.insert(ref_, name);
+            return;
+        };
+        let inner_index = ref_.inner_index() as usize;
+        if row.len() <= inner_index {
+            row.resize(inner_index + 1, name_str_empty());
+        }
+        row[inner_index] = name;
+    }
+
     pub fn add_top_level_symbol(&mut self, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        let inner: &Vec<NameStr> = &self.names[ref_.source_index() as usize];
-        if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
-        {
+        if self.stored_name(ref_).len() > 0 {
             return;
         }
 
@@ -873,11 +897,7 @@ impl NumberRenamer {
         let name = self
             .find_unused_name(original_name, ref_)
             .unwrap_or(original_name);
-        store_name(
-            &mut self.names[ref_.source_index() as usize],
-            ref_.inner_index(),
-            name,
-        );
+        self.store_name(ref_, name);
     }
 
     /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
@@ -895,11 +915,7 @@ impl NumberRenamer {
             count: 1,
             owner: ref_,
         };
-        store_name(
-            &mut self.names[ref_.source_index() as usize],
-            ref_.inner_index(),
-            name,
-        );
+        self.store_name(ref_, name);
     }
 
     pub fn add_top_level_declared_symbols(
@@ -913,7 +929,7 @@ impl NumberRenamer {
 
     /// Takes the names a `NestedRenamer` over this renamer assigned.
     pub fn absorb(&mut self, nested: NestedNames) {
-        self.names[nested.source_index as usize] = nested.names;
+        self.names[nested.source_index as usize] = Some(nested.names);
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
@@ -923,23 +939,17 @@ impl NumberRenamer {
 
         let resolved = self.symbols.follow(ref_);
 
-        let source_index = resolved.source_index();
-        let inner_index = resolved.inner_index();
-
-        let renamed_list = &self.names[source_index as usize];
-
-        if renamed_list.len() > inner_index as usize {
-            let renamed: NameStr = renamed_list[inner_index as usize];
-            if renamed.raw_len() > 0 {
-                // `StoreStr::slice` centralises the deref; allocated from
-                // `self.arena` (or a bundler worker arena) or borrows an AST-arena `original_name`, both
-                // of which outlive `self`.
-                return renamed.slice();
-            }
+        let renamed = self.stored_name(resolved);
+        if renamed.raw_len() > 0 {
+            // `StoreStr::slice` centralises the deref; allocated from
+            // `self.arena` (or a bundler worker arena) or borrows an AST-arena `original_name`, both
+            // of which outlive `self`.
+            return renamed.slice();
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols.symbols_for_source[source_index as usize][inner_index as usize]
+        self.symbols.symbols_for_source[resolved.source_index() as usize]
+            [resolved.inner_index() as usize]
             .original_name
             .slice()
     }
@@ -1050,7 +1060,9 @@ impl<'r> NestedRenamer<'r> {
     ) -> Self {
         let symbol_count = root.symbols.symbols_for_source[source_index as usize].len();
         let mut names = Vec::with_capacity(symbol_count);
-        names.extend_from_slice(&root.names[source_index as usize]);
+        if let Some(row) = &root.names[source_index as usize] {
+            names.extend_from_slice(row);
+        }
         names.resize(symbol_count, name_str_empty());
         NestedRenamer {
             root,

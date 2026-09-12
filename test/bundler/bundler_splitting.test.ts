@@ -3132,6 +3132,79 @@ describe("bundler", () => {
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
 
+  // Every chunk's renamer stays alive until its chunk is printed. A chunk that
+  // imports one binding from another chunk must hold one name for it, not a
+  // name table that reaches the binding's index in the symbol table of the
+  // file that declares it (12 bytes per slot, once per importing chunk).
+  // The two builds differ only in where big.js declares `pick`. They take
+  // about 3s on an idle debug+ASAN build, hence the timeout.
+  test("splitting/ImportedBindingSymbolIndexDoesNotCostMemoryPerChunk", async () => {
+    const CHUNKS = 200;
+    const SCOPES = 50;
+    const LOCALS_PER_SCOPE = 1000;
+    const SYMBOLS = SCOPES * LOCALS_PER_SCOPE;
+
+    const pick = "export function pick() { return 1; }\n";
+    const scope = `(function () { var ${Array.from({ length: LOCALS_PER_SCOPE }, (_, i) => "v" + i)}; });\n`;
+    const filler = `export function filler() {\n${Buffer.alloc(scope.length * SCOPES, scope).toString()}}\n`;
+    const entries: Record<string, string> = {};
+    for (let i = 0; i < CHUNKS; i++) {
+      entries[`e${i}.js`] = `import { pick } from "./big.js";\nconsole.log(${i}, pick());\n`;
+    }
+
+    // On Linux ru_maxrss survives exec: a child starts at the RSS its parent
+    // has when it spawns it. This test runner is larger than the build, so a
+    // small bun process runs the build and prints the build's peak RSS.
+    const measureBuild = `
+      const entries = Array.from({ length: ${CHUNKS} }, (_, i) => "./e" + i + ".js");
+      const { stderr, exitCode, resourceUsage } = Bun.spawnSync({
+        cmd: [process.execPath, "build", "--splitting", "--outdir", "out", ...entries],
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      console.log(JSON.stringify({ stderr: stderr.toString(), exitCode, maxRSS: resourceUsage.maxRSS }));
+    `;
+
+    async function buildPeakRss(bigJs: string) {
+      using dir = tempDir("splitting-imported-binding-index", { ...entries, "big.js": bigJs });
+      await using measure = Bun.spawn({
+        cmd: [bunExe(), "-e", measureBuild],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [measureOut, measureErr, measureExit] = await Promise.all([
+        measure.stdout.text(),
+        measure.stderr.text(),
+        measure.exited,
+      ]);
+      expect(measureErr).toBe("");
+      const { maxRSS, ...build } = JSON.parse(measureOut);
+      expect(build).toEqual({ stderr: "", exitCode: 0 });
+      expect(measureExit).toBe(0);
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "out", `e${CHUNKS - 1}.js`)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe(`${CHUNKS - 1} 1\n`);
+      expect(runExit).toBe(0);
+
+      return maxRSS as number;
+    }
+
+    const [declaredFirst, declaredLast] = await Promise.all([buildPeakRss(pick + filler), buildPeakRss(filler + pick)]);
+    // `maxRSS` is in bytes on every platform; in kilobytes this would be under 1 MiB.
+    expect(declaredFirst).toBeGreaterThan(1024 * 1024);
+    // A name table per importing chunk adds 12 * SYMBOLS * CHUNKS bytes (120 MB).
+    expect(declaredLast - declaredFirst).toBeLessThan((12 * SYMBOLS * CHUNKS) / 4);
+  }, 30_000);
+
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.
   // These pin the two per-chunk decisions of that step: what the written paths

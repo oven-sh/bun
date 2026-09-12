@@ -509,6 +509,23 @@ private:
                 }
             }
 
+            /* A Host naming a serverName entry with a client-certificate policy
+             * must not be served over a connection whose handshake never applied
+             * that policy (the client sent no SNI, or a name selecting another
+             * entry). Checked per request: Host changes freely on a keep-alive
+             * connection while the handshake does not. Answer 421 like nginx. */
+            if constexpr (SSL) {
+                std::string_view hostHeader = httpRequest->getHeader("host");
+                if (us_socket_host_header_bypasses_sni_policy((struct us_socket_t *) s, hostHeader.data(), hostHeader.length())) [[unlikely]] {
+                    constexpr std::string_view misdirected =
+                        "HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                    us_socket_write((struct us_socket_t *) s, misdirected.data(), (int) misdirected.length());
+                    us_socket_shutdown((struct us_socket_t *) s);
+                    us_socket_close((struct us_socket_t *) s, 0, nullptr);
+                    return nullptr;
+                }
+            }
+
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
             if constexpr (SSL) {

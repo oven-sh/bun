@@ -35,6 +35,18 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+
+            /* An :authority naming a serverName entry with a client-certificate
+             * policy must not be served over a connection whose QUIC handshake
+             * never applied that policy (the client sent no SNI, or a name
+             * selecting another entry). Same per-request 421 as HttpContext's
+             * Host check for HTTP/1. */
+            std::string_view authority = req.getHeader("host");
+            if (us_quic_stream_host_header_bypasses_sni_policy(s, authority.data(), authority.length())) [[unlikely]] {
+                res->writeStatus("421 Misdirected Request")->end();
+                return;
+            }
+
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

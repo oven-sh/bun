@@ -41,12 +41,17 @@ class CryptoKeyHMAC final : public CryptoKey {
 public:
     virtual ~CryptoKeyHMAC();
 
+    // A lengthBits of 0 selects the default: the hash block size for generate(), every bit of keyData for importRaw().
     static RefPtr<CryptoKeyHMAC> generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyHMAC> importRaw(size_t lengthBits, CryptoAlgorithmIdentifier hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
+
+    // HmacImportParams.length must select a prefix of keyData that ends in its last byte.
+    static bool lengthIsValidForKeyData(size_t lengthBits, size_t keyDataSize) { return lengthBits && keyDataSize == (lengthBits + 7) / 8; }
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::HMAC; }
 
     const Vector<uint8_t>& key() const { return m_key; }
+    size_t lengthBits() const { return m_lengthBits; }
     JsonWebKey exportJwk() const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
@@ -54,12 +59,14 @@ public:
     static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
 private:
-    CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
+    CryptoKeyHMAC(Vector<uint8_t>&& key, size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
 
     KeyAlgorithm algorithm() const final;
 
     CryptoAlgorithmIdentifier m_hash;
     Vector<uint8_t> m_key;
+    // The trailing (m_key.size() * 8 - m_lengthBits) bits of m_key are zero.
+    size_t m_lengthBits;
 };
 
 } // namespace WebCore

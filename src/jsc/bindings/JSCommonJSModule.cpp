@@ -261,11 +261,11 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
             return false;
         (void)scope.tryClearException();
 
-        // On error, remove the module from the require map/
+        // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
-        bool wasRemoved = globalObject->requireMap()->remove(globalObject, this->filename());
+        // The entry can already be gone: `delete require.cache[__filename]; throw ...`.
+        globalObject->requireMap()->remove(globalObject, this->filename());
         RETURN_IF_EXCEPTION(scope, false);
-        ASSERT(wasRemoved);
 
         scope.throwException(globalObject, exception);
         return false;
@@ -1282,16 +1282,16 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
     // tryClearException() cannot clear a termination, and JSMap::remove with
-    // it still pending returns false, tripping ASSERT(wasRemoved).
+    // it still pending does nothing.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();
 
-    // On error, remove the module from the require map/
+    // On error, remove the module from the require map
     // so that it can be re-evaluated on the next require.
-    bool wasRemoved = globalObject->requireMap()->remove(globalObject, specifierValue);
+    // The entry can already be gone: `delete require.cache[__filename]; throw ...`.
+    globalObject->requireMap()->remove(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT(wasRemoved);
 
     throwScope.throwException(globalObject, exception);
     RELEASE_AND_RETURN(throwScope, {});

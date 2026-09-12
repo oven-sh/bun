@@ -195,14 +195,8 @@ export function requireESM(this, resolved: string) {
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  let namespace;
-  try {
-    namespace = $requireESM(id);
-  } catch (exception) {
-    // Since the ESM code is mostly JS, we need to handle exceptions here.
-    $requireMap.$delete(id);
-    throw exception;
-  }
+  // Runs inside `$require`, which removes the `$requireMap` entry if the user's handler lets this throw.
+  const namespace = $requireESM(id);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
   let esModule, moduleExports;

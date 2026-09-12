@@ -45,6 +45,15 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
+// Chrome: which event ends the navigation the view has in flight.
+enum class ChromeNavigationKind : uint8_t {
+    NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
+    Requested, // command written, no reply yet: every commit so far is the page's own
+    Unknown, // a history traversal, which Chrome answers with {}: a document commit, or a same-document one onto its entry, ends it
+    SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
+    CrossDocument, // Page.loadEventFired ends it, or the commit itself for a back-forward cache restore
+};
+
 inline const char* screenshotMimeType(ScreenshotFormat f)
 {
     switch (f) {
@@ -98,6 +107,15 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Chrome: from the first main frame commit. Subframe events are ignored.
+    WTF::String m_mainFrameId;
+    ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
+    // Chrome: a main frame document has committed since the view's last navigation command.
+    bool m_chromeNavigationCommitted = false;
+    // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
+    uint32_t m_chromeNavigationSeq = 0;
+    // Chrome: the URL of the history entry that goBack()/goForward() asked for. A same-document commit elsewhere is the page's own.
+    WTF::String m_chromeTraversalUrl;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

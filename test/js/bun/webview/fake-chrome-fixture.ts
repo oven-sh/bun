@@ -34,11 +34,63 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--subframe-navigation`: every document load commits a subframe navigation
+// too, the way a page holding an <iframe> does.
+const subframeNavigation = process.argv.includes("--subframe-navigation");
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// The session of the command being handled, so a __fake_* global that an
+// evaluate() runs can emit events on it.
+let currentSessionId: string | undefined;
+// One script per CDP method, run once as the next command of that method is
+// read and before it is handled (see __fake_on_next).
+const onNext = new Map<string, string>();
+// How many document.title fetches the runtime has sent: one per navigation.
+let titleFetches = 0;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The page does something of its own while a command of the runtime's is on
+  // its way: `script` runs as the next `method` command is read, before the
+  // fake handles or answers it. That is how an event that was already in the
+  // pipe reaches the runtime after it wrote the command.
+  __fake_on_next(method: string, script: string) {
+    onNext.set(method, script);
+  },
+  // The page commits a same-document navigation of its own, the way
+  // history.pushState() and history.replaceState() do:
+  // Page.navigatedWithinDocument with nothing before it, no new history entry.
+  __fake_replace_state(url: string) {
+    if (historyIndex >= 0) history[historyIndex].url = url;
+    event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
+  },
+  // The page follows a #fragment link of its own, or assigns location.hash:
+  // a new history entry, and a commit that reports "fragment" the way a
+  // traversal's does.
+  __fake_hash_change(url: string) {
+    pushEntry(url);
+    commitSameDocument(url);
+  },
+  // The page navigates itself to a new document (a link, `location.href = ...`):
+  // it commits, and only __fake_load_event() finishes it.
+  __fake_page_commit(url: string) {
+    loads++;
+    pushEntry(url);
+    event("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" },
+      type: "Navigation",
+    });
+  },
+  // The load event of the document that is live, the way one arrives for a
+  // document the page itself navigated to. It names no frame and no loader.
+  __fake_load_event() {
+    event("Page.loadEventFired", { timestamp: ++loads });
+  },
+  // How many document.title fetches the runtime has sent so far.
+  __fake_title_fetches() {
+    return titleFetches;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -64,13 +116,69 @@ function send(message: unknown) {
   while (written < bytes.length) written += writeSync(REPLIES, bytes, written, bytes.length - written);
 }
 
+// An event on the session of the command being handled.
+function event(method: string, params: unknown) {
+  send({ method, params, sessionId: currentSessionId });
+}
+
 let targets = 0;
 let loads = 0;
+let entries = 0;
+
+// Session history, the way the browser keeps it: Page.navigate appends,
+// Page.getNavigationHistory reports it, Page.navigateToHistoryEntry moves
+// inside it. Two URLs that differ only after the '#' are the same document.
+const history: { id: number; url: string }[] = [];
+let historyIndex = -1;
+const documentOf = (url: string) => url.split("#")[0];
+const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
+// A URL with "never-load" in it starts loading and never commits, the way a
+// server that accepts the connection and then says nothing looks. One with
+// "stall-on-return" loads when navigated to, but a history traversal back to
+// it starts and never commits. One with "bfcached" in it comes back whole
+// from the back-forward cache when a history traversal returns to it.
+const neverLoads = (url: string) => url.includes("never-load");
+const stallsOnReturn = (url: string) => url.includes("stall-on-return");
+const bfcached = (url: string) => url.includes("bfcached");
+
+function pushEntry(url: string) {
+  history.length = historyIndex + 1;
+  history.push({ id: ++entries, url });
+  historyIndex = history.length - 1;
+}
+
+// A document commits: Page.frameNavigated, with the fragment split off into
+// frame.urlFragment. A fresh load ("Navigation") ends with the load event. A
+// page restored from the back-forward cache is whole as it commits, so
+// nothing follows.
+function commitDocument(url: string, type: "Navigation" | "BackForwardCacheRestore") {
+  const fragment = fragmentOf(url);
+  const frame = { id: "F", loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
+  event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
+  if (type === "BackForwardCacheRestore") return;
+  if (subframeNavigation) {
+    const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
+    event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" }, type });
+  }
+  event("Page.loadEventFired", { timestamp: loads });
+}
+
+// A same-document navigation of the runtime's commits: a #fragment target and
+// a history traversal both report "fragment". No load event follows.
+function commitSameDocument(url: string) {
+  event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
+}
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
+  currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
-  const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+
+  const script = onNext.get(method);
+  if (script !== undefined) {
+    onNext.delete(method);
+    (0, eval)(script);
+  }
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -83,17 +191,38 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
+      const url: string = params.url;
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
-      return;
+      // A #fragment target of the current document keeps that document.
+      const current = history[historyIndex]?.url;
+      const sameDocument = current !== undefined && documentOf(current) === documentOf(url) && fragmentOf(url) !== "";
+      if (!sameDocument) loads++;
+      // The reply names a loaderId only for a navigation that loads a document.
+      reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
+      if (neverLoads(url)) return;
+      pushEntry(url);
+      return sameDocument ? commitSameDocument(url) : commitDocument(url, "Navigation");
+    }
+    case "Page.getNavigationHistory":
+      return reply({ currentIndex: historyIndex, entries: history });
+    case "Page.navigateToHistoryEntry": {
+      const target = history.findIndex(entry => entry.id === params.entryId);
+      if (target === -1) return reply({});
+      const url = history[target].url;
+      const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
+      reply({});
+      if (neverLoads(url) || stallsOnReturn(url)) return;
+      historyIndex = target;
+      if (sameDocument) return commitSameDocument(url);
+      if (bfcached(url)) return commitDocument(url, "BackForwardCacheRestore");
+      loads++;
+      return commitDocument(url, "Navigation");
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
+        titleFetches++;
         if (noTitleReply) return;
         return reply({ result: { type: "string", value: "fake chrome" } });
       }

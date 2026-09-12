@@ -4353,6 +4353,24 @@ void markAsUntransferable(VM& vm, JSObject& object)
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
+// Serializing runs user code (getters, Proxy traps) that can invalidate entries create() accepted; runs before anything is detached.
+static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
+{
+    for (auto& transferable : transferList) {
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+    }
+    for (auto& arrayBuffer : arrayBuffers) {
+        if (arrayBuffer->isDetached())
+            return Exception { DataCloneError, "ArrayBuffer in transfer list was detached during serialization"_s };
+    }
+    for (auto& port : messagePorts) {
+        if (port->isDetached() || port->isClosing())
+            return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
+    }
+    return std::nullopt;
+}
+
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)
 {
     if (arrayBuffers.isEmpty())
@@ -4783,6 +4801,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
         releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
+
+    if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
+        releaseSerializedBlockListRefs();
+        RELEASE_AND_RETURN(scope, WTF::move(*exception));
     }
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);

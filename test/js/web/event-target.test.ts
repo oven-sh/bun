@@ -13,48 +13,34 @@ const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,10,2, 0x5f,1,0x7f,1, 0
 const listener = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
 `;
 
-test.concurrent("dispatchEvent() does not crash on a WebAssembly GC object listener", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `${makeWasmGCObject}
-       const target = new EventTarget();
-       target.addEventListener("a", listener);
-       target.dispatchEvent(new Event("a"));
-       console.log("survived");`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+// Each receiver reaches JSEventListener::handleEvent through its own cast of `this`.
+const receivers = {
+  "EventTarget#dispatchEvent": `
+    const target = new EventTarget();
+    target.addEventListener("a", listener);
+    target.dispatchEvent(new Event("a"));`,
+  "AbortController#abort": `
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", listener);
+    controller.abort();`,
+  "the global dispatchEvent": `
+    addEventListener("a", listener);
+    dispatchEvent(new Event("a"));`,
+};
+
+for (const [name, script] of Object.entries(receivers)) {
+  test.concurrent(`${name} does not crash on a WebAssembly GC object listener`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${makeWasmGCObject}${script}\nconsole.log("survived");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("survived\n");
+    expect(stderr).toContain("'handleEvent' property of event listener should be callable");
+    expect(exitCode).toBe(1);
   });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stdout).toBe("survived\n");
-  expect(stderr).toContain("'handleEvent' property of event listener should be callable");
-  expect(exitCode).toBe(1);
-});
-
-test.concurrent("AbortSignal abort does not crash on a WebAssembly GC object listener", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `${makeWasmGCObject}
-       const controller = new AbortController();
-       controller.signal.addEventListener("abort", listener);
-       controller.abort();
-       console.log("survived");`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stdout).toBe("survived\n");
-  expect(stderr).toContain("'handleEvent' property of event listener should be callable");
-  expect(exitCode).toBe(1);
-});
+}

@@ -1426,8 +1426,8 @@ impl<'a> Transpiler<'a> {
             // `source_backing` (below) so `source.contents` re-borrows it
             // without leaking; never falls through to `read_file_with_allocator`
             // (which would try to open `data:...` as a filesystem path).
-            if strings::has_prefix_comptime(path.text, b"data:") {
-                use bun_resolver::data_url::DataURL;
+            use bun_resolver::data_url::DataURL;
+            if DataURL::has_scheme(path.text) {
                 let data_url = match DataURL::parse_without_check(path.text) {
                     Ok(u) => u,
                     Err(err) => {

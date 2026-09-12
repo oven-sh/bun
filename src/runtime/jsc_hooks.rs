@@ -3909,7 +3909,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     // In a `data:` URL everything after the comma is the payload; a `?` is
     // part of the data, not a query string.
-    if bun_core::strings::has_prefix_comptime(slice, b"data:") {
+    if bun_resolver::data_url::DataURL::has_scheme(slice) {
         return (slice, slice, b"");
     }
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.

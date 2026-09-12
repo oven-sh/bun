@@ -52,6 +52,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_bytes);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamStaticFunction_from);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeReadable);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeErrored);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeDisturbed);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter);
 static JSC_DECLARE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter);
@@ -425,6 +428,12 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     auto& names = builtinNames(vm);
     putDirectCustomAccessor(vm, names.bunNativePtrPrivateName(), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototype_nativePtrGetter, jsReadableStreamPrototype_nativePtrSetter, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete);
 
+    const auto nodeStreamStateAttributes = JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly;
+    const auto nodeStreamStateAnnotation = DOMAttributeAnnotation { JSReadableStream::info(), nullptr };
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.readable"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeReadable, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.errored"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeErrored, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.disturbed"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeDisturbed, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamPrototype_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
@@ -545,6 +554,36 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked, (JSGlobalObject
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
     return JSValue::encode(jsBoolean(isReadableStreamLocked(stream)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeReadable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == ReadableStreamState::Readable));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeErrored, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == ReadableStreamState::Errored));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeDisturbed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_disturbed));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

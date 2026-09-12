@@ -1128,12 +1128,16 @@ fn configure_env_for_scripts_run(
                 .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
-                let current_path = this.env().get(b"PATH").unwrap_or(b"");
+                let current_path: Vec<u8> = this.env().get(b"PATH").unwrap_or(b"").to_vec();
                 let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
-                path_var.extend_from_slice(current_path);
+                path_var.extend_from_slice(&current_path);
                 let mut bun_path: &[u8] = b"";
-                if RunCommand::create_fake_temporary_node_executable(&mut path_var, &mut bun_path)
-                    .is_err()
+                if RunCommand::create_fake_temporary_node_executable(
+                    &mut path_var,
+                    &mut bun_path,
+                    &current_path,
+                )
+                .is_err()
                 {
                     break 'brk;
                 }

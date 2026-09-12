@@ -258,7 +258,10 @@ pub struct ValkeyClient {
     // when constructing/duplicating clients.
     pub(crate) password: Box<[u8]>,
     pub(crate) username: Box<[u8]>,
+    /// From the URL. `duplicate()` copies it.
     pub(crate) database: u32,
+    /// Follows an acknowledged `SELECT`. The reconnect handshake replays it.
+    pub(crate) selected_database: u32,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,
 
@@ -1088,7 +1091,7 @@ impl ValkeyClient {
                     }
 
                     // SELECT was successful.
-                    debug!("SELECT {} successful", self.database);
+                    debug!("SELECT {} successful", self.selected_database);
                     // Connection is now fully ready on the specified database.
                     // If any commands were queued while waiting for SELECT, try to send them.
                     self.send_next_command();
@@ -1207,6 +1210,12 @@ impl ValkeyClient {
             }
         }
 
+        if let Some(db) = pair.promise.selected_db
+            && matches!(value, RESPValue::SimpleString(ok) if ok.as_ref() == b"OK")
+        {
+            self.selected_database = db;
+        }
+
         // Resolve the promise with the potentially transformed value
         let promise_ptr = &mut pair.promise;
         let global_this = self.global_object();
@@ -1270,9 +1279,9 @@ impl ValkeyClient {
         }
 
         // If using a specific database, send SELECT command
-        if self.database > 0 {
+        if self.selected_database > 0 {
             let mut int_buf = [0u8; 64];
-            let db_str = bun_core::fmt::int_as_bytes(&mut int_buf, self.database);
+            let db_str = bun_core::fmt::int_as_bytes(&mut int_buf, self.selected_database);
             let select_cmd = Command {
                 command: b"SELECT",
                 args: Args::Raw(&[db_str]),
@@ -1441,7 +1450,7 @@ impl ValkeyClient {
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
 
-        let mut promise = command::Promise::create(global_this, checked_command.meta);
+        let mut promise = command::Promise::create(global_this, &checked_command);
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
         if let Some(message) = self.send_rejection() {

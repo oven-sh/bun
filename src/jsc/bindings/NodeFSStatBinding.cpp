@@ -749,6 +749,23 @@ const JSC::ClassInfo JSBigIntStatsPrototype::s_info = { "BigIntStats"_s, &Base::
 const JSC::ClassInfo JSStatsConstructor::s_info = { "Stats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatsConstructor) };
 const JSC::ClassInfo JSBigIntStatsConstructor::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsConstructor) };
 
+// Node: `this.atimeMs = atimeNs / kNsPerMsBigInt`, then mtime, ctime and birthtime. jsDiv is the
+// `/` operator: the quotient stays a BigInt of any size, and an operand that ToNumeric does not
+// turn into a BigInt throws a TypeError.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L624-L627
+static void divideNsIntoMs(JSC::JSGlobalObject* globalObject, JSValue& atime, JSValue& mtime, JSValue& ctime, JSValue& birthtime)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nsPerMs = JSC::JSBigInt::createFrom(globalObject, kNsPerMs);
+    RETURN_IF_EXCEPTION(scope, );
+    for (JSValue* time : { &atime, &mtime, &ctime, &birthtime }) {
+        *time = jsDiv(globalObject, *time, nsPerMs);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 template<bool isBigInt>
 inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -785,18 +802,7 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     JSValue birthtimeMs = birthtimeNs;
 
     if constexpr (isBigInt) {
-        // this.atimeMs = atimeNs / kNsPerMsBigInt;
-        // this.mtimeMs = mtimeNs / kNsPerMsBigInt;
-        // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
-        // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
-        const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
+        divideNsIntoMs(globalObject, atimeMs, mtimeMs, ctimeMs, birthtimeMs);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -869,18 +875,7 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     JSValue birthtimeMs = birthtimeNs;
 
     if constexpr (isBigInt) {
-        // this.atimeMs = atimeNs / kNsPerMsBigInt;
-        // this.mtimeMs = mtimeNs / kNsPerMsBigInt;
-        // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
-        // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
-        const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
+        divideNsIntoMs(globalObject, atimeMs, mtimeMs, ctimeMs, birthtimeMs);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

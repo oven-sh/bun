@@ -848,6 +848,12 @@ impl PublishCommand {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
+        if !registry_url.has_http_like_protocol() {
+            return Err(PublishError::InvalidRegistryUrl(redacted_registry_href(
+                &registry_url,
+            )));
+        }
+
         if registry.token.is_empty()
             && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
@@ -2079,6 +2085,8 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
+    #[error("InvalidRegistryUrl")]
+    InvalidRegistryUrl(Box<[u8]>),
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2090,8 +2098,48 @@ impl PublishError {
                 Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
                 Global::crash();
             }
+            PublishError::InvalidRegistryUrl(href) => {
+                Output::err_generic(
+                    "Registry URL must be http:// or https://\nReceived: {}",
+                    (bun_core::fmt::quote(&href),),
+                );
+                Global::crash();
+            }
         }
     }
+}
+
+/// `url.href` without userinfo, `?query` or `#fragment`, and with one trailing slash.
+fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
+    fn after_last_at(s: &[u8]) -> &[u8] {
+        strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
+    }
+
+    let href = url.href;
+    let authority_start = if !url.protocol.is_empty() {
+        url.protocol.len() + b"://".len()
+    } else if href.starts_with(b"//") {
+        2
+    } else {
+        0
+    };
+    let authority_end = authority_start
+        + strings::index_of_char_usize(&href[authority_start..], b'/')
+            .unwrap_or(href.len() - authority_start);
+    // `URL::parse` does not validate the scheme, so that slice can hold a `user:password@` too.
+    let scheme = after_last_at(&href[..authority_start]);
+    let host = after_last_at(&href[authority_start..authority_end]);
+    let rest = &href[authority_end - host.len()..];
+    let rest = &rest[..strings::index_of_any(rest, b"?#").unwrap_or(rest.len())];
+    let trimmed = strings::without_trailing_slash(rest);
+
+    let mut out = Vec::with_capacity(scheme.len() + trimmed.len() + 1);
+    out.extend_from_slice(scheme);
+    out.extend_from_slice(trimmed);
+    if trimmed.len() < rest.len() {
+        out.push(b'/');
+    }
+    out.into_boxed_slice()
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

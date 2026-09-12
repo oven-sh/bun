@@ -1,8 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
+
+// Runs `script` in a child that is killed after 30s, so a super-linear
+// regression fails fast instead of hanging the test runner.
+async function expectRendersQuickly(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("DONE");
+  expect(exitCode).toBe(0);
+}
 
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks
@@ -566,21 +585,6 @@ code
 // ============================================================================
 
 describe("pathological bracket inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("bracket floods render in linear time (html)", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -758,21 +762,6 @@ describe("pathological bracket inputs", () => {
 // ============================================================================
 
 describe("pathological inline HTML inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("unterminated inline HTML openers render in linear time", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -854,6 +843,329 @@ describe("pathological inline HTML inputs", () => {
       '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
   });
+});
+
+// ============================================================================
+// Pathological inputs: deep nesting through `Bun.markdown.render()`. Two
+// separate O(depth²) costs, both found by fuzzing, while html() and react()
+// on the same inputs take milliseconds:
+// - The `depth` field of the list / listItem meta was computed by walking the
+//   whole open-block stack on every list and list-item leave (300 KB of `>- `
+//   markers took ~100s). It is now a counter.
+// - Every element collected its children in its own buffer and copied them
+//   into the parent's buffer on leave, even with no callback registered, so
+//   text nested D levels deep was copied D times (1.2 MB of nested `*a … b*`
+//   took 5s with an empty callback set). Elements without a callback now
+//   render straight into the nearest enclosing element that has one.
+// The child process is killed after 30s so a regression fails fast.
+// ============================================================================
+
+describe("pathological nesting through render()", () => {
+  test("deeply nested lists render in linear time with correct depth meta", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        {
+          // listItem meta at every one of 100k levels.
+          const depth = 100000;
+          let items = 0, maxDepth = -1, ordered = 0;
+          const out = Bun.markdown.render(fill(depth, "1. ") + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxDepth) maxDepth = meta.depth; if (meta.ordered) ordered++; return children; },
+          });
+          const got = JSON.stringify({ out, items, maxDepth, ordered });
+          const want = JSON.stringify({ out: "hi", items: depth, maxDepth: depth - 1, ordered: depth });
+          if (got !== want) throw new Error("unexpected listItem result: " + got.slice(0, 300));
+          console.log("OK listItem depth");
+        }
+        // No callbacks registered: every block passes its children through.
+        for (const [unit, depth] of [[">- ", 100000], ["+ ", 50000], ["1) ", 50000]]) {
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {});
+          if (out !== "hi") throw new Error("unexpected output for " + JSON.stringify(unit) + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + JSON.stringify(unit));
+        }
+        // The counter reports the same list / listItem depths the stack walk did.
+        for (const unit of ["1. ", ">- ", "- > "]) {
+          const depth = 4000;
+          let items = 0, lists = 0, maxItemDepth = -1, maxListDepth = -1;
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxItemDepth) maxItemDepth = meta.depth; return children; },
+            list: (children, meta) => { lists++; if (meta.depth > maxListDepth) maxListDepth = meta.depth; return children; },
+          });
+          const got = JSON.stringify({ out, items, lists, maxItemDepth, maxListDepth });
+          const want = JSON.stringify({ out: "hi", items: depth, lists: depth, maxItemDepth: depth - 1, maxListDepth: depth - 1 });
+          if (got !== want) throw new Error("unexpected depth meta for " + JSON.stringify(unit) + ": " + got.slice(0, 300));
+          console.log("OK depth meta " + JSON.stringify(unit));
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("deeply nested inline spans render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 600000;
+        const input = fill(n, "*a ") + fill(n, " b*");
+        const text = fill(n, "a ") + fill(n, " b");
+        {
+          const out = Bun.markdown.render(input, {});
+          if (out !== text) throw new Error("unexpected output (no callbacks): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK no callbacks");
+        }
+        {
+          // Only the outermost element captures; the nested spans inside it do not.
+          const out = Bun.markdown.render(input, { paragraph: children => "<p>" + children + "</p>\\n" });
+          if (out !== "<p>" + text + "</p>\\n") throw new Error("unexpected output (paragraph callback): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK paragraph callback");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("capturing and pass-through elements interleave correctly", () => {
+    // An element with a callback collects exactly its own children, whether or
+    // not the elements between it and the text have callbacks of their own.
+    const nested = (n: number) => Buffer.alloc(n * 3, "*a ").toString() + Buffer.alloc(n * 3, " b*").toString() + "\n";
+    const callbacks = {
+      emphasis: (c: string) => "<em>" + c + "</em>",
+      paragraph: (c: string) => "<p>" + c + "</p>\n",
+    };
+    for (const n of [1, 2, 3, 50, 2000]) {
+      expect(Markdown.render(nested(n), callbacks)).toBe(Markdown.html(nested(n)));
+    }
+    const mixed = "**x *y **z *w* z** y* x**\n";
+    expect(Markdown.render(mixed, {})).toBe("x y z w z y x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]` })).toBe("[x y [z w z] y x]");
+    expect(Markdown.render(mixed, { emphasis: c => `(${c})` })).toBe("x (y z (w) z y) x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: c => `(${c})` })).toBe("[x (y [z (w) z] y) x]");
+    // A callback that returns null drops the element together with everything
+    // that rendered into it, including pass-through descendants.
+    expect(Markdown.render(mixed, { emphasis: () => null })).toBe("x  x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: () => null })).toBe("[x  x]");
+    expect(
+      Markdown.render("> - one\n>   - two [l](u)\n\npara `code`\n", {
+        blockquote: c => `<bq>${c}</bq>`,
+        link: (c, m) => `<${m.href}|${c}>`,
+        paragraph: c => `<p>${c}</p>`,
+      }),
+    ).toBe("<bq>onetwo <u|l></bq><p>para code</p>");
+    // Text that does not come from a plain text event (entity, soft break, hard
+    // break, NUL) lands in the same place as the text around it.
+    const pieces = "**a *b &amp; c\nd  \ne\0f* g**\n";
+    expect(Markdown.render(pieces, {})).toBe("a b & c\nd\ne\uFFFDf g");
+    expect(Markdown.render(pieces, { strong: c => `[${c}]` })).toBe("[a b & c\nd\ne\uFFFDf g]");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})` })).toBe("a (b & c\nd\ne\uFFFDf) g");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})`, text: t => t.toUpperCase() })).toBe(
+      "A (B & C\nD\nE\uFFFDF) G",
+    );
+  });
+
+  test("list and listItem meta do not depend on which of the two has a callback", () => {
+    const input = "3. a\n4. b\n   - [x] c\n   - [ ] d\n\n- e\n- f\n\n> 1) g\n> 2) h\n";
+    const itemMeta = [
+      { children: "a", index: 0, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "c", index: 0, depth: 1, ordered: false, start: undefined, checked: true },
+      { children: "d", index: 1, depth: 1, ordered: false, start: undefined, checked: false },
+      { children: "bcd", index: 1, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "e", index: 0, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "f", index: 1, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "g", index: 0, depth: 0, ordered: true, start: 1, checked: undefined },
+      { children: "h", index: 1, depth: 0, ordered: true, start: 1, checked: undefined },
+    ];
+    const listMeta = [
+      { children: "cd", ordered: false, start: undefined, depth: 1 },
+      { children: "abcd", ordered: true, start: 3, depth: 0 },
+      { children: "ef", ordered: false, start: undefined, depth: 0 },
+      { children: "gh", ordered: true, start: 1, depth: 0 },
+    ];
+    const record = (log: object[]) => (children: string, meta: object) => (log.push({ children, ...meta }), children);
+
+    // listItem only: every ul/ol passes through, but each li still finds its parent list.
+    let items: object[] = [];
+    expect(Markdown.render(input, { listItem: record(items) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+
+    // list only: every li passes through.
+    let lists: object[] = [];
+    expect(Markdown.render(input, { list: record(lists) })).toBe("abcdefgh");
+    expect(lists).toEqual(listMeta);
+
+    // Both.
+    items = [];
+    lists = [];
+    expect(Markdown.render(input, { listItem: record(items), list: record(lists) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+    expect(lists).toEqual(listMeta);
+  });
+});
+
+// ============================================================================
+// render() oracle. `Bun.markdown.react()` builds its element tree with a
+// separate renderer, so folding that tree with the same callbacks states
+// independently what render() must return: every callback gets exactly the
+// output of its children, an element without a callback splices its children
+// into the nearest ancestor that has one, and the list / listItem meta
+// (`depth`, `index`, `ordered`, `start`) follows from the tree shape alone.
+// Checked over the spec corpus with every callback, with none, and with two
+// complementary halves, so each element type is seen both collecting its
+// children and passing them through.
+// ============================================================================
+
+describe("render() agrees with a fold over the react() tree", () => {
+  const names = [
+    "heading",
+    "paragraph",
+    "blockquote",
+    "code",
+    "list",
+    "listItem",
+    "hr",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "html",
+    "strong",
+    "emphasis",
+    "link",
+    "image",
+    "codespan",
+    "strikethrough",
+    "text",
+  ];
+  const callbackForTag: Record<string, string> = {
+    p: "paragraph",
+    blockquote: "blockquote",
+    pre: "code",
+    ul: "list",
+    ol: "list",
+    li: "listItem",
+    hr: "hr",
+    table: "table",
+    thead: "thead",
+    tbody: "tbody",
+    tr: "tr",
+    th: "th",
+    td: "td",
+    html: "html",
+    strong: "strong",
+    em: "emphasis",
+    a: "link",
+    img: "image",
+    code: "codespan",
+    del: "strikethrough",
+  };
+  type Callbacks = Record<string, (children: string, meta?: unknown) => string>;
+  type ParentList = { ordered: boolean; start?: number; index: number };
+
+  // Every callback wraps its children in unambiguous markers together with its
+  // meta. `text` must commute with concatenation and keep "\n" (soft and hard
+  // breaks bypass it), which upper-casing does.
+  const callbacks = (subset: string[]): Callbacks =>
+    Object.fromEntries(
+      subset.map(name => [
+        name,
+        name === "text"
+          ? (children: string) => children.toUpperCase()
+          : (children: string, meta?: unknown) =>
+              "\x01" + name + (meta === undefined ? "" : JSON.stringify(meta)) + "\x02" + children + "\x03",
+      ]),
+    );
+
+  function fold(node: any, cbs: Callbacks, enclosingLists: number, parent?: ParentList): string {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string") return cbs.text ? cbs.text(node) : node;
+    if (Array.isArray(node)) {
+      let out = "";
+      let items = 0;
+      for (const child of node) {
+        out += fold(child, cbs, enclosingLists, parent && { ...parent, index: child?.type === "li" ? items++ : 0 });
+      }
+      return out;
+    }
+    const tag: string = typeof node.type === "symbol" ? "fragment" : node.type;
+    const props = node.props ?? {};
+    if (tag === "br") return "\n";
+    const isList = tag === "ul" || tag === "ol";
+    const children =
+      tag === "img"
+        ? fold(props.alt, cbs, enclosingLists)
+        : fold(
+            props.children,
+            cbs,
+            enclosingLists + (isList ? 1 : 0),
+            isList ? { ordered: tag === "ol", start: props.start, index: 0 } : undefined,
+          );
+    const level = /^h([1-6])$/.exec(tag);
+    const cb = cbs[level ? "heading" : callbackForTag[tag]];
+    if (!cb) return children;
+    let meta: unknown;
+    if (level) meta = { level: +level[1], id: props.id };
+    else if (isList) meta = { ordered: tag === "ol", start: props.start, depth: enclosingLists };
+    else if (tag === "li")
+      meta = {
+        index: parent?.index ?? 0,
+        depth: Math.max(enclosingLists - 1, 0),
+        ordered: parent?.ordered ?? false,
+        start: parent?.ordered ? parent.start : undefined,
+        checked: props.checked,
+      };
+    else if (tag === "pre") meta = props.language === undefined ? undefined : { language: props.language };
+    else if (tag === "th" || tag === "td") meta = { align: props.align };
+    else if (tag === "a") meta = { href: props.href, title: props.title };
+    else if (tag === "img") meta = { src: props.src, title: props.title };
+    return meta === undefined ? cb(children) : cb(children, meta);
+  }
+
+  function specExamples(file: string): string[] {
+    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+    const examples: string[] = [];
+    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+    }
+    return examples;
+  }
+
+  const callbackSets = [
+    names,
+    [],
+    names.filter((_, i) => i % 2 === 0), // list without listItem, heading, link, text, ...
+    names.filter((_, i) => i % 2 === 1), // listItem without list, paragraph, emphasis, image, ...
+  ].map(callbacks);
+
+  // One test per 100 examples keeps each test near a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of [
+    ["spec.txt", { headings: { ids: true } }],
+    ["spec-gfm.txt", {}],
+    ["spec-tables.txt", {}],
+    ["spec-strikethrough.txt", {}],
+    ["spec-tasklists.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["regressions.txt", {}],
+  ] as const) {
+    const examples = specExamples(file);
+    test(`${file} has examples`, () => {
+      expect(examples.length).toBeGreaterThan(0);
+    });
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          const tree = Markdown.react(markdown, undefined, { ...options, reactVersion: 18 });
+          for (const cbs of callbackSets) {
+            const rendered = Markdown.render(markdown, cbs, options);
+            const folded = fold(tree, cbs, 0);
+            if (rendered !== folded && mismatches.length < 5) {
+              mismatches.push({ markdown, callbacks: Object.keys(cbs), rendered, folded });
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
 });
 
 // ============================================================================

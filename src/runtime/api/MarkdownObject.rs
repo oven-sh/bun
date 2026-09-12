@@ -1038,15 +1038,16 @@ impl<'a> ParseRenderer<'a> {
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.
-/// Uses a content-stack pattern: each enter pushes a new buffer, text
-/// appends to the top buffer, and each leave pops the buffer, calls
-/// the JS callback with the accumulated children, and appends the
-/// callback's return value to the parent buffer.
+/// Only an element with a callback buffers its children; the rest write to the enclosing buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
+    /// Indices into `stack` of the entries that collect output, innermost last.
+    collecting: Vec<usize>,
+    /// Number of ul/ol entries on `stack`.
+    list_depth: u32,
     callbacks: Callbacks,
     heading_tracker: md::helpers::HeadingIdTracker,
     stack_check: StackCheck,
@@ -1146,11 +1147,13 @@ impl<'a> JsCallbackRenderer<'a> {
             global_object,
             src_text,
             stack: Vec::new(),
+            collecting: Vec::new(),
+            list_depth: 0,
             callbacks: Callbacks::default(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
         };
-        self_.stack.push(CallbackStackEntry::default());
+        self_.push_entry(CallbackStackEntry::default(), true);
         Ok(self_)
     }
 
@@ -1203,26 +1206,45 @@ impl<'a> JsCallbackRenderer<'a> {
     // Content stack operations
     // ========================================
 
-    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        if let Some(top) = self.stack.last_mut() {
-            top.buffer.extend_from_slice(data);
+    fn push_entry(&mut self, entry: CallbackStackEntry, collects: bool) {
+        if collects {
+            self.collecting.push(self.stack.len());
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth += 1;
+        }
+        self.stack.push(entry);
+    }
+
+    /// Never pops the root.
+    fn pop_entry(&mut self) -> Option<CallbackStackEntry> {
+        if self.stack.len() <= 1 {
+            return None;
+        }
+        let entry = self.stack.pop()?;
+        if self.collecting.last() == Some(&self.stack.len()) {
+            self.collecting.pop();
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth -= 1;
+        }
+        Some(entry)
+    }
+
+    fn append_output(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        if let Some(&i) = self.collecting.last() {
+            self.stack[i].buffer.extend_from_slice(data);
         }
         Ok(())
     }
 
     fn pop_and_callback(&mut self, callback: JSValue, meta: Option<JSValue>) -> JsResult<()> {
-        if self.stack.len() <= 1 {
-            return Ok(()); // don't pop root
-        }
-        let Some(entry) = self.stack.pop() else {
+        let Some(entry) = self.pop_entry() else {
             return Ok(());
         };
-
-        let children = entry.buffer.as_slice();
-
         if callback.is_empty() {
-            // No callback registered - pass children through to parent
-            self.append_to_top(children)?;
+            // Empty unless the parser's enter/leave events were unbalanced (#39496).
+            self.append_output(&entry.buffer)?;
             return Ok(());
         }
 
@@ -1231,7 +1253,8 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = bun_string_jsc::create_utf8_for_js(self.global_object, children)?;
+        let children_js =
+            bun_string_jsc::create_utf8_for_js(self.global_object, entry.buffer.as_slice())?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1244,7 +1267,7 @@ impl<'a> JsCallbackRenderer<'a> {
             return Ok(()); // callback returned null/undefined → omit element
         }
         let slice = result.to_utf8(self.global_object)?;
-        self.append_to_top(slice.slice())?;
+        self.append_output(slice.slice())?;
         Ok(())
     }
 
@@ -1284,13 +1307,17 @@ impl<'a> JsCallbackRenderer<'a> {
             parent.child_index += 1;
         }
 
-        self.stack.push(CallbackStackEntry {
-            block_type,
-            data,
-            flags,
-            child_index,
-            ..Default::default()
-        });
+        let collects = !self.get_block_callback(block_type).is_empty();
+        self.push_entry(
+            CallbackStackEntry {
+                block_type,
+                data,
+                flags,
+                child_index,
+                ..Default::default()
+            },
+            collects,
+        );
         Ok(())
     }
 
@@ -1303,19 +1330,18 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_block_callback(block_type);
-        // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
-        let saved = if self.stack.len() > 1 {
-            CallbackStackEntry {
-                block_type: self.stack.last().unwrap().block_type,
-                data: self.stack.last().unwrap().data,
-                flags: self.stack.last().unwrap().flags,
-                child_index: self.stack.last().unwrap().child_index,
-                ..Default::default()
+        let meta = if callback.is_empty() {
+            if block_type == md::BlockType::H {
+                let _ = self.heading_tracker.leave_heading();
             }
+            None
         } else {
-            CallbackStackEntry::default()
+            let (data, flags) = self
+                .stack
+                .last()
+                .map_or((0, 0), |top| (top.data, top.flags));
+            self.create_block_meta(block_type, data, flags)?
         };
-        let meta = self.create_block_meta(block_type, saved.data, saved.flags)?;
         self.pop_and_callback(callback, meta)?;
 
         if block_type == md::BlockType::H {
@@ -1324,15 +1350,25 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+    fn enter_span_impl(
+        &mut self,
+        span_type: md::SpanType,
+        detail: md::SpanDetail<'_>,
+    ) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        self.stack.push(CallbackStackEntry {
-            href: Box::from(detail.href),
-            title: Box::from(detail.title),
-            ..Default::default()
-        });
+        let collects = !self.get_span_callback(span_type).is_empty();
+        let entry = if collects {
+            CallbackStackEntry {
+                href: Box::from(detail.href),
+                title: Box::from(detail.title),
+                ..Default::default()
+            }
+        } else {
+            CallbackStackEntry::default()
+        };
+        self.push_entry(entry, collects);
         Ok(())
     }
 
@@ -1342,13 +1378,12 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_span_callback(span_type);
-        let (href, title): (&[u8], &[u8]) = if self.stack.len() > 1 {
-            let top = self.stack.last().unwrap();
-            (&top.href, &top.title)
-        } else {
-            (b"", b"")
+        let meta = match self.stack.last() {
+            Some(top) if !callback.is_empty() => {
+                self.create_span_meta(span_type, &top.href, &top.title)?
+            }
+            _ => None,
         };
-        let meta = self.create_span_meta(span_type, href, title)?;
         self.pop_and_callback(callback, meta)?;
         Ok(())
     }
@@ -1362,15 +1397,15 @@ impl<'a> JsCallbackRenderer<'a> {
         self.heading_tracker.track_text(text_type, content);
 
         match text_type {
-            md::TextType::NullChar => self.append_to_top(b"\xEF\xBF\xBD")?,
-            md::TextType::Br => self.append_to_top(b"\n")?,
-            md::TextType::Softbr => self.append_to_top(b"\n")?,
+            md::TextType::NullChar => self.append_output(b"\xEF\xBF\xBD")?,
+            md::TextType::Br => self.append_output(b"\n")?,
+            md::TextType::Softbr => self.append_output(b"\n")?,
             md::TextType::Entity => self.decode_and_append_entity(content)?,
             _ => {
                 if !self.callbacks.text.is_empty() {
                     self.call_text_callback(content)?;
                 } else {
-                    self.append_to_top(content)?;
+                    self.append_output(content)?;
                 }
             }
         }
@@ -1392,7 +1427,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
             let slice = result.to_utf8(self.global_object)?;
-            self.append_to_top(slice.slice())?;
+            self.append_output(slice.slice())?;
         }
         Ok(())
     }
@@ -1412,7 +1447,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.callbacks.text.is_empty() {
             self.call_text_callback(content)
         } else {
-            self.append_to_top(content)?;
+            self.append_output(content)?;
             Ok(())
         }
     }
@@ -1457,24 +1492,6 @@ impl<'a> JsCallbackRenderer<'a> {
     // Metadata object creation
     // ========================================
 
-    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
-    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
-    /// own depth which excludes self).
-    fn count_list_depth(&self) -> u32 {
-        let mut depth: u32 = 0;
-        // Skip the top entry (self) — we want enclosing lists only.
-        let len = self.stack.len();
-        if len < 2 {
-            return 0;
-        }
-        for entry in &self.stack[0..len - 1] {
-            if entry.block_type == md::BlockType::Ul || entry.block_type == md::BlockType::Ol {
-                depth += 1;
-            }
-        }
-        depth
-    }
-
     /// Returns the parent ul/ol entry for the current li (top of stack).
     /// Returns None if the stack shape is unexpected.
     fn parent_list(&self) -> Option<&CallbackStackEntry> {
@@ -1513,7 +1530,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     true,
                     JSValue::js_number(data as f64),
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Ul => {
@@ -1522,7 +1539,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     false,
                     JSValue::UNDEFINED,
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Code => {
@@ -1557,10 +1574,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 let parent = self.parent_list();
                 let is_ordered =
                     parent.is_some() && parent.unwrap().block_type == md::BlockType::Ol;
-                // count_list_depth() includes the immediate parent list; subtract it
+                // `list_depth` includes the immediate parent list; subtract it
                 // so that items in a top-level list report depth 0.
-                let enclosing = self.count_list_depth();
-                let depth: u32 = if enclosing > 0 { enclosing - 1 } else { 0 };
+                let depth = self.list_depth.saturating_sub(1);
                 let task_mark = md::types::task_mark_from_data(data);
 
                 let start_js = if is_ordered {

@@ -1,5 +1,5 @@
 import { FileSystemRouter } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
@@ -465,6 +465,153 @@ it(".query works with dynamic routes, including params", () => {
   }
 });
 
+// Pattern.match_ reuses one scratch param list across every candidate route and
+// used to clear it on only some of its failure paths, so params pushed while
+// probing a route that lost still reached the route that won.
+// https://github.com/oven-sh/bun/issues/12206
+// https://github.com/oven-sh/bun/issues/15554
+describe("nested dynamic routes do not leak params from a probed route", () => {
+  it.each([
+    {
+      label: "a losing pattern that ran out with path segments left over",
+      files: ["[user]/settings.tsx", "help/[...usertopic].tsx"],
+      pathname: "/help/settings/a",
+      name: "/help/[...usertopic]",
+      params: { usertopic: "settings/a" },
+    },
+    {
+      label: "a losing route that names its param like the winner's",
+      files: ["[topic]/settings.tsx", "help/[...topic].tsx"],
+      pathname: "/help/settings/a",
+      name: "/help/[...topic]",
+      params: { topic: "settings/a" },
+    },
+    {
+      label: "a losing route whose catch-all had nothing left to consume",
+      files: ["[c]/b/[...rest].tsx", "[c]/[...d].tsx"],
+      pathname: "/x/b",
+      name: "/[c]/[...d]",
+      params: { c: "x", d: "b" },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/12206
+      label: "sibling routes under a shared dynamic segment",
+      files: [
+        "admin/[businessId].tsx",
+        "admin/[businessId]/providers.tsx",
+        "admin/[businessId]/providers/create.tsx",
+        "admin/[businessId]/providers/[providerId]/edit.tsx",
+      ],
+      pathname: "/admin/6679fbe17b41431a977163fd/providers/create",
+      name: "/admin/[businessId]/providers/create",
+      params: { businessId: "6679fbe17b41431a977163fd" },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/12206, with the intermediate routes
+      // spelled as directories with index files instead of leaf files.
+      label: "sibling routes under a shared dynamic segment, using index files",
+      files: [
+        "admin/[businessId]/index.tsx",
+        "admin/[businessId]/providers/index.tsx",
+        "admin/[businessId]/providers/create.tsx",
+        "admin/[businessId]/providers/[providerId]/edit.tsx",
+        "admin/[businessId]/providers/[providerId]/delete.tsx",
+      ],
+      pathname: "/admin/6679fbe17b41431a977163fd/providers/create",
+      name: "/admin/[businessId]/providers/create",
+      params: { businessId: "6679fbe17b41431a977163fd" },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/15554
+      label: "a dynamic leaf next to its own index route",
+      files: ["[a]/index.tsx", "[a]/test/index.tsx", "[a]/test/[b].tsx"],
+      pathname: "/1/test/2",
+      name: "/[a]/test/[b]",
+      params: { a: "1", b: "2" },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/15554
+      label: "a dynamic leaf that is itself an index route",
+      files: ["[a]/index.tsx", "[a]/test/index.tsx", "[a]/test/[b]/index.tsx"],
+      pathname: "/1/test/2",
+      name: "/[a]/test/[b]",
+      params: { a: "1", b: "2" },
+    },
+  ])("into $name ($label)", ({ files, pathname, name, params }) => {
+    const { dir } = make(files);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    const match = router.match(pathname)!;
+    expect({ name: match.name, params: match.params }).toEqual({ name, params });
+    // `query` mirrors `params` when there is no query string; it must carry the
+    // same single values, not arrays.
+    expect(match.query).toEqual(params);
+  });
+
+  it("and does not crash reading .params when a probed param name is absent from the match", async () => {
+    // A leaked param name that the winning route's name does not contain resolves to a
+    // zero-length property key, which JSC's Identifier::fromString dereferences as null.
+    // Run in a subprocess so the crash is an exit code rather than a dead test runner.
+    using dir = tempDir("fsr-param-leak-crash", {
+      "pattern-ran-out/[user]/settings.tsx": "export default 1;",
+      "pattern-ran-out/help/[...topic].tsx": "export default 1;",
+      "empty-catch-all/[a]/b/[...rest].tsx": "export default 1;",
+      "empty-catch-all/[c]/[...d].tsx": "export default 1;",
+    });
+
+    const code = /* ts */ `
+      import path from "path";
+      const out = {};
+      for (const [subdir, pathname] of [["pattern-ran-out", "/help/settings/a"], ["empty-catch-all", "/x/b"]]) {
+        const router = new Bun.FileSystemRouter({
+          dir: path.join(${JSON.stringify(String(dir))}, subdir),
+          style: "nextjs",
+          fileExtensions: [".tsx"],
+        });
+        const match = router.match(pathname);
+        out[subdir] = match ? { name: match.name, params: match.params } : null;
+      }
+      console.log(JSON.stringify(out));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      "pattern-ran-out": { name: "/help/[...topic]", params: { topic: "settings/a" } },
+      "empty-catch-all": { name: "/[c]/[...d]", params: { c: "x", d: "b" } },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/12206#issuecomment-2228276685
+it("matches a single-character static segment after a dynamic segment", () => {
+  const { dir } = make(["index.tsx", "[test]/a/index.tsx", "[test]/a/[test2]/lala.tsx"]);
+
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Before the fix, `[test]/a` was treated as ending right after `[test]` because
+  // `Pattern::is_end` was off by one and `Pattern::init` returned an empty segment
+  // when exactly one character remained. `/value` matched `/[test]/a` and `/value/a`
+  // matched nothing.
+  for (const [input, expected] of [
+    ["/value/a", { name: "/[test]/a", params: { test: "value" } }],
+    ["/value/a/inner/lala", { name: "/[test]/a/[test2]/lala", params: { test: "value", test2: "inner" } }],
+    ["/value", null],
+    ["/value/b", null],
+    ["/value/a/inner", null],
+  ] as const) {
+    const match = router.match(input);
+    expect({ input, result: match && { name: match.name, params: match.params } }).toEqual({ input, result: expected });
+  }
+});
+
 it("dir should be validated", async () => {
   expect(() => {
     //@ts-ignore
@@ -614,22 +761,30 @@ it("MatchedRoute.params does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60_000);
 
-it("throws a clean error for invalid route filenames (no use-after-free)", async () => {
+it.each([
   // The constructor's log is backed by an arena allocator. When route loading
   // produces errors (e.g. a filename like `[foo.tsx` missing its closing bracket),
   // the arena must not be freed before log.toJS() reads the messages.
-  // Run in a subprocess so an ASAN crash doesn't take down the test runner.
+  ["[foo.tsx", "Route is missing a closing bracket]"],
+  // A trailing `[` right before the extension used to pass validation and was
+  // only re-parsed at match time, where the unclosed bracket panicked the
+  // pattern parser.
+  ["[x][.tsx", "Invalid dynamic route"],
+  ["[id]/foo[.tsx", "Invalid dynamic route"],
+])("throws a clean error for invalid route filename %j (no crash)", async (file, message) => {
+  // Run in a subprocess so a crash doesn't take down the test runner.
   using dir = tempDir("fsr-invalid-route", {
-    "pages/[foo.tsx": "export default 1;",
+    [`pages/${file}`]: "export default 1;",
   });
 
   const code = /* ts */ `
     try {
-      new Bun.FileSystemRouter({
+      const router = new Bun.FileSystemRouter({
         style: "nextjs",
         dir: ${JSON.stringify(path.join(String(dir), "pages"))},
         fileExtensions: [".tsx"],
       });
+      router.match("/abc");
       console.log("no-throw");
     } catch (e) {
       console.log("caught:" + (e?.message ?? String(e)));
@@ -644,7 +799,7 @@ it("throws a clean error for invalid route filenames (no use-after-free)", async
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
+  expect(stdout.trim()).toBe(`caught:${message}`);
   expect(exitCode).toBe(0);
 });
 

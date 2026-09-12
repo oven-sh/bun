@@ -59,6 +59,67 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, baz)).toBe(false);
   });
 
+  describe("URLSearchParams", () => {
+    it.each([
+      ["a=1&a=2", "a=1&a=2"],
+      ["a=1&b=2&a=3", "a=1&b=2&a=3"],
+      ["a=1&a", "a=1&a="],
+      ["a=1&b=2", "a=1&b=2"],
+      ["", ""],
+    ])("%p equals %p", (a, b) => {
+      expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(true);
+      expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(true);
+    });
+
+    it.each([
+      ["a=1&a=2", "a=1&a=3"],
+      ["a=1&a=2", "a=2&a=1"],
+      ["a=1&a=2", "a=1"],
+      ["a=1&a=1", "a=1"],
+      // Same size and every get() agrees, but the entries differ.
+      ["a=1&a=1&b=2", "a=1&b=2&b=2"],
+      // Entries are an ordered list: sort() is observable.
+      ["a=1&b=2", "b=2&a=1"],
+    ])("%p does not equal %p", (a, b) => {
+      expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(false);
+      expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(false);
+    });
+
+    it("compares the same entries however they were built", () => {
+      const appended = new URLSearchParams();
+      appended.append("a", "1");
+      appended.append("a", "2");
+      expect(deepEquals(appended, new URLSearchParams("a=1&a=2"))).toBe(true);
+      expect(
+        deepEquals(
+          appended,
+          new URLSearchParams([
+            ["a", "1"],
+            ["a", "2"],
+          ]),
+        ),
+      ).toBe(true);
+      expect(deepEquals(appended, new URLSearchParams({ a: "1" }))).toBe(false);
+    });
+
+    it("compares the current entries of a URL's searchParams", () => {
+      const url = new URL("https://example.com/?a=1");
+      const searchParams = url.searchParams;
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(false);
+      url.search = "?a=1&a=2";
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(true);
+      searchParams.append("a", "3");
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(false);
+      expect(deepEquals(searchParams, new URL("https://example.com/?a=1&a=2&a=3").searchParams)).toBe(true);
+    });
+
+    it("still compares own properties once the entries match", () => {
+      const withExtra = () => Object.assign(new URLSearchParams("a=1&a=2"), { extra: 1 });
+      expect(deepEquals(withExtra(), withExtra())).toBe(true);
+      expect(deepEquals(withExtra(), new URLSearchParams("a=1&a=2"))).toBe(false);
+    });
+  });
+
   describe("global object", () => {
     let contexts: [vm.Context, vm.Context];
 

@@ -943,6 +943,13 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+  {
+    name: "two URLSearchParams with a repeated name",
+    a: () => new URLSearchParams("a=1&a=2"),
+    b: () => new URLSearchParams("a=1&a=2"),
+    strict: true,
+    loose: true,
+  },
 ];
 
 function caught(fn: () => void): (Error & { code?: string }) | null {

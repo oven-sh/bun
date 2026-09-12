@@ -689,6 +689,8 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     // LOG(Network, "WebSocket %p send() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (binaryData.isDetached()) [[unlikely]]
+        return Exception { TypeError, "ArrayBuffer is detached"_s };
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = binaryData.byteLength();
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
@@ -709,6 +711,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (arrayBufferView.isDetached()) [[unlikely]]
+        return Exception { TypeError, "Underlying ArrayBuffer has been detached from the view"_s };
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = arrayBufferView.byteLength();
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
@@ -716,11 +720,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto bufferRef = arrayBufferView.unsharedBuffer();
-    auto* buffer = bufferRef.get();
-    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
-    size_t length = arrayBufferView.byteLength();
-    this->sendWebSocketData(baseAddress, length, Opcode::Binary);
+    auto bytes = arrayBufferView.span();
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Binary);
 
     return {};
 }
@@ -1005,6 +1006,8 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
     // LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (binaryData.isDetached()) [[unlikely]]
+        return Exception { TypeError, "ArrayBuffer is detached"_s };
 
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = binaryData.byteLength();
@@ -1028,6 +1031,8 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (arrayBufferView.isDetached()) [[unlikely]]
+        return Exception { TypeError, "Underlying ArrayBuffer has been detached from the view"_s };
 
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = arrayBufferView.byteLength();
@@ -1036,13 +1041,10 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto bufferRef = arrayBufferView.unsharedBuffer();
-    auto* buffer = bufferRef.get();
-    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
-    size_t length = arrayBufferView.byteLength();
-    if (length > maxControlFramePayloadSize)
-        return controlFramePayloadTooLargeException(length);
-    this->sendWebSocketData(baseAddress, length, Opcode::Ping);
+    auto bytes = arrayBufferView.span();
+    if (bytes.size() > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(bytes.size());
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Ping);
 
     return {};
 }
@@ -1091,6 +1093,8 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
     // LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (binaryData.isDetached()) [[unlikely]]
+        return Exception { TypeError, "ArrayBuffer is detached"_s };
 
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = binaryData.byteLength();
@@ -1114,6 +1118,8 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+    if (arrayBufferView.isDetached()) [[unlikely]]
+        return Exception { TypeError, "Underlying ArrayBuffer has been detached from the view"_s };
 
     if (m_state == CLOSING || m_state == CLOSED) {
         unsigned payloadSize = arrayBufferView.byteLength();
@@ -1122,13 +1128,10 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto bufferRef = arrayBufferView.unsharedBuffer();
-    auto* buffer = bufferRef.get();
-    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
-    size_t length = arrayBufferView.byteLength();
-    if (length > maxControlFramePayloadSize)
-        return controlFramePayloadTooLargeException(length);
-    this->sendWebSocketData(baseAddress, length, Opcode::Pong);
+    auto bytes = arrayBufferView.span();
+    if (bytes.size() > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(bytes.size());
+    this->sendWebSocketData(reinterpret_cast<const char*>(bytes.data()), bytes.size(), Opcode::Pong);
 
     return {};
 }

@@ -458,6 +458,27 @@ describe("bundler", () => {
       stdout: "react none\nreact react\nreact",
     },
   });
+  // An external package has no namespace object in the bundle. The
+  // destructuring reads from the import statement that the require() became.
+  itBundled("cjs2esm/UnwrappedModuleRequireDestructuredExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        const { react, missing = "fallback" } = require("react");
+        console.log(react, missing);
+      `,
+    },
+    external: ["react"],
+    target: "bun",
+    runtimeFiles: fakeReactNodeModules,
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toContain('import * as react from "react"');
+      expect(code).toMatch(/\{ react: react2, missing = "fallback" \} = react;/);
+    },
+    run: {
+      stdout: "react fallback",
+    },
+  });
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package
   // becomes `sideEffect(); export * from "./main"`, so the file needs no
   // `__commonJS` wrapper and the named import binds to the export directly.
@@ -805,6 +826,187 @@ describe("bundler", () => {
     run: true,
     minifyIdentifiers: true,
     target: "bun",
+  });
+  // A file with `import` / `export` syntax in an unwrapped package is an ES
+  // module like in any other package (preact/compat installed as "react").
+  // A default import binds its `default` export and the file gets no wrapper.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React, { version } from "react";
+        import ReactDOM from "react-dom";
+        import fromRequire from "./uses-require.cjs";
+        console.log(typeof React, React.version, version, ReactDOM.render(), fromRequire);
+      `,
+      "/uses-require.cjs": /* js */ `
+        const React = require("react");
+        module.exports = React.version + typeof React.default;
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "type": "module", "main": "./index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        export const version = "19";
+        export default { version };
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        {
+          "name": "@preact/compat",
+          "version": "18.3.1",
+          "exports": { ".": { "import": "./compat.mjs", "require": "./compat.js" } }
+        }
+      `,
+      "/node_modules/react-dom/compat.mjs": /* js */ `
+        export function render() { return "rendered"; }
+        export default { render };
+      `,
+      "/node_modules/react-dom/compat.js": /* js */ `
+        exports.render = function () { return "wrong file"; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/uses-require.cjs"] },
+    run: { stdout: "object 19 19 rendered 19object" },
+  });
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageDefaultImportMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        console.log(typeof React, React && React.version);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "type": "module", "main": "./index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        export const version = "19";
+        export default { version };
+      `,
+    },
+    target: "browser",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: "object 19" },
+  });
+  // An export that the ES module does not have is a build error, as in any
+  // other package. `bun run` throws a SyntaxError for both imports.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageMissingExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        import { nope } from "react-dom";
+        console.log(React, nope);
+      `,
+      "/node_modules/react/index.js": `export const version = "19";`,
+      "/node_modules/react-dom/index.js": `export const version = "19";`,
+    },
+    bundleErrors: {
+      "/entry.js": [
+        `No matching export in "node_modules/react/index.js" for import "default"`,
+        `No matching export in "node_modules/react-dom/index.js" for import "nope"`,
+      ],
+    },
+  });
+  // A destructured `require()` of an unwrapped package reads the namespace
+  // object of an ES module, inside or outside the unwrap list.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageDestructuredRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const { version } = require("react");
+        const { fromOutside } = require("react-dom");
+        console.log(version, fromOutside);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        export const version = "19";
+        export default { version };
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        const { name } = require("not-in-the-list");
+        exports.fromOutside = name;
+      `,
+      "/node_modules/not-in-the-list/index.js": `export const name = "outside";`,
+    },
+    cjs2esm: true,
+    run: { stdout: "19 outside" },
+  });
+  // The namespace of an ES module has no `default` that it does not export.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageSplitDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("react");
+        console.log(m.version, typeof m.default, Object.keys(m).join(","));
+      `,
+      "/node_modules/react/index.js": `export const version = "19";`,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "19 undefined version" },
+  });
+  // A `require()` in such a file is an ordinary require, so a CommonJS sibling
+  // that exports a function stays callable.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageRequiresCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import React, { made } from "react";
+        console.log(typeof React, made, React.made);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        const impl = require("./impl.cjs");
+        export const made = impl("A");
+        export default { made };
+      `,
+      "/node_modules/react/impl.cjs": /* js */ `
+        module.exports = function F(x) { return "F" + x; };
+      `,
+    },
+    run: { stdout: "object FA FA" },
+  });
+  // `import` next to `exports.x = ...` links the same way in and out of the list.
+  itBundled("cjs2esm/ImportAndExportsAssignmentInUnwrappedPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        import Other from "other";
+        console.log(React.foo, Other.foo);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        import { x } from "./x.js";
+        exports.foo = x;
+      `,
+      "/node_modules/react/x.js": `export const x = 5;`,
+      "/node_modules/other/index.js": /* js */ `
+        import { x } from "./x.js";
+        exports.foo = x;
+      `,
+      "/node_modules/other/x.js": `export const x = 5;`,
+    },
+    run: { stdout: "5 5" },
+  });
+  // A JSON or text file of an unwrapped package is not CommonJS either.
+  itBundled("cjs2esm/LazyExportInUnwrappedPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import notice from "react/NOTICE.txt";
+        import pkg from "react/package.json";
+        const { version } = require("react/package.json");
+        console.log(typeof notice, notice, Object.keys(pkg).join(","), version);
+      `,
+      "/node_modules/react/NOTICE.txt": `notice`,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    run: { stdout: "string notice name,version 19.0.0" },
+  });
+  itBundled("cjs2esm/LazyExportInUnwrappedPackageSplitDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "react/package.json";
+        const m = await import("react/package.json");
+        console.log(Object.keys(pkg).join(","), m.default === pkg, Object.keys(m).join(","));
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "name,version true default,name,version" },
   });
   itBundled("cjs2esm/ModuleExportsRenamingNoDeopt", {
     files: {

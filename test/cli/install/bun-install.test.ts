@@ -28,6 +28,7 @@ import {
   type TestContext,
 } from "./dummy.registry.js";
 import { constructStdCollision } from "./wyhash-std-collision.js";
+import { wyhash11 } from "./wyhash11.js";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -11217,6 +11218,69 @@ it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to disti
   const alpha = await file(join(victimDir, "node_modules", "alphadep", "package.json")).json();
   const beta = await file(join(victimDir, "node_modules", "betadep", "package.json")).json();
   expect({ alpha: alpha.name, beta: beta.name }).toEqual({ alpha: "pkg-alpha", beta: "pkg-beta" });
+});
+
+// The lockfile interns every out-of-line string in a pool keyed by
+// Wyhash11(0, bytes). The pool returned the pooled string on a hash hit with
+// no byte compare, so two dependency specifiers that collide under that hash
+// shared one string. The second dependency then inherited the first
+// specifier and its resolution: the lockfile recorded the wrong specifier
+// text, the wrong integrity, and collapsed two packages into one.
+// https://github.com/oven-sh/bun/issues/32741
+it.skipIf(isWindows)("colliding tarball specifiers intern to distinct strings", async () => {
+  // Two 68-byte relative tarball paths that differ in one byte and collide
+  // under Wyhash11(0). The interning pool keys on that hash.
+  const specA = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePaaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+  const specB = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePbaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
+  const enc = (s: string) => new TextEncoder().encode(s);
+  // Confirm the collision holds before relying on it.
+  expect(specA).not.toBe(specB);
+  expect(wyhash11(0n, enc(specA))).toBe(wyhash11(0n, enc(specB)));
+
+  using dir = tempDir("pool-collision", {
+    "A/package/package.json": JSON.stringify({ name: "pa", version: "1.0.0", main: "index.js" }),
+    "A/package/index.js": `module.exports = "I am A";`,
+    "B/package/package.json": JSON.stringify({ name: "pb", version: "2.0.0", main: "index.js" }),
+    "B/package/index.js": `module.exports = "I am B";`,
+  });
+  const root = String(dir);
+  await mkdir(join(root, "t"), { recursive: true });
+  for (const [src, spec] of [
+    ["A", specA],
+    ["B", specB],
+  ] as const) {
+    await using tar = Bun.spawn({
+      cmd: ["tar", "-czf", join(root, spec), "-C", join(root, src), "package"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await tar.exited).toBe(0);
+  }
+  await write(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { pa: specA, pb: specB } }));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: root,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  // Two distinct resolutions install as two packages, not one.
+  expect(stdout).toContain("2 packages installed");
+  expect(exitCode).toBe(0);
+
+  // The lockfile keeps both specifiers. Before the fix the pool returned
+  // specA for specB, so specB never reached the lockfile.
+  const lock = await file(join(root, "bun.lock")).text();
+  expect(lock).toContain(specA);
+  expect(lock).toContain(specB);
+
+  // Each package keeps its own resolution, so the two integrity hashes differ.
+  const integrities = [...lock.matchAll(/"(sha512-[^"]+)"/g)].map(m => m[1]);
+  expect(new Set(integrities).size).toBe(2);
 });
 
 it("reports an invalid URL for a manifest tarball URL containing a newline", async () => {

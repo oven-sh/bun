@@ -178,10 +178,7 @@ pub mod external_string {
             lhs_buf: &[u8],
             rhs_buf: &[u8],
         ) -> Ordering {
-            if self.hash == rhs.hash && self.hash > 0 {
-                return Ordering::Equal;
-            }
-
+            // An equal hash is not an equal string. Order by the bytes.
             self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 
@@ -569,17 +566,8 @@ pub mod semver_string {
             if String::can_inline(str) {
                 return Ok(String::init_inline(str));
             }
-
             let hash = Builder::string_hash(str);
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(*entry.value_ptr);
-            }
-
-            // new entry
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(new)
+            self.append_with_hash(str, hash)
         }
 
         pub fn append_with_hash(&mut self, str: &[u8], hash: u64) -> Result<String, AllocError> {
@@ -589,7 +577,11 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(*entry.value_ptr);
+                let existing = *entry.value_ptr;
+                if strings::eql(existing.slice(self.bytes), str) {
+                    return Ok(existing);
+                }
+                return String::init_append(self.bytes, str);
             }
 
             // new entry
@@ -600,25 +592,7 @@ pub mod semver_string {
 
         pub fn append_external(&mut self, str: &[u8]) -> Result<ExternalString, AllocError> {
             let hash = Builder::string_hash(str);
-
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            self.append_external_with_hash(str, hash)
         }
 
         pub fn append_external_with_hash(
@@ -635,10 +609,15 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
+                let existing = *entry.value_ptr;
+                if strings::eql(existing.slice(self.bytes), str) {
+                    return Ok(ExternalString {
+                        value: existing,
+                        hash,
+                    });
+                }
+                let new = String::init_append(self.bytes, str)?;
+                return Ok(ExternalString { value: new, hash });
             }
 
             let new = String::init_append(self.bytes, str)?;
@@ -844,6 +823,10 @@ pub mod semver_string {
         pub fn contains(&self, hash: u64) -> bool {
             self.map.contains_key(&hash)
         }
+        #[inline]
+        pub fn get(&self, hash: u64) -> Option<String> {
+            self.map.get(&hash).copied()
+        }
         /// Number of slots reservable without rehash.
         #[inline]
         pub fn capacity(&self) -> usize {
@@ -889,7 +872,15 @@ pub mod semver_string {
                 return;
             }
 
-            if !self.string_pool.contains(hash) {
+            // A hash hit with different bytes is a collision, and `append` stores it too.
+            let already_pooled = match self.string_pool.get(hash) {
+                Some(existing) => {
+                    let buf: &[u8] = self.ptr.as_deref().unwrap_or(&[]);
+                    strings::eql(existing.slice(buf), slice_)
+                }
+                None => false,
+            };
+            if !already_pooled {
                 self.cap += slice_.len();
             }
         }

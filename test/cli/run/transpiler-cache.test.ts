@@ -691,3 +691,76 @@ console.log("OK");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(0);
 });
+
+test("remaps a stack through a cached sourcemap whose body is damaged without a crash", () => {
+  // The header check in the test above is O(1) on purpose: a cache hit does
+  // not walk the sourcemap. So a section with a valid outer header and a
+  // damaged body still reaches SavedSourceMap, and stack remapping reads the
+  // damaged SyncEntry array and window stream. The reader has to bounds-check
+  // what it takes from them. A window that does not fit yields no mapping.
+  //
+  // InternalSourceMap section (src/sourcemap/InternalSourceMap.rs):
+  //   28: stream_offset u32, 32..stream_offset: SyncEntry[sync_count],
+  //   stream_offset..total_len: window stream (32-byte header, then varints).
+  const SOURCEMAP_BYTE_OFFSET_AT = 54;
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  const damage: Record<string, (section: Buffer) => void> = {
+    // The stream shrinks to its 1-byte tail pad, so no window header fits.
+    "stream_offset points at the last byte": s => void s.writeUInt32LE(s.length - 1, 28),
+    // Every SyncEntry.byte_offset becomes 0xffffffff.
+    "SyncEntry array filled with 0xff": s => void s.fill(0xff, 32, s.readUInt32LE(28)),
+    // The window section lengths become 0xffff and every flag bit is set.
+    "window stream filled with 0xff": s => void s.fill(0xff, s.readUInt32LE(28)),
+    // The section lengths become 0x8080 and no varint ends.
+    "window stream filled with 0x80": s => void s.fill(0x80, s.readUInt32LE(28)),
+  };
+
+  // Large enough for the cache (>= 4 KiB). The throw sits behind the filler, so
+  // the frames to remap are not in the first lines of the transpiled output.
+  const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+  const filler = Buffer.alloc(120 * line.length, line).toString();
+  writeFileSync(
+    join(temp_dir, "boom.ts"),
+    `${filler}
+function boom(): number { throw new Error("boom"); }
+function mid(n: number): number { return n > 0 ? mid(n - 1) : boom(); }
+try {
+  mid(3);
+} catch (e) {
+  void (e as Error).stack;
+}
+console.log("OK");
+`,
+  );
+
+  const run = () => Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env, stderr: "inherit" });
+
+  // The first run writes the cache entry.
+  const first = run();
+  expect(first.stdout.toString()).toBe("OK\n");
+  expect(first.exitCode).toBe(0);
+
+  const entries = readdirSync(cache_dir).filter(name => name.endsWith(".pile"));
+  expect(entries).toHaveLength(1);
+  const entry = join(cache_dir, entries[0]);
+  const pristine = readFileSync(entry);
+  const smOff = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+  const smLen = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+  expect(smLen).toBeGreaterThan(32);
+  expect(smOff + smLen).toBeLessThanOrEqual(pristine.length);
+
+  for (const [name, apply] of Object.entries(damage)) {
+    const data = Buffer.from(pristine);
+    apply(data.subarray(smOff, smOff + smLen));
+    expect(data.equals(pristine)).toBeFalse();
+    writeFileSync(entry, data);
+
+    const result = run();
+    expect({
+      name,
+      stdout: result.stdout.toString(),
+      signalCode: result.signalCode,
+      exitCode: result.exitCode,
+    }).toEqual({ name, stdout: "OK\n", signalCode: undefined, exitCode: 0 });
+  }
+});

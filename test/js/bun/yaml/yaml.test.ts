@@ -2717,6 +2717,30 @@ config:
   });
 
   describe("stringify", () => {
+    // Editors show this example for `YAML.stringify`. It runs here as written, and each console.log()
+    // must print the `// ...` lines under it. A comment cannot show the space that follows `key:`
+    // in front of a nested block, so trailing spaces are not compared.
+    test("the example in bun.d.ts prints what its comments say", async () => {
+      const dts = await file(join(import.meta.dir, "../../../../packages/bun-types/bun.d.ts")).text();
+      const declaration = dts.indexOf("export function stringify(", dts.indexOf("namespace YAML {"));
+      const jsdoc = dts.slice(dts.lastIndexOf("/**", declaration), declaration).replace(/^ *\* ?/gm, "");
+      const example = /```ts\n([\s\S]*?)```/.exec(jsdoc)![1];
+
+      const documented: string[] = [];
+      const lines = example.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].startsWith("console.log(")) continue;
+        while (lines[i + 1]?.startsWith("// ")) documented.push(lines[++i].slice(3));
+      }
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", example], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").map(line => line.trimEnd())).toEqual([...documented, ""]);
+      expect(exitCode).toBe(0);
+    });
+
     // Basic data type tests
     test("stringifies null", () => {
       expect(YAML.stringify(null)).toBe("null");
@@ -3860,11 +3884,16 @@ config:
         expect(parsed).toEqual([{ a: 1, c: 2 }, { y: 3 }, { valid: "data" }]);
       });
 
+      // A Linux release build overflows between 30,000 and 50,000 levels, a debug or ASAN build below
+      // 5,000. The loop that builds 1,000,000 levels takes 2.8 s on a debug build, which put the second
+      // test over the 5 s limit in a whole-file run.
+      const overflowDepth = isDebug || isASAN ? 100_000 : 1_000_000;
+
       test("handles stack overflow protection", () => {
         // Create deeply nested structure approaching stack limit
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }
@@ -3876,7 +3905,7 @@ config:
       test("stack overflow protection in the write pass", () => {
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }

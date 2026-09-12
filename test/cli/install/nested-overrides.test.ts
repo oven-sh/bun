@@ -507,18 +507,26 @@ describe.concurrent("syntax", () => {
       expect(await lock(dir)).not.toContain('"overrides"');
     });
 
+    // A non-object field is a typo that would otherwise install with no rules applied, so the install fails instead.
     describe.concurrent.each([
-      { rules: { overrides: "nope" }, warning: 'warn: "overrides" must be an object' },
-      { rules: { resolutions: ["x"] }, warning: 'warn: "resolutions" must be an object with string values' },
-    ])("a non-object field %j", ({ rules, warning }) => {
-      test("warns and installs without rules", async () => {
-        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...rules });
+      { field: "overrides", value: "no-deps@2.0.0" },
+      { field: "overrides", value: ["no-deps@2.0.0"] },
+      { field: "resolutions", value: "no-deps@2.0.0" },
+      { field: "resolutions", value: ["no-deps@2.0.0"] },
+    ])("a non-object field %j", ({ field, value }) => {
+      test("fails the install with an error pointing at the value", async () => {
+        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, [field]: value });
         const { err, exitCode } = await install(dir);
-        expect(occurrences(err, warning)).toBe(1);
-        expect(err).not.toContain("error");
-        expect(exitCode).toBe(0);
-        expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
-        expect(await lock(dir)).not.toContain('"overrides"');
+        expect(err).toContain(
+          `error: "${field}" expects a map of package names to versions, e.g.\n  "${field}": {\n    "react": "18.2.0"\n  }`,
+        );
+        expect(err).not.toContain("internal error");
+        const column = (await packageJsonText(dir)).indexOf(JSON.stringify(value)) + 1;
+        expect(column).toBeGreaterThan(0);
+        expect(err).toContain(`package.json:1:${column}`);
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(dir, "node_modules"))).toBeFalse();
+        expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
       });
     });
 

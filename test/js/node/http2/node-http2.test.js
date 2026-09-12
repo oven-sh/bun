@@ -6329,3 +6329,41 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe("net.Socket bytesWritten through an http2 session", () => {
+  // The h2 frame writer writes through the native socket handle, not through
+  // the JS write path. The raw socket that the user passes to createConnection
+  // must count those bytes too, like the session.socket proxy does.
+  it("counts the frames the session writes on the raw createConnection socket", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("hello world from h2");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+
+    const raw = net.connect(port, "127.0.0.1");
+    const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => raw });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.resume();
+      await new Promise(resolve => req.once("end", resolve));
+
+      const proxy = client.socket.bytesWritten;
+      expect(proxy).toBeGreaterThan(0);
+      expect(raw.bytesWritten).toBe(proxy);
+      expect(raw._bytesDispatched).toBe(proxy);
+
+      const closed = new Promise(resolve => raw.once("close", resolve));
+      client.close();
+      await closed;
+      // The count survives the destroy of the handle.
+      expect(raw.bytesWritten).toBeGreaterThanOrEqual(proxy);
+      expect(raw._bytesDispatched).toBe(raw.bytesWritten);
+    } finally {
+      client.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+});

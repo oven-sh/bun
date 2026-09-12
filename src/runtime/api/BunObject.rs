@@ -1565,7 +1565,12 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                             global_this.throw_invalid_arguments(format_args!("Path too long"))
                         );
                     }
-                    node::types::Valid::no_null_bytes(path_str.slice(), "path", "a string", global_this)?;
+                    node::types::Valid::no_null_bytes(
+                        path_str.slice(),
+                        "path",
+                        "a string",
+                        global_this,
+                    )?;
                     let paths = &[path_str.slice()];
                     let buf_len = buf.len();
                     let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<

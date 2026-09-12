@@ -128,6 +128,22 @@ with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
 
+### Fixes that upstream does not have
+
+A whole-crate port can carry a fix that upstream has not made. Each site has a
+`Not in upstream` comment, and the fix is listed here so that a re-sync keeps
+it:
+
+- `inference/infer_reactive_places.rs`: a `maybe-throw` terminal with a handler
+  is a control point. Its test is every operand the block's instructions read,
+  and what controls it also controls the blocks that have it on their
+  post-dominator frontier. The binding of a `catch` clause is a reactive input
+  of a reactive-controlled handler. Upstream has neither, so a value that
+  depends on the props only through which statement of a `try` / `catch` ran,
+  or through what was thrown, is memoized with no dependency. Test:
+  `react-compiler/TryCatchControlDependentValues` in
+  `test/bundler/transpiler/react-compiler.test.ts`.
+
 ## Hook placement
 
 The compiler runs **per-function, post-visit** at the `S::Function` /

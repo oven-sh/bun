@@ -1230,6 +1230,144 @@ describe("bundler", () => {
     },
   });
 
+  // A value can depend on the props through which statement of a `try` /
+  // `catch` ran, and not through any value it was computed from. Inside `try`
+  // the compiler ends a block after every instruction with a `maybe-throw`
+  // terminal (continue, or jump to the handler). InferReactivePlaces has to
+  // treat that terminal as a branch on the values the block reads, or the JSX
+  // built from such a value is cached with no dependency and never updates.
+  // `render` keeps one memo cache per component across calls, the way React
+  // keeps it across renders.
+  itBundled("react-compiler/TryCatchControlDependentValues", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { render } from "react/compiler-runtime";
+
+        function check(x) {
+          if (x !== "ok") throw new Error("bad:" + x);
+        }
+
+        // The props select a branch of a value block inside \`try\`.
+        function TernaryInTry(p) {
+          let v;
+          try { v = p.a === 1 ? "one" : "other"; } catch (e) { v = "caught"; }
+          return <div>{v}</div>;
+        }
+        function TernaryInReturnedJsx(p) {
+          try { return <div>{p.a === 1 ? "one" : "other"}</div>; } catch { return null; }
+        }
+        // The props select a branch of a statement inside \`try\`.
+        function IfInTry(p) {
+          let v = "init";
+          try { if (p.a === 1) v = "one"; else v = "other"; } catch { v = "caught"; }
+          return <div>{v}</div>;
+        }
+        // The props decide whether the \`try\` block throws.
+        function ThrowDecides({ text }) {
+          let ok;
+          try { JSON.parse(text); ok = "valid"; } catch { ok = "invalid"; }
+          return <div>{ok}</div>;
+        }
+        // The props decide what the \`try\` block throws.
+        function CatchBindingInJsx({ text }) {
+          try { check(text); return <div>fine</div>; } catch (e) { return <div>{e.message}</div>; }
+        }
+        function CatchBindingAssigned({ text }) {
+          let msg;
+          try { check(text); msg = "none"; } catch (e) { msg = <b>{e.message}</b>; }
+          return <div>{msg}</div>;
+        }
+        // Here a memo scope contains the inner \`try\` statement. The binding of
+        // its \`catch\` clause is declared inside that scope, so it cannot be
+        // one of the scope's dependencies.
+        function CatchBindingInsideScope({ text }) {
+          let v = "init", w = "w0";
+          try {
+            check(text);
+          } catch {
+            try {
+              v = (check(text), "unreachable");
+            } catch (e) {
+              w = <b>{e.message}</b>;
+            }
+            switch (text) {
+              case "x1": {
+              }
+              default: {
+                v = w;
+              }
+            }
+          }
+          return <div>{v}{w}</div>;
+        }
+
+        console.log(JSON.stringify({
+          TernaryInTry: [{ a: 1 }, { a: 2 }].map(p => render(TernaryInTry, p)),
+          TernaryInReturnedJsx: [{ a: 1 }, { a: 2 }].map(p => render(TernaryInReturnedJsx, p)),
+          IfInTry: [{ a: 1 }, { a: 2 }].map(p => render(IfInTry, p)),
+          ThrowDecides: [{ text: "{}" }, { text: "{bad" }].map(p => render(ThrowDecides, p)),
+          CatchBindingInJsx: ["ok", "x1", "x2"].map(text => render(CatchBindingInJsx, { text })),
+          CatchBindingAssigned: ["ok", "x1", "x2"].map(text => render(CatchBindingAssigned, { text })),
+          CatchBindingInsideScope: ["ok", "x1", "x2"].map(text => render(CatchBindingInsideScope, { text })),
+        }));
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => p.children;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => p.children;`,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        const caches = new Map();
+        let current;
+        exports.render = (component, props) => {
+          current = component;
+          return component(props);
+        };
+        exports.c = n => {
+          let cache = caches.get(current);
+          if (!cache) caches.set(current, (cache = new Array(n).fill(Symbol.for("react.memo_cache_sentinel"))));
+          return cache;
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        TernaryInTry: ["one", "other"],
+        TernaryInReturnedJsx: ["one", "other"],
+        IfInTry: ["one", "other"],
+        ThrowDecides: ["valid", "invalid"],
+        CatchBindingInJsx: ["fine", "bad:x1", "bad:x2"],
+        CatchBindingAssigned: ["none", "bad:x1", "bad:x2"],
+        CatchBindingInsideScope: [
+          ["init", "w0"],
+          ["bad:x1", "bad:x1"],
+          ["bad:x2", "bad:x2"],
+        ],
+      }),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Every component is compiled (a bail-out would also print the right
+      // values), and its memo cache is the first thing it reads.
+      for (const name of [
+        "TernaryInTry",
+        "TernaryInReturnedJsx",
+        "IfInTry",
+        "ThrowDecides",
+        "CatchBindingInJsx",
+        "CatchBindingAssigned",
+        "CatchBindingInsideScope",
+      ]) {
+        expect(out).toMatch(new RegExp(String.raw`function ${name}\(\w+\) \{\s*(?:let|const|var) \$ = [\w$.]+\(\d+\)`));
+      }
+      // What CatchBindingInsideScope is there for: a scope that contains the
+      // inner \`try\` statement and depends on \`text\` alone.
+      expect(out).toMatch(/if \(\$\[\d+\] !== text\) \{\s*try \{/);
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

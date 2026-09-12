@@ -75,34 +75,17 @@ impl Symlinker {
                                         _ => Err(symlink_err),
                                     },
                                 },
-                                // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. If it's a real
-                                // directory, leave it: this is the `bun patch <pkg>`
-                                // workspace (a detached copy the user is editing
-                                // before `--commit`), and `deleteTree` here would
-                                // silently destroy their in-progress edits. If it's
-                                // a regular file, replace it.
+                                // A real directory with a package.json is a `bun patch` workspace: keep it.
                                 _ => {
-                                    #[cfg(windows)]
-                                    let is_dir = if let Some(a) =
-                                        bun_sys::get_file_attributes(self.dest.slice_z())
-                                    {
-                                        a.is_directory && !a.is_reparse_point
-                                    } else {
-                                        false
+                                    let has_package_json = {
+                                        let mut dest = self.dest.save();
+                                        let _ = dest.append(b"package.json");
+                                        bun_sys::exists_z(dest.slice_z())
                                     };
-                                    #[cfg(not(windows))]
-                                    let is_dir = if let Ok(st) = bun_sys::lstat(self.dest.slice_z())
-                                    {
-                                        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
-                                        bun_sys::posix::s_isdir(st.st_mode as u32)
-                                    } else {
-                                        false
-                                    };
-                                    if is_dir {
+                                    if has_package_json {
                                         return Ok(false);
                                     }
-                                    let _ = bun_sys::unlink(self.dest.slice_z());
+                                    let _ = Fd::cwd().delete_tree(self.dest.slice_z());
                                     return self.symlink().map(|()| true);
                                 }
                             };

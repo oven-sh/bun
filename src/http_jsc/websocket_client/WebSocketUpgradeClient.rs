@@ -704,6 +704,10 @@ where
         };
 
         match parsed {
+            // The cap applies to the head length, complete or not.
+            Ok(HeadParse::Done { head_len, .. }) if head_len > bun_http::max_http_header_size() => {
+                HeadParse::Invalid
+            }
             Ok(done) => done,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
             Err(picohttp::ParseResponseError::ShortRead) => {

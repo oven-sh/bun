@@ -3636,6 +3636,9 @@ impl<'a> HTTPClient<'a> {
             }};
         }
 
+        // Not the 16 KB server-side `MAX_HTTP_HEADER_SIZE`: large `Location`/`Set-Cookie` responses are legitimate.
+        const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+
         let shared_resp = scratch::response_headers();
         let mut response = loop {
             let mut amount_read: usize = 0;
@@ -3653,13 +3656,6 @@ impl<'a> HTTPClient<'a> {
             ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
                     if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(
                             crate::Error::ResponseHeadersTooLarge,
@@ -3674,6 +3670,11 @@ impl<'a> HTTPClient<'a> {
                     return;
                 }
             };
+
+            if parsed.bytes_read > MAX_RESPONSE_HEADER_BUFFER {
+                self.close_and_fail::<IS_SSL>(crate::Error::ResponseHeadersTooLarge, socket);
+                return;
+            }
 
             let bytes_read = parsed.bytes_read.min(to_read.len());
             to_read = &to_read[bytes_read..];

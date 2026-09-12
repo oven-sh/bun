@@ -570,7 +570,7 @@ describe("util", () => {
       // getCallSites assigns Error.stackTraceLimit from one site. Runs in a fresh process so
       // that the JIT state of that site starts cold.
       const fixture = `
-        const util = require("node:util");
+        import util from "node:util";
         // try/finally keeps each call out of tail position, so every frame stays on the stack.
         function deep(n, k) { try { return n <= 0 ? util.getCallSites(k).length : deep(n - 1, k); } finally {} }
         const failures = [];

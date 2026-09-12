@@ -46,9 +46,9 @@ cd packages/h3blast
 make                   # → ./h3blast
 ```
 
-`PROFILE=debug make` links against the debug objects instead. Bun's debug
-profile builds them with ASan, so the Makefile links the ASan runtime too. Expect
-lower numbers than from a release h3blast.
+`PROFILE=debug make` links against the debug objects instead. `make` refuses
+objects that are ASan-instrumented, which is the default for Bun's debug profile
+on Linux. An instrumented load generator does not give useful numbers.
 
 Bun compiles BoringSSL to call embedder hooks (allocator, PEM base64) that the
 `bun` binary defines. `src/boringssl_hooks.c` defines libc-backed ones for

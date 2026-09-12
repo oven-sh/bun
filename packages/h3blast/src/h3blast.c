@@ -1178,10 +1178,6 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
 
 // ───────────────────────── main ─────────────────────────
 
-// A `PROFILE=debug` build links ASan. h3blast exits with its workers' state
-// still allocated; LeakSanitizer would report that and fail the run.
-const char *__asan_default_options(void) { return "detect_leaks=0"; }
-
 int main(int argc, char **argv) {
     g_isatty = isatty(STDERR_FILENO) && isatty(STDOUT_FILENO);
     if (g_isatty && !getenv("NO_COLOR")) enable_color();

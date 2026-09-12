@@ -21,10 +21,6 @@ LIBDEPS   := build/libdeps.a
 BIN := h3blast
 SRCS := src/h3blast.c src/boringssl_hooks.c
 
-# Bun's debug profile compiles its deps with ASan, so the runtime has to be
-# linked in too. Expanded in the recipe, once $(LIBDEPS) exists.
-ASAN = $(if $(shell nm -u $(LIBDEPS) | grep -m1 __asan_init),-fsanitize=address)
-
 all: $(BIN)
 
 $(LIBDEPS):
@@ -36,10 +32,18 @@ $(LIBDEPS):
 	@mkdir -p build
 	@echo "  AR    $@"
 	@find $(DEP_DIRS) -name '*.o' | xargs ar rcs $@
+	@if nm -u $@ | grep -q __asan_init; then \
+		rm -f $@; \
+		echo "error: the dep objects under $(OBJ) are ASan-instrumented"; \
+		echo "       (the default for Bun's debug profile). h3blast is a load"; \
+		echo "       generator: run 'bun run build:release' in the repo root,"; \
+		echo "       then 'make'"; \
+		exit 1; \
+	fi
 
 $(BIN): $(SRCS) $(LIBDEPS)
 	@echo "  CC    $@"
-	@$(CC) $(CFLAGS) $(ASAN) -o $@ $(SRCS) $(LIBDEPS) $(LDFLAGS)
+	@$(CC) $(CFLAGS) -o $@ $(SRCS) $(LIBDEPS) $(LDFLAGS)
 
 clean:
 	rm -f $(BIN) $(LIBDEPS)

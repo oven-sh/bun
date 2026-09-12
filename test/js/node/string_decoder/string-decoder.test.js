@@ -306,6 +306,68 @@ describe("StringDecoder called without new", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
+
+  // Node's constructor assigns `this.encoding` and `this[kNativeDecoder]`. The native constructor
+  // used to write its two properties onto an explicit receiver directly, which skipped the
+  // receiver's own [[DefineOwnProperty]]: a frozen object gained a property, a Proxy saw no trap,
+  // and a WebAssembly GC reference aborted the process.
+  it("a receiver that is not extensible rejects the decoder state", () => {
+    for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+      const receiver = lock({});
+      expect(() => RealStringDecoder.call(receiver, "latin1")).toThrow(TypeError);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+      // Also false when only the private decoder slot was added.
+      expect(Object.isFrozen(receiver)).toBe(true);
+    }
+  });
+
+  it("a Proxy receiver gets its defineProperty trap called", () => {
+    const calls = [];
+    const target = {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push([key, descriptor.value]);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    expect(RealStringDecoder.call(proxy, "latin1")).toBe(proxy);
+    expect(calls).toEqual([["encoding", "latin1"]]);
+    expect(target.encoding).toBe("latin1");
+
+    const refusing = new Proxy({}, { defineProperty: () => false });
+    expect(() => RealStringDecoder.call(refusing, "latin1")).toThrow(TypeError);
+  });
+
+  // In a subprocess because this aborted the process.
+  it("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
+    const src = `
+      // (module (type $s (struct (field (mut i32))))
+      //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+      const bytes = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+        0x03, 0x02, 0x01, 0x01,
+        0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+      ]);
+      const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+      const { StringDecoder } = require("node:string_decoder");
+      try {
+        StringDecoder.call(ref, "utf8");
+        console.log("no error");
+      } catch (e) {
+        console.log(e.constructor.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // Node's lastTotal getter is MissingBytes + BufferedBytes; Node clears BufferedBytes when a buffered

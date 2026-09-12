@@ -364,8 +364,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
+    // `require.cache = x` shadows this accessor with an own data property, which is what Node has.
+    // `this` is any object, and [[DefineOwnProperty]] lets it reject the property: a frozen
+    // object, a Proxy trap, a WebAssembly GC reference.
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(value), true));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -382,8 +385,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
+    // Same as jsRequireCacheSetter.
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(value), true));
 }
 
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {

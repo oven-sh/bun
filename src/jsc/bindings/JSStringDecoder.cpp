@@ -593,8 +593,14 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
         auto clientData = WebCore::clientData(vm);
         JSObject* thisObject = asObject(thisValue);
 
-        thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        // Node assigns `this.encoding` and `this[kNativeDecoder]`, which throws when `this` rejects
+        // the property: a frozen object, a Proxy trap, a WebAssembly GC reference.
+        PropertyDescriptor encodingDescriptor(convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        thisObject->methodTable()->defineOwnProperty(thisObject, lexicalGlobalObject, clientData->builtinNames().encodingPublicName(), encodingDescriptor, true);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        PropertyDescriptor decoderDescriptor(jsObject, JSC::PropertyAttribute::DontEnum | 0);
+        thisObject->methodTable()->defineOwnProperty(thisObject, lexicalGlobalObject, clientData->builtinNames().decodePrivateName(), decoderDescriptor, true);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(thisObject);
     }
 

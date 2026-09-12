@@ -1121,6 +1121,35 @@ impl<'a> Parser<'a> {
 
         visit_tracer.end();
 
+        // Non-ESM targets only: clear the pre-DCE TLA range if no `await`
+        // survived, else error at the survivor. TLA-capable targets keep the
+        // range; they may still need an async module wrapper.
+        if !p.options.features.top_level_await {
+            if !p.has_live_top_level_await {
+                p.top_level_await_keyword = bun_ast::Range::NONE;
+            } else {
+                let msg: &'static [u8] = match p.options.output_format {
+                    options::Format::Cjs => {
+                        b"Top-level await is currently not supported with the \"cjs\" output format"
+                    }
+                    options::Format::Iife => {
+                        b"Top-level await is currently not supported with the \"iife\" output format"
+                    }
+                    // Currently unreachable: ParseTask enables top_level_await
+                    // for InternalBakeDev; kept as a defensive fallback.
+                    options::Format::InternalBakeDev => {
+                        b"Top-level await is currently not supported with the \"internal_bake_dev\" output format"
+                    }
+                    // Unreachable: Esm implies `features.top_level_await`.
+                    options::Format::Esm => {
+                        b"Top-level await is currently not supported with this output format"
+                    }
+                };
+                p.log()
+                    .add_range_error(Some(p.source), p.top_level_await_keyword, msg);
+            }
+        }
+
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);

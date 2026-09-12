@@ -152,6 +152,8 @@ pub struct ForOf {
     pub init: StmtNodeIndex,
     pub value: ExprNodeIndex,
     pub body: StmtNodeIndex,
+    /// Range of the `await` keyword when `is_await` is true; used for diagnostics.
+    pub await_range: crate::Range,
 }
 
 pub struct DoWhile {

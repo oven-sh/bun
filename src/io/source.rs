@@ -69,11 +69,8 @@ pub struct File {
     /// When true, file will close itself when the current operation completes.
     pub(crate) close_after_operation: bool,
 
-    /// A read still in flight when its reader let go of this file (`iov`
-    /// points into it): the reader's buffer, kept alive here until the
-    /// detached completion frees the Box, so the pending ReadFile never lands
-    /// in freed memory.
-    pub(crate) orphaned_read_buf: Vec<u8>,
+    /// The buffer of a detached in-flight read (`iov`) or write; freed with the Box on completion.
+    pub(crate) orphaned_buf: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -100,7 +97,7 @@ impl Default for File {
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
-            orphaned_read_buf: Vec::new(),
+            orphaned_buf: Vec::new(),
         }
     }
 }
@@ -169,9 +166,20 @@ impl File {
     /// If an operation is in progress, it will complete and then close the file.
     /// If idle, closes the file immediately.
     pub(crate) fn detach(&mut self) {
+        self.detach_impl(true);
+    }
+
+    /// `detach`, but an operation in flight runs to completion instead of being cancelled.
+    pub(crate) fn detach_after_inflight(&mut self) {
+        self.detach_impl(false);
+    }
+
+    fn detach_impl(&mut self, cancel_inflight: bool) {
         self.fs.data = core::ptr::null_mut();
         self.close_after_operation = true;
-        self.stop();
+        if cancel_inflight {
+            self.stop();
+        }
 
         if self.state == FileState::Deinitialized {
             self.close_after_operation = false;
@@ -183,8 +191,19 @@ impl File {
     /// operation is in flight (its callback frees the Box); false when idle
     /// (caller drops the Box).
     pub(crate) fn detach_borrowed_fd(&mut self) -> bool {
+        self.detach_borrowed_fd_impl(true)
+    }
+
+    /// `detach_borrowed_fd`, but an operation in flight runs to completion.
+    pub(crate) fn detach_borrowed_fd_after_inflight(&mut self) -> bool {
+        self.detach_borrowed_fd_impl(false)
+    }
+
+    fn detach_borrowed_fd_impl(&mut self, cancel_inflight: bool) -> bool {
         self.fs.data = core::ptr::null_mut();
-        self.stop();
+        if cancel_inflight {
+            self.stop();
+        }
         self.state != FileState::Deinitialized
     }
 

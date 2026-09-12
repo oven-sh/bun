@@ -1077,7 +1077,7 @@ impl EventLoop {
         };
     }
 
-    /// Asynchronously run the garbage collector and track how much memory is now allocated
+    /// Asynchronously run the garbage collector
     pub fn perform_gc(&mut self) {
         self.vm_ref().as_mut().gc_controller.perform_gc(false);
     }

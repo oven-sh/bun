@@ -30,6 +30,8 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__shrinkFootprintWhenIdle(vm: &VM, quiet_ms: u32, everything: bool) -> bool;
+    safe fn JSC__VM__entryCountFromOutside(vm: &VM) -> u32;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -38,7 +40,7 @@ unsafe extern "C" {
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
-    safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn JSC__VM__totalBytesAllocated(vm: &VM) -> u64;
 }
 
 bun_opaque::opaque_ffi! {
@@ -106,6 +108,18 @@ impl VM {
         JSC__VM__collectAsyncIdle(self)
     }
 
+    /// Drop the code JSC can get back cheaply (unlinked code decodable from the executable's bytecode, parser caches; with
+    /// `everything` also all linked and RegExp code). `false`, and nothing done, if JS is on the stack or a collection saw
+    /// the program allocating within the last `quiet_ms`; after `true` the caller schedules the full collection that frees it.
+    pub(crate) fn shrink_footprint_when_idle(&self, quiet_ms: u32, everything: bool) -> bool {
+        JSC__VM__shrinkFootprintWhenIdle(self, quiet_ms, everything)
+    }
+
+    /// How often JS was entered from native code so far (wraps).
+    pub(crate) fn entry_count_from_outside(&self) -> u32 {
+        JSC__VM__entryCountFromOutside(self)
+    }
+
     /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
     pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
         JSC__VM__setStartupJITDeferralScale(self, scale)
@@ -151,10 +165,9 @@ impl VM {
         JSC__VM__drainMicrotasks(self)
     }
 
-    /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
-    /// This is faster than checking the heap size
-    pub(crate) fn block_bytes_allocated(&self) -> usize {
-        JSC__VM__blockBytesAllocated(self)
+    /// Everything the program has allocated (cells and reported extra memory) since the VM was created. JS thread only.
+    pub(crate) fn total_bytes_allocated(&self) -> u64 {
+        JSC__VM__totalBytesAllocated(self)
     }
 }
 

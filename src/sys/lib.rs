@@ -8405,6 +8405,23 @@ pub unsafe fn page_out_range(ptr: *const u8, len: usize) {
     }
 }
 
+/// This process's resident file-backed memory (mapped files, the executable among them), from `/proc/self/statm`.
+#[cfg(target_os = "linux")]
+pub fn file_backed_resident_bytes() -> Option<usize> {
+    let fd = open(
+        bun_core::zstr!("/proc/self/statm"),
+        O::RDONLY | O::CLOEXEC,
+        0,
+    )
+    .ok()?;
+    let mut buf = [0u8; 128];
+    let n = read(fd, &mut buf).unwrap_or(0);
+    let _ = close(fd);
+    // "size resident shared text lib data dt", in pages; shared = file-backed + shmem.
+    let shared = bun_core::strings::split(&buf[..n], b" ").nth(2)?;
+    Some(bun_core::fmt::parse_int::<usize>(shared, 10).ok()? * bun_alloc::page_size())
+}
+
 /// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
 pub mod elf {
     pub const PT_LOAD: u32 = 1;

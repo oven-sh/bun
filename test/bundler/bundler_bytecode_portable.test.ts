@@ -440,8 +440,8 @@ describe("bytecode cache portability", () => {
     ).toMatchInlineSnapshot(`
       {
         "builtin corpus": {
-          "bytes": 5296,
-          "sha256": "9ba5deb2d0965d3bb126d334ad8961d6cbe73762618b61cad2c8dafa9e1ec5ee",
+          "bytes": 5272,
+          "sha256": "8cb57e5ff1a6d1ca1b44b6885aeb2a411b81b16e8ce78eb496009f79f6290205",
         },
         "builtin corpus strings": {
           "bytes": 1044,
@@ -450,150 +450,150 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode --minify all.js": {
           "js": "50b3e5192dd86a205c73583d585884c1b414467b14db54d03c77d3026bf236ff",
           "jsc": {
-            "bytes": 1781360,
-            "sha256": "bd390a86e3399c8931a1b222b2600235e56a5f894080081315ab0a4a974278e9",
+            "bytes": 1778208,
+            "sha256": "993575eff3104bc331466a097265e99eca3a922b3bca92c18f61852803879fe2",
           },
         },
         "bun build --bytecode --minify features.js": {
           "js": "d30a5febed53e316cc2dd2b076502079e809bb0c201ef1671e9a190ecdcf093d",
           "jsc": {
-            "bytes": 42568,
-            "sha256": "291ad88ef104860bc7601519b60269e32d2a3ee15b7810922008912d6c881c1f",
+            "bytes": 42488,
+            "sha256": "e9b737200f5d84dedad004b1c79e1d2b7ba02d21e6cd53d69c6fbaba6bfff99e",
           },
         },
         "bun build --bytecode --minify records.js": {
           "js": "889cbb2c9525ff69a2676a6e81d97bb87760bdee65178b836c9c1d6808ac7c6e",
           "jsc": {
-            "bytes": 82248,
-            "sha256": "02d3a49ac8ffa02925676f7de749827f0a16d8150fec68d9f5d1dc1eadf87fab",
+            "bytes": 82120,
+            "sha256": "63e1cea1b839e3934adec126ef49599b7d32d90bfa80bfa5d5c8f8fc97472322",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {
           "js": "aa22cb20382fa5d66ff2ddd90817c0899f82b346bdd1da87dc9e193d203a0ce9",
           "jsc": {
-            "bytes": 243744,
-            "sha256": "a9966b3e641a80143909f5704a1df698c250ee558c67b3877da982566a29e9cc",
+            "bytes": 243456,
+            "sha256": "de90ed59cad7ec88ac672bbeb963ce7fbfccba9e6bc7466b8cc322e4f0d7043a",
           },
         },
         "bun build --bytecode all.js": {
           "js": "ce4cf9db35e0aa3257f982fb756363a5686fb52a3b7cc63ac0c66bdcaf13a849",
           "jsc": {
-            "bytes": 1957368,
-            "sha256": "3049301be1bfd272615a2ec474c57a2e5989a6765baafb7287f40648a36cb55c",
+            "bytes": 1954312,
+            "sha256": "139e4100e80aac589490f717e83cb6bb4237295ebeb633dc16d86a5ff88af9c8",
           },
         },
         "bun build --bytecode big.js": {
           "js": "df5367354d3dbd2b81114585fb2a21d058910c869ece4404ef015c0efaf5c689",
           "jsc": {
             "bytes": 144728,
-            "sha256": "3ec3683ff1a18a289e131d24d8898b0d8e51cf8f606ba1502c8b0d5ad3d80317",
+            "sha256": "fd31b0268da621f3b93b4867400387ab294e5b72971656f8fd8bffb69489b068",
           },
         },
         "bun build --bytecode features.js": {
           "js": "2ee211924620db96d6e99e9490bfe0ee60a3bc6b003f37940c5631e6eabc2c73",
           "jsc": {
-            "bytes": 44432,
-            "sha256": "d4b9a159df481eac51efd56720eae7d76c5035ccde9f74bb7a96077df6457614",
+            "bytes": 44352,
+            "sha256": "247bcb60ad71fbf0c2fdc4d12da7d4c27cf2cfc3197e9daafd50297276da37f3",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
           "js": "75d2ad2bc252c916f90f8ca85f53f0883ca46049c2700e3c1fe2337ec42d1142",
           "jsc": {
-            "bytes": 2337264,
-            "sha256": "49a83aca1ac5dcf9a7a20d64259fcb39aaec3a6c47afce6254cefb2bc89dde8e",
+            "bytes": 2331424,
+            "sha256": "318b93077e6f2b29a17f6df7f838911d2ebbd85d3ae43619e36953b223537c52",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
           "js": "d011b6c5105dad96f17aaf541c848b8d2be1b2e65a1de050112380352979bb6b",
           "jsc": {
-            "bytes": 251048,
-            "sha256": "5ad323f701584dbd4dc4ff68b4da9dcb1e16c6c8795ba72a33c996931ee8cfaf",
+            "bytes": 250256,
+            "sha256": "097784fe61a8327f720cf019953c21be0c5fedc9efce8142dcf641ca23f906e7",
           },
         },
         "bun build --bytecode libraries.js": {
           "js": "493bab674ff49b287f26be3f356a3ad6681afb0c7eeffaa590f10cdcd8b58724",
           "jsc": {
-            "bytes": 22009472,
-            "sha256": "c5c3d5417c955434debefb6053e2a7abaa63dd0e1495686b805fd030d04c8f3b",
+            "bytes": 21967040,
+            "sha256": "3be3f0448ff40f00373213aa8686de76b59e9af87f9920862abe9e7cd100f8d2",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
           "js": "9951d06da1bf94c69dece1b23f304c1cbf4018b894e398ac5ea10f35b5600187",
           "jsc": {
-            "bytes": 315560,
-            "sha256": "94e565da5e18bf470fffc07f64f25621c8b41663a6c476f0eabbe4b1270fa322",
+            "bytes": 314832,
+            "sha256": "a812b4df4282ca3d680d236669f61e192b86b7f65f649dfea0634f5656dcd001",
           },
         },
         "bun build --bytecode react-dom/cjs/react-dom.development.js": {
           "js": "3392a38ccef2f1bb7b1c8c8cbfc8111b45f6cf6f8dec3c72a99f13a6568fd5a1",
           "jsc": {
-            "bytes": 870776,
-            "sha256": "1fc4d5eb785ccdc068a6fdb1980200c2104caa0c0771ad3125f74406bee7a1a8",
+            "bytes": 869024,
+            "sha256": "869b91261249b220fa8b6b4ee6e03edd574aadbd13e0be3ac895348df2bae5c4",
           },
         },
         "bun build --bytecode records.js": {
           "js": "c87ea35df4ad6b2063402c9901ef4775a82f12594f280db76f50695f4b0eba13",
           "jsc": {
-            "bytes": 84744,
-            "sha256": "ed25a65b057defb953900ccc37e16c7618e53ebdf8cd159d0e37634cf3be269e",
+            "bytes": 84608,
+            "sha256": "320cb5f5c962e63afb3cbc11651319ae45aebb9bc4d087eac2b17b12b87149cc",
           },
         },
         "bun build --bytecode shapes.js": {
           "js": "dfcf0136de2c98f6a29d2c41477637879ccae98385a1bf30c666b85002bcae07",
           "jsc": {
-            "bytes": 230568,
-            "sha256": "7e1261b3c51e0082f89534242f437315961c2938dfaa5ec8e1b4e76fd4d4a9b0",
+            "bytes": 230400,
+            "sha256": "e042a059fca33673723f62c485f57edc133e7c9f96bb26342cdfeee107c349ce",
           },
         },
         "bun build --bytecode svelte/compiler/index.js": {
           "js": "17e7431a6f28a4b6b5d356fc815b0876ebd9613ae6c25a98dc4c5560004341ce",
           "jsc": {
-            "bytes": 1862512,
-            "sha256": "89c9135b7d6a213757b4089d9d9a966ba31097ea9bca8d0c79a2ea7dd92ea052",
+            "bytes": 1860088,
+            "sha256": "49b4e0271392efc6e9a6b4304e139e3ff6922839b7262b95747d89151639e517",
           },
         },
         "bun build --bytecode undici/index.js": {
           "js": "e1c4f1494711ecaae57a6d63dfb8ac6096629582f55cc42530ff5a156b70c9de",
           "jsc": {
-            "bytes": 874736,
-            "sha256": "20fc4d7f3f1deec97bbd18574f07e4c58426ba4a94596299640e2362b8fdfe66",
+            "bytes": 873544,
+            "sha256": "926dd20e497be823f44c945c79ff0f6fb38078d391d24532987c5e5bf7c38a87",
           },
         },
         "vm.Script big.js": {
           "bytes": 168496,
-          "sha256": "93947834afb5e9365e0b78e8a145eff7903bb1b761a74424d732b871bdeb719d",
+          "sha256": "cc16cfbce50246cc2a6459cc6dcf37899140620b02b33c18a5694d5d44d57e83",
         },
         "vm.Script features.js": {
           "bytes": 46128,
-          "sha256": "6487b044f600f1af7b89d9993dbc2f47a62fef4e34fb2a8226921c8a77814bd6",
+          "sha256": "f2b5bac4c152f45822d1bee91d506987a8e537b3d9c17d3aadf13f54ffdb54f0",
         },
         "vm.Script lodash.js": {
-          "bytes": 341328,
-          "sha256": "b81409d606dda0c29cdd2988e9aa2c0a9fa529901cad459067568cb2e067ead8",
+          "bytes": 343744,
+          "sha256": "4fe26e8e2c5ae9406d904055335b3dd7410aa3fd6e77b32b14cf4ff8c0bedb58",
         },
         "vm.Script records.js": {
-          "bytes": 88848,
-          "sha256": "2b8c4630d0e114d4978f37f946db12f5a3f63eb130e448ba7adfec2ce41afc4c",
+          "bytes": 88728,
+          "sha256": "2b0ec2c7f601a0e8e9f6b6fa2adc86a232637d8aa911598a03acfefe32f07e00",
         },
         "vm.Script shapes.js": {
-          "bytes": 276208,
-          "sha256": "60757f8c40f9b93a9cb63f272b4ca7beb4d5b38fb1a46881e43387356d32c2d2",
+          "bytes": 276040,
+          "sha256": "e6cd6077d0f9bb4cd9458032fbb79660f7929c63dce90cdc47544453da93a3c4",
         },
         "vm.Script source-forms.js": {
-          "bytes": 4784,
-          "sha256": "3ef1c05c6c57542cf72372225cfdb28e02c48c43568b465eba10d5384ab36815",
+          "bytes": 4768,
+          "sha256": "e63613fa4ca5879a38f8018e2fb84ac9f4ad7d1c447d211134ef1fa383596aa9",
         },
         "vm.Script typescript.js": {
-          "bytes": 11684048,
-          "sha256": "e5c42d10d1ecb91872abf9ce5b58b84f28de58cacf16bed19d528f90074f6641",
+          "bytes": 11762944,
+          "sha256": "4cbb1211a47ec9c4f3132ff1c6e90402af5efec0e9a2dd18ffca1afada28e186",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 257168,
-          "sha256": "a02fde5c6bbe50919370fe150cf487e1c01ea2f8b8bcacdf8419869f8b205303",
+          "bytes": 261208,
+          "sha256": "2a02bfcf303ca687af3e7fb4bfce1685570a7563bae5353cfe9146924bfd531a",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 9336,
-          "sha256": "c84ce82c137686f4972fb4a1a128fbeade717ed89f7d7d71045f0ceba5f9846c",
+          "bytes": 9344,
+          "sha256": "1aa1803ec54501655a946bc0f0350f2e2f212ef84521adfbc4b8bb0f44e9c8fc",
         },
       }
     `);

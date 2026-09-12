@@ -793,10 +793,12 @@ impl PostgresSQLQuery {
         if did_write {
             connection.flush_data_and_reset_timeout();
         } else {
-            connection.reset_connection_timeout();
             // For unnamed prepared statements with params, we skip writeQuery+Sync
             // in the enqueue path and let advance() handle it atomically.
             connection.advance_and_flush();
+            // After advance(): it can discard the request synchronously, and the
+            // idle timer must re-arm for a connection that just became idle.
+            connection.reset_connection_timeout();
         }
         Ok(JSValue::UNDEFINED)
     }

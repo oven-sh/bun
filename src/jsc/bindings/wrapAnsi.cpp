@@ -1,6 +1,7 @@
 #include "root.h"
 #include "wrapAnsi.h"
 #include "ANSIHelpers.h"
+#include "stringWidth.h"
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
@@ -11,23 +12,15 @@
 // Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
-extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 
 namespace Bun {
 using namespace WTF;
 
-// UTF-16 decoding and codepoint width are in ANSIHelpers.h (shared with
-// sliceAnsi.cpp). The local wrapper here just delegates to keep existing
-// call sites unchanged.
+// UTF-16 decoding is in ANSIHelpers.h (shared with sliceAnsi.cpp).
 static inline char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
 {
     return ANSI::decodeUTF16(ptr, available, outLen);
-}
-
-static inline uint8_t getVisibleWidth(char32_t cp, bool ambiguousIsWide)
-{
-    return Bun__codepointWidth(cp, ambiguousIsWide);
 }
 
 // Options for wrapping
@@ -212,10 +205,12 @@ public:
 // Word Wrapping Core Logic
 // ============================================================================
 
+// Hard-wraps one word wider than `columns`, one grapheme cluster at a time.
 template<typename Char>
 static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
 {
     size_t vis = rows.last().width(options.ambiguousIsNarrow);
+    const bool ambiguousIsWide = !options.ambiguousIsNarrow;
 
     const Char* it = wordStart;
     while (it < wordEnd) {
@@ -227,24 +222,43 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
             continue;
         }
 
-        size_t charLen = 1;
-        char32_t cp;
-        if constexpr (sizeof(Char) == 1) {
-            // Latin1: each byte is one character, direct 1:1 mapping to U+0000-U+00FF
-            cp = static_cast<uint8_t>(*it);
-        } else {
-            cp = decodeUTF16(it, wordEnd - it, charLen);
+        // Gather one cluster; escapes inside it travel with it.
+        StringWidth::GraphemeState cluster;
+        uint8_t breakState = 0;
+        char32_t prevCp = 0;
+        const Char* clusterEnd = it;
+        for (const Char* p = it; p < wordEnd;) {
+            if (ANSI::isEscapeCharacter(*p)) {
+                p = ANSI::consumeANSI(p, wordEnd);
+                continue;
+            }
+            size_t charLen = 1;
+            char32_t cp;
+            if constexpr (sizeof(Char) == 1) {
+                cp = static_cast<uint8_t>(*p);
+            } else {
+                cp = decodeUTF16(p, wordEnd - p, charLen);
+            }
+            if (clusterEnd == it)
+                cluster.reset(cp, StringWidth::fusedClassify(cp), ambiguousIsWide);
+            else if (Bun__graphemeBreak(prevCp, cp, &breakState))
+                break;
+            else
+                cluster.add(cp, StringWidth::fusedClassify(cp), ambiguousIsWide);
+            prevCp = cp;
+            p += charLen;
+            clusterEnd = p;
         }
-        uint8_t charWidth = getVisibleWidth(cp, !options.ambiguousIsNarrow);
+        const size_t clusterWidth = cluster.width();
 
-        if (vis + charWidth > columns) {
-            // Character doesn't fit on current line, start a new line
+        if (vis + clusterWidth > columns) {
+            // Cluster doesn't fit on current line, start a new line
             rows.append(Row<Char>());
             vis = 0;
         }
-        rows.last().append(it, it + charLen);
-        vis += charWidth;
-        it += charLen;
+        rows.last().append(it, clusterEnd);
+        vis += clusterWidth;
+        it = clusterEnd;
 
         if (vis == columns && it < wordEnd) {
             rows.append(Row<Char>());

@@ -28,7 +28,7 @@ test("12782", async () => {
     4 | 
     5 | beforeAll(() => {
     6 |   if (!FOO) throw new Error("Environment variable FOO is not set");
-                                                                         ^
+                              ^
     error: Environment variable FOO is not set
         at <anonymous> (file:NN:NN)
     (fail) (unnamed)

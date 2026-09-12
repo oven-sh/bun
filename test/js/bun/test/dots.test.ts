@@ -87,7 +87,7 @@ test("dots 2", async () => {
     6 |   setTimeout(() => {
     7 |     resolve();
     8 |     throw new Error("unhandled error");
-                                             ^
+                      ^
     error: unhandled error
         at <anonymous> (file:NN:NN)
     (fail) failure

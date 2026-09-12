@@ -664,7 +664,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
+    let incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
         && context.targets.should_compile_selectors()
         && !sty.is_compatible(context.targets)
     {
@@ -687,15 +687,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             // Otherwise, partition the selectors and keep the compatible ones in this rule.
             // We will generate additional rules for incompatible selectors later.
             let mut incompatible = SmallList::<Selector, 1>::default();
-            let mut i: u32 = 0;
-            while i < sty.selectors.v.len() {
-                if selector::is_compatible(
-                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
-                ) {
-                    i += 1;
+            for sel in core::mem::take(&mut sty.selectors.v) {
+                if selector::is_compatible(core::slice::from_ref(&sel), context.targets) {
+                    sty.selectors.v.append(sel);
                 } else {
-                    incompatible.append(sty.selectors.v.ordered_remove(i));
+                    incompatible.append(sel);
                 }
             }
             incompatible
@@ -781,8 +777,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
-    while incompatible.len() > 0 {
-        let sel = incompatible.ordered_remove(0);
+    for sel in incompatible {
         let list = SelectorList {
             v: SmallList::with_one(sel),
         };
@@ -878,8 +873,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         rules.append(&mut log.v);
     }
     rules.extend(supps);
-    while incompatible_rules.len() > 0 {
-        let entry = incompatible_rules.ordered_remove(0);
+    for entry in incompatible_rules {
         if !entry.rule.is_empty() {
             rules.push(CssRule::Style(entry.rule));
         }

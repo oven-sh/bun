@@ -400,6 +400,9 @@ thread_local! {
 #[path = "open_handles.rs"]
 pub mod open_handles;
 
+#[path = "stdio_readers.rs"]
+pub mod stdio_readers;
+
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
@@ -588,6 +591,7 @@ unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void)
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
         unsafe { uv_close(handle, None) };
+        stdio_readers::release(handle.cast());
     }
 }
 
@@ -673,6 +677,9 @@ pub unsafe trait UvHandle: Sized {
                 >(cb)),
             );
         }
+        // After `uv_close`: a pipe's parked read is cancelled by then, so the
+        // next reader of the fd never waits on it.
+        stdio_readers::release(self.as_handle_mut().cast());
     }
     #[inline]
     fn has_ref(&self) -> bool {
@@ -1194,6 +1201,18 @@ impl Pipe {
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
         // SAFETY: pipe was `init`ed.
         unsafe { uv_pipe_open(self, file) }
+    }
+    /// [`open`](Self::open) for a reader: `UV_EBUSY` while another reader's
+    /// pipe is open over the same stdio fd (`stdio_readers`).
+    pub fn open_for_reading(&mut self, file: uv_file) -> ReturnCode {
+        if !stdio_readers::claim(file, ptr::from_mut(self).cast()) {
+            return ReturnCode(UV_EBUSY);
+        }
+        let rc = self.open(file);
+        if rc.is_err() {
+            stdio_readers::release(self.as_handle_mut().cast());
+        }
+        rc
     }
     #[inline]
     pub(crate) fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {

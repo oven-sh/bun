@@ -191,9 +191,7 @@ const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
-// Node's `handle.reading` (lib/net.js#L817-L845): pause() clears it, read()/resume() set it.
-// The onread delivery loop stops on this, not on isPaused(), so a pause() followed by a
-// read() inside the callback keeps delivering.
+// Node's handle.reading: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L845
 const kOnreadReading = Symbol("kOnreadReading");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
@@ -1319,8 +1317,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     socket.data.req = undefined;
     if (self[kupgraded]) {
       self.connecting = false;
-      // A socket over a wrapped handle starts its reads in the constructor in node. The
-      // constructor's read(0) is skipped while the wrapped socket still connects, so start them here.
+      // The constructor's read(0) is skipped while the wrapped socket connects.
       if (!self.isPaused()) self.read(0);
       SocketHandlers2.drain!(socket);
     }
@@ -2342,9 +2339,7 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
-// The queued tail goes to the callback before the handle reads again. The caller
-// asked for reads, so mark the handle reading now: a pause() before the drain
-// tick clears it again and the tick then delivers nothing.
+// The tail is delivered on the next tick. A pause() before then clears kOnreadReading and the tick delivers nothing.
 function drainOnreadTail(self) {
   if (self[kOnreadTail] === undefined) return false;
   self[kOnreadReading] = true;

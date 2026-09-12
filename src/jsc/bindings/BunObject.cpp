@@ -434,8 +434,6 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
-// How the UTF-8 byte order mark (EF BB BF) matches the start of the input. Partial: the input
-// ends inside the mark, so it is incomplete and not malformed.
 enum class UTF8BOMMatch : uint8_t { None,
     Partial,
     Full };

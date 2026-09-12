@@ -36,6 +36,8 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
+let domainActiveGetter: (() => any) | null = null;
+
 class Frame {
   readonly storage: AsyncLocalStorage;
   readonly value: unknown;
@@ -247,7 +249,7 @@ class AsyncLocalStorage {
     // Replace rather than shadow an existing binding so repeated enterWith() calls
     // keep the chain bounded by the number of storages.
     set(push(without(get(), this), this, store));
-    $assert(sameValue(this.getStore(), store));
+    $assert(sameValue(this.#peek(), store));
   }
 
   exit(cb, ...args) {
@@ -298,8 +300,16 @@ class AsyncLocalStorage {
         // run()s of the same storage restore their own value likewise.
         set(push(without(head, this), this, beforeValue));
       }
-      $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
+      $assert(sameValue(this.#peek(), beforeValue), "run: previous value was not restored");
     }
+  }
+
+  // getStore() without going through the userland-patchable prototype method.
+  #peek() {
+    var start = get();
+    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
+    var bound = find(start, this);
+    return bound === undefined ? this.#defaultValue : bound.value;
   }
 
   disable() {
@@ -321,12 +331,7 @@ class AsyncLocalStorage {
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    var start = get();
-    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
-    for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
-      if (f.storage === this) return f.value;
-    }
-    return this.#defaultValue;
+    return this.#peek();
   }
 
   withScope(store) {
@@ -374,6 +379,19 @@ class AsyncResource {
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
+
+    if (domainActiveGetter !== null) {
+      const domain = domainActiveGetter();
+      if (domain != null) {
+        Object.defineProperty(this, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+      }
+    }
   }
 
   emitBefore() {
@@ -612,6 +630,8 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
+const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
+
 export default {
   AsyncLocalStorage,
   createHook,
@@ -620,4 +640,7 @@ export default {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
+  [kSetDomainActiveGetter](fn: () => any) {
+    domainActiveGetter = fn;
+  },
 };

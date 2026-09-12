@@ -146,6 +146,7 @@ extern "C" BunString Bun__Node__getRedirectWarnings();
 extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
+extern "C" bool Bun__Node__AbortOnUncaughtException;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill();
 extern "C" int32_t bun_stdio_tty[3];
@@ -939,6 +940,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* process = globalObject->processObject();
+    process->setDomainErrorHandler(callFrame->argument(0));
+    process->setDomainWouldClaim(callFrame->argument(1));
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -1321,9 +1331,44 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 };
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+extern "C" bool Bun__isMainThreadVM();
+#if !OS(WINDOWS)
+static void restoreDefaultSignalDisposition(int signalNumber);
+#endif
 
-extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
+static bool shouldAbortOnUncaughtException()
 {
+    return Bun__Node__AbortOnUncaughtException && Bun__isMainThreadVM();
+}
+
+[[noreturn]] static void abortOnUncaughtException()
+{
+#if OS(WINDOWS)
+    // Node's ABORT() macro (src/util.h) is _exit(134) so
+    // common.nodeProcessAborted() sees it.
+    if (IsDebuggerPresent()) DebugBreak();
+    _exit(134);
+#else
+    // Requested abort, like process.abort(): keep Bun's crash reporter out of it.
+    restoreDefaultSignalDisposition(SIGABRT);
+    abort();
+#endif
+}
+
+// Mirrors bun_jsc::virtual_machine::UncaughtExceptionOrigin (FFI int).
+enum class UncaughtExceptionOrigin : int {
+    Exception = 0,
+    Rejection = 1,
+    EntryPointRejection = 2,
+    EntryPointException = 3,
+};
+
+// substituteError out-param: a domain handler / capture callback throw in a
+// Worker is routed to the parent 'error' + exit 1 instead of exit 7.
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int originValue, JSC::EncodedJSValue* substituteError)
+{
+    const auto origin = static_cast<UncaughtExceptionOrigin>(originValue);
+
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1332,6 +1377,43 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
+
+    auto domainHandler = process->getDomainErrorHandler();
+    const auto captureAtThrow = process->getUncaughtExceptionCaptureCallback();
+    bool domainClaimsAtThrow = false;
+    // An entry-point throw is still the module's own synchronous execution:
+    // node:domain must not treat its async-context box as a restored pairing.
+    const bool atEntryPoint = origin == UncaughtExceptionOrigin::EntryPointRejection
+        || origin == UncaughtExceptionOrigin::EntryPointException;
+
+    if (shouldAbortOnUncaughtException() && origin != UncaughtExceptionOrigin::Rejection
+        && !domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
+        auto wouldClaim = process->getDomainWouldClaim();
+        if (!wouldClaim.isEmpty() && !wouldClaim.isUndefinedOrNull()) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            MarkedArgumentBuffer claimArgs;
+            claimArgs.append(jsBoolean(atEntryPoint));
+            JSValue claims = call(lexicalGlobalObject, wouldClaim, claimArgs, "domainWouldClaim"_s);
+            if (auto ex = scope.exception()) {
+                (void)scope.tryClearException();
+                (void)ex;
+                claims = jsUndefined();
+            }
+            domainClaimsAtThrow = claims.toBoolean(lexicalGlobalObject);
+            if (!domainClaimsAtThrow
+                && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
+                Bun__logUnhandledException(JSValue::encode(exception));
+                abortOnUncaughtException();
+            }
+        }
+    }
+    if (shouldAbortOnUncaughtException()
+        && (origin == UncaughtExceptionOrigin::Rejection
+            || ((domainHandler.isEmpty() || domainHandler.isUndefinedOrNull())
+                && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())))) {
+        Bun__logUnhandledException(JSValue::encode(exception));
+        abortOnUncaughtException();
+    }
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
@@ -1353,10 +1435,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     MarkedArgumentBuffer args;
     args.append(exception);
-    if (isRejection) {
-        args.append(jsString(vm, String("unhandledRejection"_s)));
-    } else {
+    if (origin == UncaughtExceptionOrigin::Exception || origin == UncaughtExceptionOrigin::EntryPointException) {
         args.append(jsString(vm, String("uncaughtException"_s)));
+    } else {
+        args.append(jsString(vm, String("unhandledRejection"_s)));
     }
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
@@ -1368,8 +1450,44 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
 
-    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
+    domainHandler = process->getDomainErrorHandler();
+    if (!domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer domainArgs;
+        domainArgs.append(exception);
+        domainArgs.append(jsBoolean(atEntryPoint));
+        JSValue handled = call(lexicalGlobalObject, domainHandler, domainArgs, "domainErrorHandler"_s);
+        if (auto ex = scope.exception()) {
+            (void)scope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
+            if (shouldAbortOnUncaughtException()) {
+                Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+                abortOnUncaughtException();
+            }
+            if (!Bun__isMainThreadVM()) {
+                if (substituteError) *substituteError = JSValue::encode(JSValue(ex));
+                return false;
+            }
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            Bun__Process__exit(lexicalGlobalObject, 7);
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        if (handled.toBoolean(lexicalGlobalObject)) {
+            return true;
+        }
+    }
+
+    if (origin != UncaughtExceptionOrigin::Rejection && shouldAbortOnUncaughtException()
+        && !domainClaimsAtThrow
+        && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
+        Bun__logUnhandledException(JSValue::encode(exception));
+        abortOnUncaughtException();
+    }
+
     auto capture = process->getUncaughtExceptionCaptureCallback();
+
+    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
@@ -1377,9 +1495,17 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             (void)scope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
-            // if an exception is thrown in the uncaughtException handler, we abort
+            if (shouldAbortOnUncaughtException()) {
+                Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+                abortOnUncaughtException();
+            }
+            if (!Bun__isMainThreadVM()) {
+                if (substituteError) *substituteError = JSValue::encode(JSValue(ex));
+                return false;
+            }
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            Bun__Process__exit(lexicalGlobalObject, 7);
+            RELEASE_ASSERT_NOT_REACHED();
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3766,6 +3892,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    visitor.append(thisObject->m_domainErrorHandler);
+    visitor.append(thisObject->m_domainWouldClaim);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
@@ -4426,8 +4554,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * 
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception
     // machinery and returns whether a handler claimed the error. fromPromise selects
     // origin 'unhandledRejection' vs 'uncaughtException'.
-    int isRejection = callFrame->argument(1).toBoolean(globalObject) ? 1 : 0;
-    return JSValue::encode(jsBoolean(Bun__handleUncaughtException(globalObject, callFrame->argument(0), isRejection) > 0));
+    int origin = callFrame->argument(1).toBoolean(globalObject) ? static_cast<int>(UncaughtExceptionOrigin::Rejection) : static_cast<int>(UncaughtExceptionOrigin::Exception);
+    JSC::EncodedJSValue substitute = JSC::encodedJSValue();
+    bool handled = Bun__handleUncaughtException(globalObject, callFrame->argument(0), origin, &substitute) > 0;
+    if (!JSValue::decode(substitute).isEmpty())
+        Bun__logUnhandledException(substitute);
+    return JSValue::encode(jsBoolean(handled));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

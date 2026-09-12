@@ -6204,8 +6204,7 @@ pub mod bv2_impl {
         }
 
         /// `path_text` with the suffix back on it. For the path of the resolved file, this is
-        /// the key of the module in `PathToSourceIndexMap` and `ResolveQueue`. An import
-        /// record finds its module through `path.text`, so the record gets the key there.
+        /// the key of the module in `PathToSourceIndexMap` and `ResolveQueue`.
         fn append_to(self, arena: &ThreadLocalArena, path_text: &'static [u8]) -> &'static [u8] {
             if self.0.is_empty() {
                 return path_text;
@@ -6215,6 +6214,14 @@ pub mod bv2_impl {
             key[path_text.len()..].copy_from_slice(self.0);
             // SAFETY: the arena outlives the bundle pass.
             unsafe { interned_slice(key) }
+        }
+
+        /// An import record finds its module in `PathToSourceIndexMap` through `path.text`.
+        /// `module_key` is that text when the import has a suffix.
+        fn set_module_key(self, record: &mut ImportRecord, module_key: &'static [u8]) {
+            if !self.0.is_empty() {
+                record.path.text = module_key;
+            }
         }
     }
 
@@ -6500,7 +6507,7 @@ pub mod bv2_impl {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
                                 path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            import_record.path.text = module_key;
+                            ignored_suffix.set_module_key(import_record, module_key);
                             continue 'outer;
                         }
 
@@ -6515,7 +6522,7 @@ pub mod bv2_impl {
                             )
                         };
                         import_record.path = path_as_static(&path_primary);
-                        import_record.path.text = module_key;
+                        ignored_suffix.set_module_key(import_record, module_key);
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
@@ -6889,7 +6896,7 @@ pub mod bv2_impl {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
                         path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                    import_record.path.text = module_key;
+                    ignored_suffix.set_module_key(import_record, module_key);
                     continue;
                 }
 
@@ -6898,7 +6905,7 @@ pub mod bv2_impl {
                     .expect("oom");
 
                 import_record.path = path_as_static(path);
-                import_record.path.text = module_key;
+                ignored_suffix.set_module_key(import_record, module_key);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.

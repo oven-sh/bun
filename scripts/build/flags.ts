@@ -1067,9 +1067,13 @@ export const linkerFlags: Flag[] = [
     // src/exe_format/macho.rs). Fold __DATA_DIRTY into __DATA instead: it
     // holds a single 8-byte JSC::SourceProfiler hook and is only meaningful
     // as a dyld-shared-cache page-grouping hint, which executables don't use.
+    // Every darwin link gets this, not just cross links: a native source
+    // build can link with ld64.lld too (nixpkgs' LLVM toolchain — #40107),
+    // and under Apple's ld, which already orders __DATA_DIRTY before __BUN,
+    // the fold is harmless.
     flag: "-Wl,-rename_segment,__DATA_DIRTY,__DATA",
-    when: c => c.darwin && c.crossTarget !== undefined,
-    desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
+    when: c => c.darwin,
+    desc: "macOS: keep __BUN as the last content segment so `bun build --compile` can grow it",
   },
   {
     // Identical-code folding, on top of -dead_strip: dead_strip removes

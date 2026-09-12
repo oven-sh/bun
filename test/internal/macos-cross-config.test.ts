@@ -190,6 +190,24 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(machoPostlinkCommand(linux)).toBe("");
   });
 
+  test("__DATA_DIRTY is folded into __DATA on every darwin link", () => {
+    // `bun build --compile` grows the __BUN placeholder in place, so __BUN
+    // must stay the last content segment before __LINKEDIT. ld64.lld orders
+    // unknown segments by creation order and leaves __DATA_DIRTY after
+    // __BUN, which OverlappingSegments-fails the first graph that outgrows
+    // the 16 KiB placeholder. Native source builds can link with ld64.lld
+    // too (nixpkgs' LLVM toolchain — #40107), so the rename must not be
+    // keyed on crossTarget.
+    const rename = "-Wl,-rename_segment,__DATA_DIRTY,__DATA";
+    expect(computeFlags(resolveDarwin()).ldflags).toContain(rename);
+
+    // Simulate the native-link flag evaluation (a darwin host resolves
+    // crossTarget to undefined, which a non-darwin test host can't produce
+    // through resolveConfig).
+    const native = { ...resolveDarwin(), crossTarget: undefined };
+    expect(computeFlags(native).ldflags).toContain(rename);
+  });
+
   test("the __BUN sectalign workaround applies to x64 only", () => {
     const arm64 = computeFlags(resolveDarwin());
     const x64 = computeFlags(resolveDarwin({ arch: "x64" }));

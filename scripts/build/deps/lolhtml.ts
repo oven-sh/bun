@@ -39,6 +39,8 @@ export const lolhtml: Dependency = {
     commit: LOLHTML_COMMIT,
   }),
 
+  patches: ["patches/lolhtml/uppercase-attribute-name-selector.patch"],
+
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.
   build: () => ({ kind: "none" }),

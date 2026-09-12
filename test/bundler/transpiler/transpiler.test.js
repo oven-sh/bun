@@ -6212,3 +6212,27 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("NODE_ENV with characters that need JSON escaping", () => {
+  // The auto-define for process.env.NODE_ENV is parsed as JSON. A value with a
+  // control character or a quote must not break `new Bun.Transpiler()`.
+  it.concurrent.each([
+    ["carriage return", "production\r"],
+    ["double quote", 'dev"elop'],
+    ["backslash", "C:\\new\\table"],
+  ])("%s", async (_, value) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `var x; eval(new Bun.Transpiler().transformSync("x = process.env.NODE_ENV;")); console.log(JSON.stringify(x));`,
+      ],
+      env: { ...bunEnv, NODE_ENV: value },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify(value) + "\n");
+    expect(exitCode).toBe(0);
+  });
+});

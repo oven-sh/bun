@@ -90,6 +90,11 @@ fn dump_source_string_failiable(
     {
         return Ok(());
     }
+    // A `data:` URL specifier embeds the module source and can exceed
+    // MAX_PATH_BYTES; skip the best-effort dump when it cannot fit.
+    if specifier.len() + b".map".len() >= bun_paths::MAX_PATH_BYTES {
+        return Ok(());
+    }
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 

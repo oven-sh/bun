@@ -631,6 +631,41 @@ it("setTimeout propagates an error thrown while emitting a timeout warning", asy
   expect(exitCode).toBe(0);
 });
 
+it("setTimeout emits TimeoutNaNWarning when the delay coerces to NaN", async () => {
+  // Node coerces the delay via ToNumber before deciding which warning to emit, so a
+  // string/object/array/function delay that becomes NaN must warn the same as a literal NaN.
+  // undefined is special-cased in both runtimes and must not warn.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const seen = [];
+        process.on("warning", w => seen.push(w.name));
+        setTimeout(() => {});                                 // undefined: no warning
+        setTimeout(() => {}, undefined);                      // undefined: no warning
+        setTimeout(() => {}, "abc");                          // ToNumber -> NaN
+        setTimeout(() => {}, {});                             // NaN
+        setTimeout(() => {}, [1, 2]);                         // NaN
+        setTimeout(() => {}, () => 5);                        // NaN
+        setTimeout(() => {}, { valueOf() { return NaN; } });  // NaN
+        setTimeout(() => {}, "4000000000");                   // coerced overflow
+        setTimeout(() => {}, { valueOf() { return -3; } });   // coerced negative
+        setImmediate(() => process.nextTick(() => console.log(JSON.stringify(seen))));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // NaN and Negative warnings are emitted once per process; Overflow warns every time.
+  expect(JSON.parse(stdout.trim())).toEqual(["TimeoutNaNWarning", "TimeoutOverflowWarning", "TimeoutNegativeWarning"]);
+  expect(exitCode).toBe(0);
+});
+
 it("clearTimeout with a numeric id is a no-op after a timeout promoted to an interval is cleared and collected", async () => {
   // A setTimeout whose numeric id has been observed via `+timer` registers itself in the
   // setTimeout id map. Assigning `_repeat` promotes it to a setInterval after its first

@@ -164,7 +164,6 @@ impl All {
                                 TimeoutWarning::TimeoutNegativeWarning,
                             )?;
                         } else if !countdown.is_undefined()
-                            && countdown.is_number()
                             && countdown_double.is_nan()
                             && !self.warned_not_number
                         {

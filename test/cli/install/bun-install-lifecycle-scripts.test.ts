@@ -3761,6 +3761,61 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("bun pm trust --dry-run runs no scripts and writes nothing", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.5.0",
+          },
+        }),
+      );
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "i"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      let err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+
+      const packageJsonBefore = await file(packageJson).text();
+      const lockfileBefore = await file(join(packageDir, "bun.lock")).text();
+
+      const proc = spawn({
+        cmd: [bunExe(), "pm", "trust", "uses-what-bin", "--dry-run"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const [out, dryErr, dryExit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(dryErr).toContain("bun pm trust");
+      expect(dryErr).not.toContain("error:");
+      expect(out).toContain("[install]: what-bin");
+      expect(out).toContain("dry run: would run 1 script across 1 package");
+      expect(out).toContain("dry run: would add to trustedDependencies:");
+      expect(out).toContain(" - uses-what-bin");
+      expect(out).not.toContain("script ran");
+      expect(dryExit).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+      expect(await file(packageJson).text()).toBe(packageJsonBefore);
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfileBefore);
+    });
+
     test("bun pm trust and untrusted on missing package", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

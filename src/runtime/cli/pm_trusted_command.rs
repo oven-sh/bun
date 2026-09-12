@@ -238,6 +238,47 @@ impl TrustCommand {
         }
     }
 
+    fn print_dry_run(
+        lockfile: &Lockfile,
+        scripts_at_depth: &ArrayHashMap<usize, Vec<ScriptInfo>>,
+        package_names_to_add: &StringArrayHashMap<()>,
+    ) {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = lockfile.packages.items_resolution();
+        let mut total_scripts: usize = 0;
+        let mut total_packages: usize = 0;
+
+        Output::print(format_args!("\n"));
+        for entry in scripts_at_depth.values().iter().rev() {
+            for info in entry.iter() {
+                if info.skip {
+                    continue;
+                }
+                total_packages += 1;
+                total_scripts += info.scripts_list.total as usize;
+                info.scripts_list.print_scripts(
+                    &resolutions[info.package_id as usize],
+                    buf,
+                    PrintFormat::Untrusted,
+                );
+                Output::print(format_args!("\n"));
+            }
+        }
+
+        bun_core::prettyln!(
+            "<r><d>dry run:<r> would run <b>{}<r> script{} across <b>{}<r> package{}",
+            total_scripts,
+            if total_scripts != 1 { "s" } else { "" },
+            total_packages,
+            if total_packages != 1 { "s" } else { "" },
+        );
+        bun_core::prettyln!("<r><d>dry run:<r> would add to trustedDependencies:");
+        for name in package_names_to_add.keys() {
+            bun_core::pretty!(" <d>-<r> {}\n", bstr::BStr::new(name));
+        }
+        Output::flush();
+    }
+
     pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
@@ -437,6 +478,12 @@ impl TrustCommand {
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
             Global::crash();
+        }
+
+        // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
+        if unsafe { (*pm_raw).options.dry_run } {
+            Self::print_dry_run(lockfile, &scripts_at_depth, &package_names_to_add);
+            return Ok(());
         }
 
         let mut scripts_node: Progress::Node;

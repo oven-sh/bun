@@ -2054,6 +2054,15 @@ describe("bundler", () => {
     useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
     NullableEntryThenProp ["anon",["anon"]] ["ann",["ann"]] ["ann",["ann"]]*
     BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
+    TwoArrays ["v1",[3]] ["v1",[3]]* ["v2",[3]]
+    ThreeArrays ["v1",[3]] ["v1",[3]]* ["v2",[3]]
+    SameDependencies ["v1",[1]] ["v1",[1]]* ["v2",[2]]
+    DestructuringInNestedScope ["1:2",[3]] ["1:2",[3]]* ["2:2",[3]]
+    PrefixUpdateInNestedScope [-1,[3]] [-1,[3]]* [0,[3]]
+    NestedScopeWithEntryFromProp ["a",[3]] ["b",[3]] ["b",[3]]* ["off",[3]] ["off",[3]]*
+    DoWhileInsideScopeOfSibling ["v1",{}] ["v1",{}]* ["v2",{}]
+    SpreadInsideLoopsInsideScopeOfSibling [{"q":1},{}] [{"q":1},{}]* ["init",{}]
+    LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
@@ -2248,6 +2257,115 @@ describe("bundler", () => {
             return <div label={object.v.w} list={list} />;
           }
 
+          // The components from here on have a memo block inside another one,
+          // and the assignment is in the inner block. When the cache of the
+          // outer block hits, the inner block does not run, so the outer block
+          // has to restore the variable too. In the first two, every block
+          // survives to the output.
+          function TwoArrays(p) {
+            let v = "init";
+            const outer = [];
+            const inner = [];
+            v = "v" + p.a;
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          function ThreeArrays(p) {
+            let v = "init";
+            const outer = [];
+            const middle = [];
+            const inner = [];
+            v = "v" + p.a;
+            inner.push(p.a);
+            middle.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} middle={middle} inner={inner} />;
+          }
+
+          // Both blocks depend on p.a only, so the compiler merges the inner one
+          // into the outer one.
+          function SameDependencies(p) {
+            let v = "init";
+            const outer = [];
+            const inner = [];
+            v = "v" + p.a;
+            inner.push(p.a);
+            outer.push(p.a);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          function DestructuringInNestedScope(p) {
+            let v = "init", u = "init";
+            const outer = [];
+            const inner = [];
+            [v, u] = [p.a, p.b];
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v + ":" + u} list={outer} inner={inner} />;
+          }
+
+          function PrefixUpdateInNestedScope(p) {
+            let v = 0;
+            const outer = [];
+            const inner = [];
+            if (p.a === 1) --v;
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          // The value on entry is a prop, and the outer block is the one that
+          // has to depend on it.
+          function NestedScopeWithEntryFromProp(p) {
+            let v = p.v;
+            const outer = [];
+            const inner = [];
+            if (p.off) v = "off";
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          // The block of w runs from its declaration to the end of the for-of.
+          // The do-while counter j has a block of its own inside it. The
+          // compiler prunes that block later, because nothing it computes needs
+          // memoization.
+          function DoWhileInsideScopeOfSibling(p) {
+            let v = "init";
+            let w = "w";
+            let j = 0;
+            do { j++; v = "v" + p.a; } while (j < p.n);
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
+          // The block of the object spread is inside loops, so the compiler
+          // flattens it.
+          function SpreadInsideLoopsInsideScopeOfSibling(p) {
+            let v = "init";
+            let w = "w";
+            for (const k in p.obj) {
+              for (let i = 0; i < p.n; i++) {
+                switch (p.a) {
+                  case 1: v = { ...p.obj }; break;
+                  default: break;
+                }
+              }
+            }
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
+          function LoopInsideScopeOfSibling(p) {
+            let v = p.v;
+            let w = "w";
+            for (const it of p.items) { if (p.off) v = "off"; }
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
           function run(Component, ...renders) {
             let previous;
             const results = renders.map(args => {
@@ -2370,6 +2488,20 @@ describe("bundler", () => {
             { a: null, kind: 1, b: b1, c: null },
             { a: null, kind: 0, b: null, c: c1 },
           );
+          const nested1 = { a: 1, b: 2, c: 3, n: 1, items: [1], obj: { q: 1 } };
+          const nested2 = { ...nested1, a: 2 };
+          run(TwoArrays, nested1, nested1, nested2);
+          run(ThreeArrays, nested1, nested1, nested2);
+          run(SameDependencies, nested1, nested1, nested2);
+          run(DestructuringInNestedScope, nested1, nested1, nested2);
+          run(PrefixUpdateInNestedScope, nested1, nested1, nested2);
+          const entryA = { v: "a", off: false, b: 2, c: 3, items: nested1.items };
+          const entryB = { ...entryA, v: "b" };
+          const entryOff = { ...entryB, off: true };
+          run(NestedScopeWithEntryFromProp, entryA, entryB, entryB, entryOff, entryOff);
+          run(DoWhileInsideScopeOfSibling, nested1, nested1, nested2);
+          run(SpreadInsideLoopsInsideScopeOfSibling, nested1, nested1, nested2);
+          run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
         `,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `

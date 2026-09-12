@@ -4937,10 +4937,7 @@ class ClientHttp2Session extends Http2Session {
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
-  // Open streams that user code holds, which close() waits for: a request is counted where it
-  // takes its stream id, a push in streamPush. There is no streamStart handler on purpose. The
-  // parser also registers a stream when the peer sends HEADERS on one that this side neither
-  // opened nor reserved, and user code can neither observe nor close that stream.
+  // Open streams that user code holds. Counted in request() and streamPush, never from a parser callback.
   #connections: number = 0;
 
   #socket_proxy: Proxy<TLSSocket | Socket>;
@@ -5888,8 +5885,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   request(headers: any, options?: any) {
-    // Set once a stream id was allocated and counted in #connections; validation throws before
-    // that point must not decrement.
+    // Set once the stream is counted in #connections: a throw before that must not decrement.
     let connectionsCounted = false;
     try {
       // node validates arguments synchronously and only defers session-state failures

@@ -202,13 +202,12 @@ impl All {
 
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::Clamp, true)?;
-        let wrapped_promise = promise.with_async_context_if_needed(global);
         Ok(TimeoutObject::init(
             global,
             id,
             Kind::SetTimeout,
             countdown_int,
-            wrapped_promise,
+            promise,
             JSValue::UNDEFINED,
         ))
     }
@@ -224,13 +223,7 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
-        Ok(ImmediateObject::init(
-            global,
-            id,
-            wrapped_callback,
-            arguments,
-        ))
+        Ok(ImmediateObject::init(global, id, callback, arguments))
     }
 
     pub(crate) fn set_timeout(
@@ -245,7 +238,6 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
@@ -253,7 +245,7 @@ impl All {
             id,
             Kind::SetTimeout,
             countdown_int,
-            wrapped_callback,
+            callback,
             arguments,
         ))
     }
@@ -270,7 +262,6 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = callback.with_async_context_if_needed(global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
@@ -278,7 +269,7 @@ impl All {
             id,
             Kind::SetInterval,
             countdown_int,
-            wrapped_callback,
+            callback,
             arguments,
         ))
     }

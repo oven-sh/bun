@@ -77,6 +77,8 @@ pub mod package_manager_resolution;
 pub mod patch_package;
 #[path = "PackageManager/PopulateManifestCache.rs"]
 pub mod populate_manifest_cache;
+#[path = "PackageManager/PopulatePackageCache.rs"]
+pub mod populate_package_cache;
 #[path = "PackageManager/processDependencyList.rs"]
 pub mod process_dependency_list;
 #[path = "PackageManager/ProgressStrings.rs"]
@@ -159,6 +161,7 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
   <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder
   <b><green>bun pm<r> <blue>cache rm<r>             clear the cache
+  <b><green>bun pm<r> <blue>fetch<r>                fetch all dependencies into the cache without installing
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`

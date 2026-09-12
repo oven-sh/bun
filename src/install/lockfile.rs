@@ -309,7 +309,7 @@ pub enum LockfileFormat {
 }
 
 impl LockfileFormat {
-    pub(crate) fn filename(self) -> &'static ZStr {
+    pub fn filename(self) -> &'static ZStr {
         match self {
             LockfileFormat::Text => zstr!("bun.lock"),
             LockfileFormat::Binary => zstr!("bun.lockb"),
@@ -396,7 +396,7 @@ impl<'a> LoadResult<'a> {
         }
     }
 
-    pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
+    pub fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
         match self {
             LoadResult::NotFound => {
                 // saving a lockfile for a new project. default to text lockfile

@@ -139,6 +139,47 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   expect(await checkScripts()).toEqual([true, true]);
 });
 
+test.concurrent("bun pm trust --ignore-scripts records the trust and the next install runs the scripts", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        "uses-what-bin": "1.0.0",
+      },
+    }),
+  );
+  const whatBinTxt = join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt");
+
+  await runBunInstall(env, packageDir);
+  expect(await exists(whatBinTxt)).toBeFalse();
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "trust", "uses-what-bin", "--ignore-scripts"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 script skipped across 1 package (--ignore-scripts)");
+    expect(exitCode).toBe(0);
+  }
+  expect(await exists(whatBinTxt)).toBeFalse();
+  expect((await file(packageJson).json()).trustedDependencies).toEqual(["uses-what-bin"]);
+  // The lockfile is left alone so that the next install sees the newly trusted package.
+  expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("trustedDependencies");
+
+  await runBunInstall(env, packageDir);
+  expect(await exists(whatBinTxt)).toBeTrue();
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain("trustedDependencies");
+});
+
 test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

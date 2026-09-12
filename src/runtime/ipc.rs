@@ -901,6 +901,9 @@ pub struct SendQueue {
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
+    /// Reply to a handle message read before libuv reported that message's own write complete;
+    /// `on_write_complete` (which moves the message into `waiting_for_ack`) applies it.
+    early_ack_nack: Cell<Option<AckNack>>,
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: JsCell<KeepAlive>,
@@ -1029,6 +1032,7 @@ impl SendQueue {
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
+            early_ack_nack: Cell::new(None),
             retry_count: Cell::new(0),
             keep_alive: JsCell::new(KeepAlive::default()),
             #[cfg(debug_assertions)]
@@ -1337,7 +1341,18 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
-            log!("onAckNack: ack received but not waiting for ack");
+            let handle_write_in_progress = self.write_in_progress.get()
+                && self
+                    .queue
+                    .get()
+                    .first()
+                    .is_some_and(|first| first.handle.is_some());
+            if handle_write_in_progress {
+                log!("onAckNack: ack/nack arrived before the handle message's write completed");
+                self.early_ack_nack.set(Some(ack_nack));
+            } else {
+                log!("onAckNack: ack received but not waiting for ack");
+            }
             return;
         };
         if !has_handle {
@@ -1527,6 +1542,7 @@ impl SendQueue {
             return;
         }
         self.write_in_progress.set(false);
+        let early_ack_nack = self.early_ack_nack.take();
         let global_this = self.get_global_this();
 
         enum Done {
@@ -1570,9 +1586,10 @@ impl SendQueue {
             }
         });
         match done {
-            Done::AwaitAck => {
-                self.continue_send(&global_this, ContinueSendReason::OnWritable);
-            }
+            Done::AwaitAck => match early_ack_nack {
+                Some(ack_nack) => self.on_ack_nack(&global_this, ack_nack),
+                None => self.continue_send(&global_this, ContinueSendReason::OnWritable),
+            },
             Done::Completed(item) => {
                 item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);

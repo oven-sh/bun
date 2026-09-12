@@ -216,6 +216,16 @@ function exitedAfterDisconnect(worker, message) {
   send(worker, { ack: message.seq });
 }
 
+// Windows cannot accept from copies of one listening socket in two processes: the worker losing the
+// race for a connection blocks inside accept() despite its copy being non-blocking, and libuv's
+// exclusive AFD polls from two processes cancel each other in a loop (node uses AcceptEx there).
+// So on Windows the primary distributes TCP connections under every policy; UDP and TLS always share.
+function usesRoundRobinHandle(message) {
+  if (message.sharedOnly === true || message.addressType === "udp4" || message.addressType === "udp6") return false;
+  if (schedulingPolicy === SCHED_RR) return true;
+  return process.platform === "win32" && (message.addressType === 4 || message.addressType === 6);
+}
+
 function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
@@ -231,21 +241,13 @@ function queryServer(worker, message) {
   if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   const kSharedOnlyHint =
-    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
-    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+    "TLS and non-TLS cluster workers cannot share the same address:port while the primary distributes its connections " +
+    "(Bun's TLS accept is native and cannot adopt handed-off connections); listen on different ports";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
-  if (
-    schedulingPolicy === SCHED_RR &&
-    handle !== undefined &&
-    message.sharedOnly !== true &&
-    handle instanceof SharedHandle &&
-    handle.sharedOnly &&
-    message.addressType !== "udp4" &&
-    message.addressType !== "udp6"
-  ) {
+  if (handle instanceof SharedHandle && handle.sharedOnly && usesRoundRobinHandle(message)) {
     send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
@@ -260,9 +262,6 @@ function queryServer(worker, message) {
       if (message.address.length < address.length) address = message.address;
     }
 
-    // UDP is exempt from round-robin connection balancing for what should
-    // be obvious reasons: it's connectionless. There is nothing to send to
-    // the workers except raw datagrams and that's pointless.
     if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
       const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
       error.code = "ENOTSUP";
@@ -270,15 +269,10 @@ function queryServer(worker, message) {
       worker.emit("error", error);
       return;
     }
-    if (
-      schedulingPolicy !== SCHED_RR ||
-      message.sharedOnly === true ||
-      message.addressType === "udp4" ||
-      message.addressType === "udp6"
-    ) {
-      handle = new SharedHandle(key, address, message);
-    } else {
+    if (usesRoundRobinHandle(message)) {
       handle = new RoundRobinHandle(key, address, message);
+    } else {
+      handle = new SharedHandle(key, address, message);
     }
 
     if (!cachedHandle) handles.set(key, handle);

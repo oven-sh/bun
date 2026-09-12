@@ -147,6 +147,18 @@ std::optional<String> CookieMap::get(const String& name) const
     return std::nullopt;
 }
 
+Vector<String> CookieMap::getAll(const String& name)
+{
+    Vector<String> values;
+    auto iterator = createIterator();
+    while (auto entry = iterator.next()) {
+        if (entry->key == name) {
+            values.append(entry->value);
+        }
+    }
+    return values;
+}
+
 bool CookieMap::has(const String& name) const
 {
     return get(name).has_value();

@@ -203,10 +203,7 @@ describe("Bun.CookieMap", () => {
     // Since we're overwriting cookies with the same name,
     // the size should still be 1
     expect(cookieMap.size).toBe(1);
-
-    // But this would work if we didn't overwrite
-    // const cookies = cookieMap.getAll("name");
-    // expect(cookies.length).toBe(2);
+    expect(cookieMap.getAll("name")).toEqual(["value2"]);
   });
 
   test("supports iteration", () => {

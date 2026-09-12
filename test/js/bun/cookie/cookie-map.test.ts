@@ -455,6 +455,86 @@ describe("delete with prefixed cookie names", () => {
   });
 });
 
+describe("duplicate cookie names", () => {
+  test("a repeated name in a Cookie header keeps every value", () => {
+    const map = new Bun.CookieMap("session=first; other=x; session=second");
+    expect(map.size).toBe(3);
+    expect(map.get("session")).toBe("first");
+    expect(map.getAll("session")).toEqual(["first", "second"]);
+    expect(map.getAll("other")).toEqual(["x"]);
+    expect(map.getAll("missing")).toEqual([]);
+    expect([...map]).toEqual([
+      ["session", "first"],
+      ["other", "x"],
+      ["session", "second"],
+    ]);
+    expect(map.toJSON()).toEqual({ session: "first", other: "x" });
+  });
+
+  test("a repeated name in array pairs keeps every value", () => {
+    const map = new Bun.CookieMap([
+      ["session", "first"],
+      ["session", "second"],
+    ]);
+    expect(map.size).toBe(2);
+    expect(map.get("session")).toBe("first");
+    expect(map.getAll("session")).toEqual(["first", "second"]);
+  });
+
+  test("getAll matches the entries the iterator yields for that name", () => {
+    const map = new Bun.CookieMap("a=1; b=2; a=3; a=4");
+    const fromIterator = [...map].filter(([name]) => name === "a").map(([, value]) => value);
+    expect(map.getAll("a")).toEqual(fromIterator);
+    expect(map.getAll("a")).toEqual(["1", "3", "4"]);
+    expect(map.get("a")).toBe(fromIterator[0]);
+  });
+
+  test("getAll keeps identical repeated values", () => {
+    const map = new Bun.CookieMap("a=1; a=1");
+    expect(map.size).toBe(2);
+    expect(map.getAll("a")).toEqual(["1", "1"]);
+  });
+
+  test("getAll without a name returns an empty array", () => {
+    const map = new Bun.CookieMap("a=1");
+    // @ts-expect-error name is required
+    expect(map.getAll()).toEqual([]);
+  });
+
+  test("set replaces every value of that name", () => {
+    const map = new Bun.CookieMap("session=first; session=second");
+    map.set("session", "third");
+    expect(map.size).toBe(1);
+    expect(map.get("session")).toBe("third");
+    expect(map.getAll("session")).toEqual(["third"]);
+    expect(map.toSetCookieHeaders()).toEqual(["session=third; Path=/; SameSite=Lax"]);
+  });
+
+  test("delete removes every value of that name", () => {
+    const map = new Bun.CookieMap("session=first; session=second; other=x");
+    map.delete("session");
+    expect(map.size).toBe(1);
+    expect(map.get("session")).toBe(null);
+    expect(map.getAll("session")).toEqual([]);
+    expect(map.getAll("other")).toEqual(["x"]);
+  });
+
+  test("getAll sees values added with set", () => {
+    const map = new Bun.CookieMap();
+    expect(map.getAll("a")).toEqual([]);
+    map.set("a", "1");
+    expect(map.getAll("a")).toEqual(["1"]);
+    map.set("a", "2");
+    expect(map.getAll("a")).toEqual(["2"]);
+  });
+
+  test("getAll decodes percent-encoded values like get", () => {
+    const map = new Bun.CookieMap("a=hello%20world; a=caf%C3%A9");
+    expect(map.get("a")).toBe("hello world");
+    expect(map.getAll("a")).toEqual(["hello world", "café"]);
+  });
+});
+
 describe("invalid delete usage", () => {
   test("invalid usage does not crash", () => {
     expect(() => {

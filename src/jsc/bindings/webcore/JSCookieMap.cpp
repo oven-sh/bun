@@ -47,6 +47,7 @@ CookieMap* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exc
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_get);
+static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getAll);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toSetCookieHeaders);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_set);
@@ -218,6 +219,7 @@ template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
 static const HashTableValue JSCookieMapPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieMapConstructor, 0 } },
     { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_get, 1 } },
+    { "getAll"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_getAll, 1 } },
     { "toSetCookieHeaders"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_toSetCookieHeaders, 0 } },
     { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_has, 1 } },
     { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_set, 2 } },
@@ -323,6 +325,37 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getBody(JSC::JSGl
 JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_get, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_getBody>(*lexicalGlobalObject, *callFrame, "get");
+}
+
+// Implementation of the getAll method
+static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getAllBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookieMap>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+
+    Vector<WTF::String> values;
+    if (callFrame->argumentCount() >= 1) {
+        auto name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        values = impl.getAll(name);
+    }
+
+    JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, values.size());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    size_t i = 0;
+    for (auto& value : values) {
+        resultArray->putDirectIndex(lexicalGlobalObject, i, jsString(vm, value));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        i += 1;
+    }
+
+    return JSValue::encode(resultArray);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_getAllBody>(*lexicalGlobalObject, *callFrame, "getAll");
 }
 
 static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toSetCookieHeadersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookieMap>::ClassParameter castedThis)

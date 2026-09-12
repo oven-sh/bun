@@ -764,6 +764,23 @@ impl<'a> Parser<'a> {
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
 
+        let result = Self::parse_with(p, source, orig_error_count);
+        if let Err(err) = &result {
+            // An `Err` with no new log entry has no diagnostic yet. The lexer
+            // still sits on the token that failed.
+            if p.log().errors == orig_error_count {
+                p.log()
+                    .add_range_error(Some(p.source), p.lexer.range(), err.name().as_bytes());
+            }
+        }
+        result
+    }
+
+    fn parse_with<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        source: &'a bun_ast::Source,
+        orig_error_count: u32,
+    ) -> Result<crate::Result<'a>, Error> {
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
         }

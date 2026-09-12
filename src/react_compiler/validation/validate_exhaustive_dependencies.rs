@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerSuggestion, CompilerSuggestionOperation,
-    ErrorCategory, SourceLocation,
+    ErrorCategory, SourceLocation, cold_invariant,
 };
 use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
@@ -778,16 +778,21 @@ fn collect_dependencies(
                 InstructionValue::FinishMemoize {
                     manual_memo_id,
                     decl,
+                    loc,
                     ..
                 } => {
                     if let Some(cb) = callbacks.as_mut() {
                         // onFinishMemoize — mirrors TS behavior
                         let sm = cb.start_memo.take();
                         if let Some(sm) = sm {
-                            assert_eq!(
-                                sm.manual_memo_id, *manual_memo_id,
-                                "Found FinishMemoize without corresponding StartMemoize"
-                            );
+                            if sm.manual_memo_id != *manual_memo_id {
+                                return Err(cold_invariant(
+                                    "Found FinishMemoize without corresponding StartMemoize",
+                                    None,
+                                    *loc,
+                                )
+                                .into());
+                            }
 
                             if cb.validate_memo {
                                 // Visit the decl to add it as a dependency candidate

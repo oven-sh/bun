@@ -647,31 +647,9 @@ pub(crate) fn wrap_handler_slot(
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    /// Per-monomorphization static.
-    /// Rust statics cannot be const-generic; routed through a
-    /// `&'static AtomicBool` so the four (SSL,DEBUG) instantiations share one
-    /// flag — the warning is process-global by intent (printed at most once
-    /// regardless of how many servers are running).
-    fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
-        static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-        &FLAG
-    }
-
-    /// The body ignores both arguments so a single non-generic shim suffices.
-    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
-        if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
-            if !crate::cli::Command::get().debug.silent {
-                Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
-                bun_core::warn!(
-                    "Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
-                );
-            }
-        }
-    }
-
     fn should_add_timeout_handler_for_warning(&self) -> bool {
         if DEBUG {
-            if !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed)
+            if !server_body::did_send_idletimeout_warning_once().load(Ordering::Relaxed)
                 && !crate::cli::Command::get().debug.silent
             {
                 return !self.config.has_idle_timeout;
@@ -753,13 +731,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
         if server.should_add_timeout_handler_for_warning() {
-            // We need to pass it a pointer, any pointer should do.
-            resp_ref.on_timeout(
-                Self::on_timeout_for_idle_warn,
-                Self::did_send_idletimeout_warning_once()
-                    .as_ptr()
-                    .cast::<c_void>(),
-            );
+            server_body::add_timeout_handler_for_warning(resp_ref);
         }
 
         // SAFETY: `request_pool` points at a process-static (or

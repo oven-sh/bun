@@ -6,6 +6,49 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
+/// Waits until stdin is readable, running JS signal listeners as signals arrive (a blocking `read(2)` cannot: handlers are SA_RESTART).
+#[cfg(unix)]
+fn wait_for_stdin(global: &JSGlobalObject) {
+    use bun_jsc::PosixSignalHandle;
+    use bun_sys::posix::{POLL_IN, PollFd, poll};
+
+    let Some(signals) = PosixSignalHandle::blocking_wait_fd(global) else {
+        return;
+    };
+    let mut fds = [
+        PollFd {
+            fd: bun_sys::Fd::stdin().native(),
+            events: POLL_IN,
+            revents: 0,
+        },
+        PollFd {
+            fd: signals.native(),
+            events: POLL_IN,
+            revents: 0,
+        },
+    ];
+    loop {
+        PosixSignalHandle::run_queued_from_js_thread(global);
+        fds[0].revents = 0;
+        fds[1].revents = 0;
+        if poll(&mut fds, -1).is_err() || fds[1].revents == 0 {
+            return;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_for_stdin(_global: &JSGlobalObject) {}
+
+/// `alert()` and `confirm()` read unbuffered, so every byte waits on the fd.
+fn take_byte(
+    global: &JSGlobalObject,
+    reader: &mut bun_core::output::StdinReader,
+) -> bun_core::CrateResult<u8> {
+    wait_for_stdin(global);
+    reader.take_byte()
+}
+
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -51,7 +94,9 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
     let mut reader = Output::stdin_reader();
     loop {
-        let Ok(byte) = reader.take_byte() else { break };
+        let Ok(byte) = take_byte(global, &mut reader) else {
+            break;
+        };
         if byte == b'\n' {
             break;
         }
@@ -105,7 +150,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 6. Pause until the user responds either positively or negatively.
     let mut reader = Output::stdin_reader();
 
-    let Ok(first_byte) = reader.take_byte() else {
+    let Ok(first_byte) = take_byte(global, &mut reader) else {
         return Ok(JSValue::FALSE);
     };
 
@@ -116,7 +161,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     match first_byte {
         b'\n' => return Ok(JSValue::FALSE),
         b'\r' => {
-            let Ok(next_byte) = reader.take_byte() else {
+            let Ok(next_byte) = take_byte(global, &mut reader) else {
                 // They may have said yes, but the stdin is invalid.
                 return Ok(JSValue::FALSE);
             };
@@ -125,7 +170,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             }
         }
         b'y' | b'Y' => {
-            let Ok(next_byte) = reader.take_byte() else {
+            let Ok(next_byte) = take_byte(global, &mut reader) else {
                 // They may have said yes, but the stdin is invalid.
 
                 return Ok(JSValue::FALSE);
@@ -137,7 +182,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 return Ok(JSValue::TRUE);
             } else if next_byte == b'\r' {
                 // Check Windows style
-                let Ok(second_byte) = reader.take_byte() else {
+                let Ok(second_byte) = take_byte(global, &mut reader) else {
                     return Ok(JSValue::FALSE);
                 };
                 if second_byte == b'\n' {
@@ -148,7 +193,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         _ => {}
     }
 
-    while let Ok(b) = reader.take_byte() {
+    while let Ok(b) = take_byte(global, &mut reader) {
         if b == b'\n' || b == b'\r' {
             break;
         }
@@ -172,17 +217,26 @@ pub mod prompt {
     }
 
     /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
-    /// concrete impl is the process-global `BufferedStdin`.
+    /// concrete impl is [`InterruptibleStdin`].
     pub trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
 
-    impl ReadByte for bun_core::output::BufferedStdin {
+    /// The process-global `BufferedStdin`; calls [`wait_for_stdin`] before each refill.
+    pub(crate) struct InterruptibleStdin<'a> {
+        global: &'a JSGlobalObject,
+    }
+
+    impl ReadByte for InterruptibleStdin<'_> {
         type Error = bun_core::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            bun_core::output::BufferedStdin::read_byte(self)
+            // SAFETY: process-global static, JS thread only; no `&mut` is live across `wait_for_stdin` (a listener may re-enter `prompt()`).
+            if !unsafe { &*Output::buffered_stdin_reader() }.has_buffered() {
+                wait_for_stdin(self.global);
+            }
+            unsafe { &mut *Output::buffered_stdin_reader() }.read_byte()
         }
     }
 
@@ -303,11 +357,7 @@ pub mod prompt {
             });
 
         // 7. Pause while waiting for the user's response.
-        // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-        // SAFETY: process-global static; prompt() runs single-threaded on the JS
-        // main thread, so the exclusive borrow is sound for this scope.
-        let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
+        let mut reader = InterruptibleStdin { global };
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string
@@ -341,7 +391,7 @@ pub mod prompt {
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
         if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
-            &mut *reader,
+            &mut reader,
             &mut input,
             b'\n',
             2048,
@@ -355,7 +405,7 @@ pub mod prompt {
             input.ensure_total_capacity(4096);
 
             if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
-                &mut *reader,
+                &mut reader,
                 &mut input,
                 b'\n',
                 4096,
@@ -366,8 +416,7 @@ pub mod prompt {
                     return Ok(JSValue::NULL);
                 }
 
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
-                    .is_err()
+                if read_until_delimiter_array_list_infinity(&mut reader, &mut input, b'\n').is_err()
                 {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.

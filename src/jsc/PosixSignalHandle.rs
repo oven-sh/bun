@@ -5,6 +5,8 @@ use crate::VirtualMachineRef as VirtualMachine;
 use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
+#[cfg(unix)]
+use bun_sys::FdExt as _;
 use bun_threading::SignalRing;
 
 const BUFFER_SIZE: usize = 8192;
@@ -43,7 +45,71 @@ impl PosixSignalHandle {
             event_loop.enqueue_task(task);
         }
     }
+
+    /// The main thread's handle; `None` in a worker (no POSIX signals there, and the ring has one consumer).
+    #[cfg(unix)]
+    fn for_main_thread(global_object: &JSGlobalObject) -> Option<bun_ptr::BackRef<Self>> {
+        if !global_object.bun_vm().is_main_thread() {
+            return None;
+        }
+        let vm = VirtualMachine::get_main_thread_vm()?;
+        // SAFETY: `vm` and its event loop are process-lifetime; only the `signal_handler` slot is read.
+        unsafe { (*(*vm).event_loop()).signal_handler }
+    }
+
+    /// Read end of a pipe the signal handler writes a byte to per queued signal, so `prompt()` can poll it next to stdin. `None` off the main thread or when no JS signal listener exists.
+    #[cfg(unix)]
+    pub fn blocking_wait_fd(global_object: &JSGlobalObject) -> Option<bun_sys::Fd> {
+        Self::for_main_thread(global_object)?;
+        let existing = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
+        if existing >= 0 {
+            return Some(bun_sys::Fd::from_native(existing));
+        }
+        let [read, write] = bun_sys::pipe().ok()?;
+        for fd in [read, write] {
+            if bun_sys::set_close_on_exec(fd).is_err() || bun_sys::set_nonblocking(fd).is_err() {
+                read.close();
+                write.close();
+                return None;
+            }
+        }
+        BLOCKING_WAIT_PIPE[0].store(read.native(), Ordering::Release);
+        BLOCKING_WAIT_PIPE[1].store(write.native(), Ordering::Release);
+        Some(read)
+    }
+
+    /// Runs the JS listeners for every queued signal now. Main thread only (a no-op elsewhere).
+    #[cfg(unix)]
+    pub fn run_queued_from_js_thread(global_object: &JSGlobalObject) {
+        let Some(handler) = Self::for_main_thread(global_object) else {
+            return;
+        };
+        // Pipe before ring, so a signal that lands in between leaves a spare byte, never a signal without one.
+        let read = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
+        if read >= 0 {
+            let mut buf = [0u8; 64];
+            while matches!(bun_sys::read(bun_sys::Fd::from_native(read), &mut buf), Ok(n) if n == buf.len())
+            {
+            }
+        }
+        let mut ran = false;
+        while let Some(signal) = handler.ring.dequeue() {
+            PosixSignalTask::run_from_js_thread(signal, global_object);
+            ran = true;
+        }
+        // Like Node after a signal callback: lets `async` and `nextTick` listeners finish. `Stopped` surfaces at the caller's read.
+        if ran {
+            let _ = global_object.drain_microtasks_and_next_ticks();
+        }
+    }
 }
+
+/// `[read, write]` ends of the pipe behind [`PosixSignalHandle::blocking_wait_fd`]; -1 until created.
+#[cfg(unix)]
+static BLOCKING_WAIT_PIPE: [core::sync::atomic::AtomicI32; 2] = [
+    core::sync::atomic::AtomicI32::new(-1),
+    core::sync::atomic::AtomicI32::new(-1),
+];
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
@@ -77,6 +143,11 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
                 return;
             };
             if handler.enqueue(signal) {
+                let wait_fd = BLOCKING_WAIT_PIPE[1].load(Ordering::Acquire);
+                if wait_fd >= 0 {
+                    // SAFETY: write(2) is async-signal-safe; O_NONBLOCK, and a full pipe is readable anyway.
+                    let _ = unsafe { libc::write(wait_fd, (&raw const signal).cast(), 1) };
+                }
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
                 unsafe { (*(*vm).event_loop()).wakeup() };

@@ -3811,10 +3811,8 @@ describe("expect()", () => {
     }
   });
 
-  // The first step of an iterator answers toBeEmpty(). jest-extended takes that one step too.
-  // Bun also closes an iterator that has more to give, like `break` in a for-of.
-  // Every iterator here is finite and counts its steps. A matcher that walks the whole
-  // iterable then fails the count. It does not hang the runner.
+  // jest-extended takes the same one step. Bun also closes an iterator that has more, like `break` in a for-of.
+  // The iterators are finite and count their steps, so a full walk fails the count and does not hang the runner.
   describe("toBeEmpty() takes one step of an iterable", () => {
     const counted = (/** @type {number} */ length) => {
       const seen = { steps: 0, closed: 0 };

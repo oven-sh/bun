@@ -4,7 +4,7 @@
 
 using namespace JSC;
 
-// True when the iterator of `iterable` reports done on its first step. Takes that one step only. Closes an iterator that has more, like `break` in a for-of.
+// True when the first iterator step reports done. Closes an iterator that has more, like `break` in a for-of.
 extern "C" bool JSC__JSValue__isIterableEmpty(EncodedJSValue encodedIterable, JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);

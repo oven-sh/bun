@@ -479,14 +479,16 @@ code
   });
 
   test("latex math edge cases", () => {
-    const inputs = [
-      "$$ $$\n", // empty display math
-      "$ $\n", // empty inline math
-      "$a$b$c$\n", // adjacent math
-      "$$\n\\frac{1}{2}\n$$\n", // multi-line display math
+    const cases = [
+      ["$$ $$\n", '<p><x-equation type="display"> </x-equation></p>\n'],
+      ["$ $\n", "<p><x-equation> </x-equation></p>\n"],
+      // The inner dollars sit between word characters, so they can neither
+      // open nor close and the outer pair spans across them.
+      ["$a$b$c$\n", "<p><x-equation>a$b$c</x-equation></p>\n"],
+      ["$$\n\\frac{1}{2}\n$$\n", '<p><x-equation type="display"> \\frac{1}{2} </x-equation></p>\n'],
     ];
-    for (const input of inputs) {
-      expect(typeof Markdown.html(input, { latexMath: true })).toBe("string");
+    for (const [input, expected] of cases) {
+      expect(Markdown.html(input, { latexMath: true })).toBe(expected);
     }
   });
 
@@ -1380,5 +1382,197 @@ describe.concurrent("importing .md modules", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Missing 'default' export");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+// ============================================================================
+// md4c's LaTeX math extension (`latexMath`): `$...$` and `$$...$$` become
+// <x-equation> spans whose content is verbatim, like a code span.
+// ============================================================================
+
+describe("latexMath option", () => {
+  const math = (md: string) => Markdown.html(md, { latexMath: true });
+
+  test("is off by default", () => {
+    expect(Markdown.html("$a$ $$b$$\n")).toBe("<p>$a$ $$b$$</p>\n");
+    expect(Markdown.html("$a$ $$b$$\n", { latexMath: false })).toBe("<p>$a$ $$b$$</p>\n");
+  });
+
+  test.each([
+    ["inline", "$a+b$ text\n", "<p><x-equation>a+b</x-equation> text</p>\n"],
+    ["display", "$$a+b$$\n", '<p><x-equation type="display">a+b</x-equation></p>\n'],
+    [
+      "inline and display in one paragraph",
+      "$a$ and $$b$$\n",
+      '<p><x-equation>a</x-equation> and <x-equation type="display">b</x-equation></p>\n',
+    ],
+    [
+      "content is verbatim and HTML-escaped",
+      "$a_1 * b_2 & <c>$\n",
+      "<p><x-equation>a_1 * b_2 &amp; &lt;c&gt;</x-equation></p>\n",
+    ],
+    ["emphasis inside math is not emphasis", "$*a*$\n", "<p><x-equation>*a*</x-equation></p>\n"],
+    ["backslashes inside math are kept", "$\\{x\\}$\n", "<p><x-equation>\\{x\\}</x-equation></p>\n"],
+    ["a link inside math is text", "$[a](/u)$\n", "<p><x-equation>[a](/u)</x-equation></p>\n"],
+    ["a code span inside math is text", "$a `b` c$\n", "<p><x-equation>a `b` c</x-equation></p>\n"],
+    ["newlines inside math become spaces", "$a\nb$\n", "<p><x-equation>a b</x-equation></p>\n"],
+    ["multi-line display math", "$$\na\nb\n$$\n", '<p><x-equation type="display"> a b </x-equation></p>\n'],
+    ["escaped opener", "\\$a$\n", "<p>$a$</p>\n"],
+    ["a dollar inside a code span is not a delimiter", "`$a` b$\n", "<p><code>$a</code> b$</p>\n"],
+    ["unclosed", "$a b\n", "<p>$a b</p>\n"],
+    ["prices: openers followed by a digit never close", "costs $5 and $10\n", "<p>costs $5 and $10</p>\n"],
+    ["opener preceded by a word character", "x$a$\n", "<p>x$a$</p>\n"],
+    ["closer followed by a word character", "$a$x\n", "<p>$a$x</p>\n"],
+    ["$$ does not close $", "$a$$\n", "<p>$a$$</p>\n"],
+    ["$ does not close $$", "$$a$ b\n", "<p>$$a$ b</p>\n"],
+    ["only the most recent pending opener is considered", "$$a $b c$$\n", "<p>$$a $b c$$</p>\n"],
+    [
+      "no nesting: the inner pair wins and the outer opener is dropped",
+      "$$a $b$ c$$\n",
+      "<p>$$a <x-equation>b</x-equation> c$$</p>\n",
+    ],
+    ["three or more dollars are text", "$$$a$$$\n", "<p>$$$a$$$</p>\n"],
+    ["math inside emphasis", "*a $b$ c*\n", "<p><em>a <x-equation>b</x-equation> c</em></p>\n"],
+    ["emphasis closing inside a pending math span wins", "*a $b* c$\n", "<p><em>a $b</em> c$</p>\n"],
+    ["math closing inside a pending emphasis wins", "$a *b$ c*\n", "<p><x-equation>a *b</x-equation> c*</p>\n"],
+    ["strikethrough opener inside math is dropped", "$a ~~b$ c~~\n", "<p><x-equation>a ~~b</x-equation> c~~</p>\n"],
+    ["math inside a link label", "[$a$](/u)\n", '<p><a href="/u"><x-equation>a</x-equation></a></p>\n'],
+    ["math in image alt text contributes its content", "![$a$](/i.png)\n", '<p><img src="/i.png" alt="a" /></p>\n'],
+    ["math in a heading", "# $E$\n", "<h1><x-equation>E</x-equation></h1>\n"],
+    [
+      "math in a table cell",
+      "| a |\n| - |\n| $x$ |\n",
+      "<table>\n<thead>\n<tr><th>a</th></tr>\n</thead>\n<tbody>\n<tr><td><x-equation>x</x-equation></td></tr>\n</tbody>\n</table>\n",
+    ],
+    ["delimiters next to non-ASCII punctuation", "«$a$»\n", "<p>«<x-equation>a</x-equation>»</p>\n"],
+    ["delimiters next to non-ASCII letters", "é$a$\n", "<p>é$a$</p>\n"],
+  ])("html: %s", (_name, input, expected) => {
+    expect(math(input)).toBe(expected);
+  });
+
+  test("snake_case option name is accepted", () => {
+    expect(Markdown.html("$a$\n", { latex_math: true } as any)).toBe("<p><x-equation>a</x-equation></p>\n");
+  });
+
+  test("combines with underline", () => {
+    expect(Markdown.html("_a $b$_\n", { latexMath: true, underline: true })).toBe(
+      "<p><u>a <x-equation>b</x-equation></u></p>\n",
+    );
+  });
+
+  test("ansi() enables math and styles the span", () => {
+    expect(Markdown.ansi("x $a+b$ y\n")).toBe("x \x1b[35m$a+b$\x1b[39m y\x1b[0m\n");
+    expect(Markdown.ansi("$$a$$\n", { colors: false })).toBe("$$a$$\n");
+  });
+
+  // A span that continues on the next line reaches the renderer as one chunk
+  // with the line break inside it. It has to stay one line of output, or the
+  // continuation loses the list indent / quote gutter and the column count.
+  test("ansi(): line breaks inside math and code spans become spaces", () => {
+    expect(Markdown.ansi("x $a +\nb$ y\n")).toBe("x \x1b[35m$a + b$\x1b[39m y\x1b[0m\n");
+    const plain = (md: string, columns?: number) => Markdown.ansi(md, { colors: false, columns });
+    expect(plain("- item\n  $$\n  x\n  $$\n- next\n")).toBe("  * item $$ x $$\n  * next\n");
+    expect(plain("> quote $$\n> x\n> $$ end\n")).toBe("| quote $$ x $$ end\n");
+    expect(plain("- The value $a +\n  b$ matters\n")).toBe("  * The value $a + b$ matters\n");
+    expect(plain("- item `a\n  b` tail\n- next\n")).toBe("  * item a b tail\n  * next\n");
+    // The column count stays accurate after the span, so the wrap falls where it did for plain text.
+    expect(plain("$$\nabcdefghij\nklmnopqrst\n$$ one two three four five six\n", 30)).toBe(
+      "$$ abcdefghij klmnopqrst $$\none two three four five six\n",
+    );
+  });
+
+  test("math delimiter floods render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 100000;
+        // n pending openers, then n closers: the first closer pairs with the
+        // last opener and every other delimiter must be dismissed in O(1).
+        let html = Bun.markdown.html(fill(n, "$a ") + fill(n, "a$ "), { latexMath: true });
+        if (!html.includes("<x-equation>a a</x-equation>")) throw new Error("expected a math span: " + JSON.stringify(html.slice(-200)));
+        // One mismatched pending opener that every closer is checked against.
+        html = Bun.markdown.html("$$a " + fill(n, "a$ "), { latexMath: true });
+        if (html.includes("<x-equation")) throw new Error("unexpected math span");
+        // Openers inside emphasis are popped again when the emphasis closes.
+        html = Bun.markdown.html(fill(n, "*$a $a $a $a a* "), { latexMath: true });
+        if (!html.startsWith("<p><em>$a $a $a $a a</em> <em>")) throw new Error("expected emphasis: " + JSON.stringify(html.slice(0, 120)));
+        const ansi = Bun.markdown.ansi(fill(n / 2, "$a ") + fill(n / 2, "a$ "), { colors: false });
+        if (typeof ansi !== "string" || ansi.length === 0) throw new Error("unexpected ansi output");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});
+
+// ============================================================================
+// md4c's underline extension (`underline`): underscores still pair up by the
+// CommonMark emphasis rules, but every matched underscore is a <u> span
+// instead of <em> / <strong>. Asterisks are unaffected.
+// ============================================================================
+
+describe("underline option", () => {
+  const underline = (md: string) => Markdown.html(md, { underline: true });
+
+  test("is off by default", () => {
+    expect(Markdown.html("_a_ __b__\n")).toBe("<p><em>a</em> <strong>b</strong></p>\n");
+    expect(Markdown.html("_a_ __b__\n", { underline: false })).toBe("<p><em>a</em> <strong>b</strong></p>\n");
+  });
+
+  test.each([
+    ["single underscores", "_a_\n", "<p><u>a</u></p>\n"],
+    ["double underscores", "__a__\n", "<p><u><u>a</u></u></p>\n"],
+    ["asterisks are unaffected", "*a* **b**\n", "<p><em>a</em> <strong>b</strong></p>\n"],
+    ["underline inside emphasis", "*_a_*\n", "<p><em><u>a</u></em></p>\n"],
+    ["emphasis inside underline", "_*a*_\n", "<p><u><em>a</em></u></p>\n"],
+    ["underline inside strikethrough", "~~_a_~~\n", "<p><del><u>a</u></del></p>\n"],
+    ["partially matched run leaves the extra underscore as text", "__a_\n", "<p>_<u>a</u></p>\n"],
+    ["intra-word underscores are text", "snake_case_name\n", "<p>snake_case_name</p>\n"],
+    ["unclosed underscore is text", "_a b\n", "<p>_a b</p>\n"],
+    ["escaped underscores are text", "\\_a\\_\n", "<p>_a_</p>\n"],
+    ["underline inside a link label", "[_a_](/u)\n", '<p><a href="/u"><u>a</u></a></p>\n'],
+    [
+      "underline in image alt text contributes its content",
+      "![_a_](/i.png)\n",
+      '<p><img src="/i.png" alt="a" /></p>\n',
+    ],
+    ["underline in a heading", "# _a_\n", "<h1><u>a</u></h1>\n"],
+  ])("html: %s", (_name, input, expected) => {
+    expect(underline(input)).toBe(expected);
+  });
+
+  // The em/strong emitter records at most MAX_EMPH_MATCHES (6) matches per
+  // delimiter run; underline is emitted from the consumed character counts
+  // instead, so long runs get exactly one <u> per underscore on both sides.
+  const fill = (n: number, unit: string) => Buffer.alloc(n * unit.length, unit).toString();
+
+  test("long runs underline once per underscore", () => {
+    expect(underline(`${fill(14, "_")}foo${fill(14, "_")}\n`)).toBe(
+      `<p>${fill(14, "<u>")}foo${fill(14, "</u>")}</p>\n`,
+    );
+  });
+
+  test("one opener consumed by many closers stays balanced", () => {
+    expect(underline(`${fill(14, "_")}a__ b__ c__ d__ e__ f__ g__\n`)).toBe(
+      `<p>${fill(14, "<u>")}a</u></u> b</u></u> c</u></u> d</u></u> e</u></u> f</u></u> g</u></u></p>\n`,
+    );
+  });
+
+  // The terminal preset (ansi() and `bun file.md`) deliberately leaves the
+  // option off: underscores keep rendering as emphasis there.
+  test("ansi() keeps underscores as emphasis", () => {
+    expect(Markdown.ansi("_a_ __b__\n")).toBe("\x1b[3ma\x1b[23m \x1b[1mb\x1b[22m\x1b[0m\n");
   });
 });

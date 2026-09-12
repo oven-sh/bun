@@ -353,6 +353,40 @@ This is **bold** and *italic*.
     expect(del.props.children).toEqual(["deleted"]);
   });
 
+  test("latexMath: inline math is a math element", () => {
+    const math = children("$a+b$\n", undefined, { latexMath: true })[0].props.children[0];
+    expect(math.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(math.type).toBe("math");
+    expect(math.props).toEqual({ children: ["a+b"] });
+  });
+
+  test("latexMath: display math is a math element with display: true", () => {
+    const math = children("$$a+b$$\n", undefined, { latexMath: true })[0].props.children[0];
+    expect(math.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(math.type).toBe("math");
+    expect(math.props).toEqual({ display: true, children: ["a+b"] });
+  });
+
+  test("latexMath: math content is a single verbatim string", () => {
+    const math = children("$a *b* &amp; \\c$\n", undefined, { latexMath: true })[0].props.children[0];
+    expect(math.props).toEqual({ children: ["a *b* &amp; \\c"] });
+  });
+
+  test("latexMath off: dollars are plain text", () => {
+    expect(children("$a+b$\n")[0].props.children).toEqual(["$a+b$"]);
+  });
+
+  test("underline: underscores produce u elements", () => {
+    const u = children("_a_\n", undefined, { underline: true })[0].props.children[0];
+    expect(u.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(u.type).toBe("u");
+    expect(u.props).toEqual({ children: ["a"] });
+  });
+
+  test("underline off: underscores produce em elements", () => {
+    expect(children("_a_\n")[0].props.children[0].type).toBe("em");
+  });
+
   test("unordered list children are React elements", () => {
     const ul = children("- a\n- b\n")[0];
     expect(ul.type).toBe("ul");
@@ -409,6 +443,14 @@ describe("Bun.markdown.react renderToString", () => {
 
   test("strikethrough", () => {
     expect(reactRender("~~deleted~~\n")).toBe("<p><del>deleted</del></p>");
+  });
+
+  test("inline math with latexMath", () => {
+    expect(reactRender("$a+b$\n", undefined, { latexMath: true })).toBe("<p><math>a+b</math></p>");
+  });
+
+  test("underline with underline option", () => {
+    expect(reactRender("__a__\n", undefined, { underline: true })).toBe("<p><u><u>a</u></u></p>");
   });
 
   test("inline code", () => {
@@ -602,6 +644,24 @@ describe("Bun.markdown.react component overrides", () => {
     expect(el.type).toBe("custom-hr");
     expect(el.props).toEqual({});
   });
+
+  test("math override receives children and display", () => {
+    function MathSpan({ display, children }: any) {
+      return React.createElement("span", { className: display ? "display" : "inline" }, ...children);
+    }
+    const [inline, _space, display] = children("$a$ $$b$$\n", { math: MathSpan }, { latexMath: true })[0].props
+      .children;
+    expect(inline.type).toBe(MathSpan);
+    expect(inline.props).toEqual({ children: ["a"] });
+    expect(display.type).toBe(MathSpan);
+    expect(display.props).toEqual({ display: true, children: ["b"] });
+  });
+
+  test("u override replaces type", () => {
+    const u = children("_a_\n", { u: "ins" }, { underline: true })[0].props.children[0];
+    expect(u.type).toBe("ins");
+    expect(u.props).toEqual({ children: ["a"] });
+  });
 });
 
 describe("Bun.markdown.react renderToString with component overrides", () => {
@@ -666,5 +726,21 @@ describe("Bun.markdown.react renderToString with component overrides", () => {
     }
     const html = reactRender("# Title\n\nParagraph\n", { h1: H1 });
     expect(html).toBe('<h1 class="big">Title</h1><p>Paragraph</p>');
+  });
+
+  test("custom math component", () => {
+    function MathSpan({ display, children }: any) {
+      return React.createElement("span", { className: display ? "katex-display" : "katex" }, ...children);
+    }
+    const html = reactRender("$a<b$ and $$c$$\n", { math: MathSpan }, { latexMath: true });
+    expect(html).toBe('<p><span class="katex">a&lt;b</span> and <span class="katex-display">c</span></p>');
+  });
+
+  test("custom underline component", () => {
+    function Underline({ children }: any) {
+      return React.createElement("span", { className: "underline" }, ...children);
+    }
+    const html = reactRender("_a_ and *b*\n", { u: Underline }, { underline: true });
+    expect(html).toBe('<p><span class="underline">a</span> and <em>b</em></p>');
   });
 });

@@ -698,10 +698,24 @@ impl<'a> AnsiRenderer<'a> {
             // them at internal spaces. writeStyled with empty prefix routes
             // the content through the active buffer + updates col in one
             // pass, without the paragraph word-wrap logic.
-            TextType::Code => self.write_styled(b"", content),
-            // LaTeX math spans are atomic like .code — don't let
-            // writeWrapped split `$E = mc^2$` at internal spaces.
-            TextType::Latexmath => self.write_styled(b"", content),
+            TextType::Code | TextType::Latexmath => {
+                // A line break inside the span is a space (as in the HTML renderer).
+                if strings::contains_char(content, b'\n') {
+                    let mut one_line: Vec<u8> = Vec::new();
+                    try_extend(&mut self.out.oom, &mut one_line, content);
+                    if self.out.oom {
+                        return;
+                    }
+                    for byte in &mut one_line {
+                        if *byte == b'\n' {
+                            *byte = b' ';
+                        }
+                    }
+                    self.write_styled(b"", &one_line);
+                } else {
+                    self.write_styled(b"", content);
+                }
+            }
             _ => self.write_content(content),
         }
     }

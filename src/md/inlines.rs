@@ -25,12 +25,13 @@ pub(crate) struct LabelFrame {
 pub struct EmphDelim {
     pub(crate) pos: usize,    // start position in content
     pub(crate) count: usize,  // original run length
-    pub(crate) emph_char: u8, // * or _
+    pub(crate) emph_char: u8, // *, _, ~ or $ (math span delimiter)
     pub(crate) can_open: bool,
     pub(crate) can_close: bool,
     pub(crate) remaining: usize,   // chars not yet consumed
     pub(crate) open_count: usize,  // total chars consumed as opener
     pub(crate) close_count: usize, // total chars consumed as closer
+    pub(crate) close_pos: usize,   // matched `$` openers only: start of the closing run
     // Individual match sizes in order (each is 1 for em, 2 for strong)
     pub(crate) open_sizes: [u8; MAX_EMPH_MATCHES],
     pub(crate) open_num: u8, // number of open matches
@@ -50,6 +51,7 @@ impl Default for EmphDelim {
             remaining: 0,
             open_count: 0,
             close_count: 0,
+            close_pos: 0,
             open_sizes: [0; MAX_EMPH_MATCHES],
             open_num: 0,
             close_sizes: [0; MAX_EMPH_MATCHES],
@@ -331,6 +333,35 @@ impl Parser<'_> {
                     continue;
                 }
 
+                // Math span: emitted whole at its opener, so any other `$` run here is text.
+                if c == b'$' && self.flags.latex_math {
+                    while delim_cursor < resolved.len() && resolved[delim_cursor].pos < i {
+                        delim_cursor += 1;
+                    }
+                    let Some(d) = resolved
+                        .get(delim_cursor)
+                        .filter(|d| d.pos == i && d.open_count > 0)
+                    else {
+                        i += 1;
+                        continue;
+                    };
+                    if i > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                    }
+                    let span_type = if d.count == 2 {
+                        SpanType::LatexmathDisplay
+                    } else {
+                        SpanType::Latexmath
+                    };
+                    self.enter_span(span_type)?;
+                    self.emit_text(TextType::Latexmath, &content[i + d.count..d.close_pos])?;
+                    self.leave_span(span_type)?;
+                    delim_cursor += 1;
+                    i = d.close_pos + d.count;
+                    text_start = i;
+                    continue;
+                }
+
                 // Emphasis/strikethrough with * or _ or ~ — use resolved delimiters
                 if c == b'*' || c == b'_' || (c == b'~' && self.flags.strikethrough) {
                     // Find the corresponding resolved delimiter
@@ -345,11 +376,17 @@ impl Parser<'_> {
 
                         let d = &resolved[delim_cursor];
                         let run_end = d.pos + d.count;
+                        // md4c's MD_FLAG_UNDERLINE: every matched underscore is one U span.
+                        let underline = d.emph_char == b'_' && self.flags.underline;
 
                         // Emit closing tags first (innermost to outermost)
                         if d.emph_char == b'~' {
                             if d.close_count > 0 {
                                 self.leave_span(SpanType::Del)?;
+                            }
+                        } else if underline {
+                            for _ in 0..d.close_count {
+                                self.leave_span(SpanType::U)?;
                             }
                         } else {
                             self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
@@ -365,6 +402,10 @@ impl Parser<'_> {
                         if d.emph_char == b'~' {
                             if d.open_count > 0 {
                                 self.enter_span(SpanType::Del)?;
+                            }
+                        } else if underline {
+                            for _ in 0..d.open_count {
+                                self.enter_span(SpanType::U)?;
                             }
                         } else {
                             self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
@@ -756,6 +797,37 @@ impl Parser<'_> {
                 });
                 continue;
             }
+            // Math span delimiter, with md4c's flanking rule (it keeps `$5 and $10` as text).
+            if c == b'$' && self.flags.latex_math {
+                let run_start = i;
+                while i < content.len() && content[i] == b'$' {
+                    i += 1;
+                }
+                let count = i - run_start;
+                if count > 2 {
+                    continue;
+                }
+                let can_open = run_start == 0
+                    || helpers::is_unicode_whitespace_or_punctuation(
+                        helpers::decode_utf8_backward(content, run_start).codepoint,
+                    );
+                let can_close = i >= content.len()
+                    || helpers::is_unicode_whitespace_or_punctuation(
+                        helpers::decode_utf8(content, i).codepoint,
+                    );
+                if can_open || can_close {
+                    self.emph_delims.push(EmphDelim {
+                        pos: run_start,
+                        count,
+                        emph_char: b'$',
+                        can_open,
+                        can_close,
+                        remaining: count,
+                        ..Default::default()
+                    });
+                }
+                continue;
+            }
             // Strikethrough delimiter (1 or 2 tildes only)
             if c == b'~' && self.flags.strikethrough {
                 let run_start = i;
@@ -800,10 +872,17 @@ impl Parser<'_> {
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
         let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();
+        // Indices of `$` runs that may still open a math span, oldest first.
+        let mut math_openers: Vec<usize> = Vec::new();
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
         while closer_idx < len {
+            if self.emph_delims[closer_idx].emph_char == b'$' {
+                self.resolve_math_delim(closer_idx, &mut math_openers, &mut prev_candidate);
+                closer_idx += 1;
+                continue;
+            }
             if !self.emph_delims[closer_idx].can_close
                 || self.emph_delims[closer_idx].remaining == 0
             {
@@ -890,6 +969,9 @@ impl Parser<'_> {
                         self.emph_delims[k].active = false;
                         k = prev_candidate[k];
                     }
+                    while math_openers.last().is_some_and(|&m| m > oi) {
+                        math_openers.pop();
+                    }
                     prev_candidate[closer_idx] = oi;
 
                     found_match = true;
@@ -916,6 +998,39 @@ impl Parser<'_> {
             }
 
             closer_idx = closer_idx.wrapping_add(1);
+        }
+    }
+
+    /// md4c's `md_analyze_dollar`: only same-length runs pair, and a match drops every pending opener.
+    fn resolve_math_delim(
+        &mut self,
+        idx: usize,
+        math_openers: &mut Vec<usize>,
+        prev_candidate: &mut [usize],
+    ) {
+        let run = self.emph_delims[idx];
+        if run.can_close {
+            if let Some(&oi) = math_openers.last() {
+                let opener = &mut self.emph_delims[oi];
+                debug_assert!(opener.active && opener.remaining > 0);
+                if opener.count == run.count {
+                    opener.remaining = 0;
+                    opener.open_count = run.count;
+                    opener.close_pos = run.pos;
+                    self.emph_delims[idx].remaining = 0;
+                    self.emph_delims[idx].close_count = run.count;
+                    // Nothing inside the verbatim span may pair with a delimiter outside it.
+                    for inner in &mut self.emph_delims[oi + 1..idx] {
+                        inner.active = false;
+                    }
+                    prev_candidate[idx] = oi;
+                    math_openers.clear();
+                    return;
+                }
+            }
+        }
+        if run.can_open {
+            math_openers.push(idx);
         }
     }
 

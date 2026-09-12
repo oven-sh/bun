@@ -6359,14 +6359,15 @@ describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () 
   const url = () => `https://localhost:${server.address().port}`;
 
   // Connects, sends one request, and resolves with what the session saw once it closes.
-  function run(options) {
+  // With `stopAbove`, the client destroys itself once originSet grows past that size.
+  function run(options, stopAbove) {
     const { promise, resolve } = Promise.withResolvers();
     const client = http2.connect(url(), { ...TLS_OPTIONS, ...options });
     const result = { originEvents: 0, maxSize: 0, error: null, goaway: false };
     client.on("origin", () => {
       result.originEvents++;
       result.maxSize = Math.max(result.maxSize, client.originSet.length);
-      if (options.stopAbove !== undefined && client.originSet.length > options.stopAbove) client.destroy();
+      if (stopAbove !== undefined && client.originSet.length > stopAbove) client.destroy();
     });
     client.on("error", err => {
       result.error = err;
@@ -6414,7 +6415,7 @@ describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () 
 
   it("accepts a maxOriginSetSize above the default", async () => {
     for (const maxOriginSetSize of [512, Infinity]) {
-      const result = await run({ maxOriginSetSize, stopAbove: 128 });
+      const result = await run({ maxOriginSetSize }, 128);
       expect(result.originEvents).toBe(13);
       expect(result.maxSize).toBe(131);
       expect(result.error).toBeNull();

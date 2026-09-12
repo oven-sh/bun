@@ -1159,10 +1159,10 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
        * (HTTP_END_CALLED) terminated the header section, header bytes written
-       * here would land inside the body (node:http res.destroy() mid-response
-       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
-       * gates tear the connection down; the header itself is only advisory,
-       * same as in internalEnd(). */
+       * here would land inside the body (a node:http request listener that
+       * throws mid-response ends up here). Setting HTTP_CONNECTION_CLOSE is
+       * what makes the close gates tear the connection down; the header itself
+       * is only advisory, same as in internalEnd(). */
       bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
       if (close_connection)
       {
@@ -1210,6 +1210,32 @@ extern "C"
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
       /* No close gate here; see the SSL arm above. */
+    }
+  }
+
+  /* uws_res_end_without_body(res, true) minus its writes, for a response
+   * node:http destroyed (res.destroy() / req.destroy() close the socket right
+   * after this; with the header section still open, the writes would have
+   * been a complete empty 200 response). HTTP_END_CALLED is what
+   * JSNodeHTTPServerSocket::close() reads to discard, rather than flush, any
+   * still-corked write() bytes of the destroyed response. */
+  void uws_res_abandon(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<true>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
     }
   }
 

@@ -20,6 +20,8 @@
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/WeakHandleOwner.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
+#include <wtf/text/MakeString.h>
 
 namespace Bun {
 
@@ -53,13 +55,21 @@ WeakHandleOwner& webViewWeakOwner()
     return owner.get();
 }
 
+static JSPromise* takeSlot(JSWebView* v, WriteBarrier<JSPromise>& slot)
+{
+    JSPromise* p = slot.get();
+    if (!p) return nullptr;
+    slot.clear();
+    if (&slot == &v->m_pendingNavigate) ++v->m_navGeneration; // disarms the timer from armNavTimeout
+    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    return p;
+}
+
 void settleSlot(JSGlobalObject* g, JSWebView* v,
     WriteBarrier<JSPromise>& slot, bool ok, JSValue value)
 {
-    JSPromise* p = slot.get();
+    JSPromise* p = takeSlot(v, slot);
     if (!p) return;
-    slot.clear();
-    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     if (ok)
         p->resolve(g, g->vm(), value);
     else
@@ -69,10 +79,8 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
 void rejectSlotAsHandled(JSGlobalObject* g, JSWebView* v,
     WriteBarrier<JSPromise>& slot, JSValue err)
 {
-    JSPromise* p = slot.get();
+    JSPromise* p = takeSlot(v, slot);
     if (!p) return;
-    slot.clear();
-    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     p->rejectAsHandled(g->vm(), err);
 }
 
@@ -193,14 +201,68 @@ const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullp
 #define WK_DISPATCH(call) return call
 #endif
 
-JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
+// Null once the view is closed or collected.
+static JSWebView* viewByIdForBackend(WebViewBackend backend, uint32_t viewId)
+{
+    if (backend == WebViewBackend::Chrome) return CDP::transport().viewFor(viewId);
+#if OS(DARWIN)
+    auto& byId = WK::client().viewsById;
+    auto it = byId.find(viewId);
+    return it == byId.end() ? nullptr : it->second.get();
+#else
+    return nullptr;
+#endif
+}
+
+void JSWebView::armNavTimeout(JSGlobalObject* g, uint32_t timeoutMs)
+{
+    if (!m_pendingNavigate || timeoutMs == 0) return; // a synchronously rejected op leaves the slot empty
+
+    uint32_t gen = m_navGeneration;
+    uint32_t vid = m_viewId;
+    auto backend = m_backend;
+    auto* global = defaultGlobalObject(g);
+    // The timer owns itself. There is no cancel: takeSlot bumps m_navGeneration and a late fire no-ops.
+    (void)WTF::RunLoop::currentSingleton().dispatchAfter(
+        WTF::Seconds::fromMilliseconds(timeoutMs),
+        [global, vid, gen, backend, timeoutMs]() {
+            JSWebView* v = viewByIdForBackend(backend, vid);
+            if (!v || v->m_navGeneration != gen || !v->m_pendingNavigate) return;
+            // m_loading stays as is: the page is still loading, the caller stopped waiting.
+            settleSlot(global, v, v->m_pendingNavigate, false,
+                createError(global, makeString("Navigation timeout of "_s, timeoutMs, "ms exceeded"_s)));
+        });
+}
+
+// An empty m_loaderId marks the previous document's trailing lifecycle events as stale until Page.frameNavigated commits this one.
+static inline void beginChromeNavigation(JSWebView* v, NavWaitUntil waitUntil)
+{
+    v->m_navWaitUntil = waitUntil;
+    ++v->m_navGeneration;
+    v->m_loaderId = WTF::String();
+    v->m_navTitleChained = false;
+}
+
+JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
     if (m_backend == WebViewBackend::Chrome) {
+        beginChromeNavigation(this, waitUntil);
         auto* p = CDP::Ops::navigate(g, this, url);
         if (m_pendingNavigate) m_loading = true;
+        armNavTimeout(g, timeoutMs);
         return p;
     }
-    WK_DISPATCH(WK::Ops::navigate(g, this, url));
+#if OS(DARWIN)
+    // WKNavigationDelegate has no DOMContentLoaded hook; waitUntil is accepted and behaves like Load.
+    m_navWaitUntil = waitUntil;
+    ++m_navGeneration;
+    auto* p = WK::Ops::navigate(g, this, url);
+    armNavTimeout(g, timeoutMs);
+    return p;
+#else
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+#endif
 }
 
 JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
@@ -271,21 +333,38 @@ JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
     WK_DISPATCH(WK::Ops::resize(g, this, width, height));
 }
 
-JSPromise* JSWebView::goBack(JSGlobalObject* g)
+// WebKit's GoBack/GoForward/Reload use the Misc slot and can overlap a pending navigate(), so they must not touch the Navigate-slot state.
+JSPromise* JSWebView::goBack(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::goBack(g, this);
+    if (m_backend == WebViewBackend::Chrome) {
+        beginChromeNavigation(this, waitUntil);
+        auto* p = CDP::Ops::goBack(g, this);
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::goBack(g, this));
 }
 
-JSPromise* JSWebView::goForward(JSGlobalObject* g)
+JSPromise* JSWebView::goForward(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::goForward(g, this);
+    if (m_backend == WebViewBackend::Chrome) {
+        beginChromeNavigation(this, waitUntil);
+        auto* p = CDP::Ops::goForward(g, this);
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::goForward(g, this));
 }
 
-JSPromise* JSWebView::reload(JSGlobalObject* g)
+JSPromise* JSWebView::reload(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::reload(g, this);
+    if (m_backend == WebViewBackend::Chrome) {
+        beginChromeNavigation(this, waitUntil);
+        auto* p = CDP::Ops::reload(g, this);
+        if (m_pendingNavigate) m_loading = true; // unlike goBack/goForward, reload always navigates
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::reload(g, this));
 }
 

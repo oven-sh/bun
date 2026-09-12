@@ -973,8 +973,7 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// `Init::init` maps a method token it does not know to `GET`. Tell that
-    /// fallback apart from a real `GET`/`HEAD` so the body check skips it.
+    /// True when `Init::init` fell back to `GET` for a method token it does not know.
     fn init_method_is_unknown(global_this: &JSGlobalObject, init: JSValue) -> JsResult<bool> {
         let Some(method) = init.fast_get_truthy(global_this, bun_jsc::BuiltinName::method)? else {
             return Ok(false);

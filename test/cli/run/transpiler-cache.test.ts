@@ -506,18 +506,18 @@ test("rejects cached module records containing out-of-range string indices", () 
   // *-default / *-namespace sentinels near u32::MAX) must be rejected.
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: flags u8,
+  //   then twelve u64 fields; esm_record_byte_offset @ 79,
+  //   esm_record_byte_length @ 87, esm_record_hash @ 95. Payload follows @ 103.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+  const ESM_RECORD_BYTE_OFFSET_AT = 79;
+  const ESM_RECORD_BYTE_LENGTH_AT = 87;
+  const ESM_RECORD_HASH_AT = 95;
+  const METADATA_SIZE = 103;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
@@ -622,18 +622,18 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   // the entry regenerates, not read out of bounds.
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; sourcemap_byte_offset @ 54,
-  //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: flags u8,
+  //   then twelve u64 fields; sourcemap_byte_offset @ 55,
+  //   sourcemap_byte_length @ 63, sourcemap_hash @ 71.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
   //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
   //   24: sync_count u32, 28: stream_offset u32.
-  const SOURCEMAP_BYTE_OFFSET_AT = 54;
-  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  const SOURCEMAP_BYTE_OFFSET_AT = 55;
+  const SOURCEMAP_BYTE_LENGTH_AT = 63;
 
   function corruptSourceMapHeader(file: string): boolean {
     const data = readFileSync(file);
-    if (data.length < 102) return false;
+    if (data.length < 103) return false;
     const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
     const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
     if (smLen < 32 || smOff + smLen > data.length) return false;

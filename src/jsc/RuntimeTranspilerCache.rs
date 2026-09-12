@@ -58,7 +58,10 @@ bun_core::declare_scope!(cache, visible);
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
 /// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
-const EXPECTED_VERSION: u32 = 30;
+/// Version 31: `Metadata` grows a flags byte (written under `bun test`, uses the
+/// test framework), so the read path can reject the one cross-mode entry whose
+/// output depends on the mode (the matcher tail-call rewrite).
+const EXPECTED_VERSION: u32 = 31;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -105,6 +108,9 @@ pub struct Metadata {
     pub(crate) cache_version: u32,
     pub(crate) output_encoding: Encoding,
     pub module_type: ModuleType,
+    /// `FLAG_*` bits. They let the read path reject the one entry whose output
+    /// depends on the mode: see `from_file_with_cache_file_path`.
+    pub(crate) flags: u8,
 
     pub(crate) features_hash: u64,
 
@@ -130,6 +136,7 @@ impl Default for Metadata {
             cache_version: EXPECTED_VERSION,
             output_encoding: Encoding::NONE,
             module_type: ModuleType::None,
+            flags: 0,
             features_hash: 0,
             input_byte_length: 0,
             input_hash: 0,
@@ -147,13 +154,21 @@ impl Default for Metadata {
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    /// The entry was written with `inject_jest_globals` on (a `bun test` transpile).
+    pub(crate) const FLAG_JEST_MODE: u8 = 1;
+    /// The file contains a returned matcher call, or imports `bun:test` (or
+    /// `@jest/globals` / `vitest`), so its `bun test` output can differ from its
+    /// `bun run` output.
+    pub(crate) const FLAG_USES_TEST_FRAMEWORK: u8 = 2;
+
+    // 1×u32 + 3×u8 (enum reprs + flags) + 12×u64 = 4 + 3 + 96 = 103
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 1 + 12 * 8;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
+        writer.write_int_le::<u8>(self.flags)?;
 
         writer.write_int_le::<u64>(self.features_hash)?;
 
@@ -190,6 +205,7 @@ impl Metadata {
         // holds an out-of-range value.
         let module_type_raw = reader.read_int_le::<u8>()?;
         let output_encoding_raw = reader.read_int_le::<u8>()?;
+        self.flags = reader.read_int_le::<u8>()?;
 
         self.features_hash = reader.read_int_le::<u64>()?;
 
@@ -245,6 +261,7 @@ impl Entry {
         esm_record: &[u8],
         output_code: &BunString,
         exports_kind: ExportsKind,
+        flags: u8,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
@@ -275,6 +292,7 @@ impl Entry {
                     input_byte_length,
                     input_hash,
                     features_hash,
+                    flags,
                     module_type: match exports_kind {
                         ExportsKind::Cjs => ModuleType::Cjs,
                         _ => ModuleType::Esm,
@@ -537,6 +555,7 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
+    pub(crate) inject_jest_globals: bool,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -716,6 +735,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
@@ -727,6 +747,7 @@ impl RuntimeTranspilerCache {
             input_hash,
             feature_hash,
             input_stat_size,
+            inject_jest_globals,
         )
     }
 
@@ -735,6 +756,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
+        inject_jest_globals: bool,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
         // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
@@ -776,6 +798,16 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
+        // A `bun run` entry for a file that uses the test framework misses the matcher
+        // tail-call rewrite `bun test` applies. Keep the file: it stays valid for `bun run`.
+        if inject_jest_globals
+            && entry.metadata.flags & Metadata::FLAG_JEST_MODE == 0
+            && entry.metadata.flags & Metadata::FLAG_USES_TEST_FRAMEWORK != 0
+        {
+            let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+            return Err(crate::CrateError::WrongModeForTestFile);
+        }
+
         entry.load(&file, stat_size)?;
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
@@ -790,6 +822,7 @@ impl RuntimeTranspilerCache {
         esm_record: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
+        flags: u8,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
@@ -838,6 +871,7 @@ impl RuntimeTranspilerCache {
             esm_record,
             source_code,
             exports_kind,
+            flags,
         )
     }
 
@@ -881,11 +915,13 @@ impl RuntimeTranspilerCache {
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
         self.features_hash = Some(features_hasher.final_());
+        self.inject_jest_globals = parser_options.features.inject_jest_globals;
 
         self.entry = match Self::from_file(
             input_hash,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
+            self.inject_jest_globals,
         ) {
             Ok(e) => Some(e),
             Err(err) => {
@@ -954,6 +990,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
+                inject_jest_globals: this.inject_jest_globals,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -961,6 +998,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
+            this.inject_jest_globals = jsc.inject_jest_globals;
             if let Some(entry) = jsc.entry {
                 this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
             }
@@ -977,6 +1015,15 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
             let output_code = BunString::ascii(output_code_bytes);
+            let flags = if this.inject_jest_globals {
+                Metadata::FLAG_JEST_MODE
+            } else {
+                0
+            } | if this.uses_test_framework {
+                Metadata::FLAG_USES_TEST_FRAMEWORK
+            } else {
+                0
+            };
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
@@ -985,6 +1032,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 esm_record,
                 &output_code,
                 this.exports_kind,
+                flags,
             );
             if let Err(err) = result {
                 bun_core::scoped_log!(cache, "put() = {}", err.name());

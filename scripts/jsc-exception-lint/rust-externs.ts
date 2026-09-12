@@ -17,16 +17,20 @@ import { join, relative, resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "../..");
 const args = process.argv.slice(2);
 const sIdx = args.indexOf("--summaries");
-const summaryFile = sIdx !== -1 ? args[sIdx + 1] : join(repo, "build/debug/jsc-exception-lint/bun-summaries.tsv");
+// The committed file keeps every extern "C" summary (they never follow the
+// signature convention, see the export in jsc-exception-lint.cpp). The full
+// file from `run.ts --update-summaries` also has the `why` column.
+const summaryFile = sIdx !== -1 ? args[sIdx + 1] : join(repo, "scripts/jsc-exception-lint/summaries/bun.tsv");
 if (!existsSync(summaryFile)) {
-  console.error(`missing ${summaryFile}; run scripts/jsc-exception-lint/run.ts first`);
+  console.error(`missing ${summaryFile}; run scripts/jsc-exception-lint/run.ts --update-summaries first`);
   process.exit(1);
 }
 
 type Summary = { kind: string; exit: number; why: string };
 const summaries = new Map<string, Summary>();
 for (const line of readFileSync(summaryFile, "utf8").split("\n")) {
-  const [, key, kind, exit, , why] = line.split("\t");
+  if (line.startsWith("#")) continue;
+  const [, key, kind, exit, , why = ""] = line.split("\t");
   if (!key) continue;
   // Key is `qualified::name/arity`. extern "C" symbols are unqualified, but
   // may be declared inside a namespace block; index by the last component.

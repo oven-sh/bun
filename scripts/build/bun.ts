@@ -37,6 +37,7 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
+import { emitExceptionLint } from "./exception-lint.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
@@ -384,6 +385,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     });
   }
 
+  // jsc-exception-lint runs inside each of these compiles as a clang plugin
+  // (exception-lint.ts). Not on the PCH: it only has declarations to look
+  // at, and a PCH built without the plugin is valid for a TU built with it.
+  const lint = emitExceptionLint(n, cfg);
+
   const cxxObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
@@ -401,6 +407,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       // signal directly.
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
+    }
+    if (lint !== undefined) {
+      opts.ninjaOnlyFlags = lint.flags;
+      opts.implicitInputs = [...(opts.implicitInputs ?? []), ...lint.implicitInputs];
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
   }

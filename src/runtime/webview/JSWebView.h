@@ -107,6 +107,8 @@ public:
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;
+    // Chrome: history id of the about:blank the tab was created on (0 until known); goBack() stops above it.
+    int32_t m_chromeBootstrapEntryId = 0;
     // Screenshot format/encoding stash — set by screenshot() before
     // dispatch, read by both backends' response handlers. CDP/IPC payloads
     // don't echo these; stashing here is simpler than threading them

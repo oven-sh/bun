@@ -1166,6 +1166,11 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
+    /// The live `process.env` object (runtime writes land here, not in `env_loader()`).
+    pub fn process_env(&self) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || Bun__Process__getEnvObject(self))
+    }
+
     // returns false if it throws
     pub fn validate_object(
         &self,
@@ -1517,6 +1522,7 @@ unsafe extern "C" {
         function: unsafe extern "C" fn(*mut c_void),
     );
 
+    safe fn Bun__Process__getEnvObject(global_object: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,

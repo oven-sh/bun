@@ -15,7 +15,9 @@ pub use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
+use crate::server::jsc::{
+    JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong, VirtualMachine,
+};
 use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
@@ -552,6 +554,23 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
+/// A production start is sticky; otherwise the live `process.env` can still opt in (a startup snapshot cannot).
+fn default_is_production(global: &JSGlobalObject, vm: &VirtualMachine) -> JsResult<bool> {
+    if vm.transpiler.options.production {
+        return Ok(true);
+    }
+    let process_env = global.process_env()?;
+    for key in ["NODE_ENV", "BUN_ENV"] {
+        if let Some(value) = process_env.get(global, key)?
+            && value.is_string()
+            && value.to_js_string_view(global)?.eq_ascii(b"production")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
     for key in ["routes", "static"] {
         if let Some(routes) = arg.get(global, key)? {
@@ -636,11 +655,7 @@ impl ServerConfig {
         };
         let mut has_hostname = false;
 
-        if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
-            args.development = DevelopmentOption::Production;
-        }
-
-        if arguments.vm.transpiler.options.production {
+        if default_is_production(global, vm)? {
             args.development = DevelopmentOption::Production;
         }
 

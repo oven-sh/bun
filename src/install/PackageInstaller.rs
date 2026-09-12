@@ -2035,7 +2035,20 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            if !is_trusted && self.metas[package_id as usize].has_install_script() {
+                            // `hasInstallScript` is not stored in bun.lock, so it reads
+                            // false on installs from a lockfile.
+                            let default_trust_denied = if is_trusted {
+                                None
+                            } else {
+                                self.lockfile().default_trust_denied_by_registry(
+                                    pkg_name.slice(string_buf!()),
+                                    resolution,
+                                )
+                            };
+                            if !is_trusted
+                                && (default_trust_denied.is_some()
+                                    || self.metas[package_id as usize].has_install_script())
+                            {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                                 // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                                 let mut folder_path =
@@ -2066,10 +2079,20 @@ impl<'a> PackageInstaller<'a> {
                                         .packages_with_blocked_scripts
                                         .get_or_put(truncated_dep_name_hash)
                                         .unwrap_or_oom();
-                                    if !entry.found_existing {
+                                    let first_block = !entry.found_existing;
+                                    if first_block {
                                         *entry.value_ptr = 0;
                                     }
                                     *entry.value_ptr += count;
+                                    if let (true, Some(warning)) =
+                                        (first_block, &default_trust_denied)
+                                    {
+                                        self.manager().log_mut().add_warning_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!("{warning}"),
+                                        );
+                                    }
                                 }
                             }
                         }

@@ -299,124 +299,174 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
-test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
+for (const [linker, globalStore] of [
+  ["hoisted", false],
+  ["isolated", false],
+  ["isolated", true],
+] as const) {
+  test.concurrent(
+    `default trusted dependencies require a tarball URL on the configured registry (${linker}${globalStore ? ", global store" : ""})`,
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
 
-  // No `trustedDependencies` in package.json: `electron` is on the default
-  // trusted list, so the genuine registry package's lifecycle scripts run.
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "electron": "1.0.0",
-      },
-    }),
-  );
+      // No `trustedDependencies` in package.json: `electron` is on the default
+      // trusted list, so the genuine registry package's lifecycle scripts run.
+      await Promise.all([
+        verdaccio.writeBunfig(packageDir, { linker, globalStore }),
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              "electron": "1.0.0",
+            },
+          }),
+        ),
+      ]);
 
-  let { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-
-  let err = await stderr.text();
-  let out = await stdout.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(out).not.toContain("Blocked");
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
-  expect(await exited).toBe(0);
-
-  // Tamper with the lockfile: keep the default-trusted name `electron` but
-  // point its tarball URL at a different package on the same registry. The
-  // install must still succeed, but the package must no longer inherit the
-  // default lifecycle-script grant because the URL is not the canonical
-  // registry tarball for `electron@1.0.0`.
-  const lockfilePath = join(packageDir, "bun.lock");
-  const lockfile = await file(lockfilePath).text();
-  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
-  await writeFile(
-    lockfilePath,
-    lockfile
-      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
-      .replace(/"sha512-[^"]+"/, '""'),
-  );
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  // The redirected tarball (all-lifecycle-scripts content) installs under the
-  // recorded name, but its preinstall/install/postinstall must not run: the
-  // package no longer inherits default trust from the `electron` name because
-  // the URL is not the canonical registry tarball for `electron@1.0.0`.
-  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.js"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-
-  // Tamper again: keep the canonical path for `electron@1.0.0` but point the
-  // URL at a different origin — a second local server that proxies to the
-  // real registry. The tarball still downloads and the integrity still
-  // matches, but the origin is not the configured registry, so the default
-  // lifecycle-script grant must not apply.
-  using proxy = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const url = new URL(req.url);
-      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
-        method: req.method,
-        headers: req.headers,
+      let { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
       });
+
+      let err = await stderr.text();
+      let out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(out).not.toContain("Blocked");
+      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+      expect(await exited).toBe(0);
+
+      // Tamper with the lockfile: keep the canonical path for `electron@1.0.0` but
+      // point the URL at a different origin, a second local server that proxies to
+      // the real registry. The tarball still downloads and the integrity still
+      // matches, but the origin is not the configured registry, so the default
+      // lifecycle-script grant must not apply. The install says why.
+      using proxy = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+            method: req.method,
+            headers: req.headers,
+          });
+        },
+      });
+      const lockfilePath = join(packageDir, "bun.lock");
+      const lockfile = await file(lockfilePath).text();
+      const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+      const proxiedUrl = `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`;
+      expect(lockfile).toContain(canonicalUrl);
+      await writeFile(lockfilePath, lockfile.replace(canonicalUrl, proxiedUrl));
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).not.toContain("error:");
+      expect(err).toContain(
+        `warn: "electron@1.0.0" is on the default trusted dependencies list, but its tarball URL "${proxiedUrl}" is not on the configured registry "http://localhost:${verdaccio.port}/", so its lifecycle scripts did not run. Add "electron" to "trustedDependencies" in package.json to run them.`,
+      );
+      if (linker === "hoisted") {
+        expect(out).toContain("Blocked 1 postinstall");
+      }
+      expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+      expect(await exited).toBe(0);
     },
-  });
-  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
-  expect(lockfile).toContain(canonicalUrl);
-  await writeFile(
-    lockfilePath,
-    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
   );
+}
 
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(
+    `default trusted dependencies accept a tarball URL from the configured registry with a different path (${linker})`,
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
 
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
+      // A registry front like an Artifactory virtual repository: manifests are
+      // served under `/npm/virtual/`, and every `dist.tarball` in them points
+      // at `/npm/remote/` on the same origin. The URL bun records in the
+      // lockfile is then not `<registry>/<name>/-/<name>-<version>.tgz`.
+      const upstream = `http://localhost:${verdaccio.port}`;
+      using registry = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname.startsWith("/npm/virtual/")) {
+            const res = await fetch(`${upstream}/${url.pathname.slice("/npm/virtual/".length)}${url.search}`, {
+              headers: { accept: req.headers.get("accept") ?? "*/*" },
+            });
+            const body = (await res.text()).replaceAll(`${upstream}/`, `${url.origin}/npm/remote/`);
+            return new Response(body, {
+              status: res.status,
+              headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
+            });
+          }
+          if (url.pathname.startsWith("/npm/remote/")) {
+            return fetch(`${upstream}/${url.pathname.slice("/npm/remote/".length)}${url.search}`);
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
 
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-});
+      await Promise.all([
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({
+            install: {
+              cache: join(packageDir, ".bun-cache"),
+              registry: `http://localhost:${registry.port}/npm/virtual/`,
+              linker,
+            },
+          }),
+        ),
+        // No `trustedDependencies` in package.json: `electron` is on the
+        // default trusted list.
+        write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "electron": "1.0.0" } })),
+      ]);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(out).not.toContain("Blocked");
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+        `http://localhost:${registry.port}/npm/remote/electron/-/electron-1.0.0.tgz`,
+      );
+      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+      expect(exitCode).toBe(0);
+    },
+  );
+}
 
 test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
   using ctx = await setupTest();

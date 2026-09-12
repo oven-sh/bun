@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -533,6 +534,121 @@ const IS_UV_FS_COPYFILE_DISABLED =
         head: "AAAAAAAAAASSSSS",
         size: 10 + size,
       });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // copy_file_range(2) and sendfile(2) reject a destination whose open file
+  // description has O_APPEND (EBADF / EINVAL). `>> log`, a GNU make recipe
+  // and fs.openSync(p, "a") all hand Bun such a destination.
+  describe.skipIf(isWindows)("Bun.write(dest, Bun.file(src)) with an O_APPEND destination", () => {
+    it("appends to stdout redirected with >>", async () => {
+      using dir = tempDir("bun-write-stdout-append-cfr", {
+        "src.txt": "file-content\n",
+        "log.txt": "header\n",
+      });
+      const src = join(String(dir), "src.txt");
+      const log = join(String(dir), "log.txt");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.file(${JSON.stringify(src)}))))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "",
+        resolved: "13",
+        content: "header\nfile-content\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("appends to an fd opened with 'a' and 'a+'", async () => {
+      using dir = tempDir("bun-write-fd-append-cfr", {
+        "src.txt": "payload\n",
+        "log.txt": "header\n",
+      });
+      const src = join(String(dir), "src.txt");
+      const log = join(String(dir), "log.txt");
+      const script = `
+        const fs = require("fs");
+        const out = [];
+        for (const flag of ["a", "a+"]) {
+          const fd = fs.openSync(${JSON.stringify(log)}, flag);
+          try {
+            out.push(await Bun.write(Bun.file(fd), Bun.file(${JSON.stringify(src)})));
+          } finally { fs.closeSync(fd); }
+        }
+        process.stdout.write(JSON.stringify(out));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "[8,8]",
+        stderr: "",
+        content: "header\npayload\npayload\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("appends a string above the preallocate threshold to stdout redirected with >>", async () => {
+      using dir = tempDir("bun-write-stdout-append-string", { "log.txt": "header\n" });
+      const log = join(String(dir), "log.txt");
+      const size = 4000;
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Buffer.alloc(${size}, "y").toString() + "\\n")))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "",
+        resolved: String(size + 1),
+        content: "header\n" + Buffer.alloc(size, "y").toString() + "\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A GNU make recipe on a terminal gets a tty stdout with O_APPEND. The
+    // description is shared with the parent shell, so Bun must not clear it.
+    it.skipIf(!isLinux)("keeps O_APPEND on an inherited tty description", async () => {
+      using dir = tempDir("bun-write-tty-append-flag", { "src.txt": "payload\n" });
+      const src = join(String(dir), "src.txt");
+      const flags = "grep flags /proc/$$/fdinfo/1 | tr -d '\\t'";
+      const sh = [
+        "exec 1>>/dev/tty",
+        `before=$(${flags})`,
+        `"$BUN" -e 'await Bun.write(Bun.stdout, Bun.file(${JSON.stringify(src)}))'`,
+        `echo "rc=$? before=$before after=$(${flags})" >&2`,
+      ].join("; ");
+      let output = "";
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", sh],
+        env: { ...bunEnv, BUN: bunExe() },
+        terminal: {
+          data(_, chunk) {
+            output += chunk.toString();
+          },
+        },
+      });
+      const exitCode = await proc.exited;
+
+      const [, rc, before, after] = /rc=(\d+) before=flags:(\d+) after=flags:(\d+)/.exec(output) ?? [];
+      expect({ output: output.replace(/\r/g, ""), rc, appendBefore: Number(`0o${before}`) & 0o2000 }).toEqual({
+        output: "payload\n" + `rc=0 before=flags:${before} after=flags:${before}\n`,
+        rc: "0",
+        appendBefore: 0o2000,
+      });
+      expect(after).toBe(before);
       expect(exitCode).toBe(0);
     });
   });

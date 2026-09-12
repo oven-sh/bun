@@ -411,6 +411,16 @@ impl WriteFile {
             .is_path()
     }
 
+    /// Preallocating grows the file from offset 0. A caller's fd opened
+    /// O_APPEND (`>> log`, `fs.openSync(p, "a")`) writes after the grown end,
+    /// which leaves a hole of NUL bytes before the data. Bun opens its own
+    /// destination with O_TRUNC, so only a caller's fd can append.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn appends_to_caller_fd(&self, fd: Fd) -> bool {
+        !self.is_allowed_to_close()
+            && sys::get_fcntl_flags(fd).is_ok_and(|flags| flags as i32 & sys::O::APPEND != 0)
+    }
+
     #[cfg(not(windows))]
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
@@ -473,7 +483,10 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
+            if !self.could_block
+                && self.bytes_blob.shared_view().len() > 1024
+                && !self.appends_to_caller_fd(fd)
+            {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,

@@ -3,10 +3,10 @@
 namespace Zig {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
-    JSC::JSObject* object)
+    JSC::JSObject* object, bool synthesizeDefault)
 {
     gcProtectNullTolerant(object);
-    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
+    return [object, synthesizeDefault](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
@@ -21,11 +21,20 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
+        bool hasDefault = false;
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
+            if (entry == vm.propertyNames->defaultKeyword)
+                hasDefault = true;
+
             JSValue value = object->get(globalObject, entry);
             RETURN_IF_EXCEPTION(throwScope, void());
             exportNames.append(entry);
             exportValues.append(value);
+        }
+
+        if (synthesizeDefault && !hasDefault) {
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(object);
         }
     };
 }

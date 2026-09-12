@@ -45,9 +45,11 @@ class ReadableFromWeb extends Readable {
   #reader;
   #closed;
   #stream;
+  // node-fetch, undici: `stream` is the body of a Response, whose text(), json(), ... read it too.
+  #responseBody;
 
   constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal } = options;
+    const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
@@ -57,6 +59,14 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#responseBody = responseBody;
+  }
+
+  // A lock on a Response body that this wrapper has not opened belongs to a body method, or to
+  // another consumer of the Response. It is never released: getReader() and cancel() throw, and
+  // nothing is left to read.
+  #takenByResponse(stream) {
+    return this.#responseBody && stream.locked;
   }
 
   #handleDone(reader) {
@@ -86,6 +96,12 @@ class ReadableFromWeb extends Readable {
     var reader = this.#reader;
     var stream = this.#stream;
     if (stream) {
+      if (this.#takenByResponse(stream)) {
+        this.#stream = undefined;
+        this.#closed = true;
+        this.push(null);
+        return;
+      }
       reader = this.#reader = stream.getReader();
       this.#stream = undefined;
     }
@@ -119,12 +135,14 @@ class ReadableFromWeb extends Readable {
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
-        PromisePrototypeThen.$call(
-          stream.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
-        return;
+        if (!this.#takenByResponse(stream)) {
+          PromisePrototypeThen.$call(
+            stream.cancel(error),
+            () => callback(error),
+            cancelError => callback(error ?? cancelError),
+          );
+          return;
+        }
       }
     }
     try {

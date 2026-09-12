@@ -99,7 +99,7 @@ impl Drop for Store {
         use entry::EntryColumns as _;
         for slot in self.entries.items_scripts() {
             if let Some(list) = slot.take() {
-                // SAFETY: the installer returned only after every task finished, so nothing else references the list boxed in Installer's RunPreinstall step.
+                // SAFETY: `Installer::drop` waited for every task on the pool, so nothing else references the list boxed in Installer's RunPreinstall step.
                 unsafe { bun_core::heap::destroy(list) };
             }
         }

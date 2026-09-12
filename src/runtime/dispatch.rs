@@ -373,8 +373,15 @@ pub(crate) fn run_task(
             vm.modules.on_poll();
         }
         task_tag::RuntimeTranspilerStore => {
-            let store = cast!(RuntimeTranspilerStore);
-            store.run_from_js_thread(el.into(), global, vm.into());
+            // SAFETY: §Dispatch — the VM's own store; its drains re-enter it, so it stays raw.
+            unsafe {
+                RuntimeTranspilerStore::run_from_js_thread(
+                    cast_ptr!(RuntimeTranspilerStore),
+                    el.into(),
+                    global,
+                    vm.into(),
+                )
+            };
         }
 
         // ── hot-reload (early-returns from the drain loop) ───────────────

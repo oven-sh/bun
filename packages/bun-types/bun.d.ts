@@ -5247,11 +5247,20 @@ declare module "bun" {
       | "ansi-16"
       | "ansi-16m"
       /**
+       * Aliases of `ansi-16m`
+       */
+      | "ansi-24bit"
+      | "ansi-truecolor"
+      /**
        * 256 color ANSI color string, for use in terminals which don't support true color
        *
        * Tries to match closest 24-bit color to 256 color palette
        */
       | "ansi-256"
+      /**
+       * Alias of `ansi-256`
+       */
+      | "ansi256"
       /**
        * Picks the format that produces the shortest output
        */
@@ -5303,11 +5312,23 @@ declare module "bun" {
    */
   function color(input: ColorInput, outputFormat: "[rgba]"): [number, number, number, number] | null;
   /**
+   * Convert any color input to rgba
+   * @param input Any color input
+   * @param outputFormat `[r,g,b,a]` is an alias of `[rgba]`
+   */
+  function color(input: ColorInput, outputFormat: "[r,g,b,a]"): [number, number, number, number] | null;
+  /**
    * Convert any color input to rgb
    * @param input Any color input
    * @param outputFormat Specify `{rgb}` to output as an object with `r`, `g`, and `b` properties
    */
   function color(input: ColorInput, outputFormat: "{rgb}"): { r: number; g: number; b: number } | null;
+  /**
+   * Convert any color input to rgb
+   * @param input Any color input
+   * @param outputFormat `{r,g,b}` is an alias of `{rgb}`
+   */
+  function color(input: ColorInput, outputFormat: "{r,g,b}"): { r: number; g: number; b: number } | null;
   /**
    * Convert any color input to rgba
    * @param input Any color input

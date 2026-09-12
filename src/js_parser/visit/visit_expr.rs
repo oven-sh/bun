@@ -872,6 +872,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if is_call_target {
                         p.call_target = dot.data;
                     }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
+                    }
                     if is_delete_target {
                         p.delete_target = dot.data;
                     }

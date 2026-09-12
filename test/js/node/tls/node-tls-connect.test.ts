@@ -1983,15 +1983,20 @@ it("tls.connect({ socket }).end() finishes after a transport with queued plainte
   const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
   raw.on("error", () => {});
   const client = tls.connect({ socket: raw, rejectUnauthorized: false });
-  client.on("error", () => {});
+  const finished = Promise.withResolvers<void>();
+  client.on("error", finished.reject);
+  client.once("close", () => finished.reject(new Error("closed before 'finish'")));
   try {
     const events: string[] = [];
     raw.on("connect", () => events.push("transport connect"));
-    client.on("finish", () => events.push("finish"));
+    client.on("finish", () => {
+      events.push("finish");
+      finished.resolve();
+    });
     // Still queued when the transport connects, so the upgrade takes the stream-level engine.
     raw.write("plain");
     client.end();
-    await new Promise<void>(resolve => client.once("finish", () => resolve()));
+    await finished.promise;
     expect(events).toEqual(["transport connect", "finish"]);
   } finally {
     client.destroy();

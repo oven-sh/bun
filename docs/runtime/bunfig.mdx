@@ -107,7 +107,7 @@ Bun supports the following loaders:
 
 ### `telemetry`
 
-The `telemetry` field enables or disables analytics. By default, telemetry is enabled. This setting is equivalent to the `DO_NOT_TRACK` environment variable.
+The `telemetry` field enables or disables analytics. By default, telemetry is enabled. The `DO_NOT_TRACK=1` environment variable also disables it. If `bunfig.toml` sets `telemetry` explicitly, that value wins over `DO_NOT_TRACK`.
 
 We do not currently collect telemetry; this setting only controls anonymous crash reports. We plan to collect information like which Bun APIs are used most or how long `bun build` takes.
 

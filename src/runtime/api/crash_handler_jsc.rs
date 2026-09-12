@@ -21,6 +21,7 @@ pub(crate) mod js_bindings {
             ),
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
+            ("isAnalyticsEnabled", __jsc_host_js_is_analytics_enabled),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
@@ -226,6 +227,11 @@ pub(crate) mod js_bindings {
             // there is definitely enough space in the bounded array
             .expect("unreachable");
         BunString::clone_latin1(buf.slice()).into_js(global)
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_is_analytics_enabled(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(analytics::is_enabled()))
     }
 
     #[bun_jsc::host_fn]

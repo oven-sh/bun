@@ -44,9 +44,10 @@ pub fn set_enabled(v: TriState) {
     ENABLED.store(v as u8, Ordering::Relaxed);
 }
 
+/// An explicit bunfig `telemetry` value wins over `DO_NOT_TRACK`.
 pub fn is_enabled() -> bool {
     match enabled() {
-        TriState::Yes => !env_var::DO_NOT_TRACK.get().unwrap_or(false),
+        TriState::Yes => true,
         TriState::No => false,
         TriState::Unknown => {
             let detected = 'detect: {

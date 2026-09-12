@@ -541,7 +541,7 @@ function Counter() {
 }
 ```
 
-The output imports `c` from `react/compiler-runtime`. That module is part of React 19. With React 17 or 18 the import does not resolve, and the build fails with `Could not resolve: "react/compiler-runtime"`.
+This is the `"client"` [output mode](#reactcompileroutputmode). It imports `c` from `react/compiler-runtime`. That module is part of React 19. With React 17 or 18 the import does not resolve, and the build fails with `Could not resolve: "react/compiler-runtime"`. The `"ssr"` output mode has no such import, so it does not need React 19.
 
 #### Which functions are compiled
 

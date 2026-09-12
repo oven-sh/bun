@@ -15,6 +15,7 @@ use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
+use super::blob::BlobContentType;
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
@@ -310,11 +311,12 @@ impl BodyMixin for Response {
 
 impl Response {
     pub(crate) fn init(
-        response_init: Init,
+        mut response_init: Init,
         body: Body,
         url: BunString,
         redirected: bool,
     ) -> Response {
+        response_init.capture_content_type(body.value.get());
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
@@ -324,29 +326,9 @@ impl Response {
         }
     }
 
-    #[inline]
-    pub(crate) fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
-        self.init.with_mut(|init| {
-            init.method = method;
-            init.status_code = status_code;
-            init.status_text = status_text;
-        });
-    }
-
-    #[inline]
-    pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
-        // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.with_mut(|init| init.headers = headers);
-    }
-
-    #[inline]
-    pub(crate) fn get_init_status_code(&self) -> u16 {
-        self.init.get().status_code
-    }
-
-    #[inline]
-    pub(crate) fn get_init_status_text(&self) -> &BunString {
-        &self.init.get().status_text
+    /// Deep copy of `init`, including a pending body `Content-Type`.
+    pub(crate) fn clone_init(&self, global: &JSGlobalObject) -> JsResult<Init> {
+        self.init.get().clone(global)
     }
 
     #[inline]
@@ -389,18 +371,22 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy this response's init headers (if any) into a fresh
-    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
-    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
-    #[inline]
-    pub(crate) fn clone_init_headers(
-        &self,
-        global: &JSGlobalObject,
-    ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
-            Some(headers) => headers.clone_this(global),
-            None => Ok(None),
+    /// Deep copy of the header list for another owner; a pending `Content-Type` goes into the copy only.
+    pub(crate) fn clone_headers(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+        let init = self.init.get();
+        if let Some(headers) = init.headers.as_ref() {
+            return headers.clone_this(global);
         }
+        if init.pending_content_type.is_empty() {
+            return Ok(None);
+        }
+        let mut headers = HeadersRef::create_empty();
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(init.pending_content_type.as_slice()),
+            global,
+        )?;
+        Ok(Some(headers))
     }
 
     #[inline]
@@ -593,35 +579,33 @@ impl Response {
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
         let init = self.init_mut();
-        if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
-        }
-
-        Ok(init.headers.as_mut().unwrap())
+        init.materialize_headers(global_this)?;
+        Ok(init.headers.get_or_insert_with(HeadersRef::create_empty))
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
+    /// See [`Init::pending_content_type`]. Empty once the header list exists.
+    pub(crate) fn pending_content_type(&self) -> &[u8] {
+        self.init.get().pending_content_type.as_slice()
+    }
+
     pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
-        if let Some(headers) = self.init_mut().headers.as_mut() {
+        let init = self.init_mut();
+        if let Some(headers) = init.headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_utf8()));
             }
+        }
+
+        if !init.pending_content_type.is_empty() {
+            return Ok(Some(Utf8Bytes::Borrowed(
+                init.pending_content_type.as_slice(),
+            )));
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
@@ -1166,6 +1150,7 @@ impl Response {
                 }
             }
         }
+        init.capture_content_type(body.value.get());
 
         // Disarm: all fallible ops have succeeded.
         let body = scopeguard::ScopeGuard::into_inner(body);
@@ -1194,6 +1179,8 @@ impl Response {
 // the fields' own drop glue releases `headers` and `status_text`.
 pub struct Init {
     pub(crate) headers: Option<HeadersRef>,
+    /// The body's `Content-Type`, owed to `headers` (allocated lazily); non-empty only while `headers` is `None`.
+    pub(crate) pending_content_type: BlobContentType,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
@@ -1203,6 +1190,7 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
+            pending_content_type: BlobContentType::default(),
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
@@ -1221,10 +1209,37 @@ impl Init {
         };
         Ok(Init {
             headers,
+            pending_content_type: self.pending_content_type.clone(),
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
         })
+    }
+
+    /// Park a `Blob` body's `Content-Type` while there is no header list; an already pending value wins.
+    pub(crate) fn capture_content_type(&mut self, body: &BodyValue) {
+        if self.headers.is_some() || !self.pending_content_type.is_empty() {
+            return;
+        }
+        if let BodyValue::Blob(blob) = body {
+            self.pending_content_type = blob.content_type.get().clone();
+        }
+    }
+
+    /// Allocate `headers` now if a `Content-Type` is pending.
+    pub(crate) fn materialize_headers(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        if self.headers.is_some() || self.pending_content_type.is_empty() {
+            return Ok(());
+        }
+        let mut headers = HeadersRef::create_empty();
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(self.pending_content_type.as_slice()),
+            global,
+        )?;
+        self.pending_content_type = BlobContentType::default();
+        self.headers = Some(headers);
+        Ok(())
     }
 
     pub(crate) fn init(

@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -49,7 +50,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (13.25 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -213,5 +214,122 @@ describe("clone()", () => {
 
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
+  });
+});
+
+// The Content-Type that `new Response(body)` takes from its body is part of the
+// response from construction on (fetch spec "initialize a response"), so it
+// must not depend on whether `.headers` is read before or after something moves
+// the body out of its Blob state.
+describe("body-derived Content-Type does not depend on access order", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = tempDirWithFiles("response-content-type", { "page.html": "<p>hi</p>" });
+  });
+  const file = () => Bun.file(join(dir, "page.html"), { type: "image/png" });
+  const blob = () => new Blob(["<p>hi</p>"], { type: "text/x-custom" });
+  const formData = () => {
+    const fd = new FormData();
+    fd.append("field", "<p>hi</p>");
+    return fd;
+  };
+  const searchParams = () => new URLSearchParams({ p: "<p>hi</p>" });
+
+  const cases: [string, () => BodyInit, string | RegExp][] = [
+    ["Blob", blob, "text/x-custom"],
+    ["Bun.file with type override", file, "image/png"],
+    ["FormData", formData, /^multipart\/form-data; boundary=.+/],
+    ["URLSearchParams", searchParams, "application/x-www-form-urlencoded;charset=UTF-8"],
+  ];
+  describe.each(cases)("%s", (_name, body, expected) => {
+    const check = (contentType: string | null | undefined) =>
+      typeof expected === "string" ? expect(contentType).toBe(expected) : expect(contentType).toMatch(expected);
+
+    test(".headers first", () => {
+      const res = new Response(body());
+      check(res.headers.get("content-type"));
+    });
+
+    test(".body first", () => {
+      const res = new Response(body());
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      check(res.headers.get("content-type"));
+    });
+
+    test.each(["text", "arrayBuffer", "bytes", "blob"] as const)(".%s() first", async method => {
+      const res = new Response(body());
+      await res[method]();
+      check(res.headers.get("content-type"));
+    });
+
+    test("new Response(res.body, res)", () => {
+      const res = new Response(body());
+      const rewrapped = new Response(res.body, res);
+      check(rewrapped.headers.get("content-type"));
+      expect(res.headers.get("content-type")).toBe(rewrapped.headers.get("content-type"));
+    });
+
+    test("used as ResponseInit, its Content-Type wins over the new body's", () => {
+      // Same as `{ headers: res.headers }`: the init's header list already
+      // has a Content-Type, so the new body's is not appended.
+      const res = new Response(body());
+      check(new Response(new Blob(["x"], { type: "text/plain" }), res).headers.get("content-type"));
+      check(new Response("x", res).headers.get("content-type"));
+    });
+
+    test("used as RequestInit", () => {
+      const res = new Response(body());
+      check(new Request("http://example.com/", res).headers.get("content-type"));
+    });
+
+    test("clone() after .body", () => {
+      const res = new Response(body());
+      void res.body;
+      const clone = res.clone();
+      check(clone.headers.get("content-type"));
+      expect(res.headers.get("content-type")).toBe(clone.headers.get("content-type"));
+    });
+
+    test("HTMLRewriter output", async () => {
+      const rewriter = new HTMLRewriter().on("p", { element: e => void e.setInnerContent("yo") });
+      const res = new Response(body());
+      const input = await res.clone().text();
+      const out = rewriter.transform(res);
+      check(out.headers.get("content-type"));
+      expect(await out.text()).toBe(input.replaceAll("<p>hi</p>", "<p>yo</p>"));
+      // .blob() is typed from the same header, whether or not .headers was read.
+      check((await rewriter.transform(new Response(body())).blob()).type);
+    });
+  });
+
+  test("a FormData boundary in the header is the one in the body", async () => {
+    const res = new Response(formData());
+    const text = await res.text();
+    const contentType = res.headers.get("content-type")!;
+    expect(contentType).toStartWith("multipart/form-data; boundary=");
+    expect(text).toStartWith("--" + contentType.slice("multipart/form-data; boundary=".length));
+  });
+
+  // These responses are built natively, not by the Response constructor.
+  test.each([
+    ["data:", () => "data:text/x-custom,hi", "text/x-custom"],
+    ["blob:", () => URL.createObjectURL(blob()), "text/x-custom"],
+    ["file:", () => Bun.pathToFileURL(join(dir, "page.html")).href, "text/html;charset=utf-8"],
+  ] as const)("fetch() of a %s URL, body read first", async (_, url, expected) => {
+    const res = await fetch(url());
+    await res.text();
+    expect(res.headers.get("content-type")).toBe(expected);
+  });
+
+  test("a ReadableStream body contributes no Content-Type, the init still does", () => {
+    const stream = () => new ReadableStream({ start: c => c.close() });
+    expect(new Response(stream()).headers.get("content-type")).toBeNull();
+    expect(new Response(stream(), new Response(blob())).headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test("an explicit Content-Type header wins over the body's", () => {
+    const res = new Response(blob(), { headers: { "Content-Type": "text/plain" } });
+    void res.body;
+    expect(res.headers.get("content-type")).toBe("text/plain");
   });
 });

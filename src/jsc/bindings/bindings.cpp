@@ -343,9 +343,7 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
-    // getIndexWithoutAccessors returns the empty JSValue for an array hole, an
-    // index past the end of the shorter array, and an accessor. Read it as
-    // undefined so no matcher below dereferences a null cell.
+    // Bun__deepEquals passes the empty JSValue for an array hole and for an index past the end of the shorter array.
     if (otherProp.isEmpty()) {
         otherProp = jsUndefined();
     }

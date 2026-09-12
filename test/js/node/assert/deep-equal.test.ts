@@ -691,6 +691,41 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  {
+    name: "AggregateError with deep-equal errors",
+    a: () => new AggregateError([new TypeError("x")], "agg"),
+    b: () => new AggregateError([new TypeError("x")], "agg"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "AggregateError with different inner errors",
+    a: () => new AggregateError([new Error("x")], "agg"),
+    b: () => new AggregateError([new Error("y")], "agg"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateError with different error counts",
+    a: () => new AggregateError([new Error("x")], "agg"),
+    b: () => new AggregateError([new Error("x"), new Error("x")], "agg"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateError vs plain Error with same message",
+    a: () => new AggregateError([], "x"),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "Error with non-enumerable own errors vs Error without",
+    a: () => Object.defineProperty(new Error("x"), "errors", { value: [1], enumerable: false, configurable: true }),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
 
   // Map and Set.
   {

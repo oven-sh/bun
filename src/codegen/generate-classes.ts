@@ -2051,13 +2051,26 @@ function generateRust(
             `    ${T}::${fastId}(this, global${args.length ? ", " + argFwd : ""})`,
           );
         }
-        thunk(
-          names.fn,
-          `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
-          passThis
-            ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
-            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
-        );
+        if (sharedThis) {
+          // `*mut T` + receiver-generic helper: the method takes `&self` or
+          // `this: ThisPtr<Self>` and inference picks (see `HostReceiver`).
+          thunk(
+            names.fn,
+            `(this: *mut ${T}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+            `    // SAFETY: C++ passes the wrapper's live \`m_ctx\`.\n    ` +
+              (passThis
+                ? `    unsafe { host_fn::host_fn_this_value_ptr(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v)) }`
+                : `    unsafe { host_fn::host_fn_this_ptr(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c)) }`),
+          );
+        } else {
+          thunk(
+            names.fn,
+            `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+            passThis
+              ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
+              : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+          );
+        }
       }
     }
   }

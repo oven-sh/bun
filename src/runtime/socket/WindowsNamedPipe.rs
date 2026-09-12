@@ -53,7 +53,7 @@ pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 pub struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
@@ -538,10 +538,8 @@ impl WindowsNamedPipe {
         let has_been_cleared = self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED
             || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
 
-        self.event_loop_timer.with_mut(|t| {
-            t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
-        });
+        self.event_loop_timer
+            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
         if has_been_cleared {
             return;
@@ -1032,7 +1030,7 @@ impl WindowsNamedPipe {
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(crate::timer::TimerRef::new(self, |p| &p.event_loop_timer));
         }
         self.current_timeout.set(ms);
 
@@ -1051,11 +1049,7 @@ impl WindowsNamedPipe {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        timer_all().insert(crate::timer::TimerRef::new(self, |p| &p.event_loop_timer));
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]

@@ -322,6 +322,8 @@ pub(crate) struct SharedConnection {
     early_out_armed_for: Cell<i64>,
 }
 
+bun_event_loop::impl_timer_owner!(SharedConnection; from_early_out_timer_ptr => early_out_timer);
+
 thread_local! {
     static SHARED: Cell<*mut SharedConnection> = const { Cell::new(ptr::null_mut()) };
 }
@@ -560,13 +562,10 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
-        unsafe {
-            (*state).timer.update(
-                core::ptr::addr_of!(self.early_out_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
+        // The timer slot is valid until `destroy`.
+        {
+            crate::jsc_hooks::timer_all().update(
+                crate::timer::TimerRef::new(self, |c| &c.early_out_timer),
                 &ElTimespec {
                     sec: next.sec,
                     nsec: next.nsec,
@@ -612,12 +611,8 @@ impl SharedConnection {
         if conn.early_out_timer.get().state == EventLoopTimerState::ACTIVE
             && VirtualMachine::get_or_null().is_some()
         {
-            // SAFETY: this thread's live RuntimeState owns the timer heap.
-            unsafe {
-                (*crate::jsc_hooks::runtime_state())
-                    .timer
-                    .remove(conn.early_out_timer.as_ptr())
-            };
+            crate::jsc_hooks::timer_all()
+                .remove(crate::timer::TimerRef::new(&*conn, |c| &c.early_out_timer));
         }
         // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
         unsafe { (*conn.file_poll.as_ptr()).deinit() };

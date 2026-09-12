@@ -27,10 +27,8 @@ pub(crate) use group_begin;
 /// Recover this thread's `timer::All` heap (jsc/runtime crate cycle: `vm.timer` is `()` in
 /// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
 #[inline]
-pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+pub(super) fn vm_timer() -> &'static crate::timer::All {
+    crate::jsc_hooks::timer_all()
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
@@ -982,14 +980,14 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                vm_timer().remove(&raw mut self.timer);
+                vm_timer().remove(crate::timer::TimerRef::from_mut(self, |t| &mut t.timer));
             }
             // `EventLoopTimer.next` uses the event-loop crate's local
             // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
             self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                vm_timer().insert(&raw mut self.timer);
+                vm_timer().insert(crate::timer::TimerRef::from_mut(self, |t| &mut t.timer));
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1359,7 +1357,7 @@ impl Drop for BunTest {
 
         if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            vm_timer().remove(&raw mut self.timer);
+            vm_timer().remove(crate::timer::TimerRef::from_mut(self, |t| &mut t.timer));
         }
 
         for entry in self.extra_execution_entries.drain(..) {

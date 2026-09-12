@@ -55,6 +55,22 @@ it("clearImmediate", async () => {
   await promise;
 });
 
+it("clearImmediate with a numeric or string id does not clear a timeout or interval (Node.js parity)", async () => {
+  const timeoutFired = Promise.withResolvers();
+  const intervalFired = Promise.withResolvers();
+  const t = setTimeout(() => timeoutFired.resolve(true), 1);
+  const i = setInterval(() => {
+    clearInterval(i);
+    intervalFired.resolve(true);
+  }, 1);
+  clearImmediate(+t);
+  clearImmediate(String(+t));
+  clearImmediate(+i);
+  clearImmediate(String(+i));
+  expect(await timeoutFired.promise).toBe(true);
+  expect(await intervalFired.promise).toBe(true);
+});
+
 it("setImmediate should not keep the process alive forever", async () => {
   let process = null;
   const success = async () => {

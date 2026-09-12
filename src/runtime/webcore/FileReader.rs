@@ -525,8 +525,7 @@ impl FileReader {
         }
     }
 
-    /// Drop the native sink. The stream stays locked to it, so nothing else will read the
-    /// stream: it leaves `readable` here, errored with the reader's `err`, else closed.
+    /// Drop the native sink and end the stream locked to it: errored with the reader's `err`, else closed.
     fn detach_sink(&self, err: Option<&streams::StreamError>) {
         self.sink_paused.set(false);
         if self.sink.replace(SinkHandle::None).is_some() {

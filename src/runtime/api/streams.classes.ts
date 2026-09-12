@@ -88,8 +88,7 @@ function source(name) {
     // (`producer` backref); `sinkOwner` roots the peer it pipes into
     // (`sink` backref). A chained transform needs both.
     // `closeAdapter`: the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
-    // `lockedStream`: the ReadableStream a native sink locked without a reader (`ReadableStream__lockNative` sets it).
-    // It has no reader or controller, so the source ends it: `NewSource::end_locked_stream`.
+    // `lockedStream`: the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors.
     values: ["pendingPromise", "closeAdapter", "owner", "sinkOwner", "lockedStream"],
   });
 }

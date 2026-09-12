@@ -1124,9 +1124,7 @@ impl<C: SourceContext> NewSource<C> {
         Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
     }
 
-    /// This source is done with the native sink a [`ReadableStream::lock_native`] wired to it.
-    /// The stream has no reader or controller, so only this call ends it: errored with the
-    /// producer's `err`, else closed. It stays locked. A no-op if no stream is locked.
+    /// A stream that [`ReadableStream::lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
     pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
         let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;

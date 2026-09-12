@@ -379,4 +379,28 @@ describe("randomUUIDv5", () => {
       expect(result).toBe(first);
     }
   });
+
+  // A boxed `String` namespace's `toString()` runs user JS; detaching the name
+  // buffer from there left the hash reading freed heap. With namespace coerced
+  // before the name buffer is snapshotted, the name is seen as detached (empty).
+  test("coerces namespace before snapshotting the name buffer", () => {
+    const size = 1 << 16;
+    const keep: Uint8Array[] = [];
+    const name = Buffer.from(new ArrayBuffer(size));
+    name.fill(0x41);
+    const wantRecycled = Bun.randomUUIDv5(Buffer.alloc(size, 0x5a), dnsNamespace);
+    const wantEmpty = Bun.randomUUIDv5(new Uint8Array(0), dnsNamespace);
+    const evilNs = Object.assign(new String(dnsNamespace), {
+      toString() {
+        name.buffer.transfer(0);
+        Bun.gc(true);
+        for (let i = 0; i < 96; i++) keep.push(Buffer.alloc(size, 0x5a));
+        Bun.gc(true);
+        return dnsNamespace;
+      },
+    });
+    const got = Bun.randomUUIDv5(name, evilNs as any);
+    expect({ got, detached: name.buffer.detached }).toEqual({ got: wantEmpty, detached: true });
+    expect(got).not.toBe(wantRecycled);
+  });
 });

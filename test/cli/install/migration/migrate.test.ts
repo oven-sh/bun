@@ -109,6 +109,65 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/38668
+test.concurrent("migrate npm lockfile with missing `resolved` when scope registry has no trailing slash", async () => {
+  using dir = tempDir("migrate-scope-no-slash", {
+    "package.json": JSON.stringify({
+      name: "repro",
+      version: "1.0.0",
+      dependencies: {
+        "@myscope/a": "1.0.0",
+        "@myscope/b": "2.0.0",
+      },
+    }),
+    "bunfig.toml": `
+[install.scopes]
+"@myscope" = { url = "https://example-registry.invalid" }
+`,
+    "package-lock.json": JSON.stringify({
+      name: "repro",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "repro",
+          version: "1.0.0",
+          dependencies: {
+            "@myscope/a": "1.0.0",
+            "@myscope/b": "2.0.0",
+          },
+        },
+        // without `integrity` the malformed URL failed the whole migration
+        "node_modules/@myscope/a": { version: "1.0.0" },
+        // with `integrity` the malformed URL was written into bun.lock
+        "node_modules/@myscope/b": {
+          version: "2.0.0",
+          integrity: "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
+        },
+      },
+    }),
+  });
+
+  // `bun pm migrate` never touches the network, so the unresolvable registry host is fine
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "migrate"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("InvalidNPMLockfile");
+  expect(exitCode).toBe(0);
+
+  const lock = await Bun.file(join(String(dir), "bun.lock")).text();
+  expect(lock).toContain("https://example-registry.invalid/@myscope/a/-/a-1.0.0.tgz");
+  expect(lock).toContain("https://example-registry.invalid/@myscope/b/-/b-2.0.0.tgz");
+  expect(lock).not.toContain("invalid@myscope");
+});
+
 test("npm lockfile with relative workspaces", async () => {
   const testDir = tmpdirSync();
   fs.cpSync(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });

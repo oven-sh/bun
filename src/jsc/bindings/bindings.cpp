@@ -2859,7 +2859,7 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     auto clientData = WebCore::clientData(vm);
 
     result->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SystemError"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    result->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, String("ERR_SYSTEM_ERROR"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, String("ERR_SYSTEM_ERROR"_s)), 0);
 
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
 

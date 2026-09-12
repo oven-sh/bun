@@ -382,6 +382,24 @@ it("invalid utf-8 at end of stream can sometimes produce more than one replaceme
   expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
 });
 
+it("write() rejects a non-buffer with Node's ERR_INVALID_ARG_TYPE message", () => {
+  // Node passes ['Buffer', 'TypedArray', 'DataView'], which renders as "an instance of".
+  const cases = [
+    [123, "type number (123)"],
+    [{}, "an instance of Object"],
+    [null, "null"],
+  ];
+  for (const [input, received] of cases) {
+    expect(() => new RealStringDecoder("utf8").write(input)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "buf" argument must be an instance of Buffer, TypedArray, or DataView. Received ${received}`,
+      }),
+    );
+  }
+});
+
 // When the input buffer is too large to be represented as a JS string,
 // write()/end() should throw ERR_STRING_TOO_LONG instead of segfaulting.
 // Previously, Bun__encoding__toString would throw and return an empty JSValue,

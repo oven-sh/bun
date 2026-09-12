@@ -29,6 +29,8 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellman, (JSC::JSGlobalObject * lexicalGlobal
     return JSValue::encode(result);
 }
 
+static constexpr ASCIILiteral dhKeyTypes[] = { "number"_s, "string"_s, "ArrayBuffer"_s, "Buffer"_s, "TypedArray"_s, "DataView"_s };
+
 JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -37,7 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSValue sizeOrKey = callFrame->argument(0);
 
     if (!sizeOrKey.isNumber() && !sizeOrKey.isString() && !isArrayBufferOrView(sizeOrKey)) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "sizeOrKey"_s, "number, string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, sizeOrKey);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "sizeOrKey"_s, dhKeyTypes, sizeOrKey);
     }
 
     if (sizeOrKey.isNumber()) {
@@ -80,7 +82,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         Bun::V::validateInt32(scope, globalObject, generatorValue, "generator"_s, jsUndefined(), jsUndefined(), &generatorNumber);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!generatorValue.isString() && !isArrayBufferOrView(generatorValue)) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "generator"_s, "number, string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, generatorValue);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "generator"_s, dhKeyTypes, generatorValue);
     }
 
     ncrypto::DHPointer dh;

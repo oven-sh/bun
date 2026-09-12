@@ -361,6 +361,16 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
+        /// `abs_buf_checked` with host-native (`platform::Auto`) absolute-path semantics.
+        pub fn abs_buf_checked_native<'b>(
+            &self,
+            parts: &[&[u8]],
+            buf: &'b mut [u8],
+        ) -> Option<&'b [u8]> {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            join_abs_string_buf_checked::<platform::Auto>(self.top_level_dir, buf, parts)
+        }
+
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};

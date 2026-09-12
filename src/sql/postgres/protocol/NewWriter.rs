@@ -7,6 +7,8 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
+    /// Discard every byte written at or after `offset`.
+    fn truncate(self, offset: usize);
 }
 
 #[derive(Copy, Clone)]
@@ -58,6 +60,19 @@ impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
+    }
+
+    /// Run `f`. If it fails, discard every byte it wrote.
+    pub fn atomically(
+        self,
+        f: impl FnOnce(Self) -> Result<(), AnyPostgresError>,
+    ) -> Result<(), AnyPostgresError> {
+        let start = self.offset();
+        let result = f(self);
+        if result.is_err() {
+            C::truncate(self.wrapped, start);
+        }
+        result
     }
 
     pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {

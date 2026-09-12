@@ -2123,6 +2123,76 @@ describe.concurrent("pauseOnConnect", () => {
   });
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
+describe.concurrent("typeOfService option", () => {
+  it("is validated by the Socket constructor", () => {
+    const codeFor = (typeOfService: unknown) => {
+      try {
+        new Socket({ typeOfService } as import("node:net").SocketConstructorOpts);
+        return "accepted";
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code;
+      }
+    };
+    expect({
+      0: codeFor(0),
+      255: codeFor(255),
+      undefined: codeFor(undefined),
+      256: codeFor(256),
+      "-1": codeFor(-1),
+      1.5: codeFor(1.5),
+      NaN: codeFor(NaN),
+      string: codeFor("16"),
+      null: codeFor(null),
+    }).toEqual({
+      0: "accepted",
+      255: "accepted",
+      undefined: "accepted",
+      256: "ERR_OUT_OF_RANGE",
+      "-1": "ERR_OUT_OF_RANGE",
+      1.5: "ERR_OUT_OF_RANGE",
+      NaN: "ERR_OUT_OF_RANGE",
+      string: "ERR_INVALID_ARG_TYPE",
+      null: "ERR_INVALID_ARG_TYPE",
+    });
+  });
+
+  it("is what getTypeOfService() returns before the socket connects", () => {
+    expect({
+      withOption: new Socket({ typeOfService: 0x10 }).getTypeOfService(),
+      withoutOption: new Socket().getTypeOfService(),
+    }).toEqual({ withOption: 0x10, withoutOption: 0 });
+  });
+
+  // node's TLSSocket builds its own net.Socket options, and typeOfService is not one of them:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L600
+  it("is neither validated nor kept by a TLSSocket", () => {
+    const tosOf = (typeOfService: number) =>
+      new TLSSocket(undefined, { typeOfService } as import("node:tls").TLSSocketOptions).getTypeOfService();
+    expect({ invalid: tosOf(999), valid: tosOf(0x10) }).toEqual({ invalid: 0, valid: 0 });
+  });
+
+  // Windows often ignores IP_TOS; node's test-net-socket-tos.js does not check the kernel-side value there either.
+  it.skipIf(isWindows)("is applied to the connection", async () => {
+    const server = createServer(socket => socket.on("error", () => {}).resume());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const viaConnect = connect({ port, host: "127.0.0.1", typeOfService: 0x10 });
+      const viaSocket = new Socket({ typeOfService: 0x10 }).connect(port, "127.0.0.1");
+      const plain = connect(port, "127.0.0.1");
+      await Promise.all([once(viaConnect, "connect"), once(viaSocket, "connect"), once(plain, "connect")]);
+      // The kernel may rewrite the two ECN bits; the upper six (DSCP) are what was asked for.
+      const dscp = (socket: Socket) => socket.getTypeOfService() & 0xfc;
+      const got = { viaConnect: dscp(viaConnect), viaSocket: dscp(viaSocket), plain: dscp(plain) };
+      for (const socket of [viaConnect, viaSocket, plain]) socket.destroy();
+      expect(got).toEqual({ viaConnect: 0x10, viaSocket: 0x10, plain: 0 });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("net.Server accepted-socket buffering", () => {
   it("delivers bytes buffered before a 'readable' listener attaches, past peer FIN", async () => {
     // read(0) instead of resume(): bytes that arrive before the connection

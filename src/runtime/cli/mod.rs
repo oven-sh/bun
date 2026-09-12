@@ -1808,13 +1808,15 @@ pub mod command {
             }
         }
 
-        if print_help
-            // "bun create --" / "bun create -abc --"
-            || positional_i == 0
-            || positionals[1].is_empty()
-        {
+        if print_help {
             tag_print_help(Tag::CreateCommand, true);
             Global::exit(0);
+        }
+
+        // "bun create --" / "bun create -abc --"
+        if positional_i == 0 || positionals[1].is_empty() {
+            tag_print_help(Tag::CreateCommand, true);
+            Global::exit(1);
         }
 
         let template_name = positionals[1];

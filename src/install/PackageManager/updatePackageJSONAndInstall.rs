@@ -111,14 +111,14 @@ pub fn update_package_json_and_install_with_manager(
                 Output::flush();
                 CommandLineArguments::print_help(Subcommand::Add);
 
-                Global::exit(0);
+                Global::exit(1);
             }
             Subcommand::Remove => {
                 Output::err_generic("no package specified to remove", ());
                 Output::flush();
                 CommandLineArguments::print_help(Subcommand::Remove);
 
-                Global::exit(0);
+                Global::exit(1);
             }
             Subcommand::Update => {}
             _ => {}

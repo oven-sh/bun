@@ -290,12 +290,21 @@ impl CreateCommand {
             positionals[1]
         };
 
-        let destination =
-            filesystem
-                .dirname_store
-                .append_slice(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+        let destination = {
+            let mut destination_buf = bun_paths::path_buffer_pool::get();
+            let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Loose,
+            >(
+                filesystem.top_level_dir, &mut *destination_buf, &[dirname]
+            ) else {
+                Output::err_generic(
+                    "destination path too long: {}",
+                    format_args!("{}", bun_core::fmt::quote(dirname)),
+                );
+                Global::crash();
+            };
+            filesystem.dirname_store.append_slice(joined)?
+        };
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
@@ -1302,12 +1311,18 @@ impl CreateCommand {
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        // One byte stays free for the NUL written after each join.
+        let join_buf_len = home_dir_buf.len() - 1;
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
             'outer: {
                 let parts = [filesystem.top_level_dir, positional];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let Some(outdir_path) =
+                    filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                else {
+                    break 'outer;
+                };
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
@@ -1340,7 +1355,11 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                         let parts = [home_dir, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                        let Some(outdir_path) =
+                            filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        else {
+                            break 'outer;
+                        };
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -1359,7 +1378,11 @@ impl CreateCommand {
 
                 'outer: {
                     let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
-                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                    let Some(outdir_path) =
+                        filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                    else {
+                        break 'outer;
+                    };
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
@@ -1378,7 +1401,11 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                        let Some(outdir_path) =
+                            filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        else {
+                            break 'outer;
+                        };
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above

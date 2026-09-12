@@ -1717,6 +1717,107 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // border-width / border-style / border-color set all four physical sides, so a logical longhand for
+    // the same component declared earlier in the block is overridden in every writing mode and must not
+    // be emitted. For targets that compile logical properties away it used to come out as :lang() rules
+    // after the block, where it won over the shorthand.
+    describe("4-side shorthand after a logical longhand in the same block", () => {
+      const rtlLangs =
+        ":lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)";
+      // What safari 8 targets get for an inline side: prefixed and unprefixed rules for ltr, then for rtl.
+      const directionRules = (ltr: string, rtl: string) => `
+        .a:not(:-webkit-any(${rtlLangs})) { ${ltr} }
+        .a:not(:is(${rtlLangs})) { ${ltr} }
+        .a:-webkit-any(${rtlLangs}) { ${rtl} }
+        .a:is(${rtlLangs}) { ${rtl} }
+      `;
+
+      for (const [logical, shorthand] of [
+        ["border-inline-start-width:3px", "border-width:0"],
+        ["border-inline-end-width:3px", "border-width:0"],
+        ["border-inline-width:3px", "border-width:0"],
+        ["border-block-start-width:3px", "border-width:0"],
+        ["border-block-end-width:3px", "border-width:0"],
+        ["border-inline-start-style:dotted", "border-style:solid"],
+        ["border-block-end-style:dotted", "border-style:solid"],
+        ["border-inline-start-color:red", "border-color:#00f"],
+        ["border-inline-color:red", "border-color:#00f"],
+        ["border-block-end-color:red", "border-color:#00f"],
+      ]) {
+        minify_test(`.a{${logical};${shorthand}}`, `.a{${shorthand}}`);
+        prefix_test(`.a{${logical};${shorthand}}`, `.a{${shorthand};}`, { safari: 8 << 16 });
+      }
+
+      // Only the overridden component goes away; the rest of the logical value is still live.
+      minify_test(
+        ".a{border-inline-start:3px solid red;border-width:0}",
+        ".a{border-inline-start-style:solid;border-inline-start-color:red;border-width:0}",
+      );
+      prefix_test(
+        ".a{border-inline-start:3px solid red;border-width:0}",
+        `
+        .a { border-width: 0; }
+        ${directionRules(
+          "border-left-style: solid; border-left-color: red;",
+          "border-right-style: solid; border-right-color: red;",
+        )}
+        `,
+        { safari: 8 << 16 },
+      );
+
+      // A different component is not touched.
+      minify_test(
+        ".a{border-inline-start-width:3px;border-color:red}",
+        ".a{border-inline-start-width:3px;border-color:red}",
+      );
+
+      // A target that rejects the shorthand's value (no container query units in safari 14, no color() in
+      // chrome 99) still applies the longhand, so it stays as a fallback, the same as for a physical one.
+      prefix_test(
+        ".a{border-inline-start-width:3px;border-width:max(2cqw,22px)}",
+        ".a{border-inline-start-width:3px;border-width:max(2cqw,22px);}",
+        { safari: 14 << 16 },
+      );
+      prefix_test(".a{border-inline-start-width:3px;border-width:max(2cqw,22px)}", ".a{border-width:max(2cqw,22px);}", {
+        safari: 16 << 16,
+      });
+      prefix_test(
+        ".a{border-inline-start-color:red;border-color:color(display-p3 0 .5 1)}",
+        ".a{border-inline-start-color:red;border-color:#0085f8;border-color:color(display-p3 0 .5 1);}",
+        { chrome: 99 << 16 },
+      );
+      prefix_test(
+        ".a{border-inline-start-color:red;border-color:color(display-p3 0 .5 1)}",
+        ".a{border-color:color(display-p3 0 .5 1);}",
+        { safari: 16 << 16 },
+      );
+
+      // The other order overrides the shorthand and is kept.
+      minify_test(
+        ".a{border-width:0;border-inline-start-width:3px}",
+        ".a{border-width:0;border-inline-start-width:3px}",
+      );
+      prefix_test(
+        ".a{border-width:0;border-inline-start-width:3px}",
+        `
+        .a { border-width: 0; }
+        ${directionRules("border-left-width: 3px;", "border-right-width: 3px;")}
+        `,
+        { safari: 8 << 16 },
+      );
+
+      // !important declarations go through their own handler: a normal shorthand does not override an
+      // important longhand, an important shorthand does.
+      minify_test(
+        ".a{border-inline-start-width:3px!important;border-width:0}",
+        ".a{border-width:0;border-inline-start-width:3px!important}",
+      );
+      minify_test(
+        ".a{border-inline-start-width:3px!important;border-width:0!important}",
+        ".a{border-width:0!important}",
+      );
+    });
   });
 
   describe("box-shadow", () => {

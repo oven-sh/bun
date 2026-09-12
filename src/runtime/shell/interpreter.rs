@@ -1348,10 +1348,7 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
-    /// Node `id` threw a JS exception and holds nothing in flight: kill the
-    /// subprocesses, report `id` as finished so the tree winds down through
-    /// `child_done` into `finish`, then reject the promise. The rejection runs
-    /// JS, so it comes last: user code sees the kills sent and the tree settled.
+    /// Node `id` threw and holds nothing in flight: kill the subprocesses, wind the tree down, then reject (the rejection runs JS, so it comes last).
     pub(crate) fn fail(&self, id: NodeId) -> Yield {
         let rejection = self.take_failure();
         if self.failed() {
@@ -1383,8 +1380,7 @@ impl Interpreter {
         y
     }
 
-    /// Take the pending JS exception and mark the script failed. Returns the
-    /// cached `reject` and the error when the promise still has to settle.
+    /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
     fn take_failure(&self) -> Option<(crate::jsc::JSValue, crate::jsc::JSValue)> {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;

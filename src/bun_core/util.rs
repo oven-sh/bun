@@ -5329,61 +5329,65 @@ pub mod form_data {
         }
     }
 
-    /// `FormData.getBoundary` — borrow the `boundary=` value out of a
-    /// `Content-Type` header. Returns `None` on malformed quoting.
-    ///
-    /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
-    /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
-    /// `boundary=` substring inside another parameter's value is not picked up
-    /// by an unanchored substring search. A `;` inside a quoted parameter
-    /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
-    /// delimit parameters.
-    pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
-        let mut rest = content_type;
+    /// `FormData.getBoundary` — the `boundary` parameter of a `Content-Type`
+    /// header, read per WHATWG "parse a MIME type". `None` when there is no
+    /// boundary or it is empty.
+    pub fn get_boundary(content_type: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+        use std::borrow::Cow;
+        const HTTP_WHITESPACE: &[u8] = b" \t\r\n";
+        // `rest` always starts right after a `;`.
+        let mut rest =
+            &content_type[crate::strings::index_of_char_usize(content_type, b';')? + 1..];
         loop {
-            let semi = index_of_unquoted_semicolon(rest)?;
-            rest = &rest[semi + 1..];
-            let param = crate::strings_impl::trim_left(rest, b" \t");
+            rest = crate::strings_impl::trim_left(rest, HTTP_WHITESPACE);
+            let name_end = crate::strings::index_of_any(rest, b";=")?;
             // RFC 2045 §5.1: parameter attribute names are case-insensitive;
-            // the `=` value is matched byte-exact (the boundary delimiter in
-            // the body must match it verbatim).
-            let Some(eq) = crate::strings::index_of_char_usize(param, b'=') else {
-                continue;
-            };
-            if !param[..eq].eq_ignore_ascii_case(b"boundary") {
+            // the value is matched byte-exact against the body's delimiters.
+            let is_boundary = rest[..name_end].eq_ignore_ascii_case(b"boundary");
+            if rest[name_end] == b';' {
+                rest = &rest[name_end + 1..];
                 continue;
             }
-            let begin = &param[eq + 1..];
-            if begin.is_empty() {
-                return None;
-            }
-            let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
-            if begin[0] == b'"' {
-                if end > 1 && begin[end - 1] == b'"' {
-                    return Some(&begin[1..end - 1]);
+            rest = &rest[name_end + 1..];
+            if rest.first() == Some(&b'"') {
+                let mut value = Vec::new();
+                let mut i = 1;
+                while i < rest.len() {
+                    match rest[i] {
+                        b'"' => break,
+                        b'\\' => {
+                            i += 1;
+                            if i >= rest.len() {
+                                value.push(b'\\');
+                                break;
+                            }
+                            value.push(rest[i]);
+                        }
+                        c => value.push(c),
+                    }
+                    i += 1;
                 }
-                // Opening quote with no matching closing quote — malformed.
-                return None;
+                if is_boundary && value.iter().all(is_quoted_string_token_byte) {
+                    return (!value.is_empty()).then_some(Cow::Owned(value));
+                }
+                rest = &rest[i.min(rest.len())..];
+            } else {
+                let end = crate::strings::index_of_char_usize(rest, b';').unwrap_or(rest.len());
+                let value = crate::strings_impl::trim_right(&rest[..end], HTTP_WHITESPACE);
+                // An empty unquoted value leaves the parameter unset.
+                if is_boundary && !value.is_empty() && value.iter().all(is_quoted_string_token_byte)
+                {
+                    return Some(Cow::Borrowed(value));
+                }
+                rest = &rest[end..];
             }
-            return Some(&begin[..end]);
+            rest = &rest[crate::strings::index_of_char_usize(rest, b';')? + 1..];
         }
     }
 
-    /// Index of the next `;` in `s` that is not inside an RFC 7230
-    /// quoted-string (`\` escapes the following byte inside quotes).
-    fn index_of_unquoted_semicolon(s: &[u8]) -> Option<usize> {
-        let mut in_quotes = false;
-        let mut i = 0;
-        while i < s.len() {
-            match s[i] {
-                b'"' => in_quotes = !in_quotes,
-                b'\\' if in_quotes => i += 1,
-                b';' if !in_quotes => return Some(i),
-                _ => {}
-            }
-            i += 1;
-        }
-        None
+    /// WHATWG "HTTP quoted-string token code point": HTAB, 0x20..=0x7E, 0x80..=0xFF.
+    fn is_quoted_string_token_byte(b: &u8) -> bool {
+        matches!(b, b'\t' | 0x20..=0x7E | 0x80..=0xFF)
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.

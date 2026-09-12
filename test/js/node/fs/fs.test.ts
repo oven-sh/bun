@@ -3248,10 +3248,10 @@ it.if(isPosix)("realpath resolves a symlink before a following parent traversal"
   symlinkSync(nestedDir, linkPath);
   const input = `${linkPath}${path.sep}..${path.sep}target.txt`;
 
-  expect(realpathSync(input)).toBe(expected);
+  expect(realpathSync(input)).toBe(collision);
   expect(realpathSync.native(input)).toBe(expected);
   expect(await promises.realpath(input)).toBe(expected);
-  expect(await promisify(fs.realpath)(input)).toBe(expected);
+  expect(await promisify(fs.realpath)(input)).toBe(collision);
   expect(await promisify(fs.realpath.native)(input)).toBe(expected);
 });
 

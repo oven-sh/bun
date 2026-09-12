@@ -218,6 +218,8 @@ pub use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
+#[cfg(not(windows))]
+use bun_resolver::fs::FileSystem;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -7384,23 +7386,42 @@ impl NodeFS {
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
             let path_slice = args.path.slice();
-            if path_slice.len() >= inbuf.len() {
-                return Err(sys::Error {
-                    errno: E::ENAMETOOLONG as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
-            }
-            // Let realpath walk the original components without opening and
-            // closing the target, which would release process-owned POSIX locks.
-            let path = args.path.slice_z(inbuf);
+            let path = if variant == RealpathVariant::Emulated {
+                debug_assert!(
+                    bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed)
+                );
+                // SAFETY: instance() returns the process-lifetime resolver singleton.
+                let fs = FileSystem::get();
+                let parts = [fs.top_level_dir, path_slice];
+                let inbuf_len = inbuf.len();
+                let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::realpath,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
+                };
+                let path_len = joined.len();
+                inbuf[path_len] = 0;
+                ZStr::from_buf(&inbuf[..], path_len)
+            } else {
+                if path_slice.len() >= inbuf.len() {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::realpath,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
+                }
+                args.path.slice_z(inbuf)
+            };
+            // Resolve without opening and closing the target, which would
+            // release process-owned POSIX locks.
             let buf = match Syscall::realpath(path, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };
-
-            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

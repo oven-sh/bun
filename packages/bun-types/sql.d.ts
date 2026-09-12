@@ -189,6 +189,14 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
+       * Return every integer as a `BigInt`. The same as {@link safeIntegers},
+       * under the option name the other adapters take. An explicit
+       * `safeIntegers` takes precedence.
+       * @default false
+       */
+      bigint?: boolean | undefined;
+
+      /**
        * Called when a connection attempt completes.
        * Receives an `Error` on failure, or `null` on success.
        */
@@ -705,9 +713,8 @@ declare module "bun" {
     end(options?: { timeout?: number }): Promise<void>;
 
     /**
-     * Flushes any pending operations
-     *
-     * @throws {Error} If the adapter does not support flushing (e.g., SQLite)
+     * Flushes any pending operations. A no-op on SQLite, where queries run
+     * synchronously and nothing is buffered.
      *
      * @example
      * ```ts

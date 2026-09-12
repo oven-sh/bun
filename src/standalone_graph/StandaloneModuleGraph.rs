@@ -644,6 +644,56 @@ mod elf {
             hi - lo
         );
     }
+
+    /// Whether `/proc/self/maps` shows `[lo, hi)` inside mappings that have a
+    /// backing file. The kernel maps the payload from the executable, but an
+    /// executable packer such as UPX unpacks the segments into anonymous
+    /// memory instead, and `MADV_DONTNEED` on an anonymous private page makes
+    /// the next read return zeros rather than the bytes the file holds
+    /// (#42509). A range that cannot be read or parsed counts as not backed.
+    pub(super) fn is_file_backed(lo: usize, hi: usize) -> bool {
+        let Ok(maps) = bun_sys::File::open(
+            bun_core::zstr!("/proc/self/maps"),
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        )
+        .and_then(|file| file.read_to_end_small()) else {
+            return false;
+        };
+        // One mapping per line, sorted by address:
+        // `start-end perms offset dev inode [path]`. Anonymous mappings have
+        // inode 0, whatever their path field says.
+        let mut next = lo;
+        for line in bun_core::strings::split(&maps, b"\n") {
+            let mut fields = bun_core::strings::tokenize(line, b" ");
+            let Some((start, end)) = fields
+                .next()
+                .and_then(|range| bun_core::strings::split_once_char(range, b'-'))
+            else {
+                continue;
+            };
+            let (Ok(start), Ok(end)) = (
+                bun_core::fmt::parse_int::<usize>(start, 16),
+                bun_core::fmt::parse_int::<usize>(end, 16),
+            ) else {
+                continue;
+            };
+            if end <= next {
+                continue;
+            }
+            if start > next {
+                return false;
+            }
+            if fields.nth(3).is_none_or(|inode| inode == b"0") {
+                return false;
+            }
+            next = end;
+            if next >= hi {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub struct File {
@@ -2972,6 +3022,12 @@ impl StandaloneModuleGraph {
     /// every first call into a page fault. Only applies when running as a
     /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
     /// skips the hint.
+    ///
+    /// On Linux the hint is skipped when the pages are not file-backed: an
+    /// executable packer (UPX) unpacks the payload into anonymous memory,
+    /// where `MADV_DONTNEED` zero-fills on the next read. JSC parses function
+    /// bodies lazily out of these pages, so dropping them would turn the
+    /// first call after startup into `SyntaxError: Invalid character: '\0'`.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn hint_source_pages_dont_need() {
         let Some(graph) = Self::get_ref() else {
@@ -2989,6 +3045,15 @@ impl StandaloneModuleGraph {
             );
             return;
         };
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !elf::is_file_backed(start, end) {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: source text is not file-backed, keeping it"
+            );
+            return;
+        }
 
         // This is a best-effort hint, so call libc madvise directly and
         // just log on failure rather than treating errors as fatal.

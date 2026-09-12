@@ -320,7 +320,6 @@ impl ReadableStream {
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
-        use webcore::SinkHandle;
 
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
@@ -332,7 +331,7 @@ impl ReadableStream {
                 byte_stream.signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
-                    byte_stream.sink.set(SinkHandle::None);
+                    byte_stream.detach_sink(Some(&err));
                     return NativeWireResult::EndedInline(Some(err));
                 }
 
@@ -347,14 +346,14 @@ impl ReadableStream {
                     match sink.write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
-                            byte_stream.sink.set(SinkHandle::None);
+                            byte_stream.detach_sink(None);
                             return NativeWireResult::EndedInline(None);
                         }
                         _ => {}
                     }
                 }
                 if had_last {
-                    byte_stream.sink.set(SinkHandle::None);
+                    byte_stream.detach_sink(None);
                     return NativeWireResult::EndedInline(None);
                 }
                 // Wake the producer after the older bytes are in the sink;
@@ -373,11 +372,15 @@ impl ReadableStream {
                         use bun_sys_jsc::SystemErrorJsc;
                         let err_js = e.to_system_error().to_error_instance(global);
                         err_js.ensure_still_alive();
-                        return NativeWireResult::EndedInline(Some(StreamError::JSValue(
-                            jsc::strong::Optional::create(err_js, global),
-                        )));
+                        let err =
+                            StreamError::JSValue(jsc::strong::Optional::create(err_js, global));
+                        self.lock_native(global);
+                        file_reader.parent_const().end_locked_stream(Some(&err));
+                        return NativeWireResult::EndedInline(Some(err));
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
+                        self.lock_native(global);
+                        file_reader.parent_const().end_locked_stream(None);
                         let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
                         return NativeWireResult::EndedInline(None);
                     }
@@ -1119,6 +1122,22 @@ impl<C: SourceContext> NewSource<C> {
             JSValue::UNDEFINED,
         );
         Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
+    }
+
+    /// This source is done with the native sink a [`ReadableStream::lock_native`] wired to it.
+    /// The stream has no reader or controller, so only this call ends it: errored with the
+    /// producer's `err`, else closed. It stays locked. A no-op if no stream is locked.
+    pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
+            return;
+        };
+        let global_this = self.global_this();
+        let reason = err.map_or(JSValue::ZERO, |err| err.to_js(global_this));
+        crate::dispatch::fold(bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
+            this_jsvalue,
+            global_this,
+            reason,
+        ));
     }
 
     pub fn increment_count(&mut self) {

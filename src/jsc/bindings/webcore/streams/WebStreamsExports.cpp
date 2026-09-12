@@ -199,16 +199,49 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     stream->m_consumedAsBody = true;
 }
 
+// The `lockedStream` slot (streams.classes.ts) of the two native sources a sink attaches to directly.
+static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
+{
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
+        return &bytesSource->m_lockedStream;
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
+        return &fileSource->m_lockedStream;
+    return nullptr;
+}
+
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
 // Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
 // disturbed checks behave as they do after readStreamIntoSink acquires a reader.
-extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+// Nothing but its source can end this stream: Bun__NativeStreamSource__endLockedStream finds it in `lockedStream`.
+extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
     stream->m_disturbed = true;
     stream->m_lockedWithoutReader = true;
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return;
+    if (auto* slot = lockedStreamSlot(handle.asCell()))
+        slot->set(JSC::getVM(globalObject), handle.asCell(), stream);
+}
+
+// The source of a stream that ReadableStream__lockNative locked dropped its sink. The stream errors with `reason`,
+// the source's own failure. An empty `reason` closes it. It stays locked: the sink took its bytes.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__NativeStreamSource__endLockedStream(JSC::EncodedJSValue encodedHandle, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto* slot = lockedStreamSlot(JSValue::decode(encodedHandle).asCell());
+    if (!slot || !slot->get())
+        return;
+    auto* stream = uncheckedDowncast<JSReadableStream>(slot->get());
+    slot->clear();
+
+    JSValue error = JSValue::decode(reason);
+    if (error.isEmpty())
+        readableStreamCloseIfPossible(globalObject, stream);
+    else
+        Bun::WebStreams::webStreamControllerError(globalObject, stream, error);
 }
 
 extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)

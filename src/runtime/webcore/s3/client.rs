@@ -1005,6 +1005,7 @@ pub(crate) fn upload_stream(
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
+                byte_stream.detach_sink(Some(&err));
                 let err_js = err.to_js(global_this);
                 err_js.ensure_still_alive();
                 ctx.handle_reject_stream(err_js);
@@ -1025,7 +1026,7 @@ pub(crate) fn upload_stream(
                     }
                     crate::webcore::streams::Writable::Done
                     | crate::webcore::streams::Writable::Err(_) => {
-                        byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                        byte_stream.detach_sink(None);
                         sink.source.clear();
                         if !sink.ended {
                             let _ = sink.end(None);
@@ -1037,7 +1038,7 @@ pub(crate) fn upload_stream(
                 }
             }
             if had_last {
-                byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                byte_stream.detach_sink(None);
                 sink.source.clear();
                 if !sink.ended {
                     let _ = sink.end(None);

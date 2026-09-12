@@ -303,9 +303,17 @@ impl ByteStream {
         })
     }
 
-    pub(crate) fn unpipe_without_deref(&self) {
-        self.sink.set(SinkHandle::None);
+    /// Drop the native sink. The stream stays locked to it, so nothing else will read the
+    /// stream: it leaves `readable` here, errored with the producer's `err`, else closed.
+    pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) {
         self.sink_paused.set(false);
+        if self.sink.replace(SinkHandle::None).is_some() {
+            self.parent_const().end_locked_stream(err);
+        }
+    }
+
+    pub(crate) fn unpipe_without_deref(&self) {
+        self.detach_sink(None);
     }
 
     /// The sink is gone before the stream ended (its peer went away). The stream stays
@@ -350,12 +358,12 @@ impl ByteStream {
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(None);
                     return;
                 }
@@ -375,15 +383,14 @@ impl ByteStream {
         }
 
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
-            self.sink.set(SinkHandle::None);
+            self.detach_sink(None);
             sink.end(None);
         }
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
     pub fn cancel_from_sink(&self, _err: Option<SysError>) {
-        self.sink.set(SinkHandle::None);
-        self.sink_paused.set(false);
+        self.detach_sink(None);
         if self.done.get() {
             return;
         }
@@ -439,8 +446,7 @@ impl ByteStream {
         if sink.is_some() {
             // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
-                self.sink.set(SinkHandle::None);
-                self.sink_paused.set(false);
+                self.detach_sink(Some(&err));
                 sink.end(Some(err));
                 return;
             }
@@ -458,14 +464,12 @@ impl ByteStream {
                     self.sink_paused.set(true);
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
+                    self.detach_sink(None);
                     sink.end(None);
                     return;
                 }
@@ -475,7 +479,7 @@ impl ByteStream {
             }
 
             if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
-                self.sink.set(SinkHandle::None);
+                self.detach_sink(None);
                 sink.end(None);
             }
             return;
@@ -796,9 +800,9 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.deinit());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
-        let sink = self.sink.replace(SinkHandle::None);
+        let sink = *self.sink.get();
         if sink.is_some() {
-            self.sink_paused.set(false);
+            self.detach_sink(None);
             sink.end(Some(streams::StreamError::AbortReason(
                 jsc::CommonAbortReason::UserAbort,
             )));

@@ -5762,19 +5762,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     }
 }
 
-/// `stat.{st_mtime, st_mtime_nsec}` → JS epoch ms. `bun_sys::Stat` is
-/// `libc::stat` on POSIX (fields) and `uv_stat_t` on Windows (`mtim` timespec);
-/// cfg-split here so the call sites stay shared.
-#[inline]
-fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    #[cfg(not(windows))]
-    {
-        jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize)
-    }
-    #[cfg(windows)]
-    {
-        jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
-    }
+/// `stat` mtime → JS epoch ms, widened the same way as `fs.Stats.mtimeMs`.
+pub(crate) fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
+    let (sec, nsec) = crate::node::stat::timespec_parts(bun_sys::stat_mtime(stat));
+    jsc::to_js_time(sec as isize, nsec as isize)
 }
 
 /// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an

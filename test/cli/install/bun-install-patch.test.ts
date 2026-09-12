@@ -1156,16 +1156,34 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 +hello world
 `;
 
-  // A package that patches its own `no-deps` dependency.
+  // A package that patches its own `no-deps` dependency. Pretty-printed so the
+  // `patchedDependencies` key is on line 7 of the file. `rest` is appended
+  // after it and does not move it.
+  const patchingDepPackageJson = (rest: Record<string, unknown> = {}) =>
+    JSON.stringify(
+      {
+        name: "patching-dep",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+        ...rest,
+      },
+      null,
+      2,
+    );
   const patchingDep = {
-    "package.json": JSON.stringify({
-      name: "patching-dep",
-      version: "1.0.0",
-      dependencies: { "no-deps": "1.0.0" },
-      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
-    }),
+    "package.json": patchingDepPackageJson(),
     patches: { "no-deps@1.0.0.patch": noDepsPatch },
   };
+
+  // The location each "patchedDependencies is ignored" warning points at,
+  // relative to the workspace root.
+  const ignoredWarnings = (err: string) =>
+    [
+      ...err.matchAll(
+        /^warn: "patchedDependencies" is ignored in a workspace package\. Move it to the root package\.json\r?\n\s+at .*?[\\/](packages[\\/][^\r\n]*)/gm,
+      ),
+    ].map(match => match[1].replaceAll("\\", "/"));
 
   // A consumer that installs the same `no-deps` that `patching-dep` patches.
   const consumerPackageJson = (dependencies: Record<string, string>, rest: Record<string, unknown> = {}) =>
@@ -1185,16 +1203,20 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the per-directory cache
   // in bunfig.toml. The tests below run concurrently, and two cold installs of
   // the same package into one cache replace each other's cache directory.
-  const install = (packageDir: string, env = bunEnv) =>
-    runBunInstall({ ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir);
+  type InstallOptions = Parameters<typeof runBunInstall>[2];
 
-  const lockfileHasPatches = async (packageDir: string) =>
-    (await Bun.file(join(packageDir, "bun.lock")).text()).includes("patchedDependencies");
+  const install = (packageDir: string, env = bunEnv, options?: InstallOptions) =>
+    runBunInstall({ ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir, options);
+
+  const lockfile = (packageDir: string) => Bun.file(join(packageDir, "bun.lock")).text();
+
+  const lockfileHasPatches = async (packageDir: string) => (await lockfile(packageDir)).includes("patchedDependencies");
 
   const noDepsFile = (packageDir: string, name: string) => Bun.file(join(packageDir, "node_modules", "no-deps", name));
 
-  async function installUnpatched(packageDir: string, env = bunEnv) {
-    await install(packageDir, env);
+  // Installs, checks that the dependency's patch was not applied, and returns stderr.
+  async function installUnpatched(packageDir: string, env = bunEnv, options?: InstallOptions) {
+    const { err } = await install(packageDir, env, options);
     expect({
       noDeps: await noDepsFile(packageDir, "package.json").json(),
       patched: await noDepsFile(packageDir, "patched.txt").exists(),
@@ -1204,6 +1226,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       patched: false,
       lockfileHasPatches: false,
     });
+    return err;
   }
 
   test.concurrent("apply when the declaring package is the install root", async () => {
@@ -1272,7 +1295,10 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       await installUnpatched(packageDir);
     });
 
-    test.concurrent("workspace member", async () => {
+    // A workspace member is the one manifest of the project itself that is not
+    // the root, so its `patchedDependencies` gets a warning. The other cases
+    // above are not warned about (`runBunInstall` fails on any warning).
+    test.concurrent("workspace member is warned about once per install", async () => {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker },
         files: {
@@ -1280,7 +1306,24 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
           packages: { dep: patchingDep },
         },
       });
-      await installUnpatched(packageDir);
+      const warned = ["packages/dep/package.json:7:3"];
+
+      // Fresh install: the member is parsed when the workspace dependency resolves.
+      expect(ignoredWarnings(await installUnpatched(packageDir, bunEnv, { allowWarnings: true }))).toEqual(warned);
+
+      // Nothing changed: the member is parsed again by the lockfile differ.
+      expect(
+        ignoredWarnings(await installUnpatched(packageDir, bunEnv, { allowWarnings: true, savesLockfile: false })),
+      ).toEqual(warned);
+
+      // The member's dependencies changed: the differ parses it, then it is
+      // parsed once more when it is re-resolved. Still one warning.
+      await Bun.write(
+        join(packageDir, "packages", "dep", "package.json"),
+        patchingDepPackageJson({ devDependencies: { "a-dep": "1.0.1" } }),
+      );
+      expect(ignoredWarnings(await installUnpatched(packageDir, bunEnv, { allowWarnings: true }))).toEqual(warned);
+      expect(await lockfile(packageDir)).toContain("a-dep");
     });
   });
 });

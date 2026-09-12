@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -311,4 +311,85 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+// `bun install` creates `<member>/node_modules` for every workspace member, so a member
+// outside the root is a write into a directory the project does not own. A cloned
+// repository could name the directories next to it (the user's other projects) as its
+// members: the sibling then loads the clone's code, with no lifecycle script involved.
+describe.concurrent("workspaces entries outside the workspace root", () => {
+  // A clone in `clone/` next to the user's own project in `victim/`. `inner@1.99.0` in the
+  // clone satisfies the range the victim depends on, so a member link written into
+  // `victim/node_modules` makes the victim load the clone's copy.
+  const SIBLING_PROJECTS = {
+    "victim/package.json": JSON.stringify({ name: "victim", dependencies: { inner: "^1.0.0" } }),
+    "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.99.0", main: "index.js" }),
+    "clone/packages/inner/index.js": `module.exports = "from the clone";`,
+  };
+
+  async function expectRejected(dir: string, entry: string) {
+    const { stderr, exitCode } = await runInstall(join(dir, "clone"));
+
+    expect(stderr).toContain(`error: Workspace "${entry}" is outside the workspace root`);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(dir, "victim", "node_modules"))).toBe(false);
+    expect(existsSync(join(dir, "clone", "bun.lock"))).toBe(false);
+  }
+
+  test("a listed sibling directory is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-path", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../victim"]),
+    });
+
+    await expectRejected(String(dir), "../victim");
+  });
+
+  test("a glob that leaves the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-glob", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../*"]),
+    });
+
+    // The glob walker reports the match with the platform separator.
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).toMatch(/error: Workspace "\.\.[\\/]victim" is outside the workspace root/);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "victim", "node_modules"))).toBe(false);
+    expect(existsSync(join(String(dir), "clone", "bun.lock"))).toBe(false);
+  });
+
+  test("an absolute path outside the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-absolute-outside", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": ({ root }) => rootPackageJson(["packages/*", join(root, "victim")]),
+    });
+
+    await expectRejected(String(dir), join(String(dir), "victim"));
+  });
+
+  test("a path that climbs out and back in is rejected", async () => {
+    using dir = tempDir("bad-workspace-climb-out-and-back", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "packages/../../victim"]),
+    });
+
+    await expectRejected(String(dir), "packages/../../victim");
+  });
+
+  test("an absolute path inside the root is still a workspace", async () => {
+    using dir = tempDir("bad-workspace-absolute-inside", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": ({ root }) => rootPackageJson([join(root, "clone", "packages", "inner")]),
+    });
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(join(String(dir), "clone")).workspace_paths)).toEqual([
+      "packages/inner",
+    ]);
+  });
 });

@@ -104,6 +104,36 @@ pub mod js_bundler {
         Ok(this)
     }
 
+    /// Own enumerable entries of the live `process.env`; the env loader map only has the startup environment.
+    fn process_env_snapshot(global_this: &JSGlobalObject) -> JsResult<bun_dotenv::Map> {
+        let mut map = bun_dotenv::Map::init();
+        let Some(process_env) = global_this.process_env()?.get_object() else {
+            return Ok(map);
+        };
+
+        let iter = jsc::JSPropertyIterator::init(
+            global_this,
+            process_env,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+        map.ensure_unused_capacity(iter.len)?;
+
+        while let Some((key, value)) = iter.next()? {
+            // On Windows `process.env` is a Proxy that also owns a `toJSON` function.
+            if value.is_undefined_or_null() || value.is_callable() {
+                continue;
+            }
+            let value = value.to_bun_string(global_this)?;
+            map.put(&key.to_utf8(), &value.to_utf8())?;
+        }
+
+        Ok(map)
+    }
+
     pub struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
@@ -152,6 +182,8 @@ pub mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
+        /// Live `process.env` at `Bun.build()` time, for `env: "inline"` / `"PREFIX_*"` to inline from.
+        pub(crate) process_env: Option<bun_dotenv::Map>,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
@@ -218,6 +250,7 @@ pub mod js_bundler {
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
+                process_env: None,
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,
@@ -734,31 +767,37 @@ pub mod js_bundler {
 
             if let Some(env) = config.get(global_this, "env")? {
                 if !env.is_undefined() {
-                    if env == JSValue::NULL
+                    let behavior = if env == JSValue::NULL
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        api::DotEnvBehavior::Disable
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
-                        this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        api::DotEnvBehavior::LoadAll
                     } else if env.is_string() {
                         let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
-                                this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
                                     this.env_prefix.append_slice_exact(prefix)?;
                                 }
+                                behavior
                             }
                             Err(()) => {
                                 return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
                             }
                         }
-                        drop(slice);
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "env must be 'inline', 'disable', or a string with a '*' character"
                         )));
+                    };
+                    this.env_behavior = behavior;
+                    if matches!(
+                        behavior,
+                        api::DotEnvBehavior::LoadAll | api::DotEnvBehavior::Prefix
+                    ) {
+                        this.process_env = Some(process_env_snapshot(global_this)?);
                     }
                 }
             }

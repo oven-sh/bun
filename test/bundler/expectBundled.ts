@@ -1316,10 +1316,29 @@ for (const [key, blob] of build.outputs) {
         let build: BuildOutput;
         try {
           process.chdir(root);
+          // Bun.build reads the live process.env (for `env: "inline"` / `env: "PREFIX_*"`), so `env` is applied to
+          // it for the duration of the build, the same way the cli backend passes it to the subprocess.
+          const previousEnv: Record<string, string | undefined> = {};
+          for (const key in env) {
+            previousEnv[key] = process.env[key];
+            const value = env[key];
+            if (value === undefined) {
+              delete process.env[key];
+            } else {
+              process.env[key] = String(value).replaceAll("{{root}}", root);
+            }
+          }
           try {
             build = await Bun.build(buildConfig);
           } finally {
             process.chdir(originalCwd);
+            for (const key in previousEnv) {
+              if (previousEnv[key] === undefined) {
+                delete process.env[key];
+              } else {
+                process.env[key] = previousEnv[key];
+              }
+            }
           }
         } catch (e) {
           if (e instanceof AggregateError) {

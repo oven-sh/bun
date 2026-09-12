@@ -6551,17 +6551,6 @@ pub mod bv2_impl {
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
-                            // Not for the dev server: its graph has one module for each file path.
-                            if err == _resolver::Error::ModuleNotFound
-                                && ignored_suffix.is_empty()
-                                && self.dev_server.is_none()
-                            {
-                                if let Some(suffix) = IgnoredSuffix::of(import_record.path.text) {
-                                    ignored_suffix = suffix;
-                                    continue 'inner;
-                                }
-                            }
-
                             // borrowck — `log_for_resolution_failures` returns
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via
@@ -6602,6 +6591,19 @@ pub mod bv2_impl {
                                         )
                                         .expect("oom");
                                     }
+                                }
+                            }
+
+                            // After the dir cache bust above, so that a file name with `?` or
+                            // `#` in it still wins. Not for the dev server: its graph has one
+                            // module for each file path.
+                            if err == _resolver::Error::ModuleNotFound
+                                && ignored_suffix.is_empty()
+                                && self.dev_server.is_none()
+                            {
+                                if let Some(suffix) = IgnoredSuffix::of(import_record.path.text) {
+                                    ignored_suffix = suffix;
+                                    continue 'inner;
                                 }
                             }
 
@@ -6875,6 +6877,12 @@ pub mod bv2_impl {
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();
+
+                // The HTML file is an entry point of the browser build: one module and one
+                // output for the file. The linker finds it through the path of the file.
+                if is_html_entrypoint {
+                    ignored_suffix = IgnoredSuffix::default();
+                }
 
                 let module_key = ignored_suffix.append_to(self.arena(), path.text);
                 if let Some(id) = self.path_to_source_index_map(target).get(module_key) {

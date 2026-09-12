@@ -3320,11 +3320,10 @@ impl BlobExt for Blob {
             match &store.data {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();
-                    size += if self.size.get() != MAX_SIZE {
-                        self.size.get() as usize
-                    } else {
-                        bytes.len() as usize
-                    };
+                    // Slices share the store. Its bytes count once, for the sole owner.
+                    if store.has_one_ref() {
+                        size += bytes.len() as usize;
+                    }
                 }
                 store::Data::File(file) => size += file.pathlike.estimated_size(),
                 store::Data::S3(s3) => size += s3.estimated_size(),
@@ -3997,6 +3996,11 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__calculateEstimatedByteSize(this: &Blob) {
+    this.calculate_estimated_byte_size();
 }
 
 #[unsafe(no_mangle)]

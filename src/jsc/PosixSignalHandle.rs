@@ -58,6 +58,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0
             && WATCH_SIGINT_LISTENERS.load(Ordering::Acquire) == 0
         {
+            // This handler replaced `onExitSignal` (c-bindings.cpp), so it owns
+            // writing the startup termios back; `_exit` skips the atexit hook
+            // that would. Async-signal-safe (tcsetattr + write).
+            bun_core::Output::source::stdio::restore();
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }

@@ -234,6 +234,62 @@ describe.concurrent("bun update --interactive", () => {
     }
   });
 
+  // The picker hides the cursor and turns on SGR mouse reporting. Key-driven
+  // exits undo both, but a signal (supervisor kill, `timeout 60 bun update -i`,
+  // CI cancel) ends the process through the exit-signal handler, which only
+  // wrote termios back: the shell was left typing `^[[<0;41;12M` on every
+  // click, with no cursor.
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    it.skipIf(isWindows)(`should reset cursor and mouse modes when ${signal} ends the picker`, async () => {
+      await using dir = tempDir("update-interactive-" + signal.toLowerCase(), {
+        "bunfig.toml": bunfig(),
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      });
+      await install(dir);
+
+      const decoder = new TextDecoder();
+      let output = "";
+      const shown = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive", "--latest", "--dry-run"],
+        cwd: String(dir),
+        // Colors on (the tty default), otherwise the picker sets no modes.
+        env: { ...bunEnv, NO_COLOR: undefined },
+        terminal: {
+          cols: 120,
+          rows: 30,
+          data(_, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("\x1b[?1006h")) shown.resolve();
+          },
+          exit() {
+            closed.resolve();
+          },
+        },
+      });
+      const exitedEarly = proc.exited.then(code => {
+        throw new Error(`bun update -i exited before the picker (code ${code}):\n${output}`);
+      });
+      exitedEarly.catch(() => {});
+      await Promise.race([shown.promise, exitedEarly]);
+
+      proc.kill(signal);
+      await proc.exited;
+      await closed.promise;
+
+      const afterShown = output.slice(output.lastIndexOf("\x1b[?1006h"));
+      expect(afterShown).toContain("\x1b[?25h");
+      expect(afterShown).toContain("\x1b[?1000l");
+      expect(afterShown).toContain("\x1b[?1006l");
+      expect(proc.signalCode).toBe(signal);
+    });
+  }
+
   it("should update packages when 'a' (select all) is used", async () => {
     await using dir = tempDir("update-interactive-select-all", {
       "bunfig.toml": bunfig(),

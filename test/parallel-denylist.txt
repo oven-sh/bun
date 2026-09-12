@@ -169,6 +169,7 @@ js/web/explicit-resource-management.test.ts
 js/web/fetch/fetch-proxy-tls-intern-race.test.ts
 js/web/fetch/fetch-tls-abortsignal-timeout.test.ts
 js/web/fetch/utf8-bom.test.ts
+js/web/request/request-clone-leak.test.ts
 js/web/streams/streams-leak.test.ts
 js/web/workers/worker-late-completion.test.ts
 js/web/workers/worker-terminate-funnels.test.ts

@@ -739,7 +739,7 @@ impl<'a> Transpiler<'a> {
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
+                    if let Some(v) = tsconfig.use_define_for_class_fields_or_target_default() {
                         self.options.use_define_for_class_fields = v;
                     }
                 }

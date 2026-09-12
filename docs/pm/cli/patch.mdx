@@ -64,6 +64,10 @@ bun patch --commit react --patches-dir=mypatches
 bun patch-commit react
 ```
 
+#### When a patch stops applying
+
+A patch is keyed by the exact `name@version` in `patchedDependencies`. When the package resolves to a different version, the patch is no longer applied. `bun install` prints a warning for every key that matches no installed version, and `bun install --frozen-lockfile` fails. Re-create the patch for the new version with `bun patch`, or remove the stale entry from `package.json`.
+
 ---
 
 <Patch />

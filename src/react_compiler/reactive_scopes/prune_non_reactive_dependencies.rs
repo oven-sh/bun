@@ -213,11 +213,8 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
         let scope_id = scope.scope;
         let scope_data = &mut self.env.scopes[scope_id.0 as usize];
 
-        // Remove non-reactive dependencies.
-        // Not in upstream: `|| dep.reactive`. A dependency from `visit_phi` in
-        // PropagateScopeDependenciesHIR can name a parameter or a phi that only a phi reads.
-        // No place in the reactive function carries that identifier, so `state` never holds
-        // it.
+        // Remove non-reactive dependencies
+        // Not in upstream: `|| dep.reactive`, for a parameter or a phi that only a phi reads.
         scope_data
             .dependencies
             .retain(|dep| state.contains(&dep.identifier) || dep.reactive);

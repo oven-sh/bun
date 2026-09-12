@@ -1791,9 +1791,7 @@ impl<'a> DependencyCollectionContext<'a> {
             }
         }
 
-        // Not in upstream. When the cache of the enclosing scope hits, this scope does not run,
-        // so the enclosing scope has to restore the variables that this scope reassigns.
-        // Upstream records a reassignment on the innermost scope only.
+        // Not in upstream: the enclosing scope has to restore what this scope reassigns.
         if let Some(parent) = self.current_scope() {
             let parent_start = env.scopes[parent.0 as usize].range.start;
             for id in env.scopes[scope_id.0 as usize].reassignments.clone() {
@@ -1817,10 +1815,7 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
-    /// Not in upstream, apart from the optional-chain case. A variable that the scope
-    /// reassigns on some paths keeps its value from before the scope on the others. Only a
-    /// phi reads that value, so upstream does not make it a dependency, and a cache hit
-    /// restores what the variable held in the render that filled the cache.
+    /// Not in upstream: a value from before the scope that reaches a phi in it is a dependency.
     fn visit_phi(&mut self, phi: &crate::hir::Phi, env: &mut Environment) {
         for (_pred_id, operand) in &phi.operands {
             if let Some(maybe_optional_chain) = self.temporaries.get(operand.identifier) {
@@ -1830,14 +1825,10 @@ impl<'a> DependencyCollectionContext<'a> {
             let Some(current_scope) = self.current_scope() else {
                 continue;
             };
-            // An operand that neither map holds yet comes from a loop back edge. Its
-            // definition is later in the scope.
+            // An operand that neither map holds yet comes from a loop back edge, later in the scope.
             let (defined_in, reactive) =
                 if let Some(decl) = self.reassignments.get(operand.identifier) {
-                    // `infer_reactive_places` stops at the first reactive operand of a phi, so
-                    // the flag of a later one can be unset. Any other place of the identifier
-                    // then vouches for it in `prune_non_reactive_dependencies`, but a parameter
-                    // that only this phi reads has no other place.
+                    // The operand flag can be unset, and a parameter has no other place with it.
                     let reactive =
                         operand.reactive || self.reactive_params.contains(&operand.identifier);
                     (&decl.scope_stack, reactive)
@@ -1899,10 +1890,7 @@ impl<'a> DependencyCollectionContext<'a> {
             return false;
         }
 
-        // Not in upstream, which dates a phi by the first declaration of its variable. A phi
-        // inside the scope is a value the scope computes, but codegen reads a dependency by
-        // name before the scope, where the variable still holds its value on entry.
-        // `visit_phi` has made that value a dependency already.
+        // Not in upstream: a phi inside the scope is a value the scope computes, not an input.
         if let (Some(phi), Some(current_scope)) =
             (self.phis.get(dep.identifier), self.current_scope())
         {
@@ -2223,8 +2211,7 @@ fn handle_instruction(
             ctx.visit_operand(&lvalue.place, env);
             ctx.visit_operand(val, env);
         }
-        // Not in upstream, which visits only `value` here. `x++` assigns `x` as much as
-        // `x = x + 1` does, so the scope has to restore `x` when its cache hits.
+        // Not in upstream: `x++` reassigns `x`, so the scope has to restore it on a cache hit.
         InstructionValue::PrefixUpdate {
             lvalue, value: val, ..
         }

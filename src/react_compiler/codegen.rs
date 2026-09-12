@@ -435,9 +435,7 @@ impl<'a, 'h> Context<'a, 'h> {
         validated
     }
 
-    /// The first `t<n>` that no identifier of the function has. `rename_variables` names
-    /// every other temporary, but the copies `codegen_reactive_scope` makes do not exist
-    /// until codegen.
+    /// The first `t<n>` that no identifier uses, for a temporary that only codegen creates.
     fn fresh_temporary_name(&mut self) -> String {
         let mut index = 0u32;
         loop {
@@ -683,10 +681,7 @@ fn codegen_reactive_scope(
         )
     };
 
-    // Not in upstream. The cache stores run after the computation. A dependency on a
-    // variable that the computation reassigns would then store the new value, and the next
-    // comparison would test the value on entry against it. Copy such a dependency to a
-    // `const` before the scope, and compare and store the copy.
+    // Not in upstream: the stores run last, so a dependency the scope reassigns is copied first.
     let reassigned: HashSet<DeclarationId> = scope_reassignments
         .iter()
         .map(|id| cx.env.identifiers[id.0 as usize].declaration_id)

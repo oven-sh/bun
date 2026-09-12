@@ -68,8 +68,8 @@ hunk, so gratuitous restructuring makes that harder.
 
 ### Behaviour that differs from upstream
 
-A few sites fix miscompiles that upstream still has. Each one carries a comment
-that starts with "Not in upstream" and says what upstream does instead:
+A few sites fix miscompiles that upstream still has. Each one carries a
+one-line comment that starts with "Not in upstream":
 
 ```sh
 git grep -n "Not in upstream" src/react_compiler
@@ -79,18 +79,57 @@ Keep them on a sync. `react-compiler-fixtures.test.ts` cannot tell whether they
 survived: it compiles the upstream fixtures in `infer` mode, which skips most
 of their functions, and none of these sites changes what Bun emits for one. The
 tests in `test/bundler/transpiler/react-compiler.test.ts` that run compiled
-components can.
+components can. When upstream fixes the same case, run Bun's test for it
+against upstream's fix before you drop Bun's.
 
-When upstream fixes the same case, run Bun's test for it against upstream's fix
-before you drop Bun's. Example: the sites for a `let` that is declared before a
-reactive scope and reassigned inside it (facebook/react#37224). The open
-upstream fix, facebook/react#37273, adds the same dependency. It differs in
-three ways: it tests `operand.reactive`, which `infer_reactive_places` leaves
-unset on the operands after the first reactive one, it stores the dependency
-before the computation, which breaks the rule that the cache never holds inputs
-without outputs, and it does not pass a reassignment to the enclosing scope.
-`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock` has a component for
-each.
+The code comments are short on purpose. The reasons for a group of sites go
+here.
+
+#### A `let` declared before a reactive scope and reassigned inside it
+
+facebook/react#37224. The scope stores the variable after the computation and
+restores it when the cache hits, so the variable is an output of the scope.
+`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock` runs a component for
+each point below.
+
+- `visit_phi` (`propagate_scope_dependencies_hir.rs`). A path that does not
+  reassign the variable leaves it with the value it had on entry. Only a phi
+  reads that value, and upstream visits instruction operands only. So the value
+  is not a dependency, and a cache hit restores the value of an older render.
+  An operand that neither `reassignments` nor `phis` holds comes from a loop
+  back edge, so its definition is later in the scope. `infer_reactive_places`
+  stops at the first reactive operand of a phi, so the `reactive` flag of a
+  later operand can be unset. Any other place of that identifier vouches for it
+  in `prune_non_reactive_dependencies`, but a parameter that only the phi reads
+  has no other place (`reactive_params`).
+- `check_valid_dependency`. Upstream dates a phi by the first declaration of its
+  variable, so a read of a phi inside the scope becomes a dependency. Codegen
+  reads a dependency by name before the scope, where the variable still holds
+  the value on entry. That is the wrong value, and it throws when the read is
+  `u.profile.name` and the value on entry is null. `visit_phi` has already made
+  the value on entry a dependency when it can reach the phi.
+- `prune_non_reactive_dependencies.rs`, `|| dep.reactive`. The value on entry
+  can be a parameter, or a phi that only another phi reads. No place in the
+  reactive function carries that identifier, so the set the pass builds never
+  holds it.
+- `exit_scope`. Upstream records a reassignment on the innermost scope. When the
+  cache of an enclosing scope hits, the inner scope does not run, so the
+  enclosing scope has to restore the variable too.
+- `handle_instruction`, `PrefixUpdate` and `PostfixUpdate`. Upstream visits only
+  `value`, so `x++` is not a reassignment and the scope does not restore `x`.
+- `codegen_reactive_scope` (`codegen.rs`). The cache stores run after the
+  computation, so a dependency on a variable the scope reassigns stored the new
+  value, and the next comparison tested the value on entry against it. The
+  dependency is copied to a `const` before the scope, and the comparison and
+  the store use the copy. `rename_variables` has run by then, so
+  `fresh_temporary_name` picks the first unused `t<n>`.
+
+The open upstream fix, facebook/react#37273, adds the same dependency. It
+differs in three ways. It tests `operand.reactive`, with the gap described
+under `visit_phi`. It stores the dependency before the computation, which
+breaks the rule that the cache never holds inputs without outputs (React shares
+the cache between render attempts). It does not pass a reassignment to the
+enclosing scope.
 
 ### Type mapping (input: lowering)
 

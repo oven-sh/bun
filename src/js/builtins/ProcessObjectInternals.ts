@@ -487,8 +487,9 @@ export function windowsEnv(
   // assignment (never Object.defineProperty on the target) keeps the
   // proxy CustomAccessors on `internalEnv` and their side effects intact.
   function writeEnvVar(p: string, k: string, value: unknown) {
-    // Node's EnvSetter semantics (DEP0104 + ToString) and the TZ side effect;
-    // name-matching TZ here survives a prior `delete process.env.TZ`.
+    // Read first: the proxy-var accessors read the env map that coerceForWrite updates.
+    const previous = internalEnv[k];
+    // DEP0104 + ToString, plus the native side effect by name (survives a prior `delete`).
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
@@ -496,7 +497,7 @@ export function windowsEnv(
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }
-    if (internalEnv[k] !== coerced) {
+    if (previous !== coerced) {
       editWindowsEnvVar(k, coerced);
       internalEnv[k] = coerced;
     }
@@ -557,7 +558,7 @@ export function windowsEnv(
       editWindowsEnvVar(k, null);
       // internalEnv is a plain object here so `delete internalEnv[k]` never
       // reaches the CustomAccessor — undo the native side effect explicitly.
-      if (k === "TZ" || k === "NODE_TLS_REJECT_UNAUTHORIZED") resetForDelete(k);
+      resetForDelete(k);
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {

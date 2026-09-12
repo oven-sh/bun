@@ -551,6 +551,183 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+// `delete process.env.TZ` must revert to the host zone even when TZ came from
+// the launch environment (ICU re-reads $TZ from the C environ on POSIX), and an
+// empty / unresolvable TZ selects UTC instead of leaving the previous zone.
+it("process.env.TZ from the launch environment reverts on delete, and empty / invalid select UTC", async () => {
+  const probe = `({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: new Date("2018-07-14T12:34:56Z").getTimezoneOffset() })`;
+  // Case-insensitive so a Windows `tz` does not survive into the child.
+  const envWithoutTZ = Object.fromEntries(Object.entries(bunEnv).filter(([k]) => k.toUpperCase() !== "TZ"));
+  await using hostProc = Bun.spawn({
+    cmd: [bunExe(), "-p", `JSON.stringify(${probe})`],
+    env: envWithoutTZ,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const host = JSON.parse(await hostProc.stdout.text());
+  const launch =
+    host.zone === "Asia/Tokyo" ? { zone: "Australia/Brisbane", offset: -600 } : { zone: "Asia/Tokyo", offset: -540 };
+
+  const fixture = `
+    const snap = () => ${probe};
+    const out = { launch: snap() };
+    delete process.env.TZ;
+    out.afterDelete = { ...snap(), has: "TZ" in process.env };
+    process.env.TZ = ${JSON.stringify(launch.zone)};
+    out.afterReSet = { ...snap(), spread: { ...process.env }.TZ };
+    process.env.TZ = "Not/A_Zone";
+    out.afterInvalid = snap();
+    process.env.TZ = ${JSON.stringify(launch.zone)};
+    process.env.TZ = "";
+    out.afterEmpty = snap();
+    delete process.env.TZ;
+    out.afterSecondDelete = snap();
+    process.stdout.write(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...envWithoutTZ, TZ: launch.zone },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+    launch,
+    afterDelete: { ...host, has: false },
+    afterReSet: { ...launch, spread: launch.zone },
+    afterInvalid: { zone: "UTC", offset: 0 },
+    afterEmpty: { zone: "UTC", offset: 0 },
+    afterSecondDelete: host,
+    exitCode: 0,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/735
+// `delete` on a proxy var removed its CustomAccessor with no write-back: fetch()
+// kept proxying through the stale native env map entry and later writes were dead.
+for (const mode of ["main thread", "SHARE_ENV worker"]) {
+  it(`delete process.env.HTTP_PROXY / NO_PROXY reaches fetch() and keeps later writes live (${mode})`, async () => {
+    const steps = `
+      async function run() {
+        await using target = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+        await using proxy = Bun.serve({ port: 0, fetch: () => new Response("via-proxy") });
+        await using proxy2 = Bun.serve({ port: 0, fetch: () => new Response("via-proxy2") });
+        const go = async () => (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
+        const out = { baseline: await go() };
+        process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy.port;
+        out.set = await go();
+        delete process.env.HTTP_PROXY;
+        out.afterDelete = await go();
+        out.hasAfterDelete = "HTTP_PROXY" in process.env;
+        process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy2.port;
+        out.reSet = await go();
+        out.spread = { ...process.env }.HTTP_PROXY === "http://127.0.0.1:" + proxy2.port;
+        process.env.NO_PROXY = "127.0.0.1";
+        out.noProxySet = await go();
+        delete process.env.NO_PROXY;
+        out.noProxyDeleted = await go();
+        return out;
+      }
+    `;
+    const script =
+      mode === "SHARE_ENV worker"
+        ? `
+      const { Worker, SHARE_ENV } = require("worker_threads");
+      const worker = new Worker(
+        ${JSON.stringify(steps + `run().then(out => require("worker_threads").parentPort.postMessage(out));`)},
+        { eval: true, env: SHARE_ENV },
+      );
+      worker.on("message", out => console.log(JSON.stringify(out)));
+      worker.on("error", e => { console.error(e); process.exit(1); });
+      worker.on("exit", code => { if (code !== 0) process.exit(code); });
+    `
+        : steps + `console.log(JSON.stringify(await run()));`;
+    // Scrub every proxy var casing so the child starts in the not-in-OS-env path.
+    const env = { ...bunEnv };
+    for (const k of Object.keys(env)) {
+      if (/^(https?_proxy|no_proxy)$/i.test(k)) delete env[k];
+    }
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+      baseline: "direct",
+      set: "via-proxy",
+      afterDelete: "direct",
+      hasAfterDelete: false,
+      reSet: "via-proxy2",
+      spread: true,
+      noProxySet: "direct",
+      noProxyDeleted: "via-proxy2",
+      exitCode: 0,
+    });
+  });
+}
+
+it("delete process.env.BUN_CONFIG_VERBOSE_FETCH stops verbose logging and keeps later writes live", async () => {
+  const fixture = `
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const go = async tag => (await fetch("http://127.0.0.1:" + server.port + "/" + tag, { headers: { connection: "close" } })).text();
+    await go("baseline");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "1";
+    await go("set1");
+    delete process.env.BUN_CONFIG_VERBOSE_FETCH;
+    await go("afterDelete");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "1";
+    await go("reSet1");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "0";
+    await go("set0");
+  `;
+  const { BUN_CONFIG_VERBOSE_FETCH: _, ...env } = bunEnv;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "ignore", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const logged = tag => new RegExp(String.raw`HTTP/1\.1 GET http://127\.0\.0\.1:\d+/${tag}\b`).test(stderr);
+  expect({
+    baseline: logged("baseline"),
+    set1: logged("set1"),
+    afterDelete: logged("afterDelete"),
+    reSet1: logged("reSet1"),
+    set0: logged("set0"),
+    exitCode,
+  }).toEqual({ baseline: false, set1: true, afterDelete: false, reSet1: true, set0: false, exitCode: 0 });
+});
+
+// A hot `env.KEY = v; env.KEY` site must keep reaching JSEnvironmentVariableMap::put().
+// If the key were a plain data property, DFG would fold the write into a direct store
+// (its structure-based PutByStatus ignores OverridesPut) and the native side would go stale.
+it("native-backed process.env keys still reach fetch() and the time zone from an optimized write site", async () => {
+  const fixture = `
+    const env = process.env;
+    const zones = ["Asia/Tokyo", "America/New_York", "Europe/Paris", "Australia/Sydney"];
+    function setProxy(v) { env.HTTP_PROXY = v; return env.HTTP_PROXY === v; }
+    function setTZ(z) { env.TZ = z; return env.TZ === z; }
+    let readback = true;
+    for (let i = 0; i < 1500; i++) {
+      readback &&= setProxy("http://127.0.0.1:" + (10000 + i));
+      readback &&= setTZ(zones[i & 3]);
+    }
+    await using target = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+    await using proxy = Bun.serve({ port: 0, fetch: () => new Response("via-proxy") });
+    setProxy("http://127.0.0.1:" + proxy.port);
+    setTZ("Asia/Kolkata");
+    const via = await (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
+    // Offset, not the zone name: older ICU (macOS) canonicalizes Asia/Kolkata to Asia/Calcutta.
+    console.log(JSON.stringify({ readback, via, offset: new Date("2024-01-15T00:00:00Z").getTimezoneOffset() }));
+  `;
+  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+  for (const k of Object.keys(env)) {
+    if (/^(https?_proxy|no_proxy)$/i.test(k)) delete env[k];
+  }
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+    readback: true,
+    via: "via-proxy",
+    // Asia/Kolkata is UTC+5:30 year-round.
+    offset: -330,
+    exitCode: 0,
+  });
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });
@@ -2285,37 +2462,46 @@ setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
 });
 
 it("delete process.env.TZ invalidates existing Date instances", async () => {
+  // TZ is unset at launch so `delete` reverts to the host zone whatever the
+  // host is; the target zone is picked to differ from it.
+  const envWithoutTZ = Object.fromEntries(Object.entries(bunEnv).filter(([k]) => k.toUpperCase() !== "TZ"));
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const d = new Date("2024-01-15T12:00:00Z");
-       process.env.TZ = "America/New_York";
-       const ny = d.getHours();
+       const host = d.getHours();
+       const target = host === 21 ? "America/New_York" : "Asia/Tokyo";
+       process.env.TZ = target;
+       const set = d.getHours();
        delete process.env.TZ;
        const afterDelete = d.getHours();
        const has = "TZ" in process.env;
        // set-after-delete must still fire the timezone side effect: Node's
        // RealEnvStore::Set name-matches TZ on every write, not via a
        // once-installed accessor.
-       process.env.TZ = "America/New_York";
+       process.env.TZ = target;
        const afterReSet = d.getHours();
-       console.log(JSON.stringify({ ny, afterDelete, has, afterReSet }));`,
+       console.log(JSON.stringify({ host, target, set, afterDelete, has, afterReSet }));`,
     ],
-    env: { ...bunEnv, TZ: "UTC" },
+    env: envWithoutTZ,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // NY is UTC-5 in January; after delete the override is cleared so getHours
-  // reverts to the UTC start value (12) and the property is gone.
-  expect({ ...JSON.parse(stdout), exitCode }).toEqual({
-    ny: 7,
-    afterDelete: 12,
+  const out = stdout ? JSON.parse(stdout) : { stderr };
+  // 12:00Z on 2024-01-15 is 21:00 in Asia/Tokyo (UTC+9) and 07:00 in America/New_York (UTC-5).
+  const targetHours = out.target === "Asia/Tokyo" ? 21 : 7;
+  expect({ ...out, exitCode }).toEqual({
+    host: out.host,
+    target: out.target,
+    set: targetHours,
+    afterDelete: out.host,
     has: false,
-    afterReSet: 7,
+    afterReSet: targetHours,
     exitCode: 0,
   });
+  expect(out.set).not.toBe(out.host);
 });
 
 it("process.traceDeprecation set at runtime prints a stack", async () => {

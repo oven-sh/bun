@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (9.87 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -142,6 +142,53 @@ test("Response.redirect rejects a non-absolute url that is not a valid header va
 test("new Response(123, { statusText: 123 }) does not throw", () => {
   // @ts-expect-error
   expect(new Response("123", { statusText: 123 }).statusText).toBe("123");
+});
+
+// https://github.com/oven-sh/bun/issues/42499
+describe("statusText reason-phrase validation", () => {
+  const invalid: [string, string][] = [
+    ["CR LF", "a\r\nb"],
+    ["LF", "a\nb"],
+    ["CR", "a\rb"],
+    ["NUL", "a\0b"],
+    ["DEL", "a\x7fb"],
+    ["control byte", "a\x01b"],
+    ["non-Latin-1 code unit", "a\u0100b"],
+    ["NUL in a UTF-16 string", "\u00ff\u0100\0"],
+  ];
+
+  test.each(invalid)("new Response() rejects %s", (_name, statusText) => {
+    expect(() => new Response(null, { statusText })).toThrow(new TypeError("Invalid statusText"));
+    expect(() => new Response("body", { status: 201, statusText })).toThrow(new TypeError("Invalid statusText"));
+  });
+
+  test.each(invalid)("Response.json() rejects %s", (_name, statusText) => {
+    expect(() => Response.json({ a: 1 }, { statusText })).toThrow(new TypeError("Invalid statusText"));
+  });
+
+  test.each(invalid)("Response.redirect() rejects %s", (_name, statusText) => {
+    expect(() => Response.redirect("http://example.com/", { status: 301, statusText })).toThrow(
+      new TypeError("Invalid statusText"),
+    );
+  });
+
+  test("a status out of range is reported before an invalid statusText", () => {
+    expect(() => new Response(null, { status: 600, statusText: "a\nb" })).toThrow(RangeError);
+  });
+
+  test.each([
+    ["HTAB and SP", "a\tb c"],
+    ["VCHAR range", " !\"#$%&'()*+,-./0123456789:;<=>?@ABCXYZ[\\]^_`abcxyz{|}~"],
+    ["obs-text", "\u0080\u00a9\u00ff"],
+    ["empty", ""],
+  ])("new Response() keeps %s", (_name, statusText) => {
+    expect(new Response(null, { statusText }).statusText).toBe(statusText);
+    expect(Response.json(1, { statusText }).statusText).toBe(statusText);
+  });
+
+  test("new Request() ignores statusText", () => {
+    expect(() => new Request("http://example.com/", { statusText: "a\nb" } as RequestInit)).not.toThrow();
+  });
 });
 
 test("new Response(123, { method: 456 }) does not throw", () => {

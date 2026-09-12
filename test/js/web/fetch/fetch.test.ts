@@ -1269,7 +1269,11 @@ describe("Blob", () => {
           const data = new TypedArray(sample);
           if (withGC) gc();
           const input =
-            Constructor === Blob ? [data] : Constructor === Request ? { body: data, url: "http://example.com" } : data;
+            Constructor === Blob
+              ? [data]
+              : Constructor === Request
+                ? { body: data, url: "http://example.com", method: "POST" }
+                : data;
           if (withGC) gc();
           const blob = new Constructor(input as any);
           if (withGC) gc();
@@ -1596,6 +1600,7 @@ describe("Request", () => {
   it("clone", async () => {
     gc();
     var body = new Request("https://hello.com", {
+      method: "POST",
       headers: {
         "content-type": "text/html; charset=utf-8",
       },
@@ -1654,7 +1659,7 @@ describe("Request", () => {
     expect(cloned.signal.aborted).toBe(true);
   });
 
-  testBlobInterface(data => new Request("https://hello.com", { body: data }), true);
+  testBlobInterface(data => new Request("https://hello.com", { method: "POST", body: data }), true);
 });
 
 describe("Headers", () => {

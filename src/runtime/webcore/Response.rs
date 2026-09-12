@@ -922,6 +922,7 @@ impl Response {
                 });
             } else {
                 if let Some(init) = Init::init(global_this, arg_init)? {
+                    init.validate_status_text(global_this)?;
                     response.init.set(init);
                 }
             }
@@ -1003,6 +1004,7 @@ impl Response {
                     response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
                     // cleanup is handled by Init's drop glue on `?` below
+                    init.validate_status_text(global_this)?;
                     response.init.set(init);
 
                     let status = response.init.get().status_code;
@@ -1128,7 +1130,9 @@ impl Response {
                 };
             }
             if arguments[1].is_object() {
-                break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
+                let init = Init::init(global_this, arguments[1])?.expect("unreachable");
+                init.validate_status_text(global_this)?;
+                break 'brk init;
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1319,6 +1323,32 @@ impl Init {
         }
 
         Ok(Some(result))
+    }
+
+    /// Fetch spec: `ResponseInit["statusText"]` must match the `reason-phrase`
+    /// production (HTAB, SP / VCHAR 0x20-0x7E, obs-text 0x80-0xFF). Only the
+    /// `Response` constructors call this: `Request` also parses its init
+    /// through `Init::init` and ignores `statusText`.
+    pub(crate) fn validate_status_text(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        fn is_reason_phrase_unit(c: u32) -> bool {
+            c == 0x09 || (0x20..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)
+        }
+        let status_text = &self.status_text;
+        let valid = if status_text.is_utf16() {
+            status_text
+                .utf16()
+                .iter()
+                .all(|&c| is_reason_phrase_unit(u32::from(c)))
+        } else {
+            status_text
+                .byte_slice()
+                .iter()
+                .all(|&c| is_reason_phrase_unit(u32::from(c)))
+        };
+        if valid {
+            return Ok(());
+        }
+        Err(global_this.throw_type_error(format_args!("Invalid statusText")))
     }
 }
 

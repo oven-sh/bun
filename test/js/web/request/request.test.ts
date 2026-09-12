@@ -76,6 +76,61 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+// https://github.com/oven-sh/bun/issues/42499
+describe("new Request() with a GET/HEAD method and a body", () => {
+  const message = "Request with GET/HEAD method cannot have body.";
+
+  test.each(["GET", "HEAD", "get", "head"])("method %s with a string body throws TypeError", method => {
+    expect(() => new Request("http://example.com/", { method, body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test("default method with a body throws TypeError", () => {
+    expect(() => new Request("http://example.com/", { body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test.each([
+    ["Uint8Array", () => new Uint8Array([1])],
+    ["Blob", () => new Blob(["x"])],
+    ["ReadableStream", () => new ReadableStream()],
+    ["URLSearchParams", () => new URLSearchParams("a=1")],
+    [
+      "FormData",
+      () => {
+        const fd = new FormData();
+        fd.set("a", "1");
+        return fd;
+      },
+    ],
+  ])("GET with a %s body throws TypeError", (_name, body) => {
+    expect(() => new Request("http://example.com/", { method: "GET", body: body() })).toThrow(new TypeError(message));
+  });
+
+  test("a POST input Request combined with method GET throws TypeError", () => {
+    const post = new Request("http://example.com/", { method: "POST", body: "x" });
+    expect(() => new Request(post, { method: "GET" })).toThrow(new TypeError(message));
+    // The failed construction does not consume the input body.
+    expect(post.bodyUsed).toBe(false);
+  });
+
+  test("an invalid URL wins over the body check", () => {
+    expect(() => new Request("not a url", { method: "GET", body: "x" })).toThrow(/Invalid URL/);
+  });
+
+  test("a null, undefined or empty body is accepted", async () => {
+    expect(new Request("http://example.com/", { method: "GET", body: null }).body).toBeNull();
+    expect(new Request("http://example.com/", { method: "HEAD", body: undefined }).body).toBeNull();
+    // fetch() treats an empty string as no body. The constructor does the same.
+    expect(await new Request("http://example.com/", { method: "GET", body: "" }).text()).toBe("");
+  });
+
+  test("other methods keep their body", async () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const request = new Request("http://example.com/", { method, body: "x" });
+      expect(await request.text()).toBe("x");
+    }
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

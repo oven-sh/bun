@@ -1398,6 +1398,16 @@ impl Request {
 
         req.url.set(href);
 
+        // Fetch spec `new Request()` step 36. `fetch()` has the same check in
+        // `fetch_impl`, and an empty string body counts as no body in both.
+        if matches!(req.method, Method::GET | Method::HEAD)
+            && !matches!(req.body_value(), BodyValue::Null | BodyValue::Empty)
+        {
+            bail!(Err(global_this.throw_type_error(format_args!(
+                "Request with GET/HEAD method cannot have body."
+            ))));
+        }
+
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
                 let ct: &[u8] = blob.content_type_slice();

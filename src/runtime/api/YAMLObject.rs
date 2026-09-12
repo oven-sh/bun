@@ -374,7 +374,7 @@ impl Stringifier {
 
         if unwrapped.is_string() {
             let value_str = unwrapped.to_bun_string(global)?;
-            self.append_string(&value_str);
+            self.append_value_string(&value_str);
             return Ok(());
         }
 
@@ -656,6 +656,168 @@ impl Stringifier {
         }
         self.builder.append_string(str);
     }
+
+    /// Appends a string in value position. In indented mode a multiline string
+    /// becomes a literal block scalar when that roundtrips exactly. Keys call
+    /// `append_string` directly, so they never become block scalars.
+    fn append_value_string(&mut self, str: &BunString) {
+        if self.indent_allows_block_scalar()
+            && let Some(chomping) = literal_block_chomping(str)
+        {
+            self.append_block_scalar(str, chomping);
+            return;
+        }
+        self.append_string(str);
+    }
+
+    /// Block scalar content must be indented with spaces, at least two
+    /// columns per level: a compact nested sequence (`- - `) advances two
+    /// columns per level, so a one-column unit would leave the content level
+    /// with its parent and the parser would read an empty scalar.
+    fn indent_allows_block_scalar(&self) -> bool {
+        match &self.space {
+            Space::Minified => false,
+            Space::Number(n) => *n >= 2,
+            Space::Str(space_str) => {
+                let clamped = space_str.trunc(10);
+                if clamped.length() < 2 {
+                    return false;
+                }
+                for i in 0..clamped.length() {
+                    if clamped.char_at(i) != 0x20 {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    fn append_block_scalar(&mut self, str: &BunString, chomping: BlockChomping) {
+        self.builder.append_lchar(b'|');
+        let body_len = match chomping {
+            BlockChomping::Strip => {
+                self.builder.append_lchar(b'-');
+                str.length()
+            }
+            BlockChomping::Clip => str.length() - 1,
+        };
+
+        // A root value has indent 0, but block scalar content needs at least
+        // one level of indentation.
+        let saved_indent = self.indent;
+        if self.indent == 0 {
+            self.indent = 1;
+        }
+
+        let mut i: usize = 0;
+        while i < body_len {
+            let line_start = i;
+            while i < body_len && str.char_at(i) != 0x0a {
+                i += 1;
+            }
+            if line_start == i {
+                // An empty line is emitted with no indentation so the output
+                // has no trailing spaces.
+                self.builder.append_lchar(b'\n');
+            } else {
+                self.newline();
+                for j in line_start..i {
+                    self.builder.append_uchar(str.char_at(j));
+                }
+            }
+            i += 1;
+        }
+
+        self.indent = saved_indent;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BlockChomping {
+    /// `|-`: the string does not end with a newline.
+    Strip,
+    /// `|`: the string ends with exactly one newline.
+    Clip,
+}
+
+/// Decides whether `str` can be emitted as a literal block scalar (`|` or `|-`)
+/// that parses back to the identical string. Returns the chomping to use, or
+/// `None` when the string keeps the current plain or double-quoted output:
+/// - no newline at all
+/// - two or more trailing newlines (would need `|+` keep chomping)
+/// - only newlines (clip chomping of empty content yields "")
+/// - a line that ends with a space or tab
+/// - a first non-empty line that starts with a space (indentation
+///   auto-detection would consume it)
+/// - `\r`, other control characters, `\u{85}`, `\u{2028}`, `\u{2029}` (line
+///   breaks to YAML 1.1 parsers), or lone surrogates
+fn literal_block_chomping(str: &BunString) -> Option<BlockChomping> {
+    let len = str.length();
+
+    let mut trailing_newlines: usize = 0;
+    while trailing_newlines < len && str.char_at(len - 1 - trailing_newlines) == 0x0a {
+        trailing_newlines += 1;
+    }
+
+    let chomping = match trailing_newlines {
+        0 => BlockChomping::Strip,
+        1 => BlockChomping::Clip,
+        _ => return None,
+    };
+
+    let body_len = len - trailing_newlines;
+    if body_len == 0 {
+        return None;
+    }
+
+    let mut saw_newline = trailing_newlines != 0;
+    let mut at_line_start = true;
+    let mut seen_non_empty_line = false;
+    let mut i: usize = 0;
+    while i < body_len {
+        let c = str.char_at(i);
+        if c == 0x0a {
+            saw_newline = true;
+            if i > 0 && matches!(str.char_at(i - 1), 0x20 | 0x09) {
+                return None;
+            }
+            at_line_start = true;
+            i += 1;
+            continue;
+        }
+        if at_line_start {
+            if !seen_non_empty_line && c == 0x20 {
+                return None;
+            }
+            seen_non_empty_line = true;
+            at_line_start = false;
+        }
+        match c {
+            0x00..=0x08 | 0x0b..=0x1f | 0x7f | 0x85 | 0x2028 | 0x2029 => return None,
+            0xd800..=0xdbff => {
+                // A trailing newline can't be the low half, so `>= body_len`
+                // means the high surrogate is unpaired.
+                if i + 1 >= body_len || !matches!(str.char_at(i + 1), 0xdc00..=0xdfff) {
+                    return None;
+                }
+                i += 1;
+            }
+            0xdc00..=0xdfff => return None,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if !saw_newline {
+        return None;
+    }
+
+    if matches!(str.char_at(body_len - 1), 0x20 | 0x09) {
+        return None;
+    }
+
+    Some(chomping)
 }
 
 /// Does this (unwrapped) object property value need a newline? True for arrays and objects.

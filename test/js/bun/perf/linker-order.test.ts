@@ -1,7 +1,7 @@
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isMusl, isWindows, nodeExe, primeToolchain, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   mustGenerateOrderFile,
   orderFileEligible,
@@ -333,6 +333,13 @@ async function compileMsvc(cwd: string, source: string, out: string, link: strin
   if (exitCode !== 0) throw new Error(`${compiler} exited ${exitCode}:\n${stdout}${stderr}`);
 }
 
+/** The static CRT the fixtures link, wherever %LIB% (set by the VS shell) puts it. */
+const msvcCrt = () =>
+  (process.env.LIB ?? "")
+    .split(";")
+    .filter(Boolean)
+    .flatMap(dir => ["libcmt.lib", "libucrt.lib", "libvcruntime.lib"].map(lib => join(dir, lib)));
+
 /** The linker options that write a binary's two maps where the generator looks for them (see windows-symbols.ts). */
 const mapsFor = (exe: string): string[] => [`/map:${symbolMapFor(exe)}`, `/lldmap:${linkerMapFor(exe)}`];
 
@@ -345,10 +352,19 @@ async function writeStarts(path: string, addresses: Iterable<number | bigint>) {
   await Bun.write(path, new Uint8Array(words.buffer));
 }
 
-/** The trace's header: magic, version, slide, start count, entry count. */
-async function readTraceHeader(path: string) {
-  const [magic, version, , , entries] = new BigUint64Array(await Bun.file(path).slice(0, 40).arrayBuffer());
-  return { magic, version, entries: Number(entries) };
+/**
+ * The trace's entries, in the order they were recorded, and the names each one
+ * resolves to, the way generate.ts resolves them. Every entry was one of the
+ * starts handed in, so every one resolves.
+ */
+async function readTrace(path: string, symbols: Map<number, string[]>) {
+  const words = new BigUint64Array(await Bun.file(path).arrayBuffer());
+  // Layout: u64 magic, version, slide, start count, entry count, then the entries.
+  expect({ magic: words[0], version: words[1] }).toEqual({ magic: TRACE_MAGIC, version: 1n });
+  const entries = Array.from(words.subarray(5, 5 + Number(words[4])), address => Number(address));
+  const names = entries.flatMap(address => symbols.get(address) ?? [`unresolved ${address.toString(16)}`]);
+  expect(names.filter(name => name.startsWith("unresolved "))).toEqual([]);
+  return { entries, names };
 }
 
 describe("order file generator", () => {
@@ -591,22 +607,17 @@ describe.skipIf(!canTrace || isWindows)("pty runner", () => {
  * in a real trace are the hottest.
  */
 async function expectFixtureTrace(trace: string, symbols: Map<number, string[]>) {
-  const raw = await Bun.file(trace).arrayBuffer();
-  const words = new BigUint64Array(raw);
-  // Layout: u64 magic, version, slide, start count, entry count, then the entries.
-  expect({ magic: words[0], version: words[1] }).toEqual({ magic: TRACE_MAGIC, version: 1n });
-  const entries = Array.from(words.subarray(5, 5 + Number(words[4])), address => Number(address));
-
-  // Each entry resolves to the names at that address, the way generate.ts
-  // resolves them; macOS nm spells C functions with a leading underscore.
-  const names = entries.flatMap(address => symbols.get(address) ?? [`unresolved ${address.toString(16)}`]);
+  const { entries, names } = await readTrace(trace, symbols);
+  // macOS nm spells C functions with a leading underscore.
   const plain = names.map(name => (darwin ? name.replace(/^_/, "") : name));
-  const touched = plain.filter(name => /^f\d+$/.test(name));
 
-  expect(touched).toEqual(Array.from({ length: 32 }, (_, i) => `f${i}`));
-  expect(plain).toContain("main");
-  expect(plain).toContain("after");
-  expect(plain.indexOf("after")).toBeGreaterThan(plain.indexOf("f31"));
+  // The fixture's own functions, in the order it calls them, each entered once;
+  // the CRT's are whatever it ran on the way in and between them.
+  expect(plain.filter(name => /^(main|f\d+|after)$/.test(name))).toEqual([
+    "main",
+    ...Array.from({ length: 32 }, (_, i) => `f${i}`),
+    "after",
+  ]);
   expect(new Set(entries).size).toBe(entries.length);
 }
 
@@ -660,83 +671,18 @@ describe.skipIf(!canTrace || isWindows)("function tracer", () => {
  * linked with them, as the release is.
  */
 describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
-  it.concurrent("records exact entries out of the maps' functions, and leaves the child alone", async () => {
-    using dir = tempDir("functrace-windows", { "child.c": "int main(void) { return 0; }\n" });
-    const root = String(dir);
-    const tracer = join(root, "functrace.exe");
-    const fixture = join(root, "fixture.exe");
-    const child = join(root, "child.exe");
-    const starts = join(root, "starts.bin");
-    const trace = join(root, "trace.bin");
+  /** A binary the tracer runs: built once, its functions read from its maps once and written as its starts file. */
+  type Built = { exe: string; symbols: Map<number, string[]>; starts: string };
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let root: string;
+  let tracer: string;
+  let fixture: Built, child: Built, probe: Built;
 
-    await Promise.all([
-      compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
-      // No folding: `after` has the same body as f1, and the trace is checked
-      // for it being entered separately, after f31.
-      compileMsvc(root, join(import.meta.dir, "functrace-fixture.c"), fixture, [...mapsFor(fixture), "/opt:noicf"]),
-      compileMsvc(root, join(root, "child.c"), child),
-    ]);
-
-    const symbols = readTextSymbols(fixture);
-    expect(symbols.size).toBeGreaterThan(33); // the fixture's own functions, plus the static CRT's
-    // The static CRT is also where the labels come from that are not functions:
-    // its assembly routines name their internal labels (and, on arm64, their
-    // tables), so the listing always has more than the functions kept here. A
-    // breakpoint on one of those tables is what this test crashes on otherwise.
-    const listed = parseSymbolMap(readFileSync(symbolMapFor(fixture), "utf8")).symbols.length;
-    expect([...symbols.values()].flat().length).toBeLessThan(listed);
-    await writeStarts(starts, symbols.keys());
-
-    await using proc = Bun.spawn({
-      cmd: [tracer, fixture, child],
-      env: { ...bunEnv, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The fixture's stdout comes through the tracer's, and so does its exit code.
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "497", stderr: "", exitCode: 0 });
-
-    await expectFixtureTrace(trace, symbols);
-  });
-
-  it.concurrent("reports the debuggee's exit code, and refuses a binary the starts are not for", async () => {
-    using dir = tempDir("functrace-windows-exit", {
-      "exit.c": "int main(int argc, char **argv) { (void)argv; return argc + 40; }\n",
-    });
-    const root = String(dir);
-    const tracer = join(root, "functrace.exe");
-    const exit = join(root, "exit.exe");
-    const starts = join(root, "starts.bin");
-    await Promise.all([
-      compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
-      compileMsvc(root, join(root, "exit.c"), exit, mapsFor(exit)),
-    ]);
-    const env = { ...bunEnv, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: join(root, "trace.bin") };
-
-    await writeStarts(starts, readTextSymbols(exit).keys());
-    await using traced = Bun.spawn({ cmd: [tracer, exit, "a", "b"], env, stdout: "pipe", stderr: "pipe" });
-    // Addresses far outside any code section: a starts file for some other binary.
-    await writeStarts(join(root, "elsewhere.bin"), [0x7ff600000000, 0x7ff600000010]);
-    await using refused = Bun.spawn({
-      cmd: [tracer, exit],
-      env: { ...env, BUN_FUNCTRACE_STARTS: join(root, "elsewhere.bin") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [tracedErr, tracedExit, refusedErr, refusedExit] = await Promise.all([
-      traced.stderr.text(),
-      traced.exited,
-      refused.stderr.text(),
-      refused.exited,
-    ]);
-    expect({ tracedErr, tracedExit, refusedExit }).toEqual({ tracedErr: "", tracedExit: 43, refusedExit: 2 });
-    expect(refusedErr).toContain("none of the 2 function starts");
-  });
-
-  it.concurrent("puts the debuggee on a console when asked to, and types our stdin into it", async () => {
-    using dir = tempDir("functrace-console", {
+  beforeAll(async () => {
+    dir = tempDir("functrace-windows", {
+      // What the fixture runs: exits 0 with no arguments. With arguments it
+      // exits argc + 40, for the test of what comes back through the tracer.
+      "child.c": "int main(int argc, char **argv) { (void)argv; return argc > 1 ? argc + 40 : 0; }\n",
       // Reports whether its stdio is a console, how wide, and the line it was typed.
       "probe.c": [
         "#include <windows.h>",
@@ -747,55 +693,140 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
         "    CONSOLE_SCREEN_BUFFER_INFO screen;",
         "    int console = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) &&",
         "        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &screen);",
-        "    char line[64];",
-        '    const char *typed = fgets(line, sizeof line, stdin) ? line : "nothing";',
-        '    line[strcspn(line, "\\r\\n")] = 0;',
-        '    printf("%s %d %s\\n", console ? "true" : "false", console ? (int)screen.dwSize.X : 0, typed);',
+        '    char line[64] = "nothing";',
+        '    if (fgets(line, sizeof line, stdin)) line[strcspn(line, "\\r\\n")] = 0;',
+        '    printf("%s %d %s\\n", console ? "true" : "false", console ? (int)screen.dwSize.X : 0, line);',
         "    return 0;",
         "}",
         "",
       ].join("\n"),
     });
-    const root = String(dir);
-    const tracer = join(root, "functrace.exe");
-    const probe = join(root, "probe.exe");
-    const starts = join(root, "starts.bin");
+    root = String(dir);
+    tracer = join(root, "functrace.exe");
+    const exe = (name: string) => join(root, `${name}.exe`);
+
+    // The compiler, the lld-link beside it that clang-cl links with, and the CRT: see primeToolchain.
+    primeToolchain([compiler!, join(dirname(compiler!), "lld-link.exe"), ...msvcCrt()]);
     await Promise.all([
       compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
-      compileMsvc(root, join(root, "probe.c"), probe, mapsFor(probe)),
+      // No folding: `after` has the same body as f1, and the trace is checked
+      // for it being entered separately, after f31.
+      compileMsvc(root, join(import.meta.dir, "functrace-fixture.c"), exe("fixture"), [
+        ...mapsFor(exe("fixture")),
+        "/opt:noicf",
+      ]),
+      compileMsvc(root, join(root, "child.c"), exe("child"), mapsFor(exe("child"))),
+      compileMsvc(root, join(root, "probe.c"), exe("probe"), mapsFor(exe("probe"))),
     ]);
-    await writeStarts(starts, readTextSymbols(probe).keys());
 
+    // The starts file the generator would write for each, from the same symbol reader.
+    async function built(name: string): Promise<Built> {
+      const symbols = readTextSymbols(exe(name));
+      const starts = join(root, `${name}.starts`);
+      await writeStarts(starts, symbols.keys());
+      return { exe: exe(name), symbols, starts };
+    }
+    [fixture, child, probe] = await Promise.all([built("fixture"), built("child"), built("probe")]);
+  });
+
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  /**
+   * Runs `target` under the tracer, in `root`, armed with its own starts unless
+   * told otherwise, and has it write `<name>.trace`.
+   */
+  async function trace(
+    name: string,
+    target: Built,
+    args: string[],
+    { env = {}, stdin, starts = target.starts }: { env?: Record<string, string>; stdin?: Blob; starts?: string } = {},
+  ) {
+    const out = join(root, `${name}.trace`);
+    await using proc = Bun.spawn({
+      cmd: [tracer, target.exe, ...args],
+      cwd: root,
+      env: { ...bunEnv, ...env, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: out },
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, trace: out };
+  }
+
+  it.concurrent("records exact entries out of the maps' functions, and leaves the child alone", async () => {
+    const { symbols } = fixture;
+    expect(symbols.size).toBeGreaterThan(33); // the fixture's own functions, plus the static CRT's
+    // The static CRT is also where the labels come from that are not functions:
+    // its assembly routines name their internal labels (and, on arm64, their
+    // tables), so the listing always has more than the functions kept here. A
+    // breakpoint on one of those tables is what this test crashes on otherwise.
+    const listed = parseSymbolMap(readFileSync(symbolMapFor(fixture.exe), "utf8")).symbols.length;
+    expect([...symbols.values()].flat().length).toBeLessThan(listed);
+
+    const run = await trace("fixture", fixture, [child.exe]);
+    // The fixture's stdout comes through the tracer's, and so does its exit code.
+    expect({ stdout: run.stdout.trim(), stderr: run.stderr, exitCode: run.exitCode }).toEqual({
+      stdout: "497",
+      stderr: "",
+      exitCode: 0,
+    });
+    await expectFixtureTrace(run.trace, symbols);
+  });
+
+  it.concurrent("reports the debuggee's exit code, and refuses a binary the starts are not for", async () => {
+    // Addresses far outside any code section: a starts file for some other
+    // binary. Named relative to the tracer's cwd: the message echoes the name,
+    // and the tracer prints it in the C locale, where a temp path under a
+    // non-ASCII user name would not survive.
+    await writeStarts(join(root, "elsewhere.starts"), [0x7ff600000000, 0x7ff600000010]);
+
+    const [traced, refused] = await Promise.all([
+      trace("exit", child, ["a", "b"]),
+      trace("refused", child, [], { starts: "elsewhere.starts" }),
+    ]);
+
+    // 43 is the child's argc + 40: both arguments reached it, and its exit code
+    // came back as the tracer's. The refusal is the tracer's own exit code, 2,
+    // and its one line of stderr (the CRT's, so \r\n).
+    expect({
+      traced: { stdout: traced.stdout, stderr: traced.stderr, exitCode: traced.exitCode },
+      refused: { stdout: refused.stdout, stderr: refused.stderr, exitCode: refused.exitCode },
+    }).toEqual({
+      traced: { stdout: "", stderr: "", exitCode: 43 },
+      refused: {
+        stdout: "",
+        stderr:
+          "functrace: none of the 2 function starts in elsewhere.starts fall inside the command's code — is it the binary they were read from?\r\n",
+        exitCode: 2,
+      },
+    });
+    // The exit code came out of a traced run; the refusal came before any trace was written.
+    expect((await readTrace(traced.trace, child.symbols)).names).toContain("main");
+    expect(existsSync(refused.trace)).toBe(false);
+  });
+
+  it.concurrent("puts the debuggee on a console when asked to, and types our stdin into it", async () => {
     async function type(name: string, env: Record<string, string>) {
-      const trace = join(root, `${name}.bin`);
-      await using proc = Bun.spawn({
-        cmd: [tracer, probe],
-        env: { ...bunEnv, ...env, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
-        stdin: new Blob(["hi\n"]),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const run = await trace(name, probe, [], { env, stdin: new Blob(["hi\n"]) });
       // A console's output is a terminal rendering — escape sequences, and the
       // typed line echoed back — so pick the probe's own line out of it.
-      const line = stdout
+      const line = run.stdout
         .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
         .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
         .split(/[\x00-\x1f]+/)
         .map(text => text.trim())
         .find(text => /^(true|false) \d+ /.test(text));
-      return { line, stderr, exitCode, entries: (await readTraceHeader(trace)).entries };
+      const { names } = await readTrace(run.trace, probe.symbols);
+      return { line, stderr: run.stderr, exitCode: run.exitCode, tracedMain: names.includes("main") };
     }
 
     const [terminal, pipe] = await Promise.all([type("console", { BUN_FUNCTRACE_TTY: "1" }), type("pipe", {})]);
 
-    expect({ console: terminal.line, pipe: pipe.line, stderr: terminal.stderr + pipe.stderr }).toEqual({
-      console: "true 80 hi",
-      pipe: "false 0 hi",
-      stderr: "",
+    // Both runs were traced all the way into the probe's main, on either kind of stdio.
+    expect({ console: terminal, pipe }).toEqual({
+      console: { line: "true 80 hi", stderr: "", exitCode: 0, tracedMain: true },
+      pipe: { line: "false 0 hi", stderr: "", exitCode: 0, tracedMain: true },
     });
-    expect({ console: terminal.exitCode, pipe: pipe.exitCode }).toEqual({ console: 0, pipe: 0 });
-    // Both runs were traced: the probe's main, and the CRT on the way there.
-    expect(Math.min(terminal.entries, pipe.entries)).toBeGreaterThan(1);
   });
 });

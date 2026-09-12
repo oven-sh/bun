@@ -22,37 +22,28 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     bool deferred)
 {
     UNUSED_PARAM(deferred);
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     WTF::String keyString = moduleNameValue->getString(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (keyString.startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, keyString), JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
         WTF::String refererString = sourceOrigin.string();
-        WTF::String keyString = moduleNameValue->getString(global);
-
-        if (!keyString) {
-            auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
-            return promise;
-        }
 
         BunString refererBunString = Bun::toString(refererString);
         BunString keyBunString = Bun::toString(keyString);
         BunString result = BakeProdResolve(global, &refererBunString, &keyBunString);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()), JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     // TODO: make static cast instead of jscast
-    return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
+    RELEASE_AND_RETURN(scope, uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false));
 }
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
@@ -95,7 +86,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
+    RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -172,14 +163,12 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, referrer, WTF::move(parameters), WTF::move(script));
+            RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, referrer, WTF::move(parameters), WTF::move(script)));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, referrer, WTF::move(parameters), WTF::move(script));
-    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
-    return result;
+    RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, referrer, WTF::move(parameters), WTF::move(script)));
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,

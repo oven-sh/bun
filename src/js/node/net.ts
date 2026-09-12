@@ -264,6 +264,8 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
 }
 function detachSocket(self) {
   if (!self) self = this;
+  const handle = self._handle;
+  if (handle) self[kBytesWritten] = handle.bytesWritten;
   self._handle = null;
 }
 function destroyNT(self, err) {
@@ -502,8 +504,6 @@ const SocketHandlers: SocketHandler = {
       } else {
         self._pendingData = null;
       }
-
-      self[kBytesWritten] = socket.bytesWritten;
     }
   },
   end(socket) {
@@ -582,7 +582,6 @@ const SocketHandlers: SocketHandler = {
     }
 
     if (!self[kupgraded]) {
-      self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
       self.emit("connect", self);
@@ -1328,15 +1327,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
-        self[kBytesWritten] = socket.bytesWritten;
         failWrite(self, res, callback);
       } else if (res) {
-        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
-        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
       }
     }
@@ -1843,15 +1839,17 @@ Object.defineProperty(Socket.prototype, "bufferSize", {
   },
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1043-L1045
 Object.defineProperty(Socket.prototype, "_bytesDispatched", {
   get: function () {
-    return this[kBytesWritten] || 0;
+    const handle = this._handle;
+    return (handle ? handle.bytesWritten : this[kBytesWritten]) || 0;
   },
 });
 
 Object.defineProperty(Socket.prototype, "bytesWritten", {
   get: function () {
-    let bytes = this[kBytesWritten] || 0;
+    let bytes = this._bytesDispatched;
     const data = this._pendingData;
     const writableBuffer = this.writableBuffer;
     if (!writableBuffer) return undefined;
@@ -1895,7 +1893,6 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (!this[kupgraded]) {
-    this[kBytesWritten] = socket.bytesWritten;
     // this is not actually emitted on nodejs when socket used on the connection
     // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
     this.emit("connect", this);
@@ -2833,7 +2830,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   const res = socket.$write(chunk, encoding);
-  this[kBytesWritten] = socket.bytesWritten;
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.

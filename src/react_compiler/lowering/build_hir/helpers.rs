@@ -376,6 +376,87 @@ pub(super) fn lower_member_expression(
     }
 }
 
+/// Intentional deviation: upstream lowers `a[k] += v` and `a[k]++` to a load
+/// and a store that both read the object temporary and the key temporary, and
+/// codegen prints an unnamed temporary at every site that reads it. So
+/// `a[i++] += 1` comes out as `a[i++] = a[i++] + 1`, and in a callback
+/// `get().n++` calls `get` twice. facebook/react#36733 names the bug. For
+/// `??=`, `||=` and `&&=` it holds such an operand in a promoted `const`
+/// (`copy_to_promoted_temporary`). Until upstream does the same for these two
+/// lowerings, an object or key that cannot be evaluated twice is a `Todo`,
+/// which leaves the function uncompiled.
+///
+/// `target` is the `EDot` or `EIndex` that is updated. Returns false after it
+/// records the `Todo`.
+pub(super) fn can_lower_member_update(
+    builder: &mut HirBuilder,
+    target: &Expr,
+) -> Result<bool, CompilerError> {
+    let supported = match &target.data {
+        Data::EDot(d) => can_evaluate_twice(&d.target),
+        Data::EIndex(i) => can_evaluate_twice(&i.target) && can_evaluate_twice(&i.index),
+        _ => true,
+    };
+    if !supported {
+        builder.record_error(CompilerErrorDetail {
+            category: ErrorCategory::Todo,
+            reason: "(BuildHIR::lowerExpression) Handle a compound assignment or update of a member whose object or key has side effects".to_string(),
+            description: None,
+            loc: convert_loc(target.loc),
+            suggestions: None,
+        })?;
+    }
+    Ok(supported)
+}
+
+/// True when `expr` only reads: bindings, properties, literals, and operators
+/// over those. Evaluating it a second time gives the same value and nothing
+/// can observe that it ran twice. A property read counts as a read because the
+/// compiler already takes it to be free of side effects (dead code elimination
+/// drops an unused one). A call, `i++`, an assignment, `await`, or anything
+/// that allocates must run exactly once.
+fn can_evaluate_twice(expr: &Expr) -> bool {
+    match &expr.data {
+        Data::EIdentifier(_)
+        | Data::EImportIdentifier(_)
+        | Data::EPrivateIdentifier(_)
+        | Data::EThis(_)
+        | Data::EUndefined(_)
+        | Data::ENull(_)
+        | Data::EBoolean(_)
+        | Data::EBranchBoolean(_)
+        | Data::ENumber(_)
+        | Data::EBigInt(_)
+        | Data::EString(_) => true,
+        Data::EInlinedEnum(e) => can_evaluate_twice(&e.value),
+        Data::EDot(d) => can_evaluate_twice(&d.target),
+        Data::EIndex(i) => can_evaluate_twice(&i.target) && can_evaluate_twice(&i.index),
+        Data::EUnary(unary) => {
+            OpCode::unary_assign_target(unary.op) == ast::AssignTarget::None
+                && unary.op != OpCode::UnDelete
+                && can_evaluate_twice(&unary.value)
+        }
+        Data::EBinary(bin) => {
+            bin.op.binary_assign_target() == ast::AssignTarget::None
+                && can_evaluate_twice(&bin.left)
+                && can_evaluate_twice(&bin.right)
+        }
+        Data::EIf(cond) => {
+            can_evaluate_twice(&cond.test)
+                && can_evaluate_twice(&cond.yes)
+                && can_evaluate_twice(&cond.no)
+        }
+        Data::ETemplate(template) => {
+            template.tag.is_none()
+                && template
+                    .parts()
+                    .iter()
+                    .all(|part| can_evaluate_twice(&part.value))
+        }
+        _ => false,
+    }
+}
+
 // =============================================================================
 // lower_identifier_for_assignment
 // =============================================================================

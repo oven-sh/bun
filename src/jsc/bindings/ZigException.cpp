@@ -160,7 +160,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
 
-    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
+    if (source_lines_count > 1 && source_lines != nullptr) {
         // Search for the beginning of the line
         unsigned int lineStart = location.byte_position;
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
@@ -173,8 +173,6 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
             lineEnd++;
         }
-
-        const unsigned char* bytes = sourceString.span8().data();
 
         // Most of the time, when you look at a stack trace, you want a couple lines above.
 
@@ -189,36 +187,34 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
-            auto byte_offset_in_source_string = lineStart - 1;
+            auto offset_in_source_string = lineStart - 1;
             uint8_t source_line_i = 1;
             auto remaining_lines_to_grab = source_lines_count - 1;
 
             {
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
+                while (offset_in_source_string > 0 && sourceString[offset_in_source_string] != '\n') {
+                    offset_in_source_string--;
                 }
 
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+                offset_in_source_string -= offset_in_source_string > 0;
             }
 
-            while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-                unsigned int end_of_line_offset = byte_offset_in_source_string;
+            while (offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
+                unsigned int end_of_line_offset = offset_in_source_string;
 
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
+                while (offset_in_source_string > 0 && sourceString[offset_in_source_string] != '\n') {
+                    offset_in_source_string--;
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
+                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(offset_in_source_string, end_of_line_offset - offset_in_source_string + 1));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
 
                 remaining_lines_to_grab--;
 
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+                offset_in_source_string -= offset_in_source_string > 0;
             }
         }
     }

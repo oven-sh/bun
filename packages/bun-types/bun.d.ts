@@ -3263,8 +3263,10 @@ declare module "bun" {
     /**
      * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
      * `[target]`, and `[hash]` (8 characters of the content hash, more when
-     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
-     * wider minimum.
+     * two outputs would otherwise share a name) or `[hashN]` for a minimum of
+     * `N` characters (`N` is 1 to 13; `[hash9]`…`[hash13]` are wider than
+     * `[hash]`). Other bracketed text, such as `[hash:8]` or `[contenthash]`,
+     * is not a token. It stays in the file name as written.
      *
      * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
      */

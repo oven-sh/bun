@@ -960,8 +960,11 @@ The `naming` field customizes the names and locations of the generated files. It
 
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
-- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash.
+- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hashN]` sets the minimum to `N` characters, where `N` is 1 to 13. `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash. An `N` above 13 prints 13 characters. An `N` below 8 makes it more likely that two outputs print the same characters.
 - `[dir]` - The relative path from the project root to the parent directory of the source file.
+- `[target]` - The target the file is built for: `browser`, `bun`, or `node`.
+
+Bun does not report bracketed text that is not one of these tokens. The text stays in the file name as written: `[name]-[hash:8].[ext]` produces `index-[hash:8].js`. The same applies to `[hash0]`, to an `N` of three or more digits, to uppercase `[HASH]`, and to tokens of other bundlers such as `[contenthash]`.
 
 For example:
 
@@ -1634,7 +1637,7 @@ BuildArtifact (entry-point) {
   path: "./index.js",
   loader: "tsx",
   kind: "entry-point",
-  hash: "824a039620219640",
+  hash: "h1ye2bca",
   Blob (74756 bytes) {
     type: "text/javascript;charset=utf-8"
   },
@@ -1642,16 +1645,16 @@ BuildArtifact (entry-point) {
     path: "./index.js.map",
     loader: "file",
     kind: "sourcemap",
-    hash: "e7178cda3e72e301",
     Blob (24765 bytes) {
       type: "application/json;charset=utf-8"
-    },
-    sourcemap: null
+    }
   }
 }
 ```
 
 </CodeGroup>
+
+This is the output of a build without `outdir`. With `outdir`, `path` is absolute and the `Blob (…)` line reads `FileRef ("<path>")`.
 
 ## Bytecode
 

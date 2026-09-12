@@ -63,6 +63,8 @@
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 #include "ModuleLoader.h"
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/JSMap.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
@@ -266,6 +268,16 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         bool wasRemoved = globalObject->requireMap()->remove(globalObject, this->filename());
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(wasRemoved);
+
+        // Keep the error reachable for a replayed makeModule of this module's
+        // ESM synthetic source, matching commonJSModuleSyntheticSourceCode's
+        // error path. Plain CJS require never registers with the module
+        // loader, so this is a no-op there.
+        auto filenameString = this->filename().toWTFString(globalObject);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, filenameString)))
+            registryEntry->setEvaluationError(globalObject, exception->value());
 
         scope.throwException(globalObject, exception);
         return false;
@@ -1570,35 +1582,54 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                if (entry) {
-                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
-                                (void)scope.tryClearException();
-
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                globalObject->requireMap()->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, {});
-
-                                scope.throwException(globalObject, exception);
-                                return;
-                            }
-                        }
-
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                // JSMap::get returns undefined, which is truthy as a JSValue,
+                // for a missing key. A vanished entry means an evaluation
+                // attempt failed and was evicted (below); an empty module here
+                // would silently drop the module's side effects and its error.
+                if (entry.isUndefinedOrNull()) [[unlikely]] {
+                    if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(moduleKey)) {
+                        JSValue error = registryEntry->error(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
+                        if (error) {
+                            scope.throwException(globalObject, error);
+                            return;
+                        }
                     }
-                } else {
-                    // require map was cleared of the entry
+                    throwException(globalObject, scope, createError(globalObject, makeString("Module \""_s, StringView(moduleKey.string()), "\" was removed from the require cache while it was being loaded."_s)));
+                    return;
+                }
+
+                if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
+                    if (!moduleObject->hasEvaluated) {
+                        evaluateCommonJSModuleOnce(
+                            vm,
+                            globalObject,
+                            moduleObject,
+                            moduleObject->m_dirname.get(),
+                            moduleObject->m_filename.get());
+                        if (auto exception = scope.exception()) {
+                            if (vm.hasPendingTerminationException()) [[unlikely]]
+                                return;
+                            (void)scope.tryClearException();
+
+                            // On error, remove the module from the require map
+                            // so that it can be re-evaluated on the next require.
+                            globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+                            RETURN_IF_EXCEPTION(scope, {});
+
+                            // Keep the error reachable for a replayed makeModule
+                            // (above); this throw's rejection can strand on an
+                            // outer synchronous module queue and get dropped.
+                            if (auto* registryEntry = globalObject->moduleLoader()->registryEntry(moduleKey))
+                                registryEntry->setEvaluationError(globalObject, exception->value());
+
+                            scope.throwException(globalObject, exception);
+                            return;
+                        }
+                    }
+
+                    moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             },
             sourceOrigin,

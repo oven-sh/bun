@@ -379,3 +379,95 @@ describe("WebSocket custom headers", () => {
     ws.close();
   });
 });
+
+describe("WebSocket options are read through the prototype chain", () => {
+  // Upgrades every request and echoes the upgrade request headers as the first message.
+  function headerEchoServer() {
+    return Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req, { data: req.headers.toJSON() })) return;
+        return new Response("not a websocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send(JSON.stringify(ws.data));
+        },
+        message() {},
+      },
+    });
+  }
+
+  async function upgradeHeaders(url: string, options: any): Promise<Record<string, string>> {
+    const { promise, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+    const ws = new WebSocket(url, options);
+    clients.push(ws);
+    ws.onmessage = event => resolve(JSON.parse(event.data));
+    ws.onerror = () => reject(new Error("websocket failed"));
+    ws.onclose = event => reject(new Error(`closed: ${event.code} ${event.reason}`));
+    const headers = await promise;
+    ws.onclose = null;
+    ws.close();
+    return headers;
+  }
+
+  it("honors headers and protocols inherited from a prototype", async () => {
+    using server = headerEchoServer();
+    const defaults = { headers: { "X-Auth": "secret", "Authorization": "Bearer T" }, protocols: ["chat"] };
+    const headers = await upgradeHeaders(server.url.href, Object.create(defaults));
+    expect(headers).toMatchObject({
+      "x-auth": "secret",
+      "authorization": "Bearer T",
+      "sec-websocket-protocol": "chat",
+    });
+  });
+
+  it("honors headers and protocols from prototype getters", async () => {
+    using server = headerEchoServer();
+    class Config {
+      get headers() {
+        return { "X-From-Getter": "1" };
+      }
+      get protocols() {
+        return ["getter-proto"];
+      }
+    }
+    const headers = await upgradeHeaders(server.url.href, new Config());
+    expect(headers).toMatchObject({
+      "x-from-getter": "1",
+      "sec-websocket-protocol": "getter-proto",
+    });
+  });
+
+  it("honors an inherited perMessageDeflate: false and offers the extension when omitted", async () => {
+    using server = headerEchoServer();
+    const disabled = await upgradeHeaders(server.url.href, Object.create({ perMessageDeflate: false }));
+    expect(disabled["sec-websocket-extensions"]).toBeUndefined();
+    const enabled = await upgradeHeaders(server.url.href, {});
+    expect(enabled["sec-websocket-extensions"]).toContain("permessage-deflate");
+  });
+
+  it("accepts a single protocol string via protocols or protocol", async () => {
+    using server = headerEchoServer();
+    expect((await upgradeHeaders(server.url.href, { protocols: "chat" }))["sec-websocket-protocol"]).toBe("chat");
+    expect((await upgradeHeaders(server.url.href, { protocol: "chat" }))["sec-websocket-protocol"]).toBe("chat");
+  });
+
+  it("ignores options placed on Object.prototype", async () => {
+    using server = headerEchoServer();
+    (Object.prototype as any).headers = { "X-Polluted": "1" };
+    (Object.prototype as any).protocols = ["polluted"];
+    (Object.prototype as any).perMessageDeflate = false;
+    let headers: Record<string, string>;
+    try {
+      headers = await upgradeHeaders(server.url.href, {});
+    } finally {
+      delete (Object.prototype as any).headers;
+      delete (Object.prototype as any).protocols;
+      delete (Object.prototype as any).perMessageDeflate;
+    }
+    expect(headers["x-polluted"]).toBeUndefined();
+    expect(headers["sec-websocket-protocol"]).toBeUndefined();
+    expect(headers["sec-websocket-extensions"]).toContain("permessage-deflate");
+  });
+});

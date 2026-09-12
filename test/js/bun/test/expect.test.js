@@ -2642,6 +2642,21 @@ describe("expect()", () => {
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
     expect({ "": "hello", b: "world" }).toContainAllKeys(["", "b"]);
 
+    // An asymmetric matcher can match more than one key. It must not hide an entry that matches no key.
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "a"]);
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), expect.any(String)]);
+    expect({ ab: 1, ac: 2 }).toContainAllKeys(["ac", expect.stringContaining("a")]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.any(String), "zzz"]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys(["zzz", expect.any(String)]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.anything(), "zzz"]);
+    expect({ ab: 1, ac: 2 }).not.toContainAllKeys([expect.stringContaining("a"), "zzz"]);
+    expect(() => expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"])).toThrow("contain all keys");
+    if (isBun) {
+      // jest-extended passes these two. It does not check that each key matches an entry of expected.
+      expect({ a: 1, b: 2 }).not.toContainAllKeys(["a", "a"]);
+      expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.stringContaining("a"), "a"]);
+    }
+
     expect([1, 2, 3]).toContainAllKeys(["0", "1", "2"]);
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
   });

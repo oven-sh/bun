@@ -573,13 +573,17 @@ impl WebWorker {
 
     /// [`VmHandle::request_interrupt`] for the worker's VM; kept until its
     /// entry module starts. Any thread that holds a ref (the proxy).
+    ///
+    /// # Safety
+    /// `work` is a heap `Bun::VMInterrupts::Work` the caller hands over.
     #[unsafe(export_name = "WebWorker__requestInterrupt")]
-    pub(crate) extern "C" fn request_interrupt(this: *mut WebWorker, work: *mut c_void) {
+    pub(crate) unsafe extern "C" fn request_interrupt(this: *mut WebWorker, work: *mut c_void) {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         let handle = this.vm_handle.lock();
         match &*handle {
             Some(handle) if this.entry_started.load(Ordering::Relaxed) => {
-                handle.request_interrupt(work)
+                // SAFETY: fn contract.
+                unsafe { handle.request_interrupt(work) }
             }
             _ => this.pending_interrupts.lock().push(work),
         }
@@ -888,7 +892,8 @@ impl WebWorker {
             let pending = core::mem::take(&mut *self.pending_interrupts.lock());
             let handle = handle.as_ref().expect("published by start_vm");
             for work in pending {
-                handle.request_interrupt(work);
+                // SAFETY: `work` was handed over to `request_interrupt`.
+                unsafe { handle.request_interrupt(work) };
             }
         }
 

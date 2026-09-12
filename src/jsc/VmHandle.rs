@@ -414,7 +414,10 @@ impl VmHandle {
     /// only ask) and have the VM's thread run its queue at its next safepoint:
     /// a VM trap for running script, a loop task for an idle VM. Any thread;
     /// once closed the work is dropped unrun.
-    pub fn request_interrupt(&self, work: *mut c_void) {
+    ///
+    /// # Safety
+    /// `work` is null or a heap `Bun::VMInterrupts::Work` the caller hands over.
+    pub unsafe fn request_interrupt(&self, work: *mut c_void) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate before `Closed` ⇒ the VM and its
             // JSC::VM are alive; the queue is locked on the C++ side and
@@ -796,11 +799,12 @@ pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool 
 /// Any thread: [`VmHandle::request_interrupt`].
 ///
 /// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
+/// `r` is a live reference its holder keeps for the duration of the call;
+/// `work` as for [`VmHandle::request_interrupt`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__requestInterrupt(r: *const Shared, work: *mut c_void) {
     // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.request_interrupt(work);
+    unsafe { VmHandle::borrow_ref(r).request_interrupt(work) };
 }
 
 /// The address of this handle's state byte, for C++ to test

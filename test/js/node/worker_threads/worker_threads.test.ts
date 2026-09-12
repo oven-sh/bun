@@ -836,6 +836,7 @@ describe("getHeapSnapshot", () => {
 // (cpuUsage() and getHeapStatistics() need nothing from the worker thread and are covered apart.)
 describe("introspection while the worker runs synchronous JavaScript", () => {
   async function expectToSettleWhileBusy(worker: Worker, flag: Int32Array, calledBeforeOnline?: Promise<unknown>) {
+    const exited = once(worker, "exit");
     try {
       if (calledBeforeOnline) await expect(calledBeforeOnline).resolves.toBeDefined();
 
@@ -860,7 +861,7 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
     } finally {
       Atomics.store(flag, 0, 1);
     }
-    const [exitCode] = await once(worker, "exit");
+    const [exitCode] = await exited;
     expect(exitCode).toBe(0);
   }
 
@@ -886,6 +887,7 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
         const { parentPort, workerData } = require("node:worker_threads");
         const flag = new Int32Array(workerData);
         parentPort.once("message", () => {
+          parentPort.postMessage("spinning");
           while (Atomics.load(flag, 0) === 0) {}
           process.exit(0);
         });
@@ -893,7 +895,9 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
       { eval: true, workerData: flag.buffer },
     );
     await once(worker, "online");
+    const spinning = once(worker, "message");
     worker.postMessage("spin");
+    await spinning;
     await expectToSettleWhileBusy(worker, flag);
   });
 

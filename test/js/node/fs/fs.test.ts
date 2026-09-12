@@ -5,10 +5,12 @@ import {
   gc,
   getMaxFD,
   isBroken,
+  isCI,
   isDebug,
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -967,6 +969,58 @@ describe("copyFileSync", () => {
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+  });
+
+  // clonefile(2) fails with EEXIST when the destination exists. Without
+  // COPYFILE_EXCL, copyFile must overwrite it anyway. A local volume without
+  // clone support reports ENOTSUP or EXDEV. That is not the bug this test
+  // covers. The CI runners use APFS, so the checks must run there.
+  it.if(isMacOS)("COPYFILE_FICLONE_FORCE overwrites an existing destination", async () => {
+    const tempdir = tmpdirTestMkdir();
+    const src = join(tempdir, "src.bin");
+    const content = Buffer.alloc(1024 * 1024, "A");
+    writeFileSync(src, content);
+    const force = fs.constants.COPYFILE_FICLONE_FORCE;
+    const excl = fs.constants.COPYFILE_EXCL;
+    const eexist = expect.objectContaining({ code: "EEXIST" });
+
+    const variants: Record<string, (src: string, dest: string, mode: number) => Promise<void>> = {
+      sync: async (src, dest, mode) => copyFileSync(src, dest, mode),
+      callback: promisify(fs.copyFile),
+      promises: fs.promises.copyFile,
+    };
+
+    for (const [name, copy] of Object.entries(variants)) {
+      const dest = join(tempdir, `${name}.bin`);
+      writeFileSync(dest, "placeholder");
+      try {
+        await copy(src, dest, force);
+      } catch (e: any) {
+        if (!isCI && (e.code === "ENOTSUP" || e.code === "EXDEV")) continue;
+        throw e;
+      }
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      await expect(copy(src, dest, force | excl)).rejects.toThrow(eexist);
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // A failure on the source must not remove the destination.
+      await expect(copy(join(tempdir, "missing.bin"), dest, force)).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // The same file as source and destination must keep its content.
+      await copy(dest, dest, force);
+      expect(readFileSync(dest).equals(content)).toBe(true);
+      const link = join(tempdir, `${name}.link`);
+      symlinkSync(dest, link);
+      await copy(link, dest, force);
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // No temporary file is left behind.
+      expect(readdirSync(tempdir).filter(f => f.startsWith(`${name}.bin`) && f !== `${name}.bin`)).toEqual([]);
+    }
   });
 
   it("COPYFILE_EXCL works", () => {

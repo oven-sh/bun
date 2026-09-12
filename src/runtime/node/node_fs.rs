@@ -412,6 +412,55 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: clone to a temporary name, then rename over `dest`.
+#[cfg(target_os = "macos")]
+fn clonefile_force(
+    src: &ZStr,
+    dest: &ZStr,
+    mode: constants::Copyfile,
+    syscall: sys::Tag,
+) -> Maybe<ret::CopyFile> {
+    // https://www.manpagez.com/man/2/clonefile/
+    if mode.shouldnt_overwrite() {
+        return Maybe::<ret::CopyFile>::errno_sys_p(
+            bun_sys::c::clonefile_rc(src, dest, 0),
+            syscall,
+            src,
+        )
+        .unwrap_or(Ok(()));
+    }
+
+    let name_too_long = || sys::Error {
+        errno: E::ENAMETOOLONG as _,
+        syscall,
+        path: dest.as_bytes().into(),
+        ..Default::default()
+    };
+    let mut name_buf = [0u8; 64];
+    let name = FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+        .map_err(|_| name_too_long())?;
+    let mut tmp_buf = bun_paths::path_buffer_pool::get();
+    let tmp_len = dest.len() + name.len();
+    if tmp_len >= tmp_buf.len() {
+        return Err(name_too_long());
+    }
+    tmp_buf[..dest.len()].copy_from_slice(dest.as_bytes());
+    tmp_buf[dest.len()..tmp_len].copy_from_slice(name.as_bytes());
+    tmp_buf[tmp_len] = 0;
+    let tmp = ZStr::from_buf(&tmp_buf[..], tmp_len);
+
+    if let Some(err) =
+        Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, tmp, 0), syscall, src)
+    {
+        return err;
+    }
+    if let Err(err) = Syscall::rename(tmp, dest) {
+        let _ = Syscall::unlink(tmp);
+        return Err(err.with_path(dest));
+    }
+    Ok(())
+}
+
 /// Path-length field width.
 type PathInt = u32;
 
@@ -4703,13 +4752,7 @@ impl NodeFS {
             let dest = args.dest.slice_z(&mut dest_buf);
 
             if args.mode.is_force_clone() {
-                // https://www.manpagez.com/man/2/clonefile/
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::copyfile,
-                    src,
-                )
-                .unwrap_or(Ok(()));
+                return clonefile_force(src, dest, args.mode, sys::Tag::copyfile);
             } else {
                 let stat_ = match Syscall::stat(src) {
                     Ok(result) => result,
@@ -8238,13 +8281,7 @@ impl NodeFS {
         #[cfg(target_os = "macos")]
         {
             if mode.is_force_clone() {
-                // https://www.manpagez.com/man/2/clonefile/
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                )
-                .unwrap_or(Ok(()));
+                return clonefile_force(src, dest, mode, sys::Tag::clonefile);
             }
             let stat_ = match reuse_stat {
                 Some(s) => *s,

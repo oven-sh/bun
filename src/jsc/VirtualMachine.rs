@@ -3867,6 +3867,8 @@ impl VirtualMachine {
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
                 if handle_unhandled() {
+                    // Run what the listener queued; on the loop's last turn no later checkpoint would.
+                    drain(self);
                     return;
                 }
                 // continue to default handler

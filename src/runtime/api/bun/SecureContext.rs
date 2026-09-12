@@ -15,7 +15,7 @@
 
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
-use crate::socket::{SSLConfig, SSLConfigFromJs};
+use crate::socket::{SSLConfig, SSLConfigFromJs, tls_true_defaults};
 use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
@@ -73,7 +73,7 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(|| tls_true_defaults(vm));
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -231,7 +231,7 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(|| tls_true_defaults(vm));
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -271,7 +271,7 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(|| tls_true_defaults(vm));
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();

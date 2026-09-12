@@ -1325,10 +1325,7 @@ impl Init {
         Ok(Some(result))
     }
 
-    /// Fetch spec: `ResponseInit["statusText"]` must match the `reason-phrase`
-    /// production (HTAB, SP / VCHAR 0x20-0x7E, obs-text 0x80-0xFF). Only the
-    /// `Response` constructors call this: `Request` also parses its init
-    /// through `Init::init` and ignores `statusText`.
+    /// Fetch spec: `statusText` must match `reason-phrase` (HTAB, 0x20-0x7E, 0x80-0xFF).
     pub(crate) fn validate_status_text(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         fn is_reason_phrase_unit(c: u32) -> bool {
             c == 0x09 || (0x20..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)

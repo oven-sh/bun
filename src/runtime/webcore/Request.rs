@@ -1398,9 +1398,7 @@ impl Request {
 
         req.url.set(href);
 
-        // Fetch spec `new Request()` step 36. Looser than the spec (which
-        // rejects any non-null body) to match `fetch_impl`: a zero-byte body
-        // is treated as absent by both entry points.
+        // Fetch spec `new Request()` step 36, with the zero-byte rule `fetch()` uses.
         if matches!(req.method, Method::GET | Method::HEAD)
             && req.body_value_mut().has_request_body()
         {

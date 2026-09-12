@@ -765,10 +765,7 @@ impl Value {
         }
     }
 
-    /// Whether a GET/HEAD request carrying this body must be rejected. Mirrors
-    /// `HTTPRequestBody::has_body` in `fetch_impl`: a zero-byte body (`""`,
-    /// `new Uint8Array(0)`, `new Blob([])`, `new URLSearchParams()`) counts as
-    /// no body so `new Request(url, init)` and `fetch(url, init)` agree.
+    /// Same rule as `HTTPRequestBody::has_body` in `fetch_impl`: a zero-byte body is no body.
     pub(crate) fn has_request_body(&mut self) -> bool {
         match self {
             Value::Null | Value::Empty => false,

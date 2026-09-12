@@ -615,19 +615,32 @@ impl Loader {
 
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
+        let preseeded_before = self.map.map.count();
+        let mut preseeded_written = bun_collections::AutoBitSet::init_empty(preseeded_before)?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
-            if let Some(i) = strings::index_of_char(env, b'=') {
-                let key = &env[..i as usize];
-                let value = &env[i as usize + 1..];
-                if !key.is_empty() {
-                    self.map.put(key, value)?;
-                }
+            let (key, value) = match strings::index_of_char(env, b'=') {
+                Some(i) => (&env[..i as usize], &env[i as usize + 1..]),
+                None => (env, &b""[..]),
+            };
+            if key.is_empty() {
+                continue;
+            }
+            // environ can hold duplicate keys; libc getenv()/Node take the first, so skip repeats from this scan.
+            let gop = self.map.get_or_put_without_value(key)?;
+            let first_hit = if gop.found_existing {
+                gop.index < preseeded_before && !preseeded_written.is_set(gop.index)
             } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
+                true
+            };
+            if first_hit {
+                if gop.found_existing {
+                    preseeded_written.set(gop.index);
                 }
+                *gop.value_ptr = HashTableValue {
+                    value: Box::from(value),
+                };
             }
         }
         self.did_load_process = true;

@@ -2245,20 +2245,32 @@ function renderNativeHeaders(res) {
     // header is rendered so the advertised value matches the transport.
     let closeDelimited = false;
     let forceChunked = false;
+    // False for HTTP/1.0 (set by the constructor) or when the user cleared it.
+    const chunkedByDefault = !!res.useChunkedEncodingByDefault;
+    // Node's _storeHeader shouldSendKeepAlive: without chunked encoding only an
+    // explicit Content-Length lets the connection persist.
+    const canPersist = chunkedByDefault || storedContentLength !== undefined;
     if (storedContentLength === undefined && storedTransferEncoding === undefined) {
       if (res._hasBody === false) {
         // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
         // framing headers must not close the connection (Node's _storeHeader
         // checks !_hasBody before its close-delimited else-branch).
+      } else if (!chunkedByDefault) {
+        // Node's _storeHeader `else if (!this.useChunkedEncodingByDefault) this._last = true`,
+        // taken before the Content-Length branch: no framing header at all, the body
+        // runs until the connection closes.
+        closeDelimited = true;
+        res[kMustCloseConnection] = true;
       } else if (res._removedTE) {
         closeDelimited = true;
         res[kMustCloseConnection] = true;
       } else if (res._removedContLen || res[kFramingFrozenChunked]) {
-        // Node's _storeHeader falls through to chunked only when useChunkedEncodingByDefault
-        // (false for HTTP/1.0); the native writer never chunk-frames HTTP/1.0, so the rest is
-        // close-delimited. An explicit writeHead() reaches the same null-_contentLength fallthrough.
+        // Node's _storeHeader falls through to chunked here. The flag is still set for an
+        // HTTP/1.0 request that sent `TE: chunked`, but the native writer never chunk-frames
+        // HTTP/1.0, so that stays close-delimited. An explicit writeHead() reaches the same
+        // null-_contentLength fallthrough.
         const req = res.req;
-        if (res.useChunkedEncodingByDefault && req.httpVersionMajor >= 1 && req.httpVersionMinor >= 1) {
+        if (req.httpVersionMajor >= 1 && req.httpVersionMinor >= 1) {
           forceChunked = true;
         } else {
           closeDelimited = true;
@@ -2278,6 +2290,7 @@ function renderNativeHeaders(res) {
       if (
         !defectiveNoBodyResponse &&
         !closeDelimited &&
+        canPersist &&
         !res.maxRequestsOnConnectionReached &&
         res.shouldKeepAlive !== false &&
         requestShouldKeepAlive(res.req)
@@ -2299,7 +2312,7 @@ function renderNativeHeaders(res) {
         // Like Node's shouldSendKeepAlive/_last handling: a user-cleared
         // shouldKeepAlive (graceful-shutdown helpers set it on in-flight
         // responses) must also end the socket after 'finish'.
-        if (res.shouldKeepAlive === false) {
+        if (res.shouldKeepAlive === false || !canPersist) {
           res[kMustCloseConnection] = true;
         }
         autoHeaders |= AUTO_HEADER_CONN_CLOSE;

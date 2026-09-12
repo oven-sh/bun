@@ -58,6 +58,9 @@ pub(crate) fn infer_types(
         &mut env.types,
         &mut Resolver::new(&unifier),
     );
+    if unifier.out_of_steps() {
+        return Err(too_many_steps());
+    }
     Ok(())
 }
 
@@ -1077,6 +1080,9 @@ impl<'a> Resolver<'a> {
 
     fn get(&mut self, ty: &Type) -> Type {
         self.unifier.step();
+        if self.unifier.out_of_steps() {
+            return ty.clone();
+        }
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.unifier.substitutions.get(id) {
                 if let Some(resolved) = self.vars.get(id) {
@@ -1339,6 +1345,9 @@ impl Unifier {
                 }
             }
 
+            if self.out_of_steps() {
+                return Err(too_many_steps());
+            }
             if let Some(candidate) = candidate_type {
                 self.unify_impl(v, candidate, shapes)?;
                 return Ok(());
@@ -1369,6 +1378,9 @@ impl Unifier {
 
     fn try_resolve_type(&mut self, v: &Type, ty: &Type, stripped: &mut Stripped) -> Option<Type> {
         self.step();
+        if self.out_of_steps() {
+            return None;
+        }
         match ty {
             Type::Phi { operands } => {
                 if let Some((_, resolved)) = stripped.phis.get(&operands.as_ptr()) {
@@ -1397,9 +1409,6 @@ impl Unifier {
             Type::TypeVar { id } => {
                 if let Some(resolved) = stripped.vars.get(id) {
                     return Some(resolved.clone());
-                }
-                if self.out_of_steps() {
-                    return None;
                 }
                 let substitution = self.get(ty);
                 if !type_equals(&substitution, ty) {
@@ -1445,7 +1454,8 @@ impl Unifier {
 
     fn occurs_check(&self, v: &Type, ty: &Type, visited: &mut Visited) -> bool {
         self.step();
-        if type_equals(v, ty) {
+        // `true` sends the caller into `try_resolve_type`, which reports the limit.
+        if self.out_of_steps() || type_equals(v, ty) {
             return true;
         }
 

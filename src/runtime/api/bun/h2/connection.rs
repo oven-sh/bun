@@ -413,7 +413,7 @@ impl Connection {
         self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
     }
 
-    /// node's OnInvalidFrame count. True: past maxSessionInvalidFrames, the session is torn down.
+    /// node's OnInvalidFrame, post-increment compare included. True: the session is torn down.
     fn count_invalid_frame(&mut self, sink: &impl Sink) -> bool {
         let count = self.invalid_frame_count;
         self.invalid_frame_count = count.saturating_add(1);

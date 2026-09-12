@@ -762,6 +762,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     return JSValue::encode(patched);
 }
 
+static bool isRegisteredModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
+{
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    if (!virtualModules)
+        return false;
+    auto entry = virtualModules->find(specifier);
+    return entry != virtualModules->end() && entry->value.get() == mock;
+}
+
 // False once a later mock.module() or Bun.plugin.clearAll() replaced `mock` while its factory was pending.
 static bool didSettlePendingModulePatch(Zig::GlobalObject* globalObject, JSModuleMock* mock, String& specifier)
 {
@@ -771,11 +780,13 @@ static bool didSettlePendingModulePatch(Zig::GlobalObject* globalObject, JSModul
 
     specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    if (!virtualModules)
-        return false;
-    auto entry = virtualModules->find(specifier);
-    return entry != virtualModules->end() && entry->value.get() == mock;
+    return isRegisteredModuleMock(globalObject, mock, specifier);
+}
+
+static void unregisterModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
+{
+    if (isRegisteredModuleMock(globalObject, mock, specifier))
+        globalObject->onLoadPlugins.virtualModules->remove(specifier);
 }
 
 // Mocks replaced or cleared while their factory was pending are no longer in the map.
@@ -1004,15 +1015,16 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
 
     JSC::JSValue exportsValue = callFrame->argument(0);
     if (!exportsValue.isObject()) {
-        globalObject->onLoadPlugins.virtualModules->remove(specifier);
         Zig::throwFactoryMustReturnObject(globalObject, scope);
+    } else {
+        Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
+        if (!scope.exception()) [[likely]]
+            Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+    }
+    if (scope.exception()) [[unlikely]] {
+        Zig::unregisterModuleMock(globalObject, mock, specifier);
         return {};
     }
-
-    Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
-    RETURN_IF_EXCEPTION(scope, {});
-    Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
-    RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

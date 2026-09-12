@@ -289,8 +289,9 @@ test("a pending factory promise that rejects rejects the promise mock.module ret
   factory.reject(error);
   await expect(patched).rejects.toBe(error);
   expect(ns.a()).toBe("real-a");
-  // The failed mock does not stay registered.
-  expect(require(path).a()).toBe("real-a");
+  // A fresh load is not served by the failed mock.
+  delete require.cache[path];
+  expect((await import(path)).a()).toBe("real-a");
 
   // Already rejected when the factory returns: thrown, and not also reported as an unhandled rejection.
   expect(() =>
@@ -298,6 +299,28 @@ test("a pending factory promise that rejects rejects the promise mock.module ret
       throw error;
     }),
   ).toThrow(error);
+});
+
+test("a pending factory whose exports throw while being read rejects the returned promise and unregisters the mock", async () => {
+  using dir = tempDir("mock-module-pending-getter-throws", {
+    "a.ts": `export function a() { return "real-a"; }`,
+  });
+  const path = join(String(dir), "a.ts");
+  const ns = await import(path);
+
+  const patched = mock.module(path, async () => {
+    await Promise.resolve();
+    return {
+      get a() {
+        throw new Error("export getter");
+      },
+    };
+  });
+  await expect(patched).rejects.toThrow("export getter");
+  expect(ns.a()).toBe("real-a");
+  // A fresh load is not served by the failed mock.
+  delete require.cache[path];
+  expect((await import(path)).a()).toBe("real-a");
 });
 
 test("a factory promise that resolves to a non-object is rejected like the synchronous case", async () => {

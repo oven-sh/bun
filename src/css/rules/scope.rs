@@ -50,8 +50,11 @@ impl<R> ScopeRule<R> {
             if let Some(scope_start) = &self.scope_start {
                 // `Printer::with_context` carries the captured state as the
                 // first closure arg (no `&self` capture across `&mut dest`).
+                let vendor_prefix = dest.vendor_prefix;
                 dest.with_context(
                     scope_start,
+                    vendor_prefix,
+                    false,
                     scope_end,
                     |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
                         let ctx = d.ctx;

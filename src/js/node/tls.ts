@@ -740,8 +740,7 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  // Over a wrapped socket the wrapped socket's allowHalfOpen wins and onread is
-  // ignored: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
+  // A wrapped socket keeps its allowHalfOpen and drops onread: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
   if (isNetSocketOrDuplex) {
     options = { ...options, allowHalfOpen: socket.allowHalfOpen, onread: null };
   } else {

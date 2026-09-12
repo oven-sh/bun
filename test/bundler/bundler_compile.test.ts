@@ -1120,22 +1120,47 @@ describe("bundler", () => {
       });
     }
   }
-  itBundled("compile/EmbeddedSqlite", {
-    compile: true,
-    files: {
-      "/entry.ts": /* js */ `
-        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
-        console.log(db.query("select message from messages LIMIT 1").get().message);
-      `,
-      "/db.sqlite": (() => {
-        const db = new Database(":memory:");
-        db.exec("create table messages (message text)");
-        db.exec("insert into messages values ('Hello, world!')");
-        return db.serialize();
-      })(),
+  // The embedded database becomes a synthesized module whose body calls the
+  // module's require. In cjs output (which --bytecode defaults to) the chunk
+  // is wrapped in the `@bun-cjs` function wrapper, where `import.meta` is a
+  // SyntaxError, so that call has to go through the wrapper's `require`.
+  for (const variant of [
+    { suffix: "", options: {} },
+    { suffix: "+cjs", options: { format: "cjs" } },
+    {
+      suffix: "+cjs+minify",
+      options: { format: "cjs", minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true },
     },
-    run: { stdout: "Hello, world!" },
-  });
+    { suffix: "+bytecode", options: { bytecode: true } },
+  ] as const) {
+    itBundled("compile/EmbeddedSqlite" + variant.suffix, {
+      compile: true,
+      ...variant.options,
+      files: {
+        "/entry.ts": /* js */ `
+          import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+          console.log(db.query("select message from messages LIMIT 1").get().message);
+        `,
+        "/db.sqlite": (() => {
+          const db = new Database(":memory:");
+          db.exec("create table messages (message text)");
+          db.exec("insert into messages values ('Hello, world!')");
+          return db.serialize();
+        })(),
+      },
+      run: {
+        stdout: "Hello, world!",
+        ...("bytecode" in variant.options
+          ? {
+              env: { BUN_JSC_verboseDiskCache: "1" },
+              validate({ stderr }) {
+                expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+              },
+            }
+          : {}),
+      },
+    });
+  }
   itBundled("compile/sqlite-file", {
     compile: true,
     files: {

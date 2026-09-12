@@ -1033,9 +1033,9 @@ impl PathLikeExt for PathLike<'_> {
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
                 // Bail before the cwd resolution + normalization below write
                 // into fixed u8 buffers: UNC-shaped inputs pass through the
-                // resolver untouched and can reach `normalize_buf` at full
-                // MAX_PATH_BYTES length, whose root handling writes one past
-                // the input length.
+                // resolver untouched and can reach `normalize_string_buf` at
+                // full MAX_PATH_BYTES length, whose root handling writes one
+                // past the input length.
                 if !strings::fits_in_wide_path_buffer(s) {
                     return Err(NameTooLong);
                 }
@@ -1051,10 +1051,14 @@ impl PathLikeExt for PathLike<'_> {
                     Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
-                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                    resolve,
-                    &mut b[..],
-                );
+                // `resolve` is volume-qualified (`C:\...` or `\\server\share\...`),
+                // so like `path.toNamespacedPath` this clamps `..` at the root
+                // and drops a trailing separator, which Win32 rejects on a file.
+                let normal = bun_paths::resolve_path::normalize_string_buf::<
+                    false,
+                    bun_paths::platform::Windows,
+                    false,
+                >(resolve, &mut b[..]);
                 if !strings::fits_in_wide_path_buffer(normal) {
                     return Err(NameTooLong);
                 }
@@ -1063,17 +1067,30 @@ impl PathLikeExt for PathLike<'_> {
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
-            // Handle "." specially since normalizeStringBuf strips it to an empty string
-            if s.len() == 1 && s[0] == b'.' {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
-            }
-            let normal = bun_paths::resolve_path::normalize_string_buf::<
-                true,
-                bun_paths::platform::Windows,
-                false,
-            >(s, &mut b[..]);
+            // Only `X:\...` is absolute here (separator-first paths were handled
+            // above); relative and drive-relative (`X:dir`) paths keep a leading
+            // `..` for Win32 to resolve against the (drive's) current directory.
+            let normal: &[u8] = if bun_paths::is_absolute(s) {
+                bun_paths::resolve_path::normalize_string_buf::<
+                    false,
+                    bun_paths::platform::Windows,
+                    false,
+                >(s, &mut b[..])
+            } else {
+                bun_paths::resolve_path::normalize_string_buf::<
+                    true,
+                    bun_paths::platform::Windows,
+                    false,
+                >(s, &mut b[..])
+            };
+            // A relative path whose components cancel out (`.`, `./`, `dir/..`)
+            // normalizes to nothing but names the current directory; `""` would
+            // fail with ENOENT (oven-sh/bun#26631).
+            let normal: &[u8] = if normal.is_empty() && !s.is_empty() {
+                b"."
+            } else {
+                normal
+            };
             if !strings::fits_in_wide_path_buffer(normal) {
                 return Err(NameTooLong);
             }

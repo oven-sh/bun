@@ -8,8 +8,11 @@ const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
+const { isAnyArrayBuffer } = require("node:util/types");
 
 const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
@@ -365,6 +368,32 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
 
+// The pool name also keys the TLS session cache, so it has to differ whenever the client
+// certificate or the trusted CA does. `name += value` only manages that when the value's
+// string form is its contents: a string, a Buffer, a TypedArray, or an array of those.
+// A { buf | pem, passphrase } entry, an ArrayBuffer and a Blob all stringify to "[object ...]".
+const poolKeyObjectIds = new WeakMap<object, number>();
+let poolKeyObjectCount = 0;
+function poolKeyPart(value: unknown, passphrase?: unknown): unknown {
+  if (typeof value !== "object" || value === null || $isTypedArrayView(value)) return value;
+  if ($isArray(value)) {
+    return ArrayPrototypeJoin.$call(
+      ArrayPrototypeMap.$call(value, element => poolKeyPart(element, passphrase)),
+      ",",
+    );
+  }
+  if (isAnyArrayBuffer(value)) return Buffer.from(value as ArrayBufferLike);
+  const { buf, pem, passphrase: ownPassphrase } = value as { buf?: unknown; pem?: unknown; passphrase?: unknown };
+  // A pfx entry, in the format of Node's getPfxAgentKey() (CVE-2026-56850).
+  if (buf != null) return `:${poolKeyPart(buf)}:${ownPassphrase || passphrase}`;
+  // A key entry. Its passphrase only decrypts the pem, so it stays out of the name.
+  if (pem != null) return poolKeyPart(pem);
+  // Any other object (a Blob, a BunFile) has no contents to read here: key it by identity.
+  let id = poolKeyObjectIds.get(value);
+  if (id === undefined) poolKeyObjectIds.set(value, (id = ++poolKeyObjectCount));
+  return `[object #${id}]`;
+}
+
 /**
  * Gets a unique name for a set of options.
  */
@@ -378,6 +407,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
     ciphers,
     key,
     pfx,
+    passphrase,
     rejectUnauthorized,
     servername,
     host,
@@ -393,13 +423,16 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
     sigalgs,
     privateKeyIdentifier,
     privateKeyEngine,
+    certFile,
+    keyFile,
+    caFile,
   } = options;
 
   name += ":";
-  if (ca) name += ca;
+  if (ca) name += poolKeyPart(ca);
 
   name += ":";
-  if (cert) name += cert;
+  if (cert) name += poolKeyPart(cert);
 
   name += ":";
   if (clientCertEngine) name += clientCertEngine;
@@ -408,10 +441,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ciphers) name += ciphers;
 
   name += ":";
-  if (key) name += key;
+  if (key) name += poolKeyPart(key);
 
   name += ":";
-  if (pfx) name += pfx;
+  if (pfx) name += poolKeyPart(pfx, passphrase);
 
   name += ":";
   if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
@@ -429,7 +462,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (secureProtocol) name += secureProtocol;
 
   name += ":";
-  if (crl) name += crl;
+  if (crl) name += poolKeyPart(crl);
 
   name += ":";
   if (honorCipherOrder !== undefined) name += honorCipherOrder;
@@ -438,7 +471,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ecdhCurve) name += ecdhCurve;
 
   name += ":";
-  if (dhparam) name += dhparam;
+  if (dhparam) name += poolKeyPart(dhparam);
 
   name += ":";
   if (secureOptions !== undefined) name += secureOptions;
@@ -454,6 +487,12 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
+
+  // Bun-only options: paths that the TLS layer reads the client certificate, its key and the
+  // CA from. Node has no such options, so a name without them stays Node's name.
+  if (certFile) name += `:certFile=${certFile}`;
+  if (keyFile) name += `:keyFile=${keyFile}`;
+  if (caFile) name += `:caFile=${caFile}`;
 
   return name;
 };

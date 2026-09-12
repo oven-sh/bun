@@ -2330,6 +2330,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNAVAILABLE_DURING_EXIT, "Cannot call function in process exit handler"_s));
     case ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
+    case ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME, "\"servername\" is required parameter for Server.addContext"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
     case ErrorCode::ERR_TLS_INVALID_STATE:

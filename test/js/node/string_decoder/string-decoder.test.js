@@ -354,6 +354,115 @@ describe("lastNeed/lastTotal/lastChar state matches Node after completing a spli
   });
 });
 
+// Node's end(buf) is `(buf === undefined ? "" : this.write(buf))` followed by the flushed partial
+// character (https://github.com/nodejs/node/blob/v26.3.0/lib/string_decoder.js#L96-L101), so
+// end() takes exactly what write() takes: undefined only flushes, a string is returned as-is ahead
+// of the flushed bytes, and anything that is not an ArrayBufferView throws write()'s error.
+describe("end(buf) handles its argument like write(buf)", () => {
+  const encodings = ["utf8", "utf16le", "base64", "base64url", "hex", "latin1", "ascii"];
+
+  // [encoding, bytes that stay buffered as an incomplete character, what end() flushes for them]
+  const partials = [
+    ["utf8", [0xe2, 0x82], "\ufffd"],
+    ["utf16le", [0x3d, 0xd8], "\ud83d"],
+    // A lone trailing byte of a utf16le code unit is dropped by the flush.
+    ["utf16le", [0x61], ""],
+    ["base64", [0x61, 0x62], "YWI="],
+    ["base64url", [0x61, 0x62], "YWI"],
+  ];
+
+  // [label, value] pairs that neither write() nor end() accept.
+  const rejected = [
+    ["null", null],
+    ["a number", 123],
+    ["a boolean", true],
+    ["a bigint", 123n],
+    ["a symbol", Symbol("buf")],
+    ["a plain object", {}],
+    ["an array", [0x61]],
+    ["an ArrayBuffer", new ArrayBuffer(2)],
+    ["a String object", new String("abc")],
+    ["a function", () => {}],
+  ];
+
+  function thrownBy(fn) {
+    try {
+      fn();
+    } catch (e) {
+      return { isTypeError: e instanceof TypeError, name: e.name, code: e.code, message: e.message };
+    }
+    return "did not throw";
+  }
+
+  it.each(encodings)('%s: end(undefined) is "" and end(string) is the string when nothing is buffered', encoding => {
+    const results = {
+      undefined: new RealStringDecoder(encoding).end(undefined),
+      string: new RealStringDecoder(encoding).end("abc"),
+      emptyString: new RealStringDecoder(encoding).end(""),
+    };
+    expect(results).toEqual({ undefined: "", string: "abc", emptyString: "" });
+  });
+
+  it.each(partials)("%s: end(undefined) flushes the buffered partial like end()", (encoding, bytes, flushed) => {
+    const decoder = new RealStringDecoder(encoding);
+    expect(decoder.write(Buffer.from(bytes))).toBe("");
+    expect(decoder.end(undefined)).toBe(flushed);
+    expect(decoder.end()).toBe("");
+  });
+
+  it.each(partials)(
+    "%s: end(string) returns the string followed by the buffered partial",
+    (encoding, bytes, flushed) => {
+      const decoder = new RealStringDecoder(encoding);
+      expect(decoder.write(Buffer.from(bytes))).toBe("");
+      expect(decoder.end("abc")).toBe("abc" + flushed);
+      // The partial was consumed and the decoder is reusable, as after end().
+      expect({ again: decoder.end(), lastNeed: decoder.lastNeed, lastTotal: decoder.lastTotal }).toEqual({
+        again: "",
+        lastNeed: 0,
+        lastTotal: 0,
+      });
+    },
+  );
+
+  it.each(rejected)("end() of %s throws the ERR_INVALID_ARG_TYPE that write() throws", (_label, value) => {
+    const fromWrite = thrownBy(() => new RealStringDecoder().write(value));
+    expect(fromWrite).toMatchObject({ isTypeError: true, name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(thrownBy(() => new RealStringDecoder().end(value))).toEqual(fromWrite);
+  });
+
+  it("the error names the argument and the value it received", () => {
+    const { message } = thrownBy(() => new RealStringDecoder().end(123));
+    expect(message).toStartWith('The "buf" argument must be ');
+    expect(message).toEndWith(". Received type number (123)");
+  });
+
+  it("a rejected end(buf) leaves the buffered partial for the next end()", () => {
+    const decoder = new RealStringDecoder("utf8");
+    expect(decoder.write(Buffer.from([0xe2, 0x82]))).toBe("");
+    expect(thrownBy(() => decoder.end(123))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(decoder.end()).toBe("\ufffd");
+  });
+
+  it("write() with no argument throws what write(undefined) throws", () => {
+    const fromUndefined = thrownBy(() => new RealStringDecoder().write(undefined));
+    expect(fromUndefined).toMatchObject({ isTypeError: true, code: "ERR_INVALID_ARG_TYPE" });
+    expect(fromUndefined.message).toEndWith(". Received undefined");
+    expect(thrownBy(() => new RealStringDecoder().write())).toEqual(fromUndefined);
+  });
+
+  it("end(view) still decodes any ArrayBufferView and then flushes", () => {
+    // 0xe2 0x82 0xac is "€"; the trailing 0xe2 starts a new character that end() flushes.
+    const utf8 = new RealStringDecoder("utf8");
+    expect(utf8.write(Buffer.from([0xe2]))).toBe("");
+    expect(utf8.end(new DataView(Uint8Array.of(0x82, 0xac, 0xe2).buffer))).toBe("€\ufffd");
+
+    // "a" followed by a lone high surrogate, which end() flushes on its own.
+    const utf16le = new RealStringDecoder("utf16le");
+    expect(utf16le.end(new DataView(Uint8Array.of(0x61, 0x00, 0x3d, 0xd8).buffer))).toBe("a\ud83d");
+  });
+});
+
 it("invalid utf-8 input, pr #3562", () => {
   const decoder = new RealStringDecoder("utf-8");
   let output = "";

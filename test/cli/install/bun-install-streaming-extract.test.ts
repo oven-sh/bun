@@ -10,7 +10,7 @@ import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { createGzip, gzipSync } from "node:zlib";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -416,6 +416,76 @@ describe("streaming tarball extraction", () => {
       expect([path, got.equals(body)]).toEqual([path, true]);
     }
     expect(existsSync(join(pkgRoot, longName))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  // Both extractors strip the leading `package/` and hand the rest to
+  // normalize_buf_t, which drops every `..` that would climb above the root
+  // of a relative path. The buffered extractor (Archiver::extract_to_dir) has
+  // nothing else between an entry name and openat(extraction_dir, ...); the
+  // streaming one (TarballStream) has a leading-`..` check behind it that the
+  // clamp makes unreachable. Pin the clamp for both so a normalizer change
+  // cannot quietly turn these entries into writes outside the extraction dir.
+  test.each([
+    ["streaming", {}],
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("entries that climb above the package root with .. are clamped to it (%s)", async (label, env) => {
+    const climbing = [
+      "../climb-1.txt",
+      "../../../climb-3.txt",
+      "nested/../../climb-nested.txt",
+      "a/b/../../../climb-ab.txt",
+    ];
+    const built = buildTarball([...entries, ...climbing.map(path => ({ path, body: Buffer.from(`${path}\n`) }))]);
+    expect(built.tgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+    await using reg = await makeRegistry(built.tgz, built.shasum, built.integrity, chunkBytes);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-dotdot", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+    // Entries are extracted into a directory under BUN_TMPDIR and the tree is
+    // then renamed into the cache (which runInstall keeps under `dir`). Bury
+    // the temp dir deeper than the longest `..` chain above climbs, so an
+    // entry that did escape still lands somewhere the walk below can see.
+    const tmp = join(String(dir), "t1", "t2", "t3", "bun-tmp");
+    mkdirSync(tmp, { recursive: true });
+
+    const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_TMPDIR: tmp, TMPDIR: tmp });
+    expect(stderr).not.toContain("error:");
+    if (label === "streaming") {
+      expect(stderr).toContain("] Streamed ");
+    } else {
+      expect(stderr).toContain("] Extracted to ");
+    }
+    expect(reg.tarballHits).toBe(1);
+
+    // The clamp keeps the basename: every climbing entry ends up directly in
+    // the package root, next to the regular entries.
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    const climbed = (await readdirSorted(pkgRoot)).filter(name => name.startsWith("climb-"));
+    expect(climbed).toEqual(["climb-1.txt", "climb-3.txt", "climb-ab.txt", "climb-nested.txt"]);
+    expect(readFileSync(join(pkgRoot, "climb-ab.txt"), "utf8")).toBe("a/b/../../../climb-ab.txt\n");
+    expect(readFileSync(join(pkgRoot, "index.js"), "utf8")).toBe("module.exports = 'ok';\n");
+
+    // The property that matters: every copy of a climbing entry anywhere under
+    // `dir` (node_modules, the cache, the temp dir) sits in a directory that
+    // is a stream-pkg package root. An escaped entry would have bun-tmp, one
+    // of the t* directories, .cache or `dir` itself as its parent.
+    const isStreamPkgRoot = (directory: string) => {
+      const manifest = join(directory, "package.json");
+      return existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).name === "stream-pkg";
+    };
+    const strays = readdirSync(String(dir), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.name.startsWith("climb-") && !isStreamPkgRoot(entry.parentPath))
+      .map(entry => relative(String(dir), join(entry.parentPath, entry.name)));
+    expect(strays).toEqual([]);
     expect(exitCode).toBe(0);
   });
 

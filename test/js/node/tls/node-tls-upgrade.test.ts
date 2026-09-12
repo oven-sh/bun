@@ -53,14 +53,14 @@ test("should be able to upgrade a paused socket and also have backpressure on it
     await promise;
     socket.off("data", onData);
   }
-  for (let i = 0; i < 100; i++) {
+  // 20 round trips of 128 KiB: 100 took up to 5 s on a debug ASAN build.
+  for (let i = 0; i < 20; i++) {
     // upgrade the tlsSocket
     await doWrite(tlsSocket);
   }
 
   expect().pass();
-  // 100 round trips of 128 KiB over TLS take 3.5 to 5 s under a debug ASAN build.
-}, 30_000);
+});
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
 test.each([

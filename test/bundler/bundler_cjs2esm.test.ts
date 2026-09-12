@@ -960,6 +960,35 @@ describe("bundler", () => {
     },
     run: { stdout: "object FA FA" },
   });
+  // The same for a file that is an ES module by its type (`"type": "module"`,
+  // `.mjs`) and has no `import` / `export` statement.
+  itBundled("cjs2esm/ESModuleByTypeInUnwrappedPackageRequiresCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import "react";
+        import "react-dom/setup.mjs";
+        console.log(globalThis.fromReact, globalThis.fromReactDOM);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "type": "module", "main": "./index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        const impl = require("./impl.cjs");
+        globalThis.fromReact = impl("A");
+      `,
+      "/node_modules/react/impl.cjs": /* js */ `
+        module.exports = function F(x) { return "F" + x; };
+      `,
+      "/node_modules/react-dom/setup.mjs": /* js */ `
+        const impl = require("./impl.cjs");
+        globalThis.fromReactDOM = impl("B");
+      `,
+      "/node_modules/react-dom/impl.cjs": /* js */ `
+        module.exports = function G(x) { return "G" + x; };
+      `,
+    },
+    run: { stdout: "FA GB" },
+  });
   // `import` next to `exports.x = ...` links the same way in and out of the list.
   itBundled("cjs2esm/ImportAndExportsAssignmentInUnwrappedPackage", {
     files: {

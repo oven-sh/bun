@@ -3329,8 +3329,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
-        // The unwrap list converts CommonJS files. A file with ES module syntax is not one.
-        self.unwrap_all_requires = self.unwrap_all_requires && !self.has_es_module_syntax;
+        // The unwrap list converts CommonJS files. An ES module, by syntax or by type, is not one.
+        self.unwrap_all_requires = self.unwrap_all_requires
+            && !self.has_es_module_syntax
+            && self.options.module_type != options::ModuleType::Esm;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.

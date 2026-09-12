@@ -173,7 +173,13 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!globalObject)
         return;
 
+    // JSObject::globalObject() is null for a cell with a realmless structure. A WebAssembly GC
+    // object (a struct or array reference) is the one kind of such cell that plain JS can hold,
+    // and addEventListener() accepts any object. Such an object is never callable, so it reaches
+    // the handleEvent lookup below. Use the realm of the event target instead.
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
+    if (!lexicalGlobalObject) [[unlikely]]
+        lexicalGlobalObject = globalObject;
 
     JSValue handleEventFunction = jsFunction;
 

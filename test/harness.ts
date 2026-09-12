@@ -13,7 +13,7 @@ import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, relative } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -458,7 +458,7 @@ export function makeTreeSyncFromDirectoryTree(base: string, tree: DirectoryTree)
 
 export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string) {
   if (typeof filesOrAbsolutePathToCopyFolderFrom === "string") {
-    fs.cpSync(filesOrAbsolutePathToCopyFolderFrom, base, { recursive: true });
+    copyTreeSync(filesOrAbsolutePathToCopyFolderFrom, base);
     return;
   }
 
@@ -466,10 +466,48 @@ export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: 
 }
 
 /**
+ * Copies the contents of the directory `source` into the existing directory `dest`, so that the copy is independent of
+ * the original. That is what makes an installed project (a `node_modules`, a workspace, a cache) usable as a fixture
+ * that is installed once and copied into each test's own directory.
+ *
+ * Links are recreated, not followed. A relative target is kept as it is. An absolute target that points into `source`
+ * (`bun install` writes those for workspace members and store entries on Windows, and for the cache's index everywhere)
+ * is pointed at the same entry of the copy. `fs.cpSync` would leave such a link pointing into `source`, and would
+ * resolve a relative one against `source` unless told otherwise. On Windows an absolute directory link is recreated as
+ * a junction, which needs no privilege, like the fallback `bun install` itself uses.
+ */
+export function copyTreeSync(source: string, dest: string) {
+  const root = fs.realpathSync.native(source);
+  const copy = (from: string, to: string) => {
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const entryFrom = join(from, entry.name);
+      const entryTo = join(to, entry.name);
+      if (entry.isSymbolicLink()) {
+        let target = fs.readlinkSync(entryFrom);
+        const kind = fs.statSync(entryFrom, { throwIfNoEntry: false })?.isDirectory() ? "dir" : "file";
+        if (isAbsolute(target)) {
+          const inside = relative(root, target);
+          if (!inside.startsWith("..") && !isAbsolute(inside)) target = join(dest, inside);
+          fs.symlinkSync(target, entryTo, kind === "dir" ? "junction" : "file");
+        } else {
+          fs.symlinkSync(target, entryTo, kind);
+        }
+      } else if (entry.isDirectory()) {
+        fs.mkdirSync(entryTo, { recursive: true });
+        copy(entryFrom, entryTo);
+      } else {
+        fs.copyFileSync(entryFrom, entryTo);
+      }
+    }
+  };
+  copy(source, dest);
+}
+
+/**
  * Recursively create files within a new temporary directory.
  *
  * @param basename prefix of the new temporary directory
- * @param filesOrAbsolutePathToCopyFolderFrom Directory tree or absolute path to a folder to copy. If passing an object each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @param filesOrAbsolutePathToCopyFolderFrom Directory tree or absolute path to a folder to copy (see `copyTreeSync`). If passing an object each key is a folder or file, and each value is the contents of the file. Use objects for directories.
  * @returns an absolute path to the new temporary directory
  *
  * @example

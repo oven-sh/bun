@@ -1063,25 +1063,18 @@ impl<'a> Parser<'a> {
                         p.append_part(parts_list, sliced)?;
                     }
 
-                    js_ast::StmtData::SClass(class) => {
-                        // Move class export statements to the top of the file if we can
-                        // This automatically resolves some cyclical import issues
-                        // https://github.com/kysely-org/kysely/issues/412
-                        let should_move = !p.options.bundle && class.class.can_be_moved();
-
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
-
-                        if should_move {
-                            // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
-                        }
-                    }
                     js_ast::StmtData::SExportDefault(value) => {
-                        // We move export default statements when we can
-                        // This automatically resolves some cyclical import issues in packages like luxon
-                        // https://github.com/oven-sh/bun/issues/1961
-                        let should_move = !p.options.bundle && value.can_be_moved();
+                        // Hoist for cyclic-import compat (#1961). A named default class
+                        // has a TDZ binding, so leave it in place.
+                        let is_named_default_class = match &value.value {
+                            js_ast::StmtOrExpr::Stmt(s) => matches!(
+                                &s.data,
+                                js_ast::StmtData::SClass(c) if c.class.class_name.is_some()
+                            ),
+                            js_ast::StmtOrExpr::Expr(_) => false,
+                        };
+                        let should_move =
+                            !p.options.bundle && !is_named_default_class && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 

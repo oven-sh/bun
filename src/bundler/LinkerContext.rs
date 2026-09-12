@@ -4354,21 +4354,15 @@ impl<'a> LinkerContext<'a> {
         let Some(export) = self.graph.symbols.get_const(result.r#ref) else {
             return true;
         };
-        // A direct `eval` in the exporting file can assign it too. An import
-        // that matching cannot follow is a binding of an external module,
-        // which changes out of sight.
+        // Assigned by code, by a direct `eval`, or by an external module.
         if export.has_been_assigned_to()
             || export.must_not_be_renamed()
             || export.kind == bun_ast::symbol::Kind::Import
         {
             return false;
         }
-        // The importee's own initializer changes the export too. A `require()`
-        // can run while the importee initializes (an import cycle, or a
-        // callback no import graph shows), and the pattern then copies the
-        // value from before the initializer. Only a function declaration and a
-        // namespace object (printed outside the wrapper) have their value from
-        // the start. An `import()` settles after the initializer.
+        // A `require()` can run while the importee initializes. Only a function
+        // declaration and a namespace object have their value before that.
         let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
             [named_import.import_record_index as usize];
         record.kind != ImportKind::Require

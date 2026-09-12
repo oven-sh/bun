@@ -2485,9 +2485,13 @@ export default <>hi</>
       ]);
     });
 
-    it("a parse error next to a warning still throws", () => {
+    it("a parse error next to a warning still throws", async () => {
       const t = new Bun.Transpiler({ loader: "js" });
       const src = warnSrc + "bad??!?!?!";
+      const expectedErrors = [
+        ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
+        ["error", "Unexpected ?"],
+      ];
       for (const fn of ["transformSync", "scan", "scanImports"]) {
         let thrown;
         try {
@@ -2496,11 +2500,18 @@ export default <>hi</>
           thrown = e;
         }
         expect(thrown).toBeInstanceOf(AggregateError);
-        expect(thrown.errors.map(m => [m.level, m.message])).toEqual([
-          ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
-          ["error", "Unexpected ?"],
-        ]);
+        expect(thrown.errors.map(m => [m.level, m.message])).toEqual(expectedErrors);
       }
+
+      let rejected;
+      await t.transform(src).then(
+        () => {},
+        e => {
+          rejected = e;
+        },
+      );
+      expect(rejected).toBeInstanceOf(AggregateError);
+      expect(rejected.errors.map(m => [m.level, m.message])).toEqual(expectedErrors);
     });
   });
 

@@ -3146,8 +3146,11 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JS
         return false;
     }
     auto& vm = JSC::getVM(globalObject);
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // `this` is any object: an object that inherits from `process`, or the receiver of this setter
+    // taken from the descriptor. [[DefineOwnProperty]] lets it reject the property: a frozen
+    // object, a Proxy trap, a WebAssembly GC reference.
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)

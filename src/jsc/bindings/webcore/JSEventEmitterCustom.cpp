@@ -32,7 +32,7 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue, DefineEvents defineEvents)
 {
     if (!thisValue.isCell()) [[unlikely]] {
         return nullptr;
@@ -64,7 +64,12 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    thisObject->putDirect(vm, name, result, 0);
+    if (defineEvents == DefineEvents::Yes) {
+        // Node: `this._events = ...`, which throws when `this` rejects the property: a frozen
+        // object, a Proxy trap, a WebAssembly GC reference.
+        thisObject->createDataProperty(lexicalGlobalObject, name, result, true);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+    }
 
     return uncheckedDowncast<JSEventEmitter>(asObject(result));
 }

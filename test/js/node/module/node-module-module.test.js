@@ -922,6 +922,90 @@ console.log("survived", require("./late.js"));`,
     expect(Object.getOwnPropertyDescriptor(require.cache, "bun:sqlite")).toBeUndefined();
     expect(Object.keys(require.cache)).not.toContain("bun:sqlite");
   });
+
+  // In Node, `cache` and `extensions` are own data properties of each require function. Here they
+  // are accessors on the prototype that every require function shares, and an assignment shadows
+  // the accessor with an own data property on `this`. The setters used to write that property
+  // directly, which skipped the receiver's own [[DefineOwnProperty]]: a frozen object gained a
+  // property, a Proxy saw no trap, and a WebAssembly GC reference aborted the process.
+  describe.each(["cache", "extensions"])("assigning require.%s", key => {
+    const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), key);
+    const dataProperty = value => ({ value, writable: true, enumerable: true, configurable: true });
+
+    test("shadows the accessor on that require function only", () => {
+      const assigned = createRequire(import.meta.url);
+      const value = {};
+      assigned[key] = value;
+      expect(Object.getOwnPropertyDescriptor(assigned, key)).toEqual(dataProperty(value));
+      expect(createRequire(import.meta.url)[key]).toBe(require[key]);
+      expect(require[key]).not.toBe(value);
+    });
+
+    test("a receiver that is not extensible rejects the property", () => {
+      for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+        const receiver = lock({});
+        expect(() => set.call(receiver, 1)).toThrow(TypeError);
+        expect(Reflect.ownKeys(receiver)).toEqual([]);
+
+        const locked = lock(createRequire(import.meta.url));
+        const keys = Reflect.ownKeys(locked);
+        expect(() => {
+          locked[key] = 1;
+        }).toThrow(TypeError);
+        expect(Reflect.ownKeys(locked)).toEqual(keys);
+        expect(locked[key]).toBe(require[key]);
+      }
+    });
+
+    test("a Proxy receiver gets its defineProperty trap called", () => {
+      const calls = [];
+      const target = {};
+      const proxy = new Proxy(target, {
+        defineProperty(target, key, descriptor) {
+          calls.push([key, descriptor]);
+          return Reflect.defineProperty(target, key, descriptor);
+        },
+      });
+      set.call(proxy, 1);
+      expect(calls).toEqual([[key, dataProperty(1)]]);
+      expect(target).toEqual({ [key]: 1 });
+
+      const refusing = new Proxy({}, { defineProperty: () => false });
+      expect(() => set.call(refusing, 1)).toThrow(TypeError);
+    });
+
+    // In a subprocess because this aborted the process.
+    test("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
+      const src = `
+        // (module (type $s (struct (field (mut i32))))
+        //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+        const bytes = new Uint8Array([
+          0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+          0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+          0x03, 0x02, 0x01, 0x01,
+          0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+          0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+        ]);
+        const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+        const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), ${JSON.stringify(key)});
+        try {
+          set.call(ref, 1);
+          console.log("no error");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });

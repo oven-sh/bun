@@ -109,6 +109,68 @@ test.each([
   },
 );
 
+// Node only honors onread when the TLS socket dials its own connection:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L596
+test("tls.connect({ socket, onread }) ignores onread and emits 'data' (#42419)", async () => {
+  const server = tls.createServer(certs, socket => {
+    socket.on("error", () => {});
+    socket.end("hello");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    await once(raw, "connect");
+    const log: string[] = [];
+    const tlsSocket = tls.connect({
+      socket: raw,
+      ca: certs.cert,
+      servername: "localhost",
+      onread: { buffer: Buffer.alloc(16), callback: (n: number) => log.push(`onread ${n}`) },
+    });
+    tlsSocket.on("data", data => log.push(`data ${data.length}`));
+    tlsSocket.on("error", () => {});
+    await once(tlsSocket, "close");
+    expect(log).toEqual(["data 5"]);
+  } finally {
+    server.close();
+  }
+});
+
+test("new tls.TLSSocket(socket, { isServer: true, onread }) ignores onread and emits 'data' (#42419)", async () => {
+  const log: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const server = net.createServer(socket => {
+    socket.on("error", reject);
+    const tlsSocket = new tls.TLSSocket(socket, {
+      isServer: true,
+      secureContext: tls.createSecureContext(certs),
+      onread: { buffer: Buffer.alloc(16), callback: (n: number) => log.push(`onread ${n}`) },
+    });
+    tlsSocket.on("error", reject);
+    tlsSocket.on("data", data => {
+      log.push(`data ${data.length}`);
+      tlsSocket.end();
+    });
+    tlsSocket.on("close", resolve);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = tls.connect({
+      port: (server.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      ca: certs.cert,
+      servername: "localhost",
+    });
+    client.on("error", reject);
+    client.on("secureConnect", () => client.write("hello"));
+    await promise;
+    expect(log).toEqual(["data 5"]);
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 // Both peers keep their plaintext 'data' listener across the upgrade.
 test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrapped sockets (#32239)", async () => {
   const saw: string[] = [];

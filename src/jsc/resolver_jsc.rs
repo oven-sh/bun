@@ -45,10 +45,13 @@ extern "C" fn node_module_paths_js_value(
         utf8.slice()
     };
     let mut buf = bun_paths::path_buffer_pool::get();
+    // Like Node's `_nodeModulePaths`, pure string manipulation: no length limit.
+    let mut spill = Vec::new();
 
-    let mut full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+    let mut full_path: &[u8] = resolve_path::join_abs_string_buf_spill::<bun_paths::platform::Auto>(
         bun_paths::fs::FileSystem::instance().top_level_dir(),
         &mut **buf,
+        &mut spill,
         &[base_path],
     );
     let root_index: usize = {

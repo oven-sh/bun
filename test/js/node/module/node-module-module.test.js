@@ -487,6 +487,55 @@ console.log("survived", require("./late.js"));`,
     expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
   });
 
+  test("_nodeModulePaths() accepts paths longer than PATH_MAX", async () => {
+    // Like Node's, this is string manipulation: the input never has to exist
+    // or fit a path buffer. It used to be resolved into a fixed-size buffer,
+    // which crashed the process, so this runs in a child. The inputs are built
+    // on both sides rather than passed through argv (too long for Windows').
+    function inputs() {
+      return {
+        single: Buffer.alloc(100_000, "a").toString(),
+        segments: Array.from({ length: 100 }, (_, i) => `seg${i}-` + Buffer.alloc(56, "s").toString()),
+        relative: Buffer.alloc(5000, "r").toString(),
+      };
+    }
+    const { single, segments, relative } = inputs();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("module");
+         ${inputs}
+         const { single, segments, relative } = inputs();
+         process.stdout.write(JSON.stringify({
+           single: m._nodeModulePaths("/" + single),
+           segments: m._nodeModulePaths("/" + segments.join("/")),
+           relative: m._nodeModulePaths(relative),
+           dot: m._nodeModulePaths("."),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { dot, ...results } = JSON.parse(stdout);
+
+    const root = path.resolve("/");
+    expect(results).toEqual({
+      single: [path.join(root, single, "node_modules"), path.join(root, "node_modules")],
+      segments: [
+        ...segments.map((_, i) => path.join(root, ...segments.slice(0, segments.length - i), "node_modules")),
+        path.join(root, "node_modules"),
+      ],
+      // A relative input resolves against the cwd, so its lookup chain is the
+      // cwd's own chain with one more entry in front.
+      relative: [path.join(path.dirname(dot[0]), relative, "node_modules"), ...dot],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("_nodeModulePaths() is stable across process.chdir()", async () => {
     // process.chdir() re-seeds the resolver's cached top-level dir with a
     // trailing separator; _nodeModulePaths("") then used to emit a duplicate

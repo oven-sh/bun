@@ -1540,6 +1540,8 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         65 => CertError::INVALID_CALL,
         66 => CertError::STORE_LOOKUP,
         67 => CertError::NAME_CONSTRAINTS_WITHOUT_SANS,
+        1001 => CertError::EE_KEY_TOO_SMALL, // US_X509_V_ERR_EE_KEY_TOO_SMALL (libusockets.h)
+        1002 => CertError::CA_KEY_TOO_SMALL, // US_X509_V_ERR_CA_KEY_TOO_SMALL (libusockets.h)
         _ => CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     })
 }

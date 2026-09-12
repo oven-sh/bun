@@ -687,6 +687,105 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     expect(exitCode).toBe(1);
   }
 });
+
+// Node (OpenSSL at its default security level) refuses a chain in which any
+// certificate, the trust anchor included, carries an RSA key below 2048 bits,
+// reporting code UNSPECIFIED with OpenSSL's reason string. BoringSSL's verifier
+// has no such floor, so Bun enforces it in uSockets (us_internal_x509_verify_cert).
+//
+// Fixtures (fixtures/weak-key-*.pem) were generated with:
+//   printf '[ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n[leaf]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=DNS:localhost\n' > ext.cnf
+//   issue() { openssl req -new -key $1 -subj "$2" -out req.csr && openssl x509 -req -in req.csr -sha256 -days 36500 -CA $4 -CAkey $5 -set_serial 0x$(openssl rand -hex 8) -extfile ext.cnf -extensions $3 -out $6; }
+//   openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 36500 -keyout root.key -out weak-key-root-cert.pem -subj /CN="Weak Key Test Root" -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+//   openssl genrsa -out weak-key-leaf-key.pem 2048
+//   openssl genrsa -out inter2048.key 2048; issue inter2048.key /CN="Weak Key Test Intermediate RSA-2048" ca weak-key-root-cert.pem root.key inter2048.pem
+//   issue weak-key-leaf-key.pem /CN=localhost leaf inter2048.pem inter2048.key leaf.pem; cat leaf.pem inter2048.pem > weak-key-ok-chain.pem
+//   openssl genrsa -out inter512.key 512; issue inter512.key /CN="Weak Key Test Intermediate RSA-512" ca weak-key-root-cert.pem root.key inter512.pem
+//   issue weak-key-leaf-key.pem /CN=localhost leaf inter512.pem inter512.key leaf.pem; cat leaf.pem inter512.pem > weak-key-ca512-chain.pem
+//   openssl genrsa -out weak-key-ee1024-key.pem 1024; issue weak-key-ee1024-key.pem /CN=localhost leaf weak-key-root-cert.pem root.key weak-key-ee1024-cert.pem
+//   openssl req -x509 -newkey rsa:1024 -nodes -sha256 -days 36500 -keyout root1024.key -out weak-key-root1024-cert.pem -subj /CN="Weak Key Test Root RSA-1024" -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+//   issue weak-key-leaf-key.pem /CN=localhost leaf weak-key-root1024-cert.pem root1024.key weak-key-under-root1024-cert.pem
+describe("certificate chains containing a weak public key", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const root = fixture("weak-key-root-cert.pem");
+  const leafKey = fixture("weak-key-leaf-key.pem");
+  // RSA-2048 leaf issued by an RSA-2048 intermediate under `root`.
+  const strong = { key: leafKey, cert: fixture("weak-key-ok-chain.pem") };
+
+  const weakChains = [
+    {
+      name: "an RSA-512 intermediate CA",
+      identity: { key: leafKey, cert: fixture("weak-key-ca512-chain.pem") },
+      ca: root,
+      message: "CA certificate key too weak",
+    },
+    {
+      name: "an RSA-1024 end-entity certificate",
+      identity: { key: fixture("weak-key-ee1024-key.pem"), cert: fixture("weak-key-ee1024-cert.pem") },
+      ca: root,
+      message: "EE certificate key too weak",
+    },
+    {
+      name: "an RSA-1024 trust anchor",
+      identity: { key: leafKey, cert: fixture("weak-key-under-root1024-cert.pem") },
+      ca: fixture("weak-key-root1024-cert.pem"),
+      message: "CA certificate key too weak",
+    },
+  ];
+
+  it("authorizes a chain whose keys are all RSA-2048", async () => {
+    const { client } = await connect({
+      client: { ca: root, servername: "localhost", rejectUnauthorized: false },
+      server: strong,
+    });
+    expect({ authorized: client.conn.authorized, authorizationError: client.conn.authorizationError }).toEqual({
+      authorized: true,
+      authorizationError: null,
+    });
+  });
+
+  it("accepts a client certificate whose keys are all RSA-2048", async () => {
+    const { server } = await connect({
+      client: { ...strong, ca: root, servername: "localhost" },
+      server: { ...strong, ca: root, requestCert: true },
+    });
+    expect(server.conn.authorized).toBe(true);
+  });
+
+  for (const { name, identity, ca, message } of weakChains) {
+    describe(name, () => {
+      it("is reported through authorizationError when rejectUnauthorized is false", async () => {
+        const { client } = await connect({
+          client: { ca, servername: "localhost", rejectUnauthorized: false },
+          server: identity,
+        });
+        expect({ authorized: client.conn.authorized, authorizationError: client.conn.authorizationError }).toEqual({
+          authorized: false,
+          authorizationError: "UNSPECIFIED",
+        });
+      });
+
+      it("fails tls.connect by default", async () => {
+        await expect(
+          connect({
+            client: { ca, servername: "localhost" },
+            server: identity,
+          }),
+        ).rejects.toMatchObject({ code: "UNSPECIFIED", message });
+      });
+
+      it("is rejected as a client certificate", async () => {
+        await expect(
+          connect({
+            client: { ...identity, ca: root, servername: "localhost" },
+            server: { ...strong, ca, requestCert: true },
+          }),
+        ).rejects.toMatchObject({ code: "UNSPECIFIED", message });
+      });
+    });
+  }
+});
+
 describe("tls ciphers should work", () => {
   [
     "", // when using BoringSSL we cannot set the cipher suites directly in this case, but we can set empty ciphers

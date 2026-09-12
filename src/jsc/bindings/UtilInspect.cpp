@@ -120,9 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
-// Walks what a Map or Set iterator has left to yield, in the storage of the collection, the way
-// the iterator's own next() does but without moving the iterator. Copies out at most `limit`
-// entries and returns how many are left in total.
+// JSMapIterator::nextWithAdvance in a loop, minus its writes to the iterator. Returns how many entries are left.
 template<typename Collection, typename Iterator>
 static uint32_t previewRemainingEntries(VM& vm, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
 {
@@ -158,11 +156,7 @@ static uint32_t previewRemainingEntries(VM& vm, Iterator* iterator, uint32_t lim
     return remaining;
 }
 
-// Port of V8's `internalBinding('util').previewEntries(iterator, true)`, which util.inspect and
-// console.Console#table use to show a Map or Set iterator. No user code runs: a replaced
-// %MapIteratorPrototype%.next or Map.prototype[Symbol.iterator] is never called.
-// Returns [entries, isKeyValue, length]. `entries` is flat ([key, value, key, value, ...] when
-// isKeyValue) and holds the first `limit` (default: all) of the `length` entries that are left.
+// internalBinding('util').previewEntries(iterator, true) plus a limit: [flat entries (at most `limit`), isKeyValue, entries left].
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

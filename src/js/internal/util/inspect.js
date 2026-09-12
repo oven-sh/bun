@@ -2778,8 +2778,7 @@ function getProxyDetails(proxy, withHandler = true) {
   if (withHandler) return [target, handler];
   else return target;
 }
-// For a Map or Set iterator: [entries, isKeyValue, length]. `entries` is flat and holds the first
-// `limit` (default: all) of the `length` entries the iterator has left. See UtilInspect.cpp.
+// (iterator, limit) => [flat entries (at most `limit`), isKeyValue, entries left]
 const previewIteratorEntries = $newCppFunction("UtilInspect.cpp", "jsFunctionPreviewEntries", 2);
 function previewEntries(val, isIterator = false, limit) {
   if (isIterator) return previewIteratorEntries(val, limit);

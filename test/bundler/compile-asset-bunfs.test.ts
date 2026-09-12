@@ -61,6 +61,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           dirStatIsDir: fs.statSync(assetDir).isDirectory(),
           dirLstatIsDir: fs.lstatSync(assetDir).isDirectory(),
           accessOk: errcode(() => fs.accessSync(assetDir)) === "",
+          // JSON.stringify drops undefined values, so compare here and ship a boolean
+          accessReturnsUndefined: fs.accessSync(asset) === undefined,
+          accessPromiseResolvesUndefined: (await fs.promises.access(asset)) === undefined,
           accessWriteErr: errcode(() => fs.accessSync(asset, fs.constants.W_OK)),
           readdir: fs.readdirSync(assetDir).sort(),
           readdirHasAsset: fs.readdirSync(assetDir).includes(path.basename(asset)),
@@ -178,6 +181,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           dirStatIsDir: true,
           dirLstatIsDir: true,
           accessOk: true,
+          accessReturnsUndefined: true,
+          accessPromiseResolvesUndefined: true,
           accessWriteErr: "EACCES",
           // the hashed file-loader name is covered by readdirHasAsset
           readdir: expect.arrayContaining(["client", "config.json"]),

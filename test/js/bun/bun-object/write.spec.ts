@@ -127,9 +127,8 @@ describe("Bun.write() on file paths", () => {
           await Bun.write(filepath, content);
         });
         it("Recursively creates the directory", async () => {
-          // FIXME: should be undefined, not null
-          expect(await fs.access(rootdir, constants.F_OK)).toBeFalsy();
-          expect(await fs.access(path.dirname(filepath), constants.F_OK)).toBeFalsy();
+          expect(await fs.access(rootdir, constants.F_OK)).toBeUndefined();
+          expect(await fs.access(path.dirname(filepath), constants.F_OK)).toBeUndefined();
         });
 
         it("Creates a file with the provided content", async () => {

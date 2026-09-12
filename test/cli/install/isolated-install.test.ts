@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { chmod, mkdir, readlink, rm, symlink } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -552,6 +552,61 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+});
+
+// Bin targets get `0o777 & ~umask`, the same as the hoisted linker. For
+// workspace and `file:` dependencies the target is the source file in the repo.
+describe.each([
+  ["022", 0o755],
+  ["077", 0o700],
+])("umask %s", (umask, expectedMode) => {
+  test.skipIf(isWindows)("bin targets honor umask", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "umask-root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            tool: "workspace:*",
+            dep: "file:./dep",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "tool", "package.json"),
+        JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
+      ),
+      write(join(packageDir, "packages", "tool", "cli.js"), "#!/usr/bin/env node\nconsole.log(1)\n"),
+      write(join(packageDir, "dep", "package.json"), JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" })),
+      write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
+    ]);
+    await Promise.all([
+      chmod(join(packageDir, "packages", "tool", "cli.js"), 0o644),
+      chmod(join(packageDir, "dep", "d.js"), 0o644),
+    ]);
+
+    await using proc = spawn({
+      cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const modes = [
+      join(packageDir, "packages", "tool", "cli.js"),
+      join(packageDir, "dep", "d.js"),
+      join(packageDir, "node_modules", ".bin", "tool"),
+      join(packageDir, "node_modules", ".bin", "dep"),
+    ].map(p => (statSync(p).mode & 0o777).toString(8));
+    expect(modes).toEqual(Array(4).fill(expectedMode.toString(8)));
+  });
 });
 
 describe("isolated workspaces", () => {

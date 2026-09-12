@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
-use bun_core::strings;
 
+use super::CodeUnitPair;
 use super::Expect;
 use super::get_signature;
 use super::throw;
@@ -46,18 +46,9 @@ impl Expect {
                 }
             }
         } else if value.is_string_literal() && expected.is_string_literal() {
-            let value_string = value.to_utf8(global)?;
-            let expected_string = expected.to_utf8(global)?;
-
-            if expected_string.slice().is_empty() {
-                // edge case empty string is always contained
-                pass = true;
-            } else if strings::contains(value_string.slice(), expected_string.slice()) {
-                pass = true;
-            } else if value_string.slice().is_empty() && expected_string.slice().is_empty() {
-                // edge case two empty strings are true
-                pass = true;
-            }
+            let value_view = value.to_js_string_view(global)?;
+            let expected_view = expected.to_js_string_view(global)?;
+            pass = CodeUnitPair::new(&value_view, &expected_view).includes();
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
                 global: std::ptr::from_ref(global),

@@ -1,6 +1,7 @@
 use crate::test_runner::jest::FileColumns as _;
 use core::cell::Cell;
 use core::fmt;
+use std::borrow::Cow;
 
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
@@ -2000,13 +2001,12 @@ impl Expect {
 
     /// Shared scaffold for one-arg `expect(v).toStartWith/toEndWith/toInclude(expected)`
     /// matchers: received and expected must both be strings, pass/fail is a pure
-    /// `&[u8]`×`&[u8]` predicate (with empty `expected` always passing), and the
-    /// failure message is the stock two-liner
+    /// predicate on their code units, and the failure message is the stock two-liner
     /// `"Expected to [not ]{verb}: <green>{expected}<r>\nReceived: <red>{value}<r>\n"`.
     ///
     /// Replaces ~100 LOC of byte-identical boilerplate per matcher: post_match
     /// guard, 1-arg check, expected-is-string check, `get_value`,
-    /// `increment_expect_call_counter`, UTF-8 slice + predicate, `not`-xor, dual
+    /// `increment_expect_call_counter`, code units + predicate, `not`-xor, dual
     /// formatter, `get_signature`, `throw`.
     ///
     /// Normalizes an inherited inconsistency where `toInclude` passed `""`
@@ -2019,7 +2019,7 @@ impl Expect {
         frame: &CallFrame,
         matcher_name: &'static str,
         verb: &'static str,
-        pred: fn(&[u8], &[u8]) -> bool,
+        pred: fn(&CodeUnitPair<'_>) -> bool,
     ) -> JsResult<JSValue> {
         let this = self.post_match_guard(global);
 
@@ -2040,10 +2040,9 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_string = value.to_utf8(global)?;
-            let expected_string = expected.to_utf8(global)?;
-            pass = expected_string.slice().is_empty()
-                || pred(value_string.slice(), expected_string.slice());
+            let value_view = value.to_js_string_view(global)?;
+            let expected_view = expected.to_js_string_view(global)?;
+            pass = pred(&CodeUnitPair::new(&value_view, &expected_view));
         }
 
         let not = this.flags.get().not();
@@ -2073,6 +2072,73 @@ impl Expect {
                 expected.to_fmt(&mut f1),
                 value.to_fmt(&mut f2),
             )
+        }
+    }
+}
+
+/// The received and the expected string of a string matcher, as code units of
+/// one width. The matchers compare code units, like `String.prototype.startsWith`,
+/// `endsWith` and `indexOf`, so an unpaired surrogate equals itself and nothing
+/// else. A UTF-8 copy turns every unpaired surrogate into U+FFFD.
+pub(crate) enum CodeUnitPair<'a> {
+    Latin1(&'a [u8], &'a [u8]),
+    Utf16(Cow<'a, [u16]>, Cow<'a, [u16]>),
+}
+
+impl<'a> CodeUnitPair<'a> {
+    pub(crate) fn new(received: &'a bun_core::String, expected: &'a bun_core::String) -> Self {
+        if !received.is_utf16() && !expected.is_utf16() {
+            return Self::Latin1(received.latin1(), expected.latin1());
+        }
+        let utf16 = |string: &'a bun_core::String| -> Cow<'a, [u16]> {
+            if string.is_utf16() {
+                Cow::Borrowed(string.utf16())
+            } else {
+                Cow::Owned(string.latin1().iter().map(|&unit| u16::from(unit)).collect())
+            }
+        };
+        Self::Utf16(utf16(received), utf16(expected))
+    }
+
+    pub(crate) fn starts_with(&self) -> bool {
+        match self {
+            Self::Latin1(received, expected) => received.starts_with(expected),
+            Self::Utf16(received, expected) => received.starts_with(expected),
+        }
+    }
+
+    pub(crate) fn ends_with(&self) -> bool {
+        match self {
+            Self::Latin1(received, expected) => received.ends_with(expected),
+            Self::Utf16(received, expected) => received.ends_with(expected),
+        }
+    }
+
+    pub(crate) fn includes(&self) -> bool {
+        match self {
+            Self::Latin1(received, expected) => {
+                expected.is_empty() || strings::contains(received, expected)
+            }
+            Self::Utf16(received, expected) => bun_highway::memmem16(received, expected).is_some(),
+        }
+    }
+
+    /// How many times `expected` is in `received`, without overlap. 0 for an empty `expected`.
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Self::Latin1(received, expected) => strings::count(received, expected),
+            Self::Utf16(received, expected) => {
+                if expected.is_empty() {
+                    return 0;
+                }
+                let mut total = 0;
+                let mut rest: &[u16] = received;
+                while let Some(at) = bun_highway::memmem16(rest, expected) {
+                    total += 1;
+                    rest = &rest[at + expected.len()..];
+                }
+                total
+            }
         }
     }
 }

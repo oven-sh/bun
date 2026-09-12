@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::{Expect, get_signature, throw};
+use super::{CodeUnitPair, Expect, get_signature, throw};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -58,20 +58,16 @@ impl Expect {
 
         let not = this.flags.get().not();
 
-        let expect_string_as_str_owned = expect_string.to_utf8(global)?;
-        let sub_string_as_str_owned = substring.to_utf8(global)?;
+        let expect_string_view = expect_string.to_js_string_view(global)?;
+        let substring_view = substring.to_js_string_view(global)?;
 
-        let expect_string_as_str = expect_string_as_str_owned.slice();
-        let sub_string_as_str = sub_string_as_str_owned.slice();
-
-        if sub_string_as_str.is_empty() {
+        if substring_view.is_empty() {
             return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the first argument to be a non-empty string"
             )));
         }
 
-        // Non-overlapping occurrence count.
-        let actual_count = bun_core::strings::count(expect_string_as_str, sub_string_as_str);
+        let actual_count = CodeUnitPair::new(&expect_string_view, &substring_view).count();
         let mut pass = actual_count == count_as_num as usize;
 
         if not {

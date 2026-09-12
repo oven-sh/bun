@@ -1,12 +1,17 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use super::CodeUnitPair;
 use super::Expect;
 use super::throw;
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
 // u8::is_ascii_whitespace does not.
 #[inline]
-fn is_zig_whitespace(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
+fn is_zig_whitespace(unit: u16) -> bool {
+    matches!(unit, 0x20 | 0x09..=0x0D)
+}
+
+fn without_whitespace<T: Copy + Into<u16>>(units: &[T]) -> impl Iterator<Item = u16> + '_ {
+    units.iter().map(|&unit| unit.into()).filter(|&unit| !is_zig_whitespace(unit))
 }
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
@@ -38,47 +43,16 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        let value_slice = value.to_utf8(global)?;
-        let expected_slice = expected.to_utf8(global)?;
-
-        let value_utf8: &[u8] = value_slice.slice();
-        let expected_utf8: &[u8] = expected_slice.slice();
-
-        let mut left: usize = 0;
-        let mut right: usize = 0;
-
-        // Skip leading whitespaces
-        while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
-            left += 1;
-        }
-        while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
-            right += 1;
-        }
-
-        while left < value_utf8.len() && right < expected_utf8.len() {
-            let left_char = value_utf8[left];
-            let right_char = expected_utf8[right];
-
-            if left_char != right_char {
-                pass = false;
-                break;
+        let value_view = value.to_js_string_view(global)?;
+        let expected_view = expected.to_js_string_view(global)?;
+        pass = match CodeUnitPair::new(&value_view, &expected_view) {
+            CodeUnitPair::Latin1(left, right) => {
+                without_whitespace(left).eq(without_whitespace(right))
             }
-
-            left += 1;
-            right += 1;
-
-            // Skip trailing whitespaces
-            while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
-                left += 1;
+            CodeUnitPair::Utf16(left, right) => {
+                without_whitespace(&left).eq(without_whitespace(&right))
             }
-            while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
-                right += 1;
-            }
-        }
-
-        if left < value_utf8.len() || right < expected_utf8.len() {
-            pass = false;
-        }
+        };
     }
 
     if not {

@@ -3,7 +3,26 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::{get_signature, throw, Expect};
+use super::{get_signature, throw, CodeUnitPair, Expect};
+
+/// jest does not have a `typeof === "string"` check for `toContainEqual`.
+/// it immediately spreads the value into an array, so a string becomes its code
+/// points. An unpaired surrogate is a code point of its own.
+fn has_code_point<T: Copy + PartialEq + Into<u16>>(units: &[T], code_point: &[T]) -> bool {
+    let mut at = 0;
+    while at < units.len() {
+        let is_pair = strings::u16_is_lead(units[at].into())
+            && units
+                .get(at + 1)
+                .is_some_and(|&next| strings::u16_is_trail(next.into()));
+        let len = if is_pair { 2 } else { 1 };
+        if units[at..at + len] == *code_point {
+            return true;
+        }
+        at += len;
+    }
+    false
+}
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -63,20 +82,11 @@ pub(crate) fn to_contain_equal(
         if expected_type.is_string_object_like() && value_type.is_string() {
             pass = false;
         } else {
-            let value_string = value.to_utf8(global)?;
-            let expected_string = expected.to_utf8(global)?;
-
-            // jest does not have a `typeof === "string"` check for `toContainEqual`.
-            // it immediately spreads the value into an array.
-
-            let mut expected_codepoint_cursor = strings::Cursor::default();
-            let expected_iter = strings::CodepointIterator::init(expected_string.slice());
-            let _ = expected_iter.next(&mut expected_codepoint_cursor);
-
-            pass = if expected_iter.next(&mut expected_codepoint_cursor) {
-                false
-            } else {
-                strings::index_of(value_string.slice(), expected_string.slice()).is_some()
+            let value_view = value.to_js_string_view(global)?;
+            let expected_view = expected.to_js_string_view(global)?;
+            pass = match CodeUnitPair::new(&value_view, &expected_view) {
+                CodeUnitPair::Latin1(units, code_point) => has_code_point(units, code_point),
+                CodeUnitPair::Utf16(units, code_point) => has_code_point(&units, &code_point),
             };
         }
     } else if value.is_iterable(global)? {

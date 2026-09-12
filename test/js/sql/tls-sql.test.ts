@@ -4,6 +4,9 @@ import { describeWithContainer, isDockerEnabled } from "harness";
 import path from "node:path";
 import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
 
+// Inverted gate kept for the visible skip message. Tradeoff: with no docker,
+// this branch wins before describeWithContainer can honor a
+// BUN_TEST_SERVICE_postgres_tls override (no current environment sets one).
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
 } else {

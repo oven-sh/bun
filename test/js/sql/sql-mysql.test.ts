@@ -66,6 +66,11 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
+// Deliberately still gated while the rest of test/js/sql calls describeWithContainer
+// ungated: a few tests here are MySQL-specific (CAST(... AS JSON), MYSQL_TYPE_JSON
+// binds, FROM_UNIXTIME(0)) or dial example.com expecting the connect to hang, and
+// would fail against a MariaDB-backed BUN_TEST_SERVICE_mysql_plain override.
+// Ungate once those tests are server-agnostic.
 if (isDockerEnabled()) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
   // mysql:9) run first; the slow-to-start mysql_tls container warms up in the

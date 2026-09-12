@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -776,3 +776,170 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// Bounds how long a build that never performs the awaited reload keeps a test
+// waiting; the reload itself is awaited, never timed.
+const reloadDeadline = isDebug ? 20_000 : 5_000;
+
+/**
+ * Awaits markers a --hot child writes to stdout, in order: each `next()`
+ * searches only past the previous match, so a marker printed before the save
+ * that was supposed to produce it does not count.
+ */
+function stdoutMarkers(runner: ReturnType<typeof spawn>) {
+  const decoder = new TextDecoder();
+  let output = "";
+  let ended: string | undefined;
+  let cursor = 0;
+  let wake = () => {};
+  (async () => {
+    try {
+      for await (const chunk of runner.stdout as ReadableStream<Uint8Array>) {
+        output += decoder.decode(chunk, { stream: true });
+        wake();
+      }
+      ended = "child closed stdout";
+    } catch (error) {
+      ended = `reading stdout failed: ${error}`;
+    }
+    wake();
+  })();
+  return {
+    async next(marker: string) {
+      const line = `${marker}\n`;
+      let expired = false;
+      const { promise: expiry, resolve: expire } = Promise.withResolvers<void>();
+      const timer = setTimeout(() => {
+        expired = true;
+        expire();
+      }, reloadDeadline);
+      try {
+        while (true) {
+          const index = output.indexOf(line, cursor);
+          if (index !== -1) {
+            cursor = index + line.length;
+            return;
+          }
+          if (ended) throw new Error(`${ended} before printing ${JSON.stringify(marker)}; stdout so far:\n${output}`);
+          if (expired) throw new Error(`${JSON.stringify(marker)} was never printed; stdout so far:\n${output}`);
+          await Promise.race([new Promise<void>(resolve => (wake = resolve)), expiry]);
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+// Entry-file contents for the tests below: a generation that prints `marker`
+// and finishes, or prints it and then never settles its top-level await.
+const finishes = (marker: string) => `console.write(${JSON.stringify(marker + "\n")});\n`;
+const hangs = (marker: string) => `${finishes(marker)}await new Promise(() => {});\n`;
+
+function spawnHot(dir: string, ...args: string[]) {
+  return spawn({
+    cmd: [bunExe(), "--hot", "run", ...args, join(dir, "entry.ts")],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+}
+
+describe.concurrent("a generation whose top-level await never settles", () => {
+  it(
+    "is replaced by the next save of the entry",
+    async () => {
+      using dir = tempDir("hot-tla", { "entry.ts": finishes("[#!tla] 1 ok") });
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] 1 ok");
+
+      writeFileSync(join(String(dir), "entry.ts"), hangs("[#!tla] 2 hung"));
+      await markers.next("[#!tla] 2 hung");
+
+      writeFileSync(join(String(dir), "entry.ts"), finishes("[#!tla] 3 ok"));
+      await markers.next("[#!tla] 3 ok");
+    },
+    timeout,
+  );
+
+  it(
+    "is replaced even when it is the first generation and the await is in an import that keeps the loop busy",
+    async () => {
+      using dir = tempDir("hot-tla-import", {
+        "entry.ts": `import "./dep.ts";\n${finishes("[#!tla] entry ran")}`,
+        "dep.ts": `setInterval(() => {}, 1_000_000);\n${hangs("[#!tla] dep hung")}`,
+      });
+      await using runner = spawnHot(String(dir));
+      const markers = stdoutMarkers(runner);
+      await markers.next("[#!tla] dep hung");
+
+      writeFileSync(join(String(dir), "dep.ts"), finishes("[#!tla] dep ok"));
+      await markers.next("[#!tla] dep ok");
+      await markers.next("[#!tla] entry ran");
+    },
+    timeout,
+  );
+
+  // A save that lands while a generation is still being loaded is applied once
+  // that generation has loaded, even though it then hangs. The entry imports
+  // dep.ts, whose load the plugin holds open until entry.ts has been saved
+  // over; dep.ts then evaluates and hangs. The save goes to entry.ts because it
+  // was transpiled, and so watched, before dep.ts started loading; a file the
+  // plugin provides is not watched on every platform until its generation is
+  // up. Covered twice: for the first generation, while the process is still in
+  // its initial load, and for a later one, once it is in its run loop.
+  it(
+    "still lets a save that landed while it was loading reload it",
+    async () => {
+      const importsDep = `import "./dep.ts";\n`;
+      using dir = tempDir("hot-tla-held", {
+        "entry.ts": importsDep,
+        "dep.ts": hangs("[#!tla] dep hung"),
+        "hold-plugin.ts": `
+          import { readFileSync } from "fs";
+          import { join } from "path";
+          const entry = join(import.meta.dir, "entry.ts");
+          Bun.plugin({
+            name: "hold",
+            setup(build) {
+              build.onLoad({ filter: /dep[.]ts$/ }, async ({ path }) => {
+                const contents = readFileSync(path, "utf8");
+                const entryBefore = readFileSync(entry, "utf8");
+                console.write("[#!tla] holding dep\\n");
+                while (readFileSync(entry, "utf8") === entryBefore) await Bun.sleep(5);
+                // A deferred reload is not observable; give the save's watcher
+                // event time to reach the still-loading generation.
+                await Bun.sleep(${isDebug ? 1_000 : 300});
+                return { contents, loader: "ts" };
+              });
+            },
+          });
+        `,
+      });
+      const entry = join(String(dir), "entry.ts");
+      await using runner = spawnHot(String(dir), `--preload=${join(String(dir), "hold-plugin.ts")}`);
+      const markers = stdoutMarkers(runner);
+
+      await markers.next("[#!tla] holding dep");
+      // Only the run loop emits beforeExit: once it has, the next generation is
+      // held while the process is in its run loop, not still in its initial load.
+      writeFileSync(
+        entry,
+        finishes("[#!tla] save 1 applied") + `process.on("beforeExit", () => console.log("[#!tla] idle"));\n`,
+      );
+      await markers.next("[#!tla] dep hung");
+      await markers.next("[#!tla] save 1 applied");
+      await markers.next("[#!tla] idle");
+
+      writeFileSync(entry, importsDep);
+      await markers.next("[#!tla] holding dep");
+      writeFileSync(entry, finishes("[#!tla] save 2 applied"));
+      await markers.next("[#!tla] dep hung");
+      await markers.next("[#!tla] save 2 applied");
+    },
+    timeout,
+  );
+});

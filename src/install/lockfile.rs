@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error as BunError;
@@ -96,6 +97,13 @@ type DependencyVersion = dependency::Version;
 type ResolutionTag = resolution::Tag;
 type SemverStringBuf<'a> = bun_semver::semver_string::Buf<'a>;
 type SemverStringBuilder = bun_semver::semver_string::Builder;
+
+/// See [`Lockfile::enforced_range`].
+pub(crate) struct EnforcedRange<'a> {
+    pub version: Cow<'a, DependencyVersion>,
+    /// The range came from an `overrides` rule rather than the dependent's manifest.
+    pub overridden: bool,
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Type aliases / collection types
@@ -748,6 +756,103 @@ impl Lockfile {
         Some(catalog_dep.version)
     }
 
+    /// The range the resolver holds an edge to: its `overrides` rule, else the declared range.
+    pub(crate) fn enforced_range(&self, dep_id: DependencyID) -> EnforcedRange<'_> {
+        use dependency::DependencyExt as _;
+
+        let buf = self.buffers.string_bytes.as_slice();
+        let dep = &self.buffers.dependencies[dep_id as usize];
+
+        let overridable = !dep.behavior.is_workspace()
+            && (dep.version.tag != dependency::Tag::Npm || !dep.version.npm().is_alias);
+        if overridable && !self.overrides.is_empty() {
+            let name = dep.realname();
+            let name_hash = match dep.version.tag {
+                dependency::Tag::DistTag
+                | dependency::Tag::Git
+                | dependency::Tag::Github
+                | dependency::Tag::Npm
+                | dependency::Tag::Tarball
+                | dependency::Tag::Workspace => SemverStringBuilder::string_hash(name.slice(buf)),
+                _ => dep.name_hash,
+            };
+            if let Some(rule) = self.overrides.get(self, dep_id, name_hash) {
+                if rule.tag == dependency::Tag::Catalog {
+                    if let Some(entry) = self.catalogs.get_ref(buf, *rule.catalog(), name) {
+                        return EnforcedRange {
+                            version: Cow::Borrowed(&entry.version),
+                            overridden: true,
+                        };
+                    }
+                }
+                return EnforcedRange {
+                    version: Cow::Owned(rule),
+                    overridden: true,
+                };
+            }
+        }
+
+        EnforcedRange {
+            version: Cow::Borrowed(self.catalogs.resolve_range(buf, dep)),
+            overridden: false,
+        }
+    }
+
+    /// Called by a linker with the package it wires a required peer edge of `dependent` to.
+    pub(crate) fn warn_if_peer_out_of_range(
+        &self,
+        log: &mut bun_ast::Log,
+        dependent: PackageID,
+        peer_dep_id: DependencyID,
+        served: PackageID,
+    ) {
+        let dep = &self.buffers.dependencies[peer_dep_id as usize];
+        debug_assert!(dep.behavior.is_peer());
+        if dep.behavior.is_optional_peer() {
+            return;
+        }
+        let pkg_resolutions = self.packages.items_resolution();
+        let served_res = &pkg_resolutions[served as usize];
+        let range = self.enforced_range(peer_dep_id);
+        // A workspace, folder or tarball copy has no version to reject.
+        let comparable = matches!(
+            (served_res.tag, range.version.tag),
+            (ResolutionTag::Npm, dependency::Tag::Npm)
+                | (ResolutionTag::Git, dependency::Tag::Git)
+                | (ResolutionTag::Github, dependency::Tag::Github)
+        );
+        let buf = self.buffers.string_bytes.as_slice();
+        if !comparable || served_res.satisfies_dependency_version(&range.version, buf, buf) {
+            return;
+        }
+
+        let pkg_names = self.packages.items_name();
+        let dependent_res = &pkg_resolutions[dependent as usize];
+        let dependent_name = pkg_names[dependent as usize].slice(buf);
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "incorrect peer dependency \"{}@{}\" ({}{}{} requires \"{}\"{})",
+                bstr::BStr::new(pkg_names[served as usize].slice(buf)),
+                served_res.fmt(buf, PathSep::Auto),
+                bstr::BStr::new(if dependent_name.is_empty() && dependent == 0 {
+                    b"package.json".as_slice()
+                } else {
+                    dependent_name
+                }),
+                if dependent_res.tag == ResolutionTag::Root {
+                    ""
+                } else {
+                    "@"
+                },
+                dependent_res.fmt(buf, PathSep::Posix),
+                bstr::BStr::new(range.version.literal.slice(buf)),
+                if range.overridden { " by override" } else { "" },
+            ),
+        );
+    }
+
     /// Is this a direct dependency of the workspace root package.json?
     pub(crate) fn is_workspace_root_dependency(&self, id: DependencyID) -> bool {
         self.packages.items_dependencies()[0].contains(id)
@@ -1331,10 +1436,18 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(
+            log,
+            None,
+            true,
+            &[],
+            None,
+            tree::PeerRanges::Ignore,
+        )? {}
         Ok(())
     }
 
+    /// The tree an install writes to disk. Reports the out-of-range peers of a full install.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1349,6 +1462,11 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
+            if packages_to_install.is_none() {
+                tree::PeerRanges::Report
+            } else {
+                tree::PeerRanges::Ignore
+            },
         )?;
         Ok(())
     }
@@ -1363,6 +1481,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
+        peer_ranges: tree::PeerRanges,
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
@@ -1394,6 +1513,8 @@ impl Lockfile {
             packages_to_install,
             pending_optional_peers: Default::default(),
             late_bound_optional_peer: false,
+            peer_ranges,
+            reported_peers: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
         };

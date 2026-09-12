@@ -6671,6 +6671,114 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
   expect(exitCode).toBe(0);
 });
 
+it("a by-length path argument keeps its bytes while an async call is pending", async () => {
+  using dir = tempDir("fs-path-transfer-oversize", {
+    "a.txt": "AAAA",
+    "b.txt": "BBBBBB",
+  });
+
+  // The path is borrowed the same way the data buffers are, so a by-length
+  // view holding a file name has the same hazard: without the pin the
+  // transfer below frees the name under the pool thread, which then opens
+  // whatever landed in the freed block. The path is padded with "/." segments
+  // so that every byte of the view is part of the name. The length sits
+  // between JSC's 1000-element fastSizeLimit (above it, so the view has no
+  // ArrayBuffer) and macOS's 1024-byte MAX_PATH_BYTES (below it, so the call
+  // reaches the pool instead of failing with ENAMETOOLONG).
+  const N = 1020;
+  const script = `
+    import fs from "node:fs";
+    const cwd = process.cwd();
+    const N = ${N};
+    const name = n => {
+      const pad = N - cwd.length - 1 - n.length;
+      const u = new Uint8Array(N);
+      const dots = Buffer.alloc((pad >> 1) * 2, "/.").toString();
+      u.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + dots + "/" + n));
+      return u;
+    };
+    (async () => {
+      for (let i = 0; i < 400; i++) fs.stat(cwd, () => {}); // park the pool
+      const p = name("a.txt");
+      const pending = fs.promises.readFile(p, "latin1");
+      p.buffer.transfer(0); // pinned: this copies, so the view keeps its bytes
+      globalThis.keep = Array.from({ length: 64 }, () => name("b.txt"));
+      console.log(JSON.stringify({ byteLength: p.byteLength, contents: await pending }));
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ byteLength: N, contents: "AAAA" });
+  expect(exitCode).toBe(0);
+});
+
+it("fs.read keeps filling a by-length view when its storage is transferred while the read is pending", async () => {
+  using dir = tempDir("fs-read-transfer-oversize", {
+    "data.bin": Buffer.alloc(65536, 0x61).toString(),
+  });
+
+  // Same as the test above, with the destination allocated by length. Such a
+  // view owns its bytes directly and has no ArrayBuffer, so the borrow has to
+  // adopt one before it can pin it. Without the pin, `view.buffer` makes an
+  // ArrayBuffer nothing pins, the transfer moves the storage to an owner
+  // nothing references, and the pool thread writes into freed memory.
+  const script = `
+    import fs from "node:fs";
+    import path from "node:path";
+    (async () => {
+      const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
+      const view = new Uint8Array(65536);
+      const pending = new Promise((resolve, reject) => {
+        fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
+      });
+      view.buffer.transfer(); // pinned: this copies, so the read keeps its destination
+      const bytesRead = await pending;
+      fs.closeSync(fd);
+      console.log(
+        JSON.stringify({
+          bytesRead,
+          viewByteLength: view.byteLength,
+          first: view[0] ?? null,
+          last: view[65535] ?? null,
+        }),
+      );
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    bytesRead: 65536,
+    viewByteLength: 65536,
+    first: 0x61,
+    last: 0x61,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
   using dir = tempDir("fs-writev-detach", {});
   const file = join(String(dir), "out.bin");

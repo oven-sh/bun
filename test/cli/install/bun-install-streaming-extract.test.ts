@@ -310,6 +310,39 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["streaming", {}],
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("a URL tarball dependency is tagged with its integrity and not reinstalled (%s)", async (label, env) => {
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes);
+
+    using dir = tempDir("streaming-url-dep", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": `${reg.url}stream-pkg/-/stream-pkg-1.0.0.tgz` },
+      }),
+    });
+
+    const first = await runInstall(String(dir), env);
+    expect(first.stderr).not.toContain("error:");
+    if (label === "streaming") {
+      expect(first.stderr).toContain("Streamed ");
+    } else {
+      expect(first.stderr).not.toContain("Streamed ");
+    }
+    expect(first.stdout).toContain("1 package installed");
+    expect(readFileSync(join(String(dir), "node_modules", "stream-pkg", ".bun-tag"), "utf8")).toBe(integrity);
+    expect(readFileSync(join(String(dir), "bun.lock"), "utf8")).toContain(`"${integrity}"`);
+    expect(first.exitCode).toBe(0);
+
+    const second = await runInstall(String(dir), env);
+    expect(second.stderr).not.toContain("Saved lockfile");
+    expect(second.stdout).toContain("(no changes)");
+    expect(reg.tarballHits).toBe(1);
+    expect(second.exitCode).toBe(0);
+  });
+
   // Regression: archive_read_set_options() clobbered the a->format set by
   // archive_read_set_format(), so archive_read_open1() fell back to format
   // bidding. The tar bidder needs 512 decompressed bytes up front; when the

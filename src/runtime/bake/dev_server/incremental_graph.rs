@@ -83,6 +83,7 @@ pub enum Content {
     /// When stale, the code is "", otherwise it contains at least one
     /// non-whitespace character (empty chunks contain a function wrapper).
     Js(Box<[u8]>),
+    /// A module whose loader is not JavaScript-like. Only a copied file is in `DevServer::assets`.
     Asset(Box<[u8]>),
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
@@ -1320,9 +1321,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
         }
-        if self.stale_files.bit_length > idx {
-            self.stale_files.set(idx);
-        }
+        self.ensure_stale_bit_capacity(true)?;
+        self.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {
@@ -1394,6 +1394,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
             self.ensure_stale_bit_capacity(true)?;
+            self.stale_files.set(idx);
         }
         Ok(InsertEmptyResult {
             index: FileIndex::init(idx as u32),
@@ -1423,6 +1424,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
+        }
+        if self.stale_files.bit_length > file_index.get() as usize {
+            self.stale_files.unset(file_index.get() as usize);
         }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));

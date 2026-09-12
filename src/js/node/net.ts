@@ -246,9 +246,8 @@ function endNT(self, socket, callback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  // A TLS wrap that adopted the fd since _final ran retired `socket`: its
-  // shutdown() is a no-op now, and the raw half on _handle shares the fd.
   const current = self._handle;
+  // A TLS wrap that adopted the fd since _final ran detached `socket`: the raw half on _handle has the fd now.
   (current?.[kAdoptedTLSRaw] ? current : socket).shutdown();
   callback();
 }

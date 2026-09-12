@@ -1763,10 +1763,9 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 
-extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const EncodedSlice* str)
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, BunString str)
 {
-    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
-    webSocket->didReceiveMessage(WTF::move(wtf_str));
+    webSocket->didReceiveMessage(str.transferToWTFString());
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice data, const uint8_t op)
 {

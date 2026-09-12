@@ -317,13 +317,15 @@ pub(crate) fn compile_outlined_fn(
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
     let mut cg = Codegen::new(host, arena);
-    let codegen_result =
+    let mut codegen_result =
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)?;
 
     if env.has_errors() {
         return Err(env.take_errors());
     }
 
+    // The `Ref` that the use site in the component printed.
+    codegen_result.id = codegen_fn.id;
     Ok(codegen_result)
 }
 

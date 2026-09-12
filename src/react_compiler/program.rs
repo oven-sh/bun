@@ -97,7 +97,11 @@ pub trait Host {
     /// resolved from the current scope the way the visit pass resolves it.
     fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
 
+    /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// A new symbol for a name that the compiled function (or one outlined from it) declares.
+    fn new_local(&mut self, name: &[u8]) -> Ref;
 
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)

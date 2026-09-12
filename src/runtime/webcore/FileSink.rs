@@ -1498,9 +1498,10 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
-                // A Windows uv_write is always async: Pending with an empty
-                // outgoing buffer is not backpressure, so keep the source flowing.
-                if !self.writer.get().is_backed_up() {
+                // An in-flight Windows uv_write is not backpressure for a stream source.
+                if !self.writer.get().is_backed_up()
+                    && !matches!(self.source.get(), streams::SourceHandle::None)
+                {
                     return streams::Writable::Owned(accepted);
                 }
                 self.source_pending_pull.set(true);

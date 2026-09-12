@@ -651,11 +651,81 @@ describe("pathological bracket inputs", () => {
     const overflowIntoTitle = Markdown.html("[a](" + "(".repeat(33) + "))\n");
     expect(overflowIntoTitle).not.toContain("<a href=");
     expect(overflowIntoTitle).toContain("[a](");
+    // Reference definitions use the same scanner, so the same cap (cmark too).
+    const refNest = (n: number) => "[a]: " + "(".repeat(n) + "b" + ")".repeat(n) + "\n\n[a]\n";
+    expect(Markdown.html(refNest(32))).toContain("<a href=");
+    expect(Markdown.html(refNest(33))).not.toContain("<a href=");
   });
 
   test("angle-bracket destination may not contain an unescaped '<'", () => {
     expect(Markdown.html("[a](<b<c>)\n")).not.toContain("<a href=");
     expect(Markdown.html("[a](<b\\<c>)\n")).toContain('<a href="b%3Cc"');
+  });
+
+  // CommonMark §6.3 link destinations. Every expected string below is the
+  // output of commonmark.js 0.31.2, keyed by its input.
+  const renderAll = (cases: Record<string, string>) =>
+    Object.fromEntries(Object.keys(cases).map(md => [md, Markdown.html(md)]));
+
+  test("a backslash in a link destination escapes ASCII punctuation only", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issues #192 and #530: a space, tab or
+      // line ending after a backslash still ends a bare destination.
+      "[a](te\\ st)\n": "<p>[a](te\\ st)</p>\n",
+      "[a](\\ b)\n": "<p>[a](\\ b)</p>\n",
+      "[a](b\\\nc)\n": "<p>[a](b<br />\nc)</p>\n",
+      "![a](te\\ st)\n": "<p>![a](te\\ st)</p>\n",
+      "[a]: te\\ st\n\n[a]\n": "<p>[a]: te\\ st</p>\n<p>[a]</p>\n",
+      // The backslash ends the destination, so the title still parses.
+      '[a](b\\ "t")\n': '<p><a href="b%5C" title="t">a</a></p>\n',
+      // A line ending after a backslash still invalidates a <...> destination.
+      "[a](<te\\\nst>)\n": "<p>[a](&lt;te<br />\nst&gt;)</p>\n",
+      "[a]: <te\\\nst>\n\n[a]\n": "<p>[a]: &lt;te<br />\nst&gt;</p>\n<p>[a]</p>\n",
+      // The emphasis lookahead rejects the same destination as the link parser.
+      "*foo [a](te\\ st*) bar*\n": "<p><em>foo [a](te\\ st</em>) bar*</p>\n",
+      // Controls: punctuation is escaped, other bytes keep a literal backslash.
+      "[a](foo\\)bar)\n": '<p><a href="foo)bar">a</a></p>\n',
+      "[a](foo\\bar)\n": '<p><a href="foo%5Cbar">a</a></p>\n',
+      "[a](<te\\ st>)\n": '<p><a href="te%5C%20st">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("reference definition <...> destination may not contain an unescaped '<'", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issue #193.
+      "[a]\n\n[a]: <te<st>\n": "<p>[a]</p>\n<p>[a]: &lt;te<st></p>\n",
+      "[a]: <te\\<st>\n\n[a]\n": '<p><a href="te%3Cst">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("bare link destination needs balanced parentheses", () => {
+    const cases = {
+      "[a](foo(bar )\n": "<p>[a](foo(bar )</p>\n",
+      '[a](foo(bar "t")\n': "<p>[a](foo(bar &quot;t&quot;)</p>\n",
+      "[a]: foo(bar\n\n[a]\n": "<p>[a]: foo(bar</p>\n<p>[a]</p>\n",
+      // Controls: balanced or escaped parentheses.
+      "[a](foo(bar))\n": '<p><a href="foo(bar)">a</a></p>\n',
+      "[a](foo\\(bar )\n": '<p><a href="foo(bar">a</a></p>\n',
+      "[a]: foo(bar)\n\n[a]\n": '<p><a href="foo(bar)">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("a rejected inline destination falls back to the shortcut reference", () => {
+    const cases = {
+      "[a]: /url\n\n[a](<b<c>)\n": '<p><a href="/url">a</a>(&lt;b<c>)</p>\n',
+      "[a]: /url\n\n[a](te\\ st)\n": '<p><a href="/url">a</a>(te\\ st)</p>\n',
+      // The emphasis lookahead and label_contains_link take the same fallback.
+      "[a]: /url\n\n*[a](<b*<c>)\n": '<p><em><a href="/url">a</a>(&lt;b</em><c>)</p>\n',
+      "[a]: /url\n\n[x [a](<b<c>) y](/u)\n": '<p>[x <a href="/url">a</a>(&lt;b<c>) y](/u)</p>\n',
+      // An unclosed <...> at the end of the text. The lookahead used to give up
+      // where the parser fell back, so the '*' in the label opened an <em>
+      // that nothing closed.
+      "[a*]: /url\n\n*[a*](<b\n": '<p>*<a href="/url">a*</a>(&lt;b</p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
   });
 
   test("()-delimited title may not contain an unescaped '('", () => {

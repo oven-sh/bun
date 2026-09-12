@@ -378,6 +378,9 @@ pub struct DirEntry {
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
+    /// `false` marks a listing created without a full `readdir` (entry-point
+    /// fast path); consumers that iterate must re-read it first.
+    pub complete: bool,
 }
 
 impl DirEntry {
@@ -387,6 +390,7 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            complete: true,
         }
     }
 

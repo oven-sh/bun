@@ -4075,6 +4075,16 @@ console.log(foo, array);
       expect(() => transpiler.transformSync("function f(o) { const x = {}; with (o) {} x++; }")).toThrow(
         'This assignment will throw because "x" is a constant',
       );
+
+      // A lowered top-level `using` prints each top-level `const` as `var`. Nothing
+      // would stop the assignment then, so the error stays.
+      const source = "using r = null; const x = 1; function f(o) { with (o) { x = 5; } }";
+      expect(() => new Bun.Transpiler({ target: "browser" }).transformSync(source)).toThrow(
+        'This assignment will throw because "x" is a constant',
+      );
+      expect(new Bun.Transpiler({ target: "bun" }).transformSync(source)).toBe(
+        "let r = null;\nconst x = 1;\nfunction f(o) {\n  with (o)\n    x = 5;\n}\n",
+      );
     });
 
     it("constant folding scopes", () => {

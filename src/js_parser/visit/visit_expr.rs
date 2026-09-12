@@ -198,10 +198,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
             // Inside a `with` body the target can be a property of the `with`
-            // object. The bundler still rejects it: it can print `const` as
-            // `let` or `var`, which is only safe if nothing assigns to it.
+            // object. The error stays when `select_local_kind` can print a
+            // `const` as `let` or `var`, which is only safe if nothing assigns to it.
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
-                && (!result.is_inside_with_scope || p.options.bundle)
+                && (!result.is_inside_with_scope
+                    || p.options.bundle
+                    || p.will_wrap_module_in_try_catch_for_using)
             {
                 // TODO: silence this for runtime transpiler
                 let r = js_lexer::range_of_identifier(p.source, expr.loc);

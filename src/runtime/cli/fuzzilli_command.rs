@@ -94,19 +94,27 @@ impl FuzzilliCommand {
             // cache in place of the user's. Child processes inherit both. A campaign that has a
             // fixture registry sets BUN_CONFIG_REGISTRY itself. The cache path is fixed because
             // Fuzzilli respawns this process constantly, and a killed one cannot clean up.
+            // The package manager ignores a registry that is empty or is not http(s) and goes on
+            // to the next source, so such a value does not count as set.
+            let has_registry = bun_core::getenv_z(zstr!("BUN_CONFIG_REGISTRY"))
+                .is_some_and(|url| url.starts_with(b"http://") || url.starts_with(b"https://"));
+            let has_cache_dir = bun_core::getenv_z(zstr!("BUN_INSTALL_CACHE_DIR"))
+                .is_some_and(|dir| !dir.is_empty());
             // SAFETY: main thread during startup, before any concurrent reader of the environment
             // exists. setenv copies the NUL-terminated strings.
             let defaults_set = unsafe {
-                libc::setenv(
-                    c"BUN_CONFIG_REGISTRY".as_ptr(),
-                    c"http://127.0.0.1:1/".as_ptr(),
-                    0,
-                ) == 0
-                    && libc::setenv(
-                        c"BUN_INSTALL_CACHE_DIR".as_ptr(),
-                        c"/tmp/bun-fuzzilli-install-cache".as_ptr(),
-                        0,
-                    ) == 0
+                (has_registry
+                    || libc::setenv(
+                        c"BUN_CONFIG_REGISTRY".as_ptr(),
+                        c"http://127.0.0.1:1/".as_ptr(),
+                        1,
+                    ) == 0)
+                    && (has_cache_dir
+                        || libc::setenv(
+                            c"BUN_INSTALL_CACHE_DIR".as_ptr(),
+                            c"/tmp/bun-fuzzilli-install-cache".as_ptr(),
+                            1,
+                        ) == 0)
             };
             // Without them the child would use the live registry.
             if !defaults_set {

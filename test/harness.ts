@@ -2028,7 +2028,15 @@ export class VerdaccioRegistry {
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir: String(packageDir), packageJson };
+    const dir = String(packageDir);
+    return {
+      packageDir: dir,
+      packageJson,
+      // The `install.cache` writeBunfig sets loses to the BUN_INSTALL_CACHE_DIR the CI runner exports, so
+      // projects spawned with plain bunEnv share one cache per test file. Projects that install concurrently
+      // spawn bun with this env instead: concurrent installs publishing the same entry fail on Windows (#28062).
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {

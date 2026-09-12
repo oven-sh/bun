@@ -2063,7 +2063,7 @@ describe("bundler", () => {
     DoWhileInsideScopeOfSibling ["v1",{}] ["v1",{}]* ["v2",{}]
     SpreadInsideLoopsInsideScopeOfSibling [{"q":1},{}] [{"q":1},{}]* ["init",{}]
     LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
-    ClosureReassigns [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]] ["flagged",[]]
+    ClosureReassigns [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]] ["flagged",[]] ["flagged",[]]*
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
@@ -2522,6 +2522,7 @@ describe("bundler", () => {
             { count: 2, flag: false, b: "x" },
             { count: 2, flag: false, b: "x" },
             { count: 3, flag: true, b: "x" },
+            { count: 4, flag: true, b: "x" },
             { count: 4, flag: true, b: "x" },
           );
         `,

@@ -42,6 +42,7 @@ test/cli/install/frozen-lockfile-pruned.test.ts  # 3 of 80 builds; alpine, debia
 test/cli/install/hoist.test.ts  # 1 of 80 builds; debian
 test/cli/install/migration/complex-workspace.test.ts  # 1 of 80 builds; mac; error: Failed to install
 test/cli/install/migration/migrate.test.ts  # 6 of 80 builds; parallel batch; failed in the parallel batch
+test/cli/install/migration/pnpm-migration.test.ts  # Verdaccio exited with code 2 before the test ran, and beforeAll timed out (build 109692, ubuntu 25.04 aarch64). Exit code 2 is the verdaccio listen error. VerdaccioRegistry picks randomPort(), and that port was in use
 test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
 test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu
 test/cli/run/cpu-prof.test.ts  # 4 of 80 builds; windows
@@ -62,6 +63,7 @@ test/js/bun/http/proxy-stress-concurrent.test.ts  # 1 of 80 builds; mac
 test/js/bun/http/proxy.test.js  # 3 of 80 builds; parallel batch; should use proxy when NO_PROXY has different port: expect(received).toBe(expected) (in...
 test/js/bun/http/proxy.test.ts  # 1 of 80 builds; parallel batch; https target (CONNECT): expect(received).toBe(expected)
 test/js/bun/http/request-smuggling.test.ts  # 3 of 80 builds; mac
+test/js/bun/http/serve-error-handler-stream.test.ts  # async reject -> error() async-iterator body completes (Connection: close): status 404, len 43 (build 109693, darwin x64). The fixture never answers 404, so another server did. It binds the wildcard and dials 127.0.0.1 (see #37141)
 test/js/bun/http/serve-http2-lifecycle.test.ts  # stop with a stream open on each: test timed out (17 of the last 20 failures), HTTP3HandshakeFailed (2 of 20); PING frames do not keep a connection alive: no GOAWAY before the close (1 of 20)
 test/js/bun/http/serve-http2.test.ts  # 4 of 80 builds; parallel batch; 2 MB request body streamed to the handler (WINDOW_UPDATE path): expect(received).toBe(...
 test/js/bun/http/serve-http3.test.ts  # 3 of 80 builds; mac, windows
@@ -70,6 +72,7 @@ test/js/bun/http/serve.test.ts  # 4 of 80 builds; mac
 test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() without uv_fs_copyfile: test timed out
 test/js/bun/jsc-stress/testFFI.test.ts  # 1 of 80 builds; debian
 test/js/bun/jsc/domjit.test.ts  # 3 of 80 builds; parallel batch; Script.runInNewContext: test timed out
+test/js/bun/net/socket-syscall-fault.test.ts  # TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk: flightsReceived 0, expected 5, in the parked scenario (build 109703, darwin x64, parallel batch), so no socket sent its handshake flight before stop(true). Likely cause: the fixture takes the child's "hellos" line as proof that the ClientHellos arrived, and on macOS the loopback bytes can arrive later
 test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
 test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
 test/js/bun/resolve/load-same-js-file-a-lot.test.ts  # 4 of 80 builds; parallel batch; load the same file 10000 times: test timed out
@@ -101,6 +104,7 @@ test/js/bun/webview/webview-chrome.test.ts  # 1 of 80 builds; alpine
 test/js/bun/webview/webview.test.ts  # 1 of 80 builds; parallel batch; survives more than 64 lifetime create/navigate/close cycles: test timed out (in the pa...
 test/js/node/async_hooks/AsyncLocalStorage.test.ts  # 1 of 80 builds; http2 clears the stream frame even if an 'aborted' listener throws: expect(received).t...
 test/js/node/child_process/child-process-exec.test.ts  # 7 of 80 builds
+test/js/node/dgram/node-dgram.test.js  # node:dgram close() inside 'message' handler stops remaining batch datagrams: the trace was empty, so no 'message' event came in the 8 setImmediate turns the fixture waits (build 109698, darwin x64, parallel batch)
 test/js/node/http/node-http-backpressure.test.ts  # 1 of 80 builds; mac
 test/js/node/http/node-http-connect.test.ts  # 1 of 80 builds; CONNECT: process exits after the tunnel socket is re-emitted as a connection and the se...
 test/js/node/http/node-http-uaf.test.ts  # 2 of 80 builds; mac

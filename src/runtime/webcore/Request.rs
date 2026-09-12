@@ -1400,8 +1400,7 @@ impl Request {
 
         req.url.set(href);
 
-        // Fetch spec `new Request()` step 36, with the zero-byte rule `fetch()` uses.
-        // A body taken from a Response init is a Bun extension outside the spec.
+        // Fetch spec `new Request()` step 36. A Response init body is a Bun extension.
         if !body_from_response
             && matches!(req.method, Method::GET | Method::HEAD)
             && req.body_value_mut().has_request_body()

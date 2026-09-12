@@ -443,7 +443,7 @@ describe("Bun.JSONL", () => {
         expect(result.error).toBeNull();
       });
 
-      // A read boundary can fall anywhere in a line, also inside a \uXXXX escape or the exponent of a number.
+      // A read boundary can fall anywhere in a line, also inside a \u escape or the exponent of a number.
       describe("a line cut at any position is incomplete, not an error", () => {
         const lines = [
           '{"name":"caf\\u00e9"}', // what Python's json.dumps emits for "café"

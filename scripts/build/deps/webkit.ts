@@ -4,7 +4,7 @@
  * From https://github.com/oven-sh/WebKit releases.
  */
 // Preview of oven-sh/WebKit#638 (on top of cf1b36ec, the previous pin here): Bun.JSONL reports
-// a chunk that ends inside a \uXXXX escape or a number's exponent as incomplete, not as an error.
+// a chunk that ends inside a \u escape or a number's exponent as incomplete, not as an error.
 // Swap in the merged sha once that PR lands.
 export const WEBKIT_VERSION = "autobuild-preview-pr-638-2a5a22bc";
 

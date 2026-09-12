@@ -72,6 +72,7 @@ async function setupTest(): Promise<TestCtx> {
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      BUN_INSTALL_GLOBAL_DIR: join(packageDir, ".bun-global"),
       BUN_TMPDIR: join(packageDir, ".bun-tmp"),
       TMPDIR: join(packageDir, ".bun-tmp"),
       TEMP: join(packageDir, ".bun-tmp"),
@@ -1400,6 +1401,107 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   err = await stderr.text();
   expect(err).toContain('Workspace name "pkg1" already exists');
   expect(await exited).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/15102
+describe("missing local-protocol devDependency is not an error when devDependencies are skipped", () => {
+  const specs = {
+    "workspace:*": 'Workspace dependency "missing-local" not found',
+    "link:missing-local": 'Package "missing-local" is not linked',
+    "file:../does-not-exist": 'package.json for "file:../does-not-exist" dependency "missing-local"',
+  } as const;
+
+  for (const flag of ["--production", "--omit=dev"]) {
+    for (const [spec, errSubstring] of Object.entries(specs)) {
+      test.concurrent(`${flag} ${spec}`, async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        await write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+            devDependencies: {
+              "missing-local": spec,
+            },
+          }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install", flag],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain(errSubstring);
+        expect(out).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+
+        expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+        expect(await exists(join(packageDir, "node_modules", "missing-local"))).toBeFalse();
+      });
+    }
+  }
+
+  for (const [spec, errSubstring] of Object.entries(specs)) {
+    test.concurrent(`still errors for ${spec} in \`dependencies\` under --production`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "missing-local": spec,
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--production"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = (await stderr.text()).replaceAll("\\", "/");
+      expect(err).toContain(errSubstring);
+      expect(await exited).toBe(1);
+    });
+
+    test.concurrent(`still errors for ${spec} devDependency without --production`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          devDependencies: {
+            "missing-local": spec,
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = (await stderr.text()).replaceAll("\\", "/");
+      expect(err).toContain(errSubstring);
+      expect(await exited).toBe(1);
+    });
+  }
 });
 
 const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];

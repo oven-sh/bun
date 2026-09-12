@@ -25,7 +25,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, file_name, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -45,7 +45,7 @@ mod coverage {
         if opts.ignore_patterns.is_empty() {
             return false;
         }
-        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
+        let relative_path = file_name(source_url, relative_dir);
         opts.ignore_patterns
             .iter()
             .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
@@ -1554,7 +1554,7 @@ fn print_coverage_table<const COLORS: bool>(
     let thresholds = *thresholds;
     let max_filepath_length = reports
         .iter()
-        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .map(|r| coverage::file_name(&r.source_url, relative_dir).len())
         .fold(b"All files".len(), usize::max);
 
     let zero = Fraction {
@@ -1691,6 +1691,11 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
     let slice: &[u8] = zig_slice.slice();
+
+    // The report would name these rows by the source text itself or by a per-run UUID.
+    if slice.starts_with(b"data:") || slice.starts_with(b"blob:") {
+        return false;
+    }
 
     // always ignore node_modules.
     if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")

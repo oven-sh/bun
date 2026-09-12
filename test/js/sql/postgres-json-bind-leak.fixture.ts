@@ -5,44 +5,26 @@
 
 import { SQL } from "bun";
 import {
-  listeningServer,
-  pgAuthenticationOk,
   pgBindComplete,
   pgCommandComplete,
+  pgMockServer,
   pgParameterDescription,
   pgParseComplete,
   pgRaw,
-  pgReadFrontendMessages,
   pgReadyForQuery,
 } from "./wire-frames";
 
 const noData = pgRaw("n", Buffer.alloc(0));
 
-const { server, port } = await listeningServer(socket => {
-  let buf = Buffer.alloc(0);
-  let startup = true;
-  socket.on("data", chunk => {
-    buf = Buffer.concat([buf, chunk]);
-    const out: Buffer[] = [];
-    if (startup) {
-      if (buf.length < 4 || buf.length < buf.readInt32BE(0)) return;
-      buf = buf.subarray(buf.readInt32BE(0));
-      startup = false;
-      out.push(pgAuthenticationOk(), pgReadyForQuery());
-    }
-    buf = pgReadFrontendMessages(buf, type => {
-      switch (String.fromCharCode(type)) {
-        case "P": out.push(pgParseComplete()); break;
-        case "D": out.push(pgParameterDescription([114]), noData); break;
-        case "B": out.push(pgBindComplete()); break;
-        case "E": out.push(pgCommandComplete("SELECT 0")); break;
-        case "S": out.push(pgReadyForQuery()); break;
-        case "X": socket.end(); break;
-      }
-    });
-    if (out.length) socket.write(Buffer.concat(out));
-  });
-  socket.on("error", () => {});
+const { server, port } = await pgMockServer((type, _, socket) => {
+  switch (type) {
+    case "P": return pgParseComplete();
+    case "D": return [pgParameterDescription([114]), noData];
+    case "B": return pgBindComplete();
+    case "E": return pgCommandComplete("SELECT 0");
+    case "S": return pgReadyForQuery();
+    case "X": socket.end(); break;
+  }
 });
 
 const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1 });

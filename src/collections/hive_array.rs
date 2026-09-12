@@ -96,7 +96,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub(crate) fn find_first_unset(&self) -> Option<usize> {
+    pub fn find_first_unset(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {
             let live_mask = if i + 1 == Self::NUM_WORDS {
@@ -204,6 +204,16 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
             core::ptr::addr_of_mut!((*out).used).write(HiveBitSet::init_empty());
         }
         // `buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>` intentionally untouched.
+    }
+
+    /// Heap-allocate an empty hive without staging `Self` on the stack.
+    pub fn new_boxed() -> Box<Self> {
+        let mut out = Box::<Self>::new_uninit();
+        // SAFETY: fresh aligned allocation; `init_in_place` writes the only field that needs it.
+        unsafe {
+            Self::init_in_place(out.as_mut_ptr());
+            out.assume_init()
+        }
     }
 
     /// Raw pointer to slot `index`. Carries the buffer's `UnsafeCell` tag so

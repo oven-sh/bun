@@ -33,12 +33,28 @@ impl LinkerContext<'_> {
     /// None of the file's live parts run anything at the top level:
     /// declarations only, `"sideEffects": false`, or a lazily initialized
     /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its
-    /// tail runs it), nor does top-level await. A static import of a wrapped module is printed as a
-    /// top-level `init_x()` / `require_x()` call in the importer, and one of
-    /// an external module loads it (hoisted out of a wrapper, too); either
-    /// counts as running something. An import of an unwrapped bundled file
-    /// does not: that file is judged on its own.
+    /// tail runs it), nor does top-level await. A static import of a wrapped
+    /// module is printed as a top-level `init_x()` / `require_x()` call in the
+    /// importer, and one of an external module loads it (hoisted out of a
+    /// wrapper, too); either counts as running something. An import of an
+    /// unwrapped bundled file does not: that file is judged on its own.
     pub(crate) fn loading_file_has_no_side_effects(&self, source_index: u32) -> bool {
+        self.inits_already_done
+            .as_ref()
+            .is_some_and(|files| files.is_set(source_index as usize))
+            || self.loading_file_side_effects(source_index, None)
+    }
+
+    /// `loading_file_has_no_side_effects`, except that a top-level
+    /// `init_x()` / `require_x()` of a bundled wrapped module is collected into
+    /// `inits` (by source index) instead of counting as a side effect: the
+    /// call does nothing where that module is already initialized. A bare
+    /// `import "x"` still counts; it is there for the effect.
+    pub(crate) fn loading_file_side_effects(
+        &self,
+        source_index: u32,
+        mut inits: Option<&mut Vec<u32>>,
+    ) -> bool {
         let flags = self.graph.meta.items_flags();
         if self.graph.files.items_entry_point_kind()[source_index as usize].is_entry_point()
             || flags[source_index as usize].is_async_or_has_async_dependency
@@ -50,13 +66,24 @@ impl LinkerContext<'_> {
         let declared_pure = self.file_has_no_side_effects(source_index);
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         let records = &self.graph.ast.items_import_records()[source_index as usize];
-        let import_has_no_side_effects = |record: &bun_ast::ImportRecord| {
+        let mut import_has_no_side_effects = |record: &bun_ast::ImportRecord| {
             record.flags.contains(ImportRecordFlags::IS_UNUSED)
                 || match record.kind {
                     ImportKind::Stmt => {
                         if record.source_index.is_valid() {
                             wrapped
                                 || flags[record.source_index.get() as usize].wrap == WrapKind::None
+                                || match inits.as_deref_mut() {
+                                    Some(inits)
+                                        if !record.flags.contains(
+                                            ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
+                                        ) =>
+                                    {
+                                        inits.push(record.source_index.get());
+                                        true
+                                    }
+                                    _ => false,
+                                }
                         } else {
                             record
                                 .flags
@@ -83,6 +110,37 @@ impl LinkerContext<'_> {
                             .all(|&i| import_has_no_side_effects(&records[i as usize])))
             })
     }
+
+    /// The bundled wrapped modules an unwrapped file initializes at its top
+    /// level (`init_x()` / `require_x()` printed for a live static import).
+    pub(crate) fn top_level_inits(&self, source_index: u32, inits: &mut Vec<u32>) {
+        let flags = self.graph.meta.items_flags();
+        if flags[source_index as usize].wrap != WrapKind::None {
+            return;
+        }
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &i in part.import_record_indices.iter() {
+                let record = &records[i as usize];
+                if record.kind == ImportKind::Stmt
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && record.source_index.is_valid()
+                    && record.source_index.get() != source_index
+                    && flags[record.source_index.get() as usize].wrap != WrapKind::None
+                {
+                    inits.push(record.source_index.get());
+                }
+            }
+        }
+    }
 }
 
 /// The files sharing one chunk key (`File.entry_bits`).
@@ -100,38 +158,101 @@ struct Group {
     /// of its importer's.
     loaded: AutoBitSet,
     loaded_count: usize,
+    /// Rule 2 last considered folding this group in the pass that started at
+    /// this tick; nothing that could give it a target has happened since
+    /// unless `recheck` is set, an entry of `loaded` has a newer `entry_tick`,
+    /// or (`wants_inits`) something was folded at all.
+    checked_at: u32,
+    recheck: bool,
+    wants_inits: bool,
     /// Neither merged nor merged into.
     pinned: bool,
     /// Every live part of every file is side-effect free.
     pure: bool,
     /// Groups holding files that this group's live parts statically import
-    /// or depend on.
+    /// or depend on, and (rule 2 only) the groups importing this one.
     deps: Vec<usize>,
+    importers: Vec<usize>,
+    /// Wrapped modules (source indices) the group's side-effect-free files
+    /// `init_x()` / `require_x()` at the top level, and the ones any of its
+    /// unwrapped files do. Sorted.
+    needs_init: Vec<u32>,
+    provides_init: Vec<u32>,
+    /// Position in a topological order of the live groups' static imports
+    /// (importer before imported).
+    topo: u32,
     /// `Some(target)` once folded into another group.
     merged_into: Option<usize>,
+    /// ... by rule 2, which checked `needs_init` against the target.
+    hoisted: bool,
+    /// A file of the group, for logs.
+    first_source: u32,
+}
+
+impl Group {
+    fn new(
+        target: Target,
+        bits: &AutoBitSet,
+        pinned: bool,
+        first_source: u32,
+    ) -> Result<Group, bun_alloc::AllocError> {
+        Ok(Group {
+            first_source,
+            size: 0,
+            target: Some(target),
+            bits: bits.clone()?,
+            loaded: bits.clone()?,
+            loaded_count: 0,
+            checked_at: 0,
+            recheck: false,
+            wants_inits: false,
+            pinned,
+            pure: true,
+            deps: Vec::new(),
+            importers: Vec::new(),
+            needs_init: Vec::new(),
+            provides_init: Vec::new(),
+            topo: 0,
+            merged_into: None,
+            hoisted: false,
+        })
+    }
+}
+
+fn merge_sorted<T: Ord + Copy>(into: &mut Vec<T>, from: &[T]) {
+    if from.is_empty() {
+        return;
+    }
+    into.extend_from_slice(from);
+    into.sort_unstable();
+    into.dedup();
 }
 
 /// Fold `from` into `into`: `into` inherits the size, dependencies, load
 /// conditions and impurity; the files are re-keyed through `resolve` at the
 /// end.
 fn fold(groups: &mut [Group], from: usize, into: usize) {
-    let deps = core::mem::take(&mut groups[from].deps);
-    let (size, pure) = (groups[from].size, groups[from].pure);
     groups[from].merged_into = Some(into);
-    let (from, target) = if from < into {
+    let (source, target) = if from < into {
         let (a, b) = groups.split_at_mut(into);
-        (&a[from], &mut b[0])
+        (&mut a[from], &mut b[0])
     } else {
         let (a, b) = groups.split_at_mut(from);
-        (&b[0], &mut a[into])
+        (&mut b[0], &mut a[into])
     };
-    target.size += size;
-    target.pure &= pure;
-    target.loaded.set_union(&from.loaded);
-    target.deps.extend(deps);
-    target.deps.sort_unstable();
-    target.deps.dedup();
-    target.deps.retain(|&d| d != into);
+    target.size += source.size;
+    target.pure &= source.pure;
+    target.loaded.set_union(&source.loaded);
+    for (t, s) in [
+        (&mut target.deps, &mut source.deps),
+        (&mut target.importers, &mut source.importers),
+    ] {
+        merge_sorted(t, s);
+        t.retain(|&g| g != into && g != from);
+        s.clear();
+    }
+    merge_sorted(&mut target.needs_init, &source.needs_init);
+    merge_sorted(&mut target.provides_init, &source.provides_init);
 }
 
 /// Follow `merged_into` links to the group that now owns the files.
@@ -145,12 +266,109 @@ fn resolve(groups: &[Group], mut index: usize) -> usize {
 /// Per-attempt scratch for `collect_newly_loaded`; `visited` is epoch-stamped
 /// so each attempt resets it in O(1).
 struct Scratch {
-    visited: Vec<u32>,
-    epoch: u32,
+    visited: Vec<u64>,
+    epoch: u64,
     stack: Vec<usize>,
     /// `candidate` plus the side-effect-free groups the target's extra entries
     /// would start loading.
     newly_loaded: Vec<usize>,
+}
+
+impl Scratch {
+    fn next_epoch(&mut self) -> u64 {
+        self.epoch += 1;
+        self.epoch
+    }
+}
+
+/// `from` statically imports `to`, directly or through other groups. Every
+/// edge goes up in `topo`, so nothing past `to` there needs visiting.
+fn reaches(groups: &[Group], from: usize, to: usize, scratch: &mut Scratch) -> bool {
+    let bound = groups[to].topo;
+    if groups[from].topo >= bound {
+        return from == to;
+    }
+    let epoch = scratch.next_epoch();
+    scratch.stack.clear();
+    scratch.stack.push(from);
+    scratch.visited[from] = epoch;
+    while let Some(g) = scratch.stack.pop() {
+        for &d in &groups[g].deps {
+            let d = resolve(groups, d);
+            if d == to {
+                return true;
+            }
+            if groups[d].topo < bound && core::mem::replace(&mut scratch.visited[d], epoch) != epoch
+            {
+                scratch.stack.push(d);
+            }
+        }
+    }
+    false
+}
+
+/// Every `x` in `needs` (top-level `init_x()` / `require_x()` calls) lives in
+/// a chunk other than `merged` whose own top level makes the same call. Code
+/// making the call imports `init_x` / `require_x` from that chunk, so the
+/// chunk has run to completion first and the call finds `x` initialized.
+fn inits_provided(
+    groups: &[Group],
+    group_of_file: &[usize],
+    needs: &[u32],
+    merged: [usize; 2],
+) -> bool {
+    needs.iter().all(|&x| {
+        let home = resolve(groups, group_of_file[x as usize]);
+        !merged.contains(&home) && groups[home].provides_init.binary_search(&x).is_ok()
+    })
+}
+
+/// `topo` for every live group: Kahn's algorithm, releasing ties in order of
+/// how many entries load the group so a fold target (loaded by a superset)
+/// tends to sort after the groups that would start importing it. False if the
+/// groups' imports already form a cycle, which `entry_bits` cannot produce (an
+/// importer's key is a subset of the imported file's); `reaches` would then
+/// prune wrongly, so rule 2 stops.
+fn number_topologically(groups: &mut [Group], indegree: &mut Vec<u32>) -> bool {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    indegree.clear();
+    indegree.resize(groups.len(), 0);
+    for g in 0..groups.len() {
+        if groups[g].merged_into.is_some() {
+            continue;
+        }
+        for i in 0..groups[g].deps.len() {
+            let d = resolve(groups, groups[g].deps[i]);
+            if d != g {
+                indegree[d] += 1;
+            }
+        }
+    }
+    let mut ready: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
+    for g in 0..groups.len() {
+        if groups[g].merged_into.is_none() && indegree[g] == 0 {
+            ready.push(Reverse((groups[g].loaded_count, g)));
+        }
+    }
+    let mut next = 0u32;
+    while let Some(Reverse((_, g))) = ready.pop() {
+        groups[g].topo = next;
+        next += 1;
+        for i in 0..groups[g].deps.len() {
+            let d = resolve(groups, groups[g].deps[i]);
+            if d == g {
+                continue;
+            }
+            indegree[d] -= 1;
+            if indegree[d] == 0 {
+                ready.push(Reverse((groups[d].loaded_count, d)));
+            }
+        }
+    }
+    let acyclic = (0..groups.len()).all(|g| groups[g].merged_into.is_some() || indegree[g] == 0);
+    debug_assert!(acyclic, "static import cycle between chunks");
+    acyclic
 }
 
 /// Walks `candidate`'s dependencies: each must already be loaded wherever
@@ -164,8 +382,7 @@ fn collect_newly_loaded(
     target: usize,
     scratch: &mut Scratch,
 ) -> bool {
-    scratch.epoch += 1;
-    let epoch = scratch.epoch;
+    let epoch = scratch.next_epoch();
     scratch.visited[candidate] = epoch;
     scratch.visited[target] = epoch;
     scratch.stack.clear();
@@ -192,6 +409,120 @@ fn collect_newly_loaded(
             .extend(dep.deps.iter().map(|&e| resolve(groups, e)));
     }
     true
+}
+
+/// Calls `each` with the index of every set bit.
+fn for_each_bit(words: &[usize], mut each: impl FnMut(usize)) {
+    for (w, &word) in words.iter().enumerate() {
+        let mut word = word;
+        while word != 0 {
+            each(w * usize::BITS as usize + word.trailing_zeros() as usize);
+            word &= word - 1;
+        }
+    }
+}
+
+/// What `entry_id` starts loading out of `newly_loaded` (rule 2).
+fn bytes_started(groups: &[Group], newly_loaded: &[usize], entry_id: usize) -> u64 {
+    newly_loaded
+        .iter()
+        .map(|&g| &groups[g])
+        .filter(|g| !g.loaded.is_set(entry_id))
+        .map(|g| g.size)
+        .sum()
+}
+
+/// Rule 2's byte budgets. `headroom[e]` is what entry `e` may still gain;
+/// `levels[k]` holds the entries with at least `2^k` of it left, so "can
+/// every entry in this mask afford `n` bytes" is a mask test per word except
+/// for the entries whose headroom is within a factor of two of `n`.
+struct Budget {
+    headroom: Vec<u64>,
+    levels: Vec<AutoBitSet>,
+}
+
+impl Budget {
+    const LEVELS: usize = 48;
+
+    fn new(
+        entries: usize,
+        initial: impl Fn(usize) -> u64,
+    ) -> Result<Budget, bun_alloc::AllocError> {
+        let mut levels = Vec::with_capacity(Self::LEVELS);
+        for _ in 0..Self::LEVELS {
+            levels.push(AutoBitSet::init_empty(entries)?);
+        }
+        let mut budget = Budget {
+            headroom: vec![0; entries],
+            levels,
+        };
+        for entry_id in 0..entries {
+            budget.set(entry_id, initial(entry_id));
+        }
+        Ok(budget)
+    }
+
+    fn set(&mut self, entry_id: usize, headroom: u64) {
+        self.headroom[entry_id] = headroom;
+        for (k, level) in self.levels.iter_mut().enumerate() {
+            if headroom >> k != 0 {
+                level.set(entry_id);
+            } else {
+                level.unset(entry_id);
+            }
+        }
+    }
+
+    fn charge(&mut self, entry_id: usize, bytes: u64) {
+        self.set(entry_id, self.headroom[entry_id].saturating_sub(bytes));
+    }
+
+    /// A superset of the entries with at least `bytes` left (exactly those
+    /// with at least `2^floor(log2(bytes))`).
+    fn can_afford(&self, bytes: u64) -> &AutoBitSet {
+        &self.levels[(bytes.max(1).ilog2() as usize).min(Self::LEVELS - 1)]
+    }
+
+    /// Every entry in `mask` has at least `bytes` left.
+    fn all_afford(&self, mask: &[usize], bytes: u64) -> bool {
+        if bytes == 0 {
+            return true;
+        }
+        // 2^k <= bytes < 2^(k+1): outside level k nobody can pay, inside
+        // level k + 1 everybody can; ask the ones in between.
+        let k = bytes.ilog2() as usize;
+        let (Some(maybe), Some(surely)) = (self.levels.get(k), self.levels.get(k + 1)) else {
+            return self.all_afford_each(mask, bytes, |_| bytes);
+        };
+        let mut between = false;
+        for ((&m, &lo), &hi) in mask.iter().zip(maybe.words()).zip(surely.words()) {
+            if m & !lo != 0 {
+                return false;
+            }
+            between |= m & !hi != 0;
+        }
+        !between || self.all_afford_each(mask, bytes, |_| bytes)
+    }
+
+    /// Every entry `e` in `mask` has at least `price(e) <= most` left.
+    fn all_afford_each(&self, mask: &[usize], most: u64, price: impl Fn(usize) -> u64) -> bool {
+        // Everybody inside level floor(log2(most)) + 1 can pay; ask the rest.
+        let surely = self
+            .levels
+            .get(most.max(1).ilog2() as usize + 1)
+            .map(|level| level.words());
+        mask.iter().enumerate().all(|(w, &m)| {
+            let mut word = m & !surely.map_or(0, |s| s[w]);
+            while word != 0 {
+                let entry_id = w * usize::BITS as usize + word.trailing_zeros() as usize;
+                if self.headroom[entry_id] < price(entry_id) {
+                    return false;
+                }
+                word &= word - 1;
+            }
+            true
+        })
+    }
 }
 
 const UNREACHED: u32 = u32::MAX;
@@ -281,7 +612,11 @@ fn immediate_dominators<'a>(
 ///    already loaded wherever that target is (or is side-effect free too); the
 ///    extra entries then carry some unused definitions, but no side effect
 ///    runs earlier than before. What an entry gains this way is capped
-///    relative to what it already loaded.
+///    relative to what it already loaded. A top-level `require_x()` /
+///    `init_x()` (a static import of a wrapped module, e.g. `react`) does not
+///    count as a side effect when a chunk the target statically imports makes
+///    the same call first, and no fold may close a static import cycle
+///    between chunks.
 ///
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
@@ -523,10 +858,7 @@ pub(crate) fn merge_small_chunks(
     // entry point has exports: absorbing one adds the bindings other chunks
     // need to its module namespace (Rollup's `preserveEntrySignatures:
     // "exports-only"`). Chunks loaded together with it still fold into each
-    // other. `--compile` keys the user entry point's module at
-    // `/$bunfs/root/<outfile>` after linking (see `js_bundle_completion_task`
-    // / `build_command`), so a chunk importing from that chunk would name a
-    // path that no longer exists in the executable; leave those alone too.
+    // other. `--compile` leaves the chunks of user entry points alone too.
     let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
     let pin_entry_chunk = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
@@ -536,6 +868,8 @@ pub(crate) fn merge_small_chunks(
             || !export_aliases[source_index].is_empty()
     };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
+    let mut inits: Vec<u32> = Vec::new();
+    let mut files_with_inits = AutoBitSet::init_empty(files_len)?;
     let mut groups: ArrayHashMap<&[u8], Group> = ArrayHashMap::new();
     let mut classes: ArrayHashMap<&[u8], (AutoBitSet, Vec<usize>)> = ArrayHashMap::new();
     for source_index in this.graph.reachable_files.iter() {
@@ -555,8 +889,11 @@ pub(crate) fn merge_small_chunks(
         // Loading a file earlier than before is only unobservable when none
         // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
-        let pure = fold_pure && this.loading_file_has_no_side_effects(source_index);
+        inits.clear();
+        let pure = fold_pure && this.loading_file_side_effects(source_index, Some(&mut inits));
         if fold_pure && !pure {
+            inits.clear();
+            this.top_level_inits(source_index, &mut inits);
             debug_merge!(
                 "not side-effect free: {}{}",
                 bstr::BStr::new(sources[source_index as usize].path.text),
@@ -567,21 +904,16 @@ pub(crate) fn merge_small_chunks(
                 },
             );
         }
+        inits.sort_unstable();
+        inits.dedup();
         let entry = groups.entry(temp.alloc_slice_copy(bits.bytes(entry_points_len)));
         let group_index = match &entry {
             MapEntry::Occupied(entry) => entry.index(),
             MapEntry::Vacant(entry) => entry.index(),
         };
         group_of_file[source_index as usize] = group_index;
-        match entry {
-            MapEntry::Occupied(entry) => {
-                let group = entry.into_mut();
-                group.size += size;
-                group.pure &= pure;
-                if group.target != Some(target) {
-                    group.target = None;
-                }
-            }
+        let group = match entry {
+            MapEntry::Occupied(entry) => entry.into_mut(),
             MapEntry::Vacant(entry) => {
                 let class = load_class(bits)?;
                 match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
@@ -592,18 +924,20 @@ pub(crate) fn merge_small_chunks(
                 }
                 let pinned = bits.count() == 1
                     && pin_entry_chunk(bits.find_first_set().expect("one bit set"));
-                entry.insert(Group {
-                    size,
-                    target: Some(target),
-                    bits: bits.clone()?,
-                    loaded: bits.clone()?,
-                    loaded_count: 0,
-                    pinned,
-                    pure,
-                    deps: Vec::new(),
-                    merged_into: None,
-                });
+                entry.insert(Group::new(target, bits, pinned, source_index)?)
             }
+        };
+        group.size += size;
+        group.pure &= pure;
+        if group.target != Some(target) {
+            group.target = None;
+        }
+        if pure && !inits.is_empty() {
+            merge_sorted(&mut group.needs_init, &inits);
+            files_with_inits.set(source_index as usize);
+        }
+        if !wrapped {
+            merge_sorted(&mut group.provides_init, &inits);
         }
     }
 
@@ -621,23 +955,20 @@ pub(crate) fn merge_small_chunks(
         if !is_live_js(source_index) {
             continue;
         }
-        let group = Group {
-            size: 0,
-            target: Some(ast_targets[source_index as usize]),
-            bits: class.clone()?,
-            loaded: class.clone()?,
-            loaded_count: 0,
-            pinned: pin_entry_chunk(entry_id),
-            pure: false,
-            deps: Vec::new(),
-            merged_into: None,
-        };
+        let mut group = Group::new(
+            ast_targets[source_index as usize],
+            class,
+            pin_entry_chunk(entry_id),
+            source_index,
+        )?;
+        group.pure = false;
         classes.values_mut()[class_index].1.push(groups.count());
         groups.put(key, group)?;
     }
 
-    // Static dependencies between groups, from the live parts' import records
-    // and symbol dependencies. Only rule 2 consults them.
+    // Static dependencies between groups, along the edges that assigned
+    // `File.entry_bits` (so a dependency's key is a superset of its
+    // importer's) and symbol dependencies. Only rule 2 consults them.
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if !fold_pure {
             break;
@@ -653,14 +984,31 @@ pub(crate) fn merge_small_chunks(
             }
             for &record_index in part.import_record_indices.iter() {
                 let record = &import_records[source_index][record_index as usize];
-                if record.source_index.is_valid()
-                    && !this.is_external_dynamic_import(record, source_index as u32)
-                {
-                    deps.push(group_of_file[record.source_index.get() as usize]);
+                if let Some(other) = this.file_loaded_by_import(record, source_index as u32) {
+                    deps.push(group_of_file[other as usize]);
                 }
             }
             for dependency in part.dependencies.iter() {
                 deps.push(group_of_file[dependency.source_index.get() as usize]);
+            }
+        }
+    }
+    // An entry point's chunk also imports every binding the entry re-exports
+    // (`compute_cross_chunk_dependencies`).
+    if fold_pure {
+        let resolved_exports = this.graph.meta.items_resolved_exports();
+        for &source_index in entry_source_indices.iter() {
+            let group_index = group_of_file[source_index as usize];
+            if group_index == usize::MAX || flags[source_index as usize].wrap == WrapKind::Cjs {
+                continue;
+            }
+            let deps = &mut groups.values_mut()[group_index].deps;
+            for alias in export_aliases[source_index as usize].iter() {
+                if let Some(export) = resolved_exports[source_index as usize].get(alias)
+                    && export.data.source_index.is_valid()
+                {
+                    deps.push(group_of_file[export.data.source_index.get() as usize]);
+                }
             }
         }
     }
@@ -714,10 +1062,35 @@ pub(crate) fn merge_small_chunks(
         return Ok(());
     }
 
+    // An `import()` entry every load path of which passes through entry `e`
+    // (its dominators) is loaded only once `e`'s chunks are.
+    let group_count = groups.count();
+    {
+        let mut dominated: Vec<AutoBitSet> = Vec::with_capacity(entry_points_len);
+        for _ in 0..entry_points_len {
+            dominated.push(AutoBitSet::init_empty(entry_points_len)?);
+        }
+        for entry_id in 0..entry_points_len {
+            let mut up = idom[entry_id];
+            while up != UNREACHED && up as usize != vroot {
+                dominated[up as usize].set(entry_id);
+                up = idom[up as usize];
+            }
+        }
+        for group in groups.values_mut() {
+            if group.merged_into.is_some() {
+                continue;
+            }
+            let mut iter = group.bits.iterator::<true, true>();
+            while let Some(entry_id) = iter.next() {
+                group.loaded.set_union(&dominated[entry_id]);
+            }
+        }
+    }
+
     // A parent's extra entries now reach everything the folded members
     // imported; propagate so every dependency's `loaded` covers its
     // importer's.
-    let group_count = groups.count();
     loop {
         let mut changed = false;
         for group_index in 0..group_count {
@@ -754,8 +1127,24 @@ pub(crate) fn merge_small_chunks(
     // for noticeably more code to parse.
     const EXTRA_LOAD_DIVISOR: u64 = 64;
     let mut folded_pure = 0usize;
+    let groups = groups.values_mut();
+    for g in 0..group_count {
+        if groups[g].merged_into.is_some() {
+            continue;
+        }
+        for i in 0..groups[g].deps.len() {
+            let d = resolve(groups, groups[g].deps[i]);
+            if d != g {
+                groups[d].importers.push(g);
+            }
+        }
+    }
+    for group in groups.iter_mut() {
+        group.importers.sort_unstable();
+        group.importers.dedup();
+    }
     let mut load_size: Vec<u64> = vec![0; entry_points_len];
-    for group in groups.values().iter() {
+    for group in groups.iter() {
         if group.merged_into.is_some() {
             continue;
         }
@@ -764,8 +1153,16 @@ pub(crate) fn merge_small_chunks(
             load_size[entry_id] += group.size;
         }
     }
-    let mut extra_loaded: Vec<u64> = vec![0; entry_points_len];
-    let mut gained: Vec<(usize, u64)> = Vec::new();
+    // What each entry may still gain, and, per power of two, the entries with
+    // at least that much left: a fold charges every entry in
+    // `target.loaded & !candidate.loaded`, so most verdicts are word-wide
+    // mask tests, with exact arithmetic only for entries within a factor of
+    // two of the price.
+    let mut budget = Budget::new(entry_points_len, |entry_id| {
+        load_size[entry_id] / EXTRA_LOAD_DIVISOR
+    })?;
+    let words = budget.levels[0].words().len();
+    let mut payers: Vec<usize> = vec![0; words];
     // Groups loaded by each entry: a target must be loaded by every entry of
     // the candidate, so scanning the candidate's rarest entry's list suffices.
     let mut groups_by_entry: Vec<Vec<usize>> = vec![Vec::new(); entry_points_len];
@@ -775,43 +1172,73 @@ pub(crate) fn merge_small_chunks(
         stack: Vec::new(),
         newly_loaded: Vec::new(),
     };
+    let mut indegree: Vec<u32> = Vec::new();
+    let mut by_preference: Vec<(u32, core::cmp::Reverse<u64>, usize)> =
+        Vec::with_capacity(group_count);
+    // See `Group::checked_at`.
+    let mut tick = 1u32;
+    let mut entry_tick: Vec<u32> = vec![0; entry_points_len];
+    let mut fold_tick = 0u32;
+    let mut passes = 0usize;
     loop {
+        passes += 1;
+        let pass_tick = tick;
         // Sizes and load conditions change as groups absorb others; rebuild
         // the lists in preference order once per pass so the first target
         // that passes every check wins.
         for list in groups_by_entry.iter_mut() {
             list.clear();
         }
-        for (group_index, group) in groups.values_mut().iter_mut().enumerate() {
-            if group.merged_into.is_some() {
-                continue;
-            }
-            group.loaded_count = group.loaded.count();
-            let mut iter = group.loaded.iterator::<true, true>();
-            while let Some(entry_id) = iter.next() {
-                groups_by_entry[entry_id].push(group_index);
+        by_preference.clear();
+        for (group_index, group) in groups.iter_mut().enumerate() {
+            if group.merged_into.is_none() {
+                group.loaded_count = group.loaded.count();
+                by_preference.push((
+                    group.loaded_count as u32,
+                    core::cmp::Reverse(group.size),
+                    group_index,
+                ));
             }
         }
-        for list in groups_by_entry.iter_mut() {
-            list.sort_unstable_by(|&a, &b| {
-                let (ga, gb) = (&groups.values()[a], &groups.values()[b]);
-                ga.loaded_count
-                    .cmp(&gb.loaded_count)
-                    .then_with(|| gb.size.cmp(&ga.size))
-                    .then_with(|| a.cmp(&b))
+        by_preference.sort_unstable();
+        for &(_, _, group_index) in &by_preference {
+            for_each_bit(groups[group_index].loaded.words(), |entry_id| {
+                groups_by_entry[entry_id].push(group_index)
             });
         }
+        if !number_topologically(groups, &mut indegree) {
+            break;
+        }
+        let max_headroom = budget.headroom.iter().copied().max().unwrap_or(0);
         let mut progressed = false;
         for candidate in 0..group_count {
-            let c = &groups.values()[candidate];
+            let c = &groups[candidate];
             if c.merged_into.is_some()
                 || c.pinned
                 || !c.pure
                 || c.size >= min_chunk_size
+                || c.size > max_headroom
                 || c.target.is_none()
             {
                 continue;
             }
+            // A target appears only when a superset of `loaded` starts being
+            // loaded by an entry of it, an importer's dependency moved, or new
+            // initializers landed somewhere; budgets and cycles only get worse.
+            if c.checked_at != 0 && !c.recheck && !(c.wants_inits && fold_tick >= c.checked_at) {
+                let mut newest = 0;
+                for_each_bit(c.loaded.words(), |entry_id| {
+                    newest = newest.max(entry_tick[entry_id])
+                });
+                if newest < c.checked_at {
+                    continue;
+                }
+            }
+            let c = &mut groups[candidate];
+            c.checked_at = pass_tick;
+            c.recheck = false;
+            c.wants_inits = false;
+            let c = &groups[candidate];
             let mut rarest: Option<usize> = None;
             let mut iter = c.loaded.iterator::<true, true>();
             while let Some(entry_id) = iter.next() {
@@ -823,68 +1250,207 @@ pub(crate) fn merge_small_chunks(
             let Some(rarest) = rarest else {
                 continue;
             };
-            let chosen = groups_by_entry[rarest].iter().copied().find(|&target| {
-                let t = &groups.values()[target];
+            // A target's `loaded` holds all of the candidate's entries and
+            // otherwise only ones that can afford the candidate, which bounds
+            // its size on both sides; the list is sorted by that size.
+            let list = &groups_by_entry[rarest];
+            let first = list.partition_point(|&g| groups[g].loaded_count < c.loaded_count);
+            let mut most = if c.size == 0 { entry_points_len } else { 0 };
+            for (&can, &l) in budget
+                .can_afford(c.size)
+                .words()
+                .iter()
+                .zip(c.loaded.words())
+            {
+                most += (can | l).count_ones() as usize;
+            }
+            let last = first + list[first..].partition_point(|&g| groups[g].loaded_count <= most);
+            let mut chosen = None;
+            for ti in first..last {
+                let target = groups_by_entry[rarest][ti];
+                let (c, t) = (&groups[candidate], &groups[target]);
                 if target == candidate
                     || t.merged_into.is_some()
                     || t.pinned
                     || t.target != c.target
                     || !c.loaded.subset_of(&t.loaded)
-                    || !collect_newly_loaded(groups.values(), candidate, target, &mut scratch)
                 {
-                    return false;
+                    continue;
                 }
-                gained.clear();
-                let mut iter = t.loaded.iterator::<true, true>();
-                while let Some(entry_id) = iter.next() {
-                    let bytes: u64 = scratch
-                        .newly_loaded
-                        .iter()
-                        .map(|&g| &groups.values()[g])
-                        .filter(|g| !g.loaded.is_set(entry_id))
-                        .map(|g| g.size)
-                        .sum();
-                    if bytes == 0 {
+                for ((p, &t), &c) in payers
+                    .iter_mut()
+                    .zip(t.loaded.words())
+                    .zip(c.loaded.words())
+                {
+                    *p = t & !c;
+                }
+                if !budget.all_afford(&payers, c.size) {
+                    continue;
+                }
+                // The candidate's importers will import the target and the
+                // target will import what the candidate did; neither may close
+                // a static import cycle (cross-chunk bindings are plain `var`s,
+                // read before assignment in a cycle).
+                if reaches(groups, target, candidate, &mut scratch)
+                    || (0..groups[candidate].deps.len()).any(|i| {
+                        let d = resolve(groups, groups[candidate].deps[i]);
+                        d != target && d != candidate && reaches(groups, d, target, &mut scratch)
+                    })
+                {
+                    debug_merge!(
+                        "would cycle: {} -> {}",
+                        bstr::BStr::new(
+                            sources[groups[candidate].first_source as usize].path.pretty
+                        ),
+                        bstr::BStr::new(sources[groups[target].first_source as usize].path.pretty),
+                    );
+                    continue;
+                }
+                if !collect_newly_loaded(groups, candidate, target, &mut scratch) {
+                    continue;
+                }
+                if scratch.newly_loaded.len() > 1 {
+                    let most: u64 = scratch.newly_loaded.iter().map(|&g| groups[g].size).sum();
+                    if !budget.all_afford_each(&payers, most, |entry_id| {
+                        bytes_started(groups, &scratch.newly_loaded, entry_id)
+                    }) {
                         continue;
                     }
-                    if extra_loaded[entry_id] + bytes > load_size[entry_id] / EXTRA_LOAD_DIVISOR {
-                        return false;
+                }
+                // A wrapped module the moved code initializes at the top level
+                // must already be initialized by then (`inits_provided`); the
+                // order of files inside one chunk guarantees nothing, so that
+                // module may not end up in the merged chunk, whichever side
+                // brings it. The same goes for a side-effect-free dependency more
+                // entries start loading.
+                let inits_covered = inits_provided(
+                    groups,
+                    group_of_file,
+                    &groups[candidate].needs_init,
+                    [target, candidate],
+                ) && inits_provided(
+                    groups,
+                    group_of_file,
+                    &groups[target].needs_init,
+                    [candidate; 2],
+                ) && scratch.newly_loaded[1..]
+                    .iter()
+                    .all(|&g| inits_provided(groups, group_of_file, &groups[g].needs_init, [g; 2]));
+                if !inits_covered {
+                    groups[candidate].wants_inits = true;
+                    debug_merge!(
+                        "would initialize a wrapped module early: {} -> {}",
+                        bstr::BStr::new(
+                            sources[groups[candidate].first_source as usize].path.pretty
+                        ),
+                        bstr::BStr::new(sources[groups[target].first_source as usize].path.pretty),
+                    );
+                    continue;
+                }
+                for_each_bit(&payers, |entry_id| {
+                    budget.charge(
+                        entry_id,
+                        bytes_started(groups, &scratch.newly_loaded, entry_id),
+                    )
+                });
+                chosen = Some(target);
+                break;
+            }
+            let Some(target) = chosen else {
+                continue;
+            };
+            tick += 1;
+            fold_tick = tick;
+            let target_loaded = groups[target].loaded.clone()?;
+            // Whatever imports a group that changed here, directly or not, may
+            // price differently now.
+            let epoch = scratch.next_epoch();
+            scratch.stack.clear();
+            scratch.stack.push(candidate);
+            scratch.visited[candidate] = epoch;
+            for &g in &scratch.newly_loaded[1..] {
+                for ((&t, &had), ticks) in target_loaded
+                    .words()
+                    .iter()
+                    .zip(groups[g].loaded.words())
+                    .zip(entry_tick.chunks_mut(usize::BITS as usize))
+                {
+                    let mut gained = t & !had;
+                    while gained != 0 {
+                        ticks[gained.trailing_zeros() as usize] = tick;
+                        gained &= gained - 1;
                     }
-                    gained.push((entry_id, bytes));
                 }
-                true
-            });
-            if let Some(target) = chosen {
-                for &(entry_id, bytes) in &gained {
-                    extra_loaded[entry_id] += bytes;
+                groups[g].loaded.set_union(&target_loaded);
+                scratch.stack.push(g);
+                scratch.visited[g] = epoch;
+            }
+            while let Some(g) = scratch.stack.pop() {
+                for i in 0..groups[g].importers.len() {
+                    let importer = resolve(groups, groups[g].importers[i]);
+                    if core::mem::replace(&mut scratch.visited[importer], epoch) != epoch {
+                        groups[importer].recheck = true;
+                        scratch.stack.push(importer);
+                    }
                 }
-                let target_loaded = groups.values()[target].loaded.clone()?;
-                for &g in &scratch.newly_loaded {
-                    groups.values_mut()[g].loaded.set_union(&target_loaded);
-                }
-                // Keep a shared chunk's `bits` covering every entry that
-                // statically reaches its files (route manifests read
-                // `File.entry_bits` directly). A single bit is an entry
-                // point's own chunk, which must stay keyed by that bit; only
-                // `import()` entries it precedes can be missing there.
-                if groups.values()[target].bits.count() > 1 {
-                    let candidate_bits = groups.values()[candidate].bits.clone()?;
-                    groups.values_mut()[target].bits.set_union(&candidate_bits);
-                }
-                fold(groups.values_mut(), candidate, target);
-                folded_pure += 1;
-                progressed = true;
+            }
+            // Keep a shared chunk's `bits` covering every entry that
+            // statically reaches its files (route manifests read
+            // `File.entry_bits` directly). A single bit is an entry
+            // point's own chunk, which must stay keyed by that bit; only
+            // `import()` entries it precedes can be missing there.
+            if groups[target].bits.count() > 1 {
+                let candidate_bits = groups[candidate].bits.clone()?;
+                groups[target].bits.set_union(&candidate_bits);
+            }
+            // Keep `topo` an order of the import graph: the target takes over
+            // the candidate's edges, which is only certainly fine where it
+            // sat between the candidate's importers and dependencies already.
+            let topo = groups[target].topo;
+            let out_of_order = |list: &[usize], before: bool| {
+                list.iter()
+                    .map(|&g| resolve(groups, g))
+                    .any(|g| g != target && g != candidate && (groups[g].topo < topo) != before)
+            };
+            let renumber = out_of_order(&groups[candidate].importers, true)
+                || out_of_order(&groups[candidate].deps, false);
+            fold(groups, candidate, target);
+            groups[candidate].hoisted = true;
+            folded_pure += 1;
+            progressed = true;
+            if renumber && !number_topologically(groups, &mut indegree) {
+                progressed = false;
+                break;
             }
         }
         if !progressed {
             break;
         }
     }
+    // The `init_x()` / `require_x()` calls of a file rule 2 moved were shown
+    // to repeat ones the destination chunk's imports make first, so they no
+    // longer say anything about where that chunk must be imported
+    // (`find_imported_parts_in_js_order`, `inert_chunks`).
+    if folded_pure > 0 {
+        let mut done = AutoBitSet::init_empty(files_len)?;
+        let mut iter = files_with_inits.iterator::<true, true>();
+        while let Some(source_index) = iter.next() {
+            let mut group = group_of_file[source_index];
+            while let Some(into) = groups[group].merged_into {
+                if groups[group].hoisted {
+                    done.set(source_index);
+                    break;
+                }
+                group = into;
+            }
+        }
+        this.inits_already_done = Some(done);
+    }
 
-    rekey_files(this, group_of_file, groups.values())?;
+    rekey_files(this, group_of_file, groups)?;
     debug!(
-        "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset (min size {} bytes)",
-        folded_same, folded_pure, min_chunk_size
+        "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
+        folded_same, folded_pure, passes, min_chunk_size
     );
     Ok(())
 }

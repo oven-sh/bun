@@ -50,6 +50,101 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("listing require.cache does not create a namespace object for each ES module", async () => {
+    using dir = tempDir("require-cache-esm-namespaces", {
+      "a.mjs": `export const a = 1;`,
+      "b.mjs": `import { a } from "./a.mjs"; export const b = a + 1;`,
+      "index.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { b } from "./b.mjs";
+        import { join } from "node:path";
+        const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
+        const aPath = join(import.meta.dir, "a.mjs");
+        const before = namespaces();
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        const has = aPath in require.cache;
+        const descriptor = Object.getOwnPropertyDescriptor(require.cache, aPath);
+        const createdByListing = namespaces() - before;
+        const { a } = require.cache[aPath].exports;
+        const createdByGet = namespaces() - before - createdByListing;
+        // The key is now in both tables; it is still listed once.
+        const listedAfterGet = Object.keys(require.cache).filter(key => key === aPath).length;
+        console.log(JSON.stringify({ b, keys, has, descriptor, createdByListing, a, createdByGet, listedAfterGet }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        b: 2,
+        keys: ["a.mjs", "b.mjs"],
+        has: true,
+        descriptor: { writable: false, enumerable: true, configurable: true },
+        createdByListing: 0,
+        a: 1,
+        createdByGet: 1,
+        listedAfterGet: 1,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a specifier imported under two import attribute types is one key of require.cache", async () => {
+    using dir = tempDir("require-cache-esm-attribute-types", {
+      "a.mjs": `export const a = 1;`,
+      "data.json": `{"x":1}`,
+      // Never imported as JavaScript.
+      "only.json": `{"y":2}`,
+      "index.mjs": `
+        import { join } from "node:path";
+        import { a } from "./a.mjs";
+        import text from "./a.mjs" with { type: "text" };
+        import data from "./data.json";
+        import sameData from "./data.json" with { type: "json" };
+        import only from "./only.json" with { type: "json" };
+        import onlyText from "./only.json" with { type: "text" };
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        // Every key that is listed is there when asked for by name.
+        const present = keys.map(key => join(import.meta.dir, key)).every(key => key in require.cache && require.cache[key]);
+        console.log(JSON.stringify({ a, text: text.length > 0, x: data.x + sameData.x, y: only.y, onlyText, keys, present }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        a: 1,
+        text: true,
+        x: 2,
+        y: 2,
+        onlyText: `{"y":2}`,
+        keys: ["a.mjs", "data.json", "only.json"],
+        present: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
     test("via require() with a lot of long export names", async () => {
       let text = "";
@@ -64,7 +159,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
           function bust() {
             const mod = require.cache[path];
@@ -123,7 +218,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -173,7 +268,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -234,7 +329,7 @@ describe.concurrent("require.cache", () => {
           "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             const mod = require.cache[path];
             if (mod) {
@@ -309,6 +404,173 @@ describe.concurrent("require.cache", () => {
     }, 20000);
   });
 
+  // `delete require.cache[path]` of an ES module evicts its registry entry. A
+  // module that is still loading or evaluating is not in require.cache (`in`
+  // says false), so deleting it must be a no-op: evicting it mid-load made the
+  // next import() of the same path create a second record for it, which the
+  // loader's import cache did not expect (segfault at address 0x10 on the
+  // next import(), or the module evaluating twice).
+  describe("delete require.cache[esm] of a module that is still loading", () => {
+    // Every fixture records into one object and prints it once the event loop
+    // drains, so the test compares the whole outcome instead of line order.
+    const report = `
+      const result = (globalThis.__result ??= { evaluated: 0 });
+      process.on("beforeExit", () => console.log(JSON.stringify(result)));
+      module.exports = result;
+    `;
+
+    async function run(dir: string, entry: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // a.mjs is fetched, then its CommonJS dependency runs before a.mjs evaluates.
+    // The dependency evicts a.mjs and imports it again.
+    const deleteThenImport = {
+      "report.cjs": report,
+      "a.mjs": `
+        import "./b.cjs";
+        export const x = 1;
+        globalThis.__result.evaluated++;
+      `,
+      "b.cjs": `
+        const result = require("./report.cjs");
+        const key = require("node:path").join(__dirname, "a.mjs");
+        result.inCacheBeforeDelete = key in require.cache;
+        result.deleted = delete require.cache[key];
+        import("./a.mjs").then(
+          ns => { result.depImport = ns.x; },
+          e => { result.depImport = String(e); },
+        );
+      `,
+      "main.mjs": `
+        const ns = await import("./a.mjs");
+        globalThis.__result.mainImport = ns.x;
+        globalThis.__result.secondImportIsSame = (await import("./a.mjs")) === ns;
+      `,
+    };
+
+    test("import() of the module from its dependency", async () => {
+      using dir = tempDir("require-cache-delete-loading-import", deleteThenImport);
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        inCacheBeforeDelete: false,
+        deleted: true,
+        mainImport: 1,
+        secondImportIsSame: true,
+        depImport: 1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("import() of the module from its dependency, module is the entry point", async () => {
+      using dir = tempDir("require-cache-delete-loading-entry", deleteThenImport);
+      const { stdout, stderr, exitCode } = await run(String(dir), "a.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ evaluated: 1, inCacheBeforeDelete: false, deleted: true, depImport: 1 });
+      expect(exitCode).toBe(0);
+    });
+
+    test("require() of the module from its dependency", async () => {
+      using dir = tempDir("require-cache-delete-loading-require", {
+        ...deleteThenImport,
+        "b.cjs": `
+          const result = require("./report.cjs");
+          const key = require("node:path").join(__dirname, "a.mjs");
+          result.deleted = delete require.cache[key];
+          result.depRequire = require("./a.mjs").x;
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        deleted: true,
+        depRequire: 1,
+        mainImport: 1,
+        secondImportIsSame: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("while the module's top level is running", async () => {
+      using dir = tempDir("require-cache-delete-evaluating", {
+        "report.cjs": report,
+        "a.mjs": `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          require("./c.cjs");
+          export const x = 1;
+          globalThis.__result.evaluated++;
+        `,
+        "c.cjs": `
+          const result = require("./report.cjs");
+          const key = require("node:path").join(__dirname, "a.mjs");
+          result.inCacheBeforeDelete = key in require.cache;
+          result.deleted = delete require.cache[key];
+          import("./a.mjs").then(
+            ns => { result.depImport = ns.x; },
+            e => { result.depImport = String(e); },
+          );
+        `,
+        "main.mjs": `
+          const ns = await import("./a.mjs");
+          globalThis.__result.mainImport = ns.x;
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        inCacheBeforeDelete: false,
+        deleted: true,
+        mainImport: 1,
+        depImport: 1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("an evaluated module is still evicted", async () => {
+      using dir = tempDir("require-cache-delete-evaluated", {
+        "report.cjs": report,
+        "a.mjs": `
+          export const x = 1;
+          globalThis.__result.evaluated++;
+        `,
+        "main.mjs": `
+          import { createRequire } from "node:module";
+          import { join } from "node:path";
+          const require = createRequire(import.meta.url);
+          const result = require("./report.cjs");
+          const key = join(import.meta.dir, "a.mjs");
+          const first = await import("./a.mjs");
+          result.inCacheBeforeDelete = key in require.cache;
+          result.deleted = delete require.cache[key];
+          result.inCacheAfterDelete = key in require.cache;
+          result.secondImportIsSame = (await import("./a.mjs")) === first;
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 2,
+        inCacheBeforeDelete: true,
+        deleted: true,
+        inCacheAfterDelete: false,
+        secondImportIsSame: false,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // These tests are extra slow in debug builds
   describe("files transpiled and loaded don't leak file paths", () => {
     test("via require()", async () => {
@@ -339,7 +601,7 @@ describe.concurrent("require.cache", () => {
         expect(exitCode).toBe(0);
       },
       // TODO: Investigate why this is so slow on Windows
-      isWindows ? 60000 : 30000,
+      isWindows || isASAN ? 60000 : 30000,
     );
   });
 });

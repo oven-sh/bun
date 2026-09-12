@@ -526,7 +526,7 @@ console.log("survived", require("./late.js"));`,
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
@@ -747,6 +747,76 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("Overwriting _resolveFilename with a non-callable makes require() throw like Node", async () => {
+    // Node keeps _resolveFilename as a plain data property: any value can be
+    // assigned and reads back, and require() throws when it goes to call it.
+    using dir = tempDir("resolve-filename-non-callable", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const Module = require("module");
+        const original = Module._resolveFilename;
+        const attempt = fn => {
+          try {
+            return "returned " + String(fn());
+          } catch (e) {
+            return e.constructor.name + ": " + e.message;
+          }
+        };
+        const results = {};
+        for (const [label, value] of [
+          ["object", {}],
+          ["string", "not a function"],
+          ["undefined", undefined],
+          ["null", null],
+          ["number", 42],
+          ["symbol", Symbol("s")],
+        ]) {
+          Module._resolveFilename = value;
+          results[label] = {
+            readsBack: Object.is(Module._resolveFilename, value),
+            require: attempt(() => require("./dep.cjs")),
+            requireResolve: attempt(() => require.resolve("./dep.cjs")),
+            createRequire: attempt(() => Module.createRequire(__filename)("./dep.cjs")),
+          };
+        }
+        // Callable objects other than plain functions are still honored.
+        Module._resolveFilename = new Proxy(original, {});
+        results.callableProxy = attempt(() => require("./dep.cjs"));
+        Module._resolveFilename = original;
+        results.restored = {
+          readsBack: Module._resolveFilename === original,
+          require: attempt(() => require("./dep.cjs")),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notAFunction = {
+      readsBack: true,
+      require: "TypeError: Module._resolveFilename is not a function",
+      requireResolve: "TypeError: Module._resolveFilename is not a function",
+      createRequire: "TypeError: Module._resolveFilename is not a function",
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      object: notAFunction,
+      string: notAFunction,
+      undefined: notAFunction,
+      null: notAFunction,
+      number: notAFunction,
+      symbol: notAFunction,
+      callableProxy: "returned dep",
+      restored: { readsBack: true, require: "returned dep" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],
@@ -922,5 +992,29 @@ console.log("survived", require("./late.js"));`,
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("new Module().exports survives object spread", async () => {
+    // exports was built with inline capacity 0, so spreading it hit JSC's
+    // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a
+    // subprocess so a regressing assert shows up as missing stdout rather than
+    // killing the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const Module = require("node:module");
+         const m = new Module("x");
+         m.exports.a = 1;
+         console.log(JSON.stringify({ ...m.exports }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"a":1}');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

@@ -444,6 +444,73 @@ describe("bundler", () => {
     },
     run: { stdout: "2 2 1 111" },
   });
+  // The pattern reads its target once where the declarators read it once
+  // each. An unbound global may be an accessor on globalThis, and a getter on
+  // the first property may reassign a variable the file assigns somewhere.
+  // Only a declared symbol that nothing assigns, or a known pure global such
+  // as `Math`, reads as the same value both times.
+  itBundled("minify/SameTargetDestructuringSkipsUnstableTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        let reads = 0;
+        Object.defineProperty(globalThis, "CFG", {
+          get() {
+            reads++;
+            return { host: "h", port: 1 };
+          },
+          configurable: true,
+        });
+        function globalHead() {
+          reads = 0;
+          var h = CFG.host, p = CFG.port;
+          return [h, p, reads];
+        }
+        function globalMid() {
+          reads = 0;
+          var z = 0, h = CFG.host, p = CFG.port;
+          return [z, h, p, reads];
+        }
+        function getterReassigns() {
+          var cur = { get a() { cur = nxt; return "a1"; }, b: "b1" }, nxt = { a: "a2", b: "b2" };
+          var x = cur.a, y = cur.b;
+          return x + y;
+        }
+        function blockHoisted() {
+          var swap;
+          { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
+          var o = { get a() { swap(); return "a1"; }, b: "b1" };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function stable(param) {
+          var local = { a: "a1", b: "b1" };
+          var a = local.a, b = local.b;
+          var c = param.a, d = param.b;
+          var cos = Math.cos, sin = Math.sin;
+          return [a + b, c + d, typeof cos(0), typeof sin(0)];
+        }
+        var top = { get a() { swapTop(); return "a1"; }, b: "b1" };
+        var swapTop = () => eval("top = { a: 'a2', b: 'b2' }");
+        var ta = top.a, tb = top.b;
+        console.log(JSON.stringify([globalHead(), globalMid(), getterReassigns(), blockHoisted(), stable({ a: "a2", b: "b2" }), ta + tb]));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var h = CFG.host, p = CFG.port");
+      api.expectFile("/out.js").toContain("var z = 0, h = CFG.host, p = CFG.port");
+      // `--minify-syntax` merges the adjacent `var` statements, so these runs
+      // start mid-list.
+      api.expectFile("/out.js").toContain(", x = cur.a, y = cur.b;");
+      api.expectFile("/out.js").toContain(", a = o.a, b = o.b;");
+      api.expectFile("/out.js").toContain("{ a, b } = local");
+      api.expectFile("/out.js").toContain("{ a: c, b: d } = param");
+      api.expectFile("/out.js").toContain("{ cos, sin } = Math");
+      // The direct eval can assign any top-level variable.
+      api.expectFile("/out.js").toContain(", ta = top.a, tb = top.b;");
+    },
+    run: { stdout: '[["h",1,2],[0,"h",1,2],"a1b2","a1b2",["a1b1","a2b2","number","number"],"a1b2"]' },
+  });
   // A `using` declaration admits only identifier bindings, so the transform
   // must not rewrite its declarators into an object pattern.
   itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {
@@ -1130,6 +1197,8 @@ describe("bundler", () => {
         capture(new Array());
         capture(new Array(3));
         capture(new Array(1, 2, 3));
+        capture(new Array(...unknownValue));
+        capture(new Array(5, ...unknownValue));
         
         // Test Array with non-numeric single arguments (should convert to literal)
         capture(new Array("string"));
@@ -1170,6 +1239,8 @@ describe("bundler", () => {
   2,
   3
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      "Array(...unknownValue)", // a spread may leave a single number behind, which is a length
+      "Array(5, ...unknownValue)",
       `[
   "string"
 ]`, // new Array("string") -> ["string"]
@@ -1262,6 +1333,12 @@ describe("bundler", () => {
         const a3 = new Array(n);
         const a4 = Array(n);
         capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+
+        // A spread can leave a single number behind at runtime, and then it is a length
+        const none = [];
+        const a5 = new Array(5, ...none);
+        capture(a5.length === 5);
+        capture(0 in a5 === false);
         
         // Test Object semantics
         const o1 = new Object();
@@ -1290,6 +1367,8 @@ describe("bundler", () => {
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "a5.length === 5",
+      "0 in a5 === !1",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -1300,7 +1379,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

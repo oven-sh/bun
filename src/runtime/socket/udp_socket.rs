@@ -638,6 +638,22 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    hostname_z.as_bytes(),
+                )),
+            );
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -956,12 +972,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 1
+        let iface = if arguments.len() > 1
             && this.parse_addr(global_this, 0, arguments[1], &mut interface)?
         {
             if addr.ss_family != interface.ss_family {
@@ -969,11 +980,17 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_membership(&addr, iface, drop);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1056,12 +1073,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 2
+        let iface = if arguments.len() > 2
             && this.parse_addr(global_this, 0, arguments[2], &mut interface)?
         {
             if source_addr.ss_family != interface.ss_family {
@@ -1069,21 +1081,22 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                Some(&interface),
-                drop,
-            )
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                None,
-                drop,
-            )
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
+            &source_addr,
+            &group_addr,
+            iface,
+            drop,
+        );
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1896,6 +1909,14 @@ impl UDPSocket {
 
         let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 

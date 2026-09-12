@@ -30,7 +30,7 @@ impl Percentage {
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
-            Some(self.v as i32)
+            Some(x as i32)
         } else {
             None
         };

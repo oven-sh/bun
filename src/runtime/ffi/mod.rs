@@ -52,7 +52,10 @@ mod dom_call_slowpath {
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
-                bun_jsc::to_js_host_call(global, move || $target(global, this_value, arguments))
+                bun_jsc::to_js_host_call(global, move || {
+                    super::check_ffi_enabled(global)?;
+                    $target(global, this_value, arguments)
+                })
             }
         )*};
     }
@@ -89,8 +92,26 @@ mod dom_call_slowpath {
                 core::slice::from_raw_parts(arguments_ptr, arguments_len),
             )
         };
+        if let Err(err) = super::check_ffi_enabled(global) {
+            return bun_jsc::to_js_host_fn_result(global, Err(err));
+        }
         ffi_object::ptr(global, this_value, arguments)
     }
+}
+
+/// Throws `ERR_FFI_DISABLED` under `--no-ffi-cc` / `--no-addons`.
+pub(crate) fn check_ffi_enabled(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JsResult<()> {
+    if global.bun_vm().allow_ffi() {
+        return Ok(());
+    }
+    Err(global
+        .err(
+            bun_jsc::ErrorCode::FFI_DISABLED,
+            format_args!(
+                "bun:ffi is not available because FFI was disabled with --no-ffi-cc or --no-addons."
+            ),
+        )
+        .throw())
 }
 
 /// Get the last dynamic-library loading error message in a cross-platform way.

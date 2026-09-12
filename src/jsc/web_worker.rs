@@ -366,8 +366,8 @@ impl WebWorker {
             if let Some(flags) = parsed {
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
-                let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
-                transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
+                let parent_allows_ffi = transform_options.allow_ffi.unwrap_or(true);
+                transform_options.allow_ffi = Some(parent_allows_ffi && flags.allow_ffi);
             }
         }
         // The worker's `process.env` starts as a copy of the parent's now (as in

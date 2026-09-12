@@ -99,7 +99,8 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
 ) -> JSValue {
     jsc::to_js_host_fn_result(
         global,
-        new_cstring(global, ptr, Some(byte_offset), Some(byte_length)),
+        super::check_ffi_enabled(global)
+            .and_then(|()| new_cstring(global, ptr, Some(byte_offset), Some(byte_length))),
     )
 }
 
@@ -767,7 +768,10 @@ macro_rules! wrap_host_fn {
             ) -> JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the host call.
                 let (global, callframe) = unsafe { (&*global, &*callframe) };
-                jsc::to_js_host_fn_result(global, $body(global, callframe))
+                jsc::to_js_host_fn_result(
+                    global,
+                    super::check_ffi_enabled(global).and_then(|()| $body(global, callframe)),
+                )
             }
         }
         thunk as jsc::JSHostFn

@@ -997,6 +997,30 @@ describe("expect()", () => {
     }
   });
 
+  test("toThrow(string) compares the UTF-16 code units of the message", async () => {
+    const thrower = (/** @type {string} */ message) => () => {
+      throw new Error(message);
+    };
+    // "🙂" is the surrogate pair \ud83d \ude42.
+    expect(thrower("🙂x")).toThrow("\ud83d");
+    expect(thrower("🙂x")).toThrow("\ude42x");
+    expect(thrower("🙂x")).not.toThrow("\ud83dx");
+    // An unpaired surrogate equals itself. It does not equal U+FFFD or another unpaired surrogate.
+    expect(thrower("a\ud83db")).toThrow("\ud83d");
+    expect(thrower("a\ud83db")).not.toThrow("\ud83e");
+    expect(thrower("a\ud83db")).not.toThrow("\ufffd");
+    expect(thrower("a\ufffdb")).not.toThrow("\ud83d");
+    expect(() => expect(thrower("a\ud83db")).toThrow("\ud83e")).toThrow("toThrow");
+    expect(() => expect(thrower("🙂x")).not.toThrow("\ud83d")).toThrow("toThrow");
+    // A slice of a 16-bit string keeps the 16-bit storage.
+    expect(thrower("du café au lait")).toThrow("🙂café".slice(2));
+    expect(thrower("🙂 du café".slice(2))).toThrow("café");
+    expect(thrower("café")).not.toThrow("🙂");
+
+    await expect(Promise.reject(new Error("🙂x"))).rejects.toThrow("\ud83d");
+    await expect(Promise.reject(new Error("a\ud83db"))).rejects.not.toThrow("\ud83e");
+  });
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";

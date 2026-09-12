@@ -2076,10 +2076,7 @@ impl Expect {
     }
 }
 
-/// The received and the expected string of a string matcher, as code units of
-/// one width. The matchers compare code units, like `String.prototype.startsWith`,
-/// `endsWith` and `indexOf`, so an unpaired surrogate equals itself and nothing
-/// else. A UTF-8 copy turns every unpaired surrogate into U+FFFD.
+/// Two JS strings as code units of one width. A UTF-8 copy turns each unpaired surrogate into U+FFFD.
 pub(crate) enum CodeUnitPair<'a> {
     Latin1(&'a [u8], &'a [u8]),
     Utf16(Cow<'a, [u16]>, Cow<'a, [u16]>),

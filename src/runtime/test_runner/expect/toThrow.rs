@@ -3,8 +3,8 @@ use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_core::strings;
 
+use super::CodeUnitPair;
 use super::Expect;
 use super::ExpectAny;
 use super::expect_any_js;
@@ -114,12 +114,11 @@ pub(crate) fn to_throw(
             })
             .unwrap_or(JSValue::UNDEFINED);
 
-            // TODO: remove this allocation
             // partial match
             {
-                let expected_slice = expected_value.to_utf8(global)?;
-                let received_slice = received_message.to_utf8(global)?;
-                if !strings::contains(received_slice.slice(), expected_slice.slice()) {
+                let expected_view = expected_value.to_js_string_view(global)?;
+                let received_view = received_message.to_js_string_view(global)?;
+                if !CodeUnitPair::new(&received_view, &expected_view).includes() {
                     return Ok(JSValue::UNDEFINED);
                 }
             }
@@ -221,11 +220,10 @@ pub(crate) fn to_throw(
 
         if expected_value.is_string() {
             if let Some(received_message) = received_message_opt {
-                // TODO: remove this allocation
                 // partial match
-                let expected_slice = expected_value.to_utf8(global)?;
-                let received_slice = received_message.to_utf8(global)?;
-                if strings::contains(received_slice.slice(), expected_slice.slice()) {
+                let expected_view = expected_value.to_js_string_view(global)?;
+                let received_view = received_message.to_js_string_view(global)?;
+                if CodeUnitPair::new(&received_view, &expected_view).includes() {
                     return Ok(JSValue::UNDEFINED);
                 }
             }

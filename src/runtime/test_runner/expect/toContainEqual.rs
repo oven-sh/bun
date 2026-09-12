@@ -5,9 +5,7 @@ use bun_core::strings;
 
 use super::{get_signature, throw, CodeUnitPair, Expect};
 
-/// jest does not have a `typeof === "string"` check for `toContainEqual`.
-/// it immediately spreads the value into an array, so a string becomes its code
-/// points. An unpaired surrogate is a code point of its own.
+/// Jest spreads the received string into code points. An unpaired surrogate is one of its own.
 fn has_code_point<T: Copy + PartialEq + Into<u16>>(units: &[T], code_point: &[T]) -> bool {
     let mut at = 0;
     while at < units.len() {

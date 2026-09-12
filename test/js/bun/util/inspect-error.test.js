@@ -1,5 +1,7 @@
-import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll, describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { closeSync, constants, mkdirSync, openSync, readSync, symlinkSync, writeSync } from "node:fs";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,24 +11,25 @@ test("error.cause", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
-6 |   const err2 = new Error("error 2", { cause: err });
+"3 | import { mkfifo } from "mkfifo";
+4 | import { closeSync, constants, mkdirSync, openSync, readSync, symlinkSync, writeSync } from "node:fs";
+5 | 
+6 | test("error.cause", () => {
+7 |   const err = new Error("error 1");
+8 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:6:20)
+      at <anonymous> ([dir]/inspect-error.test.js:8:20)
 
-1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+3 | import { mkfifo } from "mkfifo";
+4 | import { closeSync, constants, mkdirSync, openSync, readSync, symlinkSync, writeSync } from "node:fs";
+5 | 
+6 | test("error.cause", () => {
+7 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:5:19)
+      at <anonymous> ([dir]/inspect-error.test.js:7:19)
 "
 `);
 });
@@ -38,15 +41,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"30 | "
-31 | \`);
-32 | });
-33 | 
-34 | test("Error", () => {
-35 |   const err = new Error("my message");
+"33 | "
+34 | \`);
+35 | });
+36 | 
+37 | test("Error", () => {
+38 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:35:19)
+      at <anonymous> ([dir]/inspect-error.test.js:38:19)
 "
 `);
 });
@@ -105,7 +108,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:89:7)"
     `);
   }
 });
@@ -134,7 +137,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:117:7)"
     `);
   }
 });
@@ -148,7 +151,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:143:19)"
+    at <anonymous> ([file]:146:19)"
 `);
 });
 
@@ -196,8 +199,17 @@ describe("source map remapping of the printed stack", () => {
       .map(line => line.replaceAll(prefix, ""));
   }
 
-  async function run(files) {
+  // A child that never exits fails its test by timeout. It must not outlive
+  // the run too.
+  const children = [];
+  afterAll(() => {
+    for (const child of children) child.kill("SIGKILL");
+  });
+
+  // `prepare(dir)` runs once the files exist, for what a file tree can't express.
+  async function run(files, prepare = () => {}) {
     using dir = tempDir("inspect-error-sourcemap", files);
+    prepare(String(dir));
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: String(dir),
@@ -205,6 +217,7 @@ describe("source map remapping of the printed stack", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+    children.push(proc);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
   }
@@ -251,6 +264,163 @@ describe("source map remapping of the printed stack", () => {
       uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
     });
     expect(exitCode).toBe(1);
+  });
+
+  // The error printer reads files by path: the file of the top frame for the
+  // code frame, the `.map` next to it, and an original source that map names.
+  // error.stack alone reads the `.map` too. Any of these paths can name a FIFO
+  // by then. Opening one blocks until a writer shows up, so the process used to
+  // stay in open() forever instead of printing the error and exiting. With a
+  // writer it took the bytes that were in the pipe and stayed in read(). Only a
+  // regular file is read now. What is printed is what a missing file gives.
+  describe.skipIf(isWindows)("a path the error printer reads names a FIFO", () => {
+    const swapped = {
+      "swapped.ts": [
+        "type Padding1 = { a: number };",
+        "type Padding2 = { b: string };",
+        "export function thrower(): never {",
+        '  throw new Error("HOSTILE");',
+        "}",
+        "",
+      ].join("\n"),
+      "main.js": [
+        'import { renameSync } from "node:fs";',
+        'import { thrower } from "./swapped.ts";',
+        'renameSync(import.meta.dir + "/fifo", import.meta.dir + "/swapped.ts");',
+        "const out = {};",
+        "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
+        "console.log(JSON.stringify(out));",
+        "thrower();",
+        "",
+      ].join("\n"),
+    };
+    // The throw is on line 4 of the original module and on line 2 after type
+    // stripping.
+    const thrower = [expect.stringMatching(/^at thrower \(swapped\.ts:4:\d+\)$/)];
+    const remapped = { inspect: thrower, uncaught: thrower };
+
+    test.concurrent("the file of a module bun transpiled, no writer", async () => {
+      const { dir, out, stderr, exitCode } = await run(swapped, cwd => mkfifo(`${cwd}/fifo`));
+      expect({
+        inspect: frames(out.inspect, dir, ["swapped.ts"]),
+        uncaught: frames(stderr, dir, ["swapped.ts"]),
+      }).toEqual(remapped);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("the file of a module bun transpiled, a writer with bytes in the pipe", async () => {
+      let fd;
+      try {
+        const { dir, out, stderr, exitCode } = await run(swapped, cwd => {
+          mkfifo(`${cwd}/fifo`);
+          // Both ends: the child finds a writer, and the read below never blocks.
+          fd = openSync(`${cwd}/fifo`, constants.O_RDWR | constants.O_NONBLOCK);
+          writeSync(fd, "not source code\n");
+        });
+        expect({
+          inspect: frames(out.inspect, dir, ["swapped.ts"]),
+          uncaught: frames(stderr, dir, ["swapped.ts"]),
+        }).toEqual(remapped);
+        const inPipe = Buffer.alloc(64);
+        expect(inPipe.toString("utf8", 0, readSync(fd, inPipe))).toBe("not source code\n");
+        expect(exitCode).toBe(1);
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
+    });
+
+    // The frame of code run through node:vm names whatever its sourceURL says.
+    const vmScript = url =>
+      [
+        'import vm from "node:vm";',
+        'console.log("{}");',
+        `vm.runInNewContext(\`function thrower() { throw new Error("HOSTILE"); }\\nthrower();\\n//# sourceURL=\${import.meta.dir}/${url}\`);`,
+        "",
+      ].join("\n");
+
+    test.concurrent("the file a sourceURL names", async () => {
+      const { dir, stderr, exitCode } = await run({ "main.js": vmScript("fifo.js") }, cwd => mkfifo(`${cwd}/fifo.js`));
+      expect(frames(stderr, dir, ["fifo.js"])).toEqual([expect.stringMatching(/^at thrower \(fifo\.js:1:\d+\)$/)]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The printer used to look up the package.json of the frame's directory,
+    // for a module type it never used. In a directory nothing was loaded from,
+    // that read the directory and opened its package.json.
+    test.concurrent("the package.json of the directory a sourceURL names", async () => {
+      const { dir, stderr, exitCode } = await run({ "main.js": vmScript("cold/x.js") }, cwd => {
+        mkdirSync(`${cwd}/cold`);
+        mkfifo(`${cwd}/cold/fifo`);
+        symlinkSync("fifo", `${cwd}/cold/package.json`);
+      });
+      expect(frames(stderr, dir, ["x.js"])).toEqual([expect.stringMatching(/^at thrower \(cold\/x\.js:1:\d+\)$/)]);
+      expect(exitCode).toBe(1);
+    });
+
+    // No code has to run under that name: the frames of a string assigned to
+    // error.stack are enough.
+    test.concurrent("the file a frame of an assigned error.stack names", async () => {
+      const { dir, stderr, exitCode } = await run(
+        {
+          "main.js": [
+            'const e = new Error("HOSTILE");',
+            'e.stack = "Error: HOSTILE\\n    at thrower (" + import.meta.dir + "/fifo.js:3:7)";',
+            'console.log("{}");',
+            "throw e;",
+            "",
+          ].join("\n"),
+        },
+        cwd => mkfifo(`${cwd}/fifo.js`),
+      );
+      expect(frames(stderr, dir, ["fifo.js"])).toEqual(["at thrower (fifo.js:3:7)"]);
+      expect(exitCode).toBe(1);
+    });
+
+    const prebuilt = [
+      "// @bun",
+      'function thrower() { throw new Error("HOSTILE"); }',
+      "const out = {};",
+      "try { thrower(); } catch (e) { out.stack = e.stack; }",
+      "console.log(JSON.stringify(out));",
+      "thrower();",
+      "",
+    ].join("\n");
+
+    // Without a map the frames stay as they are.
+    test.concurrent("the .map next to a prebuilt file, which error.stack reads too", async () => {
+      const { dir, out, stderr, exitCode } = await run({ "main.js": prebuilt }, cwd => mkfifo(`${cwd}/main.js.map`));
+      const unmapped = [expect.stringMatching(/^at thrower \(main\.js:2:\d+\)$/)];
+      expect({
+        stack: frames(out.stack, dir, ["main.js"]).slice(0, 1),
+        uncaught: frames(stderr, dir, ["main.js"]).slice(0, 1),
+      }).toEqual({ stack: unmapped, uncaught: unmapped });
+      expect(exitCode).toBe(1);
+    });
+
+    // One segment at column 0 of generated lines 2, 4 and 6 (to orig.ts:11:5,
+    // 21:5 and 31:5), and no `sourcesContent`: the printer looks for orig.ts on
+    // disk.
+    test.concurrent("an original source the map names", async () => {
+      const map = {
+        version: 3,
+        sources: ["orig.ts"],
+        sourcesContent: [null],
+        names: [],
+        mappings: ";AAUI;;AAUA;;AAUA",
+      };
+      const { dir, out, stderr, exitCode } = await run(
+        { "main.js": prebuilt, "main.js.map": JSON.stringify(map) },
+        cwd => mkfifo(`${cwd}/orig.ts`),
+      );
+      expect({
+        stack: frames(out.stack, dir, ["orig.ts"]),
+        uncaught: frames(stderr, dir, ["orig.ts"]),
+      }).toEqual({
+        stack: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
+        uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
+      });
+      expect(exitCode).toBe(1);
+    });
   });
 
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is

@@ -792,6 +792,7 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
+            non_regular_file: bun_resolver::cache::NonRegularFile::Read,
             // SAFETY: `input_file_fd` is a stack local declared above and
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.

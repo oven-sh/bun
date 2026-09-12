@@ -4425,11 +4425,6 @@ impl VirtualMachine {
             Ok(lr) => lr,
             Err(_) => return Err(crate::CrateError::ModuleNotFound),
         };
-        let module_type = lr
-            .package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
-
         // A drop-guard so both the normal and error paths reset the arena on
         // the right edge.
         struct ArenaReset<'a>(&'a mut VirtualMachine, bool);
@@ -4463,7 +4458,8 @@ impl VirtualMachine {
             } else {
                 bun_ast::Loader::File
             }),
-            module_type,
+            // Unused: the one caller fetches with `PrintSource`, which does not parse.
+            module_type: bun_bundler::options::ModuleType::Unknown,
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),

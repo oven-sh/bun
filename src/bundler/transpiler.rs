@@ -983,6 +983,7 @@ pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
+    pub non_regular_file: resolver::cache::NonRegularFile,
 
     /// On exception, we might still want to watch the file.
     pub file_fd_ptr: Option<&'b mut FD>,
@@ -1481,6 +1482,7 @@ impl<'a> Transpiler<'a> {
                 USE_SHARED_BUFFER,
                 file_descriptor,
                 if USE_SHARED_BUFFER { None } else { Some(arena) },
+                this_parse.non_regular_file,
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -2966,6 +2968,7 @@ impl<'a> Transpiler<'a> {
                     loader,
                     dirname_fd,
                     file_descriptor: None,
+                    non_regular_file: resolver::cache::NonRegularFile::Read,
                     file_fd_ptr: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
@@ -3139,6 +3142,7 @@ impl<'a> Transpiler<'a> {
             false,
             None,
             None,
+            resolver::cache::NonRegularFile::Read,
         ) {
             Ok(e) => e,
             Err(err) => {

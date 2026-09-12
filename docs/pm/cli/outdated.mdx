@@ -172,6 +172,29 @@ bun outdated -r
 └────────────────────┴─────────┴─────────┴─────────┴────────────────────────────────┘
 ```
 
+### Changelog URLs
+
+Pass `--changelog` to print each outdated package's repository URL below the
+table, so you can jump straight to its changelog or releases page:
+
+```sh terminal icon="terminal"
+bun outdated --changelog
+```
+
+```txt
+┌──────────┬─────────┬────────┬────────┐
+│ Package  │ Current │ Update │ Latest │
+├──────────┼─────────┼────────┼────────┤
+│ no-deps  │ 1.0.0   │ 1.0.0  │ 2.0.0  │
+└──────────┴─────────┴────────┴────────┘
+
+Changelogs:
+  no-deps  https://github.com/example/no-deps
+```
+
+The URL comes from the package's `repository` field in the npm registry.
+Packages without a `repository` field are omitted from the list.
+
 ---
 
 <Outdated />

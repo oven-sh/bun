@@ -344,6 +344,9 @@ static OUTDATED_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "-r, --recursive                        Check outdated packages in all workspaces"
         ),
+        clap::param!(
+            "--changelog                            Show changelog URLs for outdated packages"
+        ),
         clap::param!("<POS> ...                              Package patterns to filter by"),
     ]
 ];
@@ -535,6 +538,7 @@ pub struct CommandLineArguments {
     pub interactive: bool,
     pub json_output: bool,
     pub(crate) recursive: bool,
+    pub(crate) changelog: bool,
     pub(crate) filters: &'static [&'static [u8]],
     pub update_groups: UpdateGroups,
 
@@ -639,6 +643,7 @@ impl Default for CommandLineArguments {
             interactive: false,
             json_output: false,
             recursive: false,
+            changelog: false,
             filters: &[],
             update_groups: UpdateGroups::default(),
 
@@ -1414,6 +1419,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             // fake --dry-run, we don't actually resolve+clean the lockfile
             cli.dry_run = true;
             cli.recursive = args.flag(b"--recursive");
+            cli.changelog = args.flag(b"--changelog");
             // cli.json_output = args.flag(b"--json");
         }
 

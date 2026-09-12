@@ -902,6 +902,8 @@ pub struct PackageManifest {
     pub(crate) package_versions: Box<[PackageVersion]>,
     pub(crate) extern_strings_bin_entries: Box<[ExternalString]>,
     pub(crate) bundled_deps_buf: Box<[PackageNameHash]>,
+    /// From the extended manifest; transient, never serialized to the on-disk cache.
+    pub repository_url: Box<[u8]>,
 }
 
 impl PackageManifest {
@@ -3215,8 +3217,114 @@ impl PackageManifest {
             result.string_buf = v.into_boxed_slice();
         }
 
+        if is_extended_manifest {
+            if let Some(repo_expr) = json.get(b"repository") {
+                // `repository` is either a string or an object with a `url` field.
+                let url_expr = repo_expr.get(b"url");
+                let raw_url = repo_expr
+                    .as_utf8_string_literal()
+                    .or_else(|| url_expr.as_ref().and_then(|u| u.as_utf8_string_literal()));
+                if let Some(url) = raw_url {
+                    let normalized = normalize_repository_url(url);
+                    if !normalized.is_empty() {
+                        result.repository_url = normalized.to_vec().into_boxed_slice();
+                    }
+                }
+            }
+        }
+
         let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }
+}
+
+/// Normalize an npm `repository` URL to a browseable slice of the input:
+/// a full `http(s)://` URL, a `host/path`, or a bare GitHub `user/repo`.
+/// Returns an empty slice for forms that need allocation to normalize.
+pub fn normalize_repository_url(raw: &[u8]) -> &[u8] {
+    let mut url = raw;
+    let mut had_url_scheme = false;
+    let mut full_url = false;
+
+    // 1. Strip git+ wrapper.
+    if strings::has_prefix_comptime(url, b"git+") {
+        url = &url[b"git+".len()..];
+    }
+
+    // 2. Strip URL scheme.
+    if strings::has_prefix_comptime(url, b"https://")
+        || strings::has_prefix_comptime(url, b"http://")
+    {
+        let scheme_len = if strings::has_prefix_comptime(url, b"https://") {
+            b"https://".len()
+        } else {
+            b"http://".len()
+        };
+        let after = &url[scheme_len..];
+        let authority_end = strings::index_of_char(after, b'/')
+            .map(|i| i as usize)
+            .unwrap_or(after.len());
+        // Userinfo (https://git@host/…): drop scheme + userinfo; the display code reattaches https://.
+        if let Some(at) = strings::index_of_char(&after[..authority_end], b'@') {
+            url = &after[at as usize + 1..];
+            had_url_scheme = true;
+        } else {
+            full_url = true;
+        }
+    } else if strings::has_prefix_comptime(url, b"git://") {
+        url = &url[b"git://".len()..];
+        had_url_scheme = true;
+    } else if strings::has_prefix_comptime(url, b"ssh://") {
+        url = &url[b"ssh://".len()..];
+        had_url_scheme = true;
+    } else if strings::has_prefix_comptime(url, b"github:") {
+        url = &url[b"github:".len()..];
+    } else if strings::has_prefix_comptime(url, b"bitbucket:")
+        || strings::has_prefix_comptime(url, b"gitlab:")
+        || strings::has_prefix_comptime(url, b"gist:")
+    {
+        return b""; // non-GitHub hosted shorthand, cannot normalize without allocation
+    } else if strings::contains(url, b"://") {
+        return b""; // unsupported scheme (file://, svn://, etc.)
+    }
+
+    // 3. Strip `user@` userinfo, then handle GitHub SCP / port shapes.
+    if !full_url {
+        let first_slash = strings::index_of_char(url, b'/')
+            .map(|i| i as usize)
+            .unwrap_or(url.len());
+        if let Some(at) = strings::index_of_char(&url[..first_slash], b'@') {
+            url = &url[at as usize + 1..];
+        }
+
+        if strings::has_prefix_comptime(url, b"github.com:") {
+            url = &url[b"github.com:".len()..];
+            // With a URL scheme, :digits is a port; in bare SCP it is an org name.
+            if had_url_scheme {
+                let mut port_end = 0usize;
+                while port_end < url.len() && url[port_end].is_ascii_digit() {
+                    port_end += 1;
+                }
+                if port_end > 0 && port_end < url.len() && url[port_end] == b'/' {
+                    url = &url[port_end + 1..];
+                }
+            }
+        } else {
+            // host:path on a non-GitHub host (SCP form) needs allocation; skip it.
+            let first_slash = strings::index_of_char(url, b'/')
+                .map(|i| i as usize)
+                .unwrap_or(url.len());
+            if strings::index_of_char(&url[..first_slash], b':').is_some() {
+                return b"";
+            }
+        }
+    }
+
+    // 4. Strip .git suffix.
+    if strings::has_suffix_comptime(url, b".git") {
+        url = &url[..url.len() - b".git".len()];
+    }
+
+    url
 }

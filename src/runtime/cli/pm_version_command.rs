@@ -321,8 +321,7 @@ impl PmVersionCommand {
         Ok(())
     }
 
-    /// node-semver's limit for major, minor and patch. It also keeps `+ 1` from wrapping.
-    /// https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    /// node-semver's limit: https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
     fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
         const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
         let version = result.version.min();

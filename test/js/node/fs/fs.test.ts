@@ -322,6 +322,14 @@ describe("FileHandle", () => {
     expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
   });
 
+  it("FileHandle#readv / #writev with no buffers resolve with 0 bytes", async () => {
+    await using fd = await fs.promises.open(import.meta.path, "r");
+    expect(await fd.readv([], 0)).toEqual({ bytesRead: 0, buffers: [] });
+    const out = join(tmpdirSync(), "writev-empty.txt");
+    await using wfd = await fs.promises.open(out, "w");
+    expect(await wfd.writev([], 0)).toEqual({ bytesWritten: 0, buffers: [] });
+  });
+
   it("FileHandle#write throws EBADF when closed", async () => {
     let handle: FileHandle;
     let spy;

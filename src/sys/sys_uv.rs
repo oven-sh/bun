@@ -30,53 +30,8 @@ pub use crate::symlink;
 pub use crate::unlinkat;
 pub use crate::unlinkat_with_flags;
 
-// Note: `req = undefined; req.deinit()` has a safety-check in a debug build
-
-/// RAII owner for a synchronous `uv_fs_t` request.
-///
-/// `uv_fs_t` becomes **self-referential** after `uv_fs_read`/`uv_fs_write` with
-/// `nbufs <= 4`: libuv points `req->fs.info.bufs` at the inline
-/// `req->fs.info.bufsml[4]` array (vendor/libuv/src/win/fs.c:3291). If the
-/// struct is bitwise-moved before `uv_fs_req_cleanup`, the cleanup check
-/// `if (bufs != bufsml) uv__free(bufs);` (fs.c:3237) sees the *old* stack
-/// address ≠ the *new* `bufsml` slot and frees a stack pointer — heap UB.
-///
-/// `scopeguard::guard(fs_t, |mut r| r.deinit())` triggers exactly that move
-/// (its `Drop` `ManuallyDrop::take`s the value into the closure arg), so we
-/// instead give the request a real `Drop` impl: Rust calls `Drop::drop` *in
-/// place* at the original address, so `bufs == bufsml` still holds and cleanup
-/// is sound. Do **not** move an `FsReq` after passing it to libuv.
-#[repr(transparent)]
-struct FsReq(uv::fs_t);
-
-impl FsReq {
-    #[inline]
-    fn new() -> Self {
-        Self(uv::fs_t::uninitialized())
-    }
-}
-
-impl Drop for FsReq {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.deinit();
-    }
-}
-
-impl core::ops::Deref for FsReq {
-    type Target = uv::fs_t;
-    #[inline]
-    fn deref(&self) -> &uv::fs_t {
-        &self.0
-    }
-}
-
-impl core::ops::DerefMut for FsReq {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut uv::fs_t {
-        &mut self.0
-    }
-}
+/// RAII owner for a synchronous `uv_fs_t` request (cleanup on drop).
+type FsReq = uv::OwnedFsReq;
 
 pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     // libuv heap-allocates the WCHAR path copy
@@ -203,14 +158,8 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         Result::Err(Error::new(errno, Tag::statfs).with_path(file_path.as_bytes()))
     } else {
         // On Windows `StatFS == uv_statfs_t`, so the libuv result *is* the
-        // public type.
-        // SAFETY: libuv guarantees `req.ptr` points to a valid `uv_statfs_t`
-        // on success; the pointer carries no alignment guarantee for `StatFS`,
-        // so read it by value via `read_unaligned`. The value is copied out
-        // *before* `FsReq::drop` runs `uv_fs_req_cleanup` and frees the
-        // backing allocation.
-        let p = unsafe { req.ptr_as::<StatFS>() };
-        Result::Ok(unsafe { core::ptr::read_unaligned(p) })
+        // public type; copied out before `FsReq::drop` frees it.
+        Result::Ok(req.statfs_result().expect("uv_fs_statfs succeeded"))
     }
 }
 
@@ -371,6 +320,127 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
         buf[len] = 0;
         // SAFETY: buf[len] == 0 written above; buf[0..len] is valid.
         return Result::Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) });
+    }
+}
+
+/// `uv_fs_realpath`; the resolved path is copied into `buf` (no terminator).
+/// A successful call that yields no path reports `ENOENT`.
+pub fn realpath<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a [u8]> {
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; `req` lives on the stack for the duration.
+    let rc = unsafe { uv::uv_fs_realpath(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    if let Some(err) = rc.to_error(Tag::realpath) {
+        log!(
+            "uv realpath({}) = {}",
+            BStr::new(file_path.as_bytes()),
+            rc.int()
+        );
+        return Result::Err(err.with_path(file_path.as_bytes()));
+    }
+    let Some(resolved) = req.ptr_c_str() else {
+        return Result::Err(Error::new(E::NOENT, Tag::realpath).with_path(file_path.as_bytes()));
+    };
+    let resolved = resolved.to_bytes();
+    if resolved.len() > buf.len() {
+        return Result::Err(
+            Error::new(E::NAMETOOLONG, Tag::realpath).with_path(file_path.as_bytes()),
+        );
+    }
+    log!(
+        "uv realpath({}) = {}",
+        BStr::new(file_path.as_bytes()),
+        BStr::new(resolved)
+    );
+    let len = resolved.len();
+    buf[..len].copy_from_slice(resolved);
+    Result::Ok(&buf[..len])
+}
+
+/// `uv_fs_mkdtemp`: `template` holds a NUL-terminated `...XXXXXX` pattern; the
+/// created directory's path is written back over it and its length returned.
+/// The error carries no path.
+pub fn mkdtemp(template: &mut [u8]) -> Result<usize> {
+    assert!(
+        bun_core::strings::contains_char(template, 0),
+        "mkdtemp template must be NUL-terminated"
+    );
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; `template` is NUL-terminated and libuv
+    // copies it before returning.
+    let rc = unsafe {
+        uv::uv_fs_mkdtemp(
+            uv::Loop::get(),
+            &mut *req,
+            template.as_ptr().cast::<c_char>(),
+            None,
+        )
+    };
+    if let Some(err) = rc.to_error(Tag::mkdtemp) {
+        return Result::Err(err);
+    }
+    // SAFETY: `template` (the path passed to `uv_fs_mkdtemp`) is still alive.
+    let created = unsafe { req.path_c_str() }
+        .map(|p| p.to_bytes())
+        .unwrap_or(&[]);
+    let len = created.len().min(template.len());
+    template[..len].copy_from_slice(&created[..len]);
+    Result::Ok(len)
+}
+
+/// `uv_fs_utime` (times in seconds). The error carries no path.
+pub fn utime(file_path: &ZStr, atime: f64, mtime: f64) -> Result<()> {
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
+    let rc = unsafe {
+        uv::uv_fs_utime(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            atime,
+            mtime,
+            None,
+        )
+    };
+    log!(
+        "uv utime({}) = {}",
+        BStr::new(file_path.as_bytes()),
+        rc.int()
+    );
+    rc.to_result(Tag::utime)
+}
+
+/// `uv_fs_lutime` (times in seconds). The error carries no path.
+pub fn lutime(file_path: &ZStr, atime: f64, mtime: f64) -> Result<()> {
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
+    let rc = unsafe {
+        uv::uv_fs_lutime(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            atime,
+            mtime,
+            None,
+        )
+    };
+    log!(
+        "uv lutime({}) = {}",
+        BStr::new(file_path.as_bytes()),
+        rc.int()
+    );
+    rc.to_result(Tag::lutime)
+}
+
+/// `uv_fs_futime` (times in seconds).
+pub fn futime(fd: Fd, atime: f64, mtime: f64) -> Result<()> {
+    let uv_fd = fd.uv();
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
+    let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut *req, uv_fd, atime, mtime, None) };
+    log!("uv futime({}) = {}", uv_fd, rc.int());
+    match rc.to_error(Tag::futime) {
+        Some(err) => Result::Err(err.with_fd(fd)),
+        None => Result::Ok(()),
     }
 }
 

@@ -1268,13 +1268,7 @@ impl<'a> Putter<'a> {
         if IS_RAW {
             *cell = SQLDataCell::raw(optional_bytes);
         } else {
-            let tag = if (types::short::MAX as u32) < oid {
-                types::Tag::text
-            } else {
-                // types::Tag is `#[repr(transparent)] struct Tag(pub Short)` —
-                // construct directly, no transmute needed.
-                types::Tag(oid as types::short)
-            };
+            let tag = field.type_tag();
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(
                     (field.binary || self.binary) && tag.is_binary_format_supported(),

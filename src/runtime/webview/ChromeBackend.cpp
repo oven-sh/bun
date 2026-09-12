@@ -673,11 +673,22 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
     }
 }
 
+// End the console.group() levels the page left open in the parent's console.
+static void endMirroredConsoleGroups(JSGlobalObject* g, JSWebView* view)
+{
+    if (!view->m_consoleGroupDepth) return;
+    auto client = g->consoleClient();
+    if (!client) return;
+    for (; view->m_consoleGroupDepth; --view->m_consoleGroupDepth)
+        client->groupEnd(g, Inspector::ScriptArguments::create(g, {}));
+}
+
 // Slots, not m_pending: a navigation that Chrome has already answered is
 // waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
+    endMirroredConsoleGroups(g, view);
     settleSlot(g, view, view->m_pendingNavigate, false, err);
     settleSlot(g, view, view->m_pendingEval, false, err);
     settleSlot(g, view, view->m_pendingScreenshot, false, err);
@@ -689,6 +700,7 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
+    endMirroredConsoleGroups(g, view);
     rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
     rejectSlotAsHandled(g, view, view->m_pendingEval, err);
     rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
@@ -1143,6 +1155,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        // A new main-frame document can no longer end the groups it opened.
+        if (jsonField(frame, { "parentId", 8 }).empty()) endMirroredConsoleGroups(g, view);
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
@@ -1180,7 +1194,16 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto root = JSON::Value::parseJSON(WTF::String::fromUTF8(params));
         auto o = root ? root->asObject() : nullptr;
         if (!o) return;
+        // CDP's names for these four differ from the console method name.
         auto type = o->getString("type"_s);
+        if (type == "warning"_s)
+            type = "warn"_s;
+        else if (type == "startGroup"_s)
+            type = "group"_s;
+        else if (type == "startGroupCollapsed"_s)
+            type = "groupCollapsed"_s;
+        else if (type == "endGroup"_s)
+            type = "groupEnd"_s;
         auto argsArr = o->getArray("args"_s);
 
         // remoteToJS allocates (jsString/JSONParse). Both dispatch paths
@@ -1240,7 +1263,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             MessageLevel ml = MessageLevel::Log;
             if (type == "error"_s || type == "assert"_s)
                 ml = MessageLevel::Error;
-            else if (type == "warning"_s)
+            else if (type == "warn"_s)
                 ml = MessageLevel::Warning;
             else if (type == "debug"_s)
                 ml = MessageLevel::Debug;
@@ -1253,7 +1276,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
                 strongArgs.append(Strong<Unknown>(vm, args.at(i)));
             auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
             scope.release();
-            if (auto clientRef = g->consoleClient())
+            auto clientRef = g->consoleClient();
+            if (!clientRef) return;
+            if (type == "group"_s || type == "groupCollapsed"_s) {
+                if (view->m_consoleGroupDepth == UINT16_MAX) return; // a terminal cannot collapse: both indent
+                ++view->m_consoleGroupDepth;
+                clientRef->group(g, WTF::move(scriptArgs));
+            } else if (type == "groupEnd"_s) {
+                if (!view->m_consoleGroupDepth) return; // not the parent's own groups
+                --view->m_consoleGroupDepth;
+                clientRef->groupEnd(g, WTF::move(scriptArgs));
+            } else
                 clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
             return;
         }

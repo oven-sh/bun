@@ -1,32 +1,42 @@
 import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
 
-const getByteLength = str => {
-  // returns the byte length of an utf8 string
-  var s = str.length;
-  for (var i = str.length - 1; i >= 0; i--) {
-    var code = str.charCodeAt(i);
-    if (code > 0x7f && code <= 0x7ff) s++;
-    else if (code > 0x7ff && code <= 0xffff) s += 2;
-    if (code >= 0xdc00 && code <= 0xdfff) i--; //trail surrogate
+// UTF-8 reference encoder: lone surrogates become U+FFFD, like TextEncoder.
+function utf8Reference(str) {
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    let cp = str.charCodeAt(i);
+    if (cp >= 0xd800 && cp <= 0xdbff) {
+      const next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        cp = (cp - 0xd800) * 0x400 + (next - 0xdc00) + 0x10000;
+        i++;
+      } else {
+        cp = 0xfffd;
+      }
+    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
+      cp = 0xfffd;
+    }
+
+    if (cp < 0x80) {
+      out.push(cp);
+    } else if (cp < 0x800) {
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    } else if (cp < 0x10000) {
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    } else {
+      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    }
   }
-  return s;
-};
+  return Uint8Array.from(out);
+}
 
-it("not enough space for replacement character", () => {
-  const encoder = new TextEncoder();
-  const bytes = new Uint8Array(2);
-  const result = encoder.encodeInto("\udc00", bytes);
-  expect(result.read).toBe(0);
-  expect(result.written).toBe(0);
-  expect(Array.from(bytes)).toEqual([0x00, 0x00]);
-});
-
-describe("encodeInto astral characters and buffer sizing", () => {
+describe("encodeInto astral characters, lone surrogates and buffer sizing", () => {
   // WHATWG Encoding spec: a code point that doesn't fit in the remaining
   // destination space is left unwritten, and that destination space is left
   // untouched. A previous implementation incorrectly wrote U+FFFD when a
   // valid 4-byte astral character met an exactly-3-byte buffer.
+  // A lone surrogate needs 3 bytes for its U+FFFD replacement.
   it.each([
     ["\u{1F600}", 3, { read: 0, written: 0 }, [0xaa, 0xaa, 0xaa]],
     ["\u{1F600}", 4, { read: 2, written: 4 }, [0xf0, 0x9f, 0x98, 0x80]],
@@ -34,6 +44,8 @@ describe("encodeInto astral characters and buffer sizing", () => {
     ["\uD800", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
     ["\uDC00", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
     ["\uD800", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["\uDC00", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["\uD800\uD801", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
     ["a\u{1F600}", 3, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa]],
     ["a\u{1F600}", 4, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa, 0xaa]],
     ["a\u{1F600}", 5, { read: 3, written: 5 }, [0x61, 0xf0, 0x9f, 0x98, 0x80]],
@@ -48,10 +60,12 @@ describe("encodeInto astral characters and buffer sizing", () => {
 describe("TextEncoder", () => {
   it("should handle undefined", () => {
     const encoder = new TextEncoder();
-    expect(encoder.encode(undefined).length).toBe(0);
-    expect(encoder.encode(null).length).toBe(4);
-    expect(encoder.encode("").length).toBe(0);
+    expect(encoder.encode(undefined)).toEqual(new Uint8Array(0));
+    expect(encoder.encode()).toEqual(new Uint8Array(0));
+    expect(Array.from(encoder.encode(null))).toEqual([0x6e, 0x75, 0x6c, 0x6c]);
+    expect(encoder.encode("")).toEqual(new Uint8Array(0));
   });
+
   it("should encode latin1 text with non-ascii latin1 characters", () => {
     var text = "H©ell©o Wor©ld!";
 
@@ -62,110 +76,50 @@ describe("TextEncoder", () => {
     const into = new Uint8Array(100);
     const out = encoder.encodeInto(text, into);
     gcTrace(true);
-    expect(out.read).toBe(text.length);
 
-    expect(encoded instanceof Uint8Array).toBe(true);
     const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
-    for (let i = 0; i < result.length; i++) {
-      expect(encoded[i]).toBe(result[i]);
-      expect(into[i]).toBe(result[i]);
-    }
-    expect(encoded.length).toBe(result.length);
-    expect(out.written).toBe(result.length);
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(Array.from(encoded)).toEqual(result);
+    expect(out).toEqual({ read: text.length, written: result.length });
+    expect(Array.from(into)).toEqual([...result, ...new Array(100 - result.length).fill(0)]);
 
-    const repeatCOunt = 16;
-    text = "H©ell©o Wor©ld!".repeat(repeatCOunt);
-    const byteLength = getByteLength(text);
-    const encoded2 = encoder.encode(text);
-    expect(encoded2.length).toBe(byteLength);
-    const into2 = new Uint8Array(byteLength);
-    const out2 = encoder.encodeInto(text, into2);
-    expect(out2.read).toBe(text.length);
-    expect(out2.written).toBe(byteLength);
-    expect(into2).toEqual(encoded2);
-    const repeatedResult = new Uint8Array(byteLength);
-    for (let i = 0; i < repeatCOunt; i++) {
+    const repeatCount = 16;
+    text = "H©ell©o Wor©ld!".repeat(repeatCount);
+    const repeatedResult = new Uint8Array(result.length * repeatCount);
+    for (let i = 0; i < repeatCount; i++) {
       repeatedResult.set(result, i * result.length);
     }
+    expect(encoder.encode(text)).toEqual(repeatedResult);
+    const into2 = new Uint8Array(repeatedResult.length);
+    expect(encoder.encodeInto(text, into2)).toEqual({ read: text.length, written: repeatedResult.length });
     expect(into2).toEqual(repeatedResult);
   });
 
-  it("should encode latin1 text", async () => {
+  it("should encode latin1 text", () => {
     gcTrace(true);
     const text = "Hello World!";
     const encoder = new TextEncoder();
     gcTrace(true);
     const encoded = encoder.encode(text);
     gcTrace(true);
-    expect(encoded instanceof Uint8Array).toBe(true);
-    expect(encoded.length).toBe(text.length);
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(Array.from(encoded)).toEqual([72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33]);
     gcTrace(true);
-    const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
-    for (let i = 0; i < result.length; i++) {
-      expect(encoded[i]).toBe(result[i]);
-    }
 
-    let t = [
-      {
-        str: "\u009c\u0097",
-        expected: [194, 156, 194, 151],
-      },
-      {
-        str: "世",
-        expected: [228, 184, 150],
-      },
-      // Less than 0, out of range.
-      {
-        str: -1,
-        expected: [45, 49],
-      },
+    const cases = [
+      ["\u009c\u0097", [194, 156, 194, 151]],
+      ["世", [228, 184, 150]],
+      // Numbers are stringified. Less than 0, out of range.
+      [-1, [45, 49]],
       // Greater than 0x10FFFF, out of range.
-      {
-        str: 0x110000,
-        expected: [49, 49, 49, 52, 49, 49, 50],
-      },
+      [0x110000, [49, 49, 49, 52, 49, 49, 50]],
       // The Unicode replacement character.
-      {
-        str: "\uFFFD",
-        expected: [239, 191, 189],
-      },
+      ["\uFFFD", [239, 191, 189]],
+      [String.fromCodePoint(0), [0]],
     ];
-    for (let { str, expected } of t) {
-      let utf8 = new TextEncoder().encode(str);
-      expect([...utf8]).toEqual(expected);
+    for (const [input, expected] of cases) {
+      expect(Array.from(new TextEncoder().encode(input))).toEqual(expected);
     }
-
-    expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
-
-    const fixture = new Uint8Array(await Bun.file(import.meta.dir + "/utf8-encoding-fixture.bin").arrayBuffer());
-    const length = 0x110000;
-    let textEncoder = new TextEncoder();
-    let textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
-    let encodeOut = new Uint8Array(length * 4);
-    let encodeIntoOut = new Uint8Array(length * 4);
-    let encodeIntoBuffer = new Uint8Array(4);
-    let encodeDecodedOut = new Uint8Array(length * 4);
-    for (let i = 0, offset = 0; i < length; i++, offset += 4) {
-      const s = String.fromCodePoint(i);
-      const u = textEncoder.encode(s);
-      encodeOut.set(u, offset);
-
-      textEncoder.encodeInto(s, encodeIntoBuffer);
-      encodeIntoOut.set(encodeIntoBuffer, offset);
-
-      const decoded = textDecoder.decode(encodeIntoBuffer);
-      const encoded = textEncoder.encode(decoded);
-      encodeDecodedOut.set(encoded, offset);
-    }
-
-    expect(encodeOut).toEqual(fixture);
-    expect(encodeIntoOut).toEqual(fixture);
-    expect(encodeOut).toEqual(encodeIntoOut);
-    expect(encodeDecodedOut).toEqual(encodeOut);
-    expect(encodeDecodedOut).toEqual(encodeIntoOut);
-    expect(encodeDecodedOut).toEqual(fixture);
-
-    expect(() => textEncoder.encode(String.fromCodePoint(length + 1))).toThrow();
   });
 
   it("should encode long latin1 text", async () => {
@@ -174,13 +128,13 @@ describe("TextEncoder", () => {
     gcTrace(true);
     const encoded = encoder.encode(text);
     gcTrace(true);
-    expect(encoded instanceof Uint8Array).toBe(true);
-    expect(encoded.length).toBe(text.length);
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(encoded).toEqual(utf8Reference(text));
     gcTrace(true);
     const decoded = new TextDecoder().decode(encoded);
     expect(decoded).toBe(text);
     gcTrace();
-    await new Promise(resolve => setTimeout(resolve, 1));
+    await new Promise(resolve => setImmediate(resolve));
     gcTrace();
     expect(decoded).toBe(text);
   });
@@ -197,15 +151,12 @@ describe("TextEncoder", () => {
     const into = new Uint8Array(100);
     const out = encoder.encodeInto(text, into);
     gcTrace(true);
-    expect(out.read).toBe(text.length);
-    expect(out.written).toBe(encoded.length);
-    expect(encoded instanceof Uint8Array).toBe(true);
+
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
-    for (let i = 0; i < result.length; i++) {
-      expect(encoded[i]).toBe(result[i]);
-      expect(encoded[i]).toBe(into[i]);
-    }
-    expect(encoded.length).toBe(getByteLength(text));
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(Array.from(encoded)).toEqual(result);
+    expect(out).toEqual({ read: text.length, written: result.length });
+    expect(Array.from(into.subarray(0, result.length))).toEqual(result);
   });
 
   it("should encode latin1 rope text with non-ascii latin1 characters", () => {
@@ -220,23 +171,24 @@ describe("TextEncoder", () => {
     const into = new Uint8Array(100);
     const out = encoder.encodeInto(text, into);
     gcTrace(true);
-    expect(out.read).toBe(text.length);
 
-    expect(encoded instanceof Uint8Array).toBe(true);
     const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
+    expect(encoded).toBeInstanceOf(Uint8Array);
+    expect(Array.from(encoded)).toEqual(result);
+    expect(out).toEqual({ read: text.length, written: result.length });
+    expect(Array.from(into.subarray(0, result.length))).toEqual(result);
 
-    for (let i = 0; i < result.length; i++) {
-      expect(encoded[i]).toBe(into[i]);
-      expect(encoded[i]).toBe(result[i]);
-    }
-    expect(encoded.length).toBe(result.length);
-    expect(out.written).toBe(encoded.length);
-
+    // 10k calls take the call site through the JIT tiers. Compare in plain JS,
+    // an expect() per iteration is slow in debug builds.
+    let mismatches = 0;
     withoutAggressiveGC(() => {
       for (let i = 0; i < 10_000; i++) {
-        expect(encoder.encodeInto(text, into)).toEqual(out);
+        const again = encoder.encodeInto(text, into);
+        if (again.read !== out.read || again.written !== out.written) mismatches++;
       }
     });
+    expect(mismatches).toBe(0);
+    expect(Array.from(into.subarray(0, result.length))).toEqual(result);
   });
 
   it("should encode utf-16 text", () => {
@@ -247,59 +199,32 @@ describe("TextEncoder", () => {
     var encoder = new TextEncoder();
     var decoder = new TextDecoder();
     gcTrace(true);
-    expect(decoder.decode(encoder.encode(text))).toBe(text);
+    const encoded = encoder.encode(text);
+    expect(encoded).toEqual(utf8Reference(text));
+    expect(decoder.decode(encoded)).toBe(text);
     gcTrace(true);
   });
 
   // this test is from a web platform test in WebKit
   describe("should use a unicode replacement character for invalid surrogate pairs", () => {
-    var bad = [
-      {
-        encoding: "utf-16le",
-        input: [0x00, 0xd8],
-        expected: "\uFFFD",
-        name: "lone surrogate lead",
-      },
-      {
-        encoding: "utf-16le",
-        input: [0x00, 0xdc],
-        expected: "\uFFFD",
-        name: "lone surrogate trail",
-      },
-      {
-        encoding: "utf-16le",
-        input: [0x00, 0xd8, 0x00, 0x00],
-        expected: "\uFFFD\u0000",
-        name: "unmatched surrogate lead",
-      },
-      {
-        encoding: "utf-16le",
-        input: [0x00, 0xdc, 0x00, 0x00],
-        expected: "\uFFFD\u0000",
-        name: "unmatched surrogate trail",
-      },
-      {
-        encoding: "utf-16le",
-        input: [0x00, 0xdc, 0x00, 0xd8],
-        expected: "\uFFFD\uFFFD",
-        name: "swapped surrogate pair",
-      },
-    ];
-
-    bad.forEach(function (t) {
-      it(t.encoding + " - " + t.name, () => {
-        gcTrace(true);
-        expect(new TextDecoder(t.encoding).decode(new Uint8Array(t.input))).toBe(t.expected);
-        expect(new TextDecoder(t.encoding).decode(new Uint16Array(new Uint8Array(t.input).buffer))).toBe(t.expected);
-        gcTrace(true);
-      });
-      //   test(function () {
-      //     assert_throws_js(TypeError, function () {
-      //       new TextDecoder(t.encoding, { fatal: true }).decode(
-      //         new Uint8Array(t.input)
-      //       );
-      //     });
-      //   }, t.encoding + " - " + t.name + " (fatal flag set)");
+    it.each([
+      ["lone surrogate lead", [0x00, 0xd8], "\uFFFD"],
+      ["lone surrogate trail", [0x00, 0xdc], "\uFFFD"],
+      ["unmatched surrogate lead", [0x00, 0xd8, 0x00, 0x00], "\uFFFD\u0000"],
+      ["unmatched surrogate trail", [0x00, 0xdc, 0x00, 0x00], "\uFFFD\u0000"],
+      ["swapped surrogate pair", [0x00, 0xdc, 0x00, 0xd8], "\uFFFD\uFFFD"],
+    ])("utf-16le - %s", (_, input, expected) => {
+      gcTrace(true);
+      expect(new TextDecoder("utf-16le").decode(new Uint8Array(input))).toBe(expected);
+      expect(new TextDecoder("utf-16le").decode(new Uint16Array(new Uint8Array(input).buffer))).toBe(expected);
+      expect(() => new TextDecoder("utf-16le", { fatal: true }).decode(new Uint8Array(input))).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+          message: "The encoded data was not valid for encoding utf-16le",
+        }),
+      );
+      gcTrace(true);
     });
   });
 
@@ -428,11 +353,13 @@ describe("TextEncoder", () => {
       const encoder = new TextEncoder();
 
       // Large string ending with unpaired surrogate
-      const largeStr = "A".repeat(100000) + String.fromCharCode(0xd800);
+      const ascii = Buffer.alloc(100000, "A").toString();
+      const largeStr = ascii + String.fromCharCode(0xd800);
       const encoded = encoder.encode(largeStr);
-      const decoded = new TextDecoder().decode(encoded);
-      expect(decoded.length).toBe(100001); // 100000 'A's + 1 replacement char
-      expect(decoded.endsWith("\uFFFD")).toBe(true);
+      const expected = new Uint8Array(100003).fill(0x41);
+      expected.set([0xef, 0xbf, 0xbd], 100000);
+      expect(encoded).toEqual(expected);
+      expect(new TextDecoder().decode(encoded)).toBe(ascii + "\uFFFD");
 
       // Large string with unpaired surrogates scattered throughout
       let scatteredStr = "";
@@ -443,34 +370,8 @@ describe("TextEncoder", () => {
         }
       }
       const encoded2 = encoder.encode(scatteredStr);
-      const decoded2 = new TextDecoder().decode(encoded2);
-      expect(decoded2).toContain("\uFFFD");
-    });
-
-    it("should handle encodeInto with insufficient buffer for replacement characters", () => {
-      const encoder = new TextEncoder();
-
-      // Unpaired surrogate needs 3 bytes for U+FFFD, but buffer is too small
-      const str = String.fromCharCode(0xd800);
-      const buffer1 = new Uint8Array(2); // Too small for U+FFFD
-      const result1 = encoder.encodeInto(str, buffer1);
-      expect(result1.read).toBe(0); // Should not read the surrogate
-      expect(result1.written).toBe(0); // Should not write anything
-
-      // Buffer exactly the right size
-      const buffer2 = new Uint8Array(3); // Exact size for U+FFFD
-      const result2 = encoder.encodeInto(str, buffer2);
-      expect(result2.read).toBe(1); // Should read the surrogate
-      expect(result2.written).toBe(3); // Should write U+FFFD
-      expect(Array.from(buffer2)).toEqual([0xef, 0xbf, 0xbd]); // U+FFFD in UTF-8
-
-      // Multiple unpaired surrogates with limited buffer
-      const str2 = String.fromCharCode(0xd800, 0xd801);
-      const buffer3 = new Uint8Array(3); // Only room for one replacement
-      const result3 = encoder.encodeInto(str2, buffer3);
-      expect(result3.read).toBe(1); // Should only read first surrogate
-      expect(result3.written).toBe(3); // Should write one U+FFFD
-      expect(Array.from(buffer3)).toEqual([0xef, 0xbf, 0xbd]);
+      expect(encoded2).toEqual(utf8Reference(scatteredStr));
+      expect(new TextDecoder().decode(encoded2)).toBe(scatteredStr.replaceAll("\uD800", "\uFFFD"));
     });
 
     it("should handle boundary surrogates correctly", () => {
@@ -491,13 +392,14 @@ describe("TextEncoder", () => {
       // Valid surrogate pair at boundaries
       const test3 = String.fromCharCode(0xdbff, 0xdfff); // Maximum valid surrogate pair
       const encoded3 = encoder.encode(test3);
-      expect(encoded3.length).toBe(4); // Should encode to 4 bytes
+      expect(Array.from(encoded3)).toEqual([0xf4, 0x8f, 0xbf, 0xbf]); // U+10FFFF
       const decoded3 = new TextDecoder().decode(encoded3);
       expect(decoded3).toBe(String.fromCharCode(0xdbff, 0xdfff)); // Should preserve the valid pair
 
       // Just outside surrogate range (valid BMP characters)
       const test4 = String.fromCharCode(0xd7ff, 0xe000); // Last char before surrogates, first after
       const encoded4 = encoder.encode(test4);
+      expect(Array.from(encoded4)).toEqual([0xed, 0x9f, 0xbf, 0xee, 0x80, 0x80]);
       const decoded4 = new TextDecoder().decode(encoded4);
       expect(decoded4).toBe(String.fromCharCode(0xd7ff, 0xe000)); // Should preserve both
     });
@@ -514,38 +416,118 @@ describe("TextEncoder", () => {
     }
 
     var encoder = new TextEncoder();
-    expect(new TextDecoder().decode(encoder.encode(text))).toBe(textReal);
+    const encoded = encoder.encode(text);
+    expect(encoded).toEqual(utf8Reference(textReal));
+    expect(new TextDecoder().decode(encoded)).toBe(textReal);
   });
 });
 
-function utf8Reference(str) {
-  const out = [];
-  for (let i = 0; i < str.length; i++) {
-    let cp = str.charCodeAt(i);
-    if (cp >= 0xd800 && cp <= 0xdbff) {
-      const next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        cp = (cp - 0xd800) * 0x400 + (next - 0xdc00) + 0x10000;
-        i++;
-      } else {
-        cp = 0xfffd;
-      }
-    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
-      cp = 0xfffd;
+describe("TextEncoder every code point", () => {
+  const encoder = new TextEncoder();
+  // U+FEFF is one of the code points under test, so the decoder must not strip it as a BOM.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const utf8Length = cp => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
+  const hex = cp => "U+" + cp.toString(16).toUpperCase().padStart(4, "0");
+
+  // One code point per string: the first and last code point of every UTF-8 length,
+  // the edges of the surrogate range, the BOM and U+FFFD itself.
+  const boundaries = [
+    [0x0000, [0x00]],
+    [0x007f, [0x7f]],
+    [0x0080, [0xc2, 0x80]],
+    [0x00ff, [0xc3, 0xbf]],
+    [0x0100, [0xc4, 0x80]],
+    [0x07ff, [0xdf, 0xbf]],
+    [0x0800, [0xe0, 0xa0, 0x80]],
+    [0xd7ff, [0xed, 0x9f, 0xbf]],
+    [0xd800, [0xef, 0xbf, 0xbd]],
+    [0xdbff, [0xef, 0xbf, 0xbd]],
+    [0xdc00, [0xef, 0xbf, 0xbd]],
+    [0xdfff, [0xef, 0xbf, 0xbd]],
+    [0xe000, [0xee, 0x80, 0x80]],
+    [0xfeff, [0xef, 0xbb, 0xbf]],
+    [0xfffd, [0xef, 0xbf, 0xbd]],
+    [0xffff, [0xef, 0xbf, 0xbf]],
+    [0x10000, [0xf0, 0x90, 0x80, 0x80]],
+    [0x10ffff, [0xf4, 0x8f, 0xbf, 0xbf]],
+  ];
+  for (const [cp, bytes] of boundaries) {
+    it(`${hex(cp)} alone`, () => {
+      const text = String.fromCodePoint(cp);
+      const isLoneSurrogate = cp >= 0xd800 && cp <= 0xdfff;
+      const dest = new Uint8Array(4).fill(0xaa);
+      const encoded = encoder.encode(text);
+      expect({
+        encoded: Array.from(encoded),
+        encodeInto: encoder.encodeInto(text, dest),
+        dest: Array.from(dest),
+        decoded: decoder.decode(encoded),
+      }).toEqual({
+        encoded: bytes,
+        encodeInto: { read: text.length, written: bytes.length },
+        dest: [...bytes, ...new Array(4 - bytes.length).fill(0xaa)],
+        decoded: isLoneSurrogate ? "\uFFFD" : text,
+      });
+    });
+  }
+
+  it("should encode all 0x110000 code points like the fixture, 1024 at a time", async () => {
+    // utf8-encoding-fixture.bin has one 4-byte slot per code point: its UTF-8 bytes,
+    // left-aligned and zero-padded. The slots of the surrogates D800-DFFF hold U+FFFD.
+    const fixture = new Uint8Array(await Bun.file(import.meta.dir + "/utf8-encoding-fixture.bin").arrayBuffer());
+    expect(fixture.length).toBe(0x110000 * 4);
+
+    // Pack the slots into one UTF-8 byte stream.
+    const stream = new Uint8Array(0x80 + 0x780 * 2 + 0xf800 * 3 + 0x100000 * 4);
+    for (let cp = 0, offset = 0; cp < 0x110000; cp++) {
+      const slot = cp * 4;
+      for (let j = 0; j < utf8Length(cp); j++) stream[offset++] = fixture[slot + j];
     }
 
-    if (cp < 0x80) {
-      out.push(cp);
-    } else if (cp < 0x800) {
-      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
-    } else if (cp < 0x10000) {
-      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
-    } else {
-      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    // UTF-16 code units of every code point, in order.
+    const units = new Uint16Array(0x10000 + 0x100000 * 2);
+    for (let cp = 0, i = 0; cp < 0x110000; cp++) {
+      if (cp < 0x10000) {
+        units[i++] = cp;
+      } else {
+        units[i++] = 0xd800 + ((cp - 0x10000) >> 10);
+        units[i++] = 0xdc00 + ((cp - 0x10000) & 0x3ff);
+      }
     }
-  }
-  return Uint8Array.from(out);
-}
+
+    // Chunks of 1024 put the high surrogates D800-DBFF and the low surrogates DC00-DFFF
+    // in two separate strings. Next to each other, DBFF DC00 would form a valid pair.
+    const CHUNK = 1024;
+    let unitOffset = 0;
+    let byteOffset = 0;
+    for (let first = 0; first < 0x110000; first += CHUNK) {
+      const unitCount = first < 0x10000 ? CHUNK : 2 * CHUNK;
+      const text = String.fromCharCode.apply(null, units.subarray(unitOffset, unitOffset + unitCount));
+      let byteCount = 0;
+      for (let cp = first; cp < first + CHUNK; cp++) byteCount += utf8Length(cp);
+      const expected = stream.subarray(byteOffset, byteOffset + byteCount);
+      unitOffset += unitCount;
+      byteOffset += byteCount;
+
+      const encoded = encoder.encode(text);
+      const dest = new Uint8Array(byteCount);
+      const encodeInto = encoder.encodeInto(text, dest);
+      const decoded = decoder.decode(encoded);
+      const label = `${hex(first)} to ${hex(first + CHUNK - 1)}`;
+      expect({ encoded, encodeInto, dest, decoded, reencoded: encoder.encode(decoded) }, label).toEqual({
+        encoded: expected,
+        encodeInto: { read: unitCount, written: byteCount },
+        dest: expected,
+        decoded: text.toWellFormed(),
+        reencoded: expected,
+      });
+    }
+    expect(unitOffset).toBe(units.length);
+    expect(byteOffset).toBe(stream.length);
+    // There is no code point 0x110000, so the loop above saw all of them.
+    expect(() => String.fromCodePoint(0x110000)).toThrow(RangeError);
+  });
+});
 
 describe("TextEncoder latin1 ASCII fast path boundaries", () => {
   const encoder = new TextEncoder();
@@ -598,8 +580,7 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
     const text = flatten("abcdefgh©xyz");
     const dest = new Uint8Array(16).fill(0xaa);
     const result = encoder.encodeInto(text, dest.subarray(0, 9));
-    expect(result.read).toBe(8);
-    expect(result.written).toBe(8);
+    expect(result).toEqual({ read: 8, written: 8 });
     expect(Array.from(dest.subarray(0, 8))).toEqual(Array.from(utf8Reference("abcdefgh")));
     expect(Array.from(dest.subarray(8))).toEqual(new Array(8).fill(0xaa));
   });
@@ -608,8 +589,7 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
     const text = flatten("a".repeat(150));
     const dest = new Uint8Array(200).fill(0xaa);
     const result = encoder.encodeInto(text, dest.subarray(0, 70));
-    expect(result.read).toBe(70);
-    expect(result.written).toBe(70);
+    expect(result).toEqual({ read: 70, written: 70 });
     expect(Array.from(dest.subarray(0, 70))).toEqual(new Array(70).fill(0x61));
     expect(Array.from(dest.subarray(70))).toEqual(new Array(130).fill(0xaa));
   });
@@ -627,7 +607,7 @@ describe("TextEncoder rope fast path", () => {
       expected += segment;
     }
     const encoded = encoder.encode(text);
-    expect(encoded.length).toBe(expected.length);
+    expect(encoded).toEqual(utf8Reference(expected));
     expect(new TextDecoder().decode(encoded)).toBe(expected);
   });
 
@@ -653,7 +633,7 @@ describe("TextEncoder rope fast path", () => {
     resolved.charCodeAt(0);
     const fromRope = encoder.encode(rope);
     const fromResolved = encoder.encode(resolved);
-    expect(fromRope.length).toBe(12 * 1024);
+    expect(fromRope).toEqual(utf8Reference(resolved));
     expect(fromRope).toEqual(fromResolved);
     expect(new TextDecoder().decode(fromRope)).toBe(resolved);
   });
@@ -663,10 +643,13 @@ describe("TextEncoder UTF-16 exact-size path", () => {
   const encoder = new TextEncoder();
 
   it("should encode long valid UTF-16 strings of varying lengths", () => {
-    for (const repeat of [1, 32, 170, 171, 512, 600, 5000]) {
+    // "n💕ó" is 4 UTF-16 code units. 16 and 17 repeats sit on either side of the
+    // 64-unit cutoff between the stack buffer path and the exact-size path.
+    for (const repeat of [1, 16, 17, 32, 170, 171, 512, 600, 5000]) {
       const text = "n💕ó".repeat(repeat);
       const encoded = encoder.encode(text);
       expect({ repeat, bytes: encoded.length }).toEqual({ repeat, bytes: 7 * repeat });
+      expect(encoded).toEqual(utf8Reference(text));
       expect(new TextDecoder().decode(encoded)).toBe(text);
     }
   });

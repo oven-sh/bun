@@ -3544,6 +3544,12 @@ impl H2FrameParser {
         }
     }
 
+    /// The engine matches each inbound SETTINGS ACK to the oldest SETTINGS registered here (§6.5.3).
+    fn register_settings_submissions(&self, engine: &mut crate::api::h2::connection::Connection) {
+        self.pending_settings_window_submissions
+            .with_mut(|v| engine.pending_local_settings_acks.extend(v.drain(..)));
+    }
+
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
@@ -3599,13 +3605,7 @@ impl H2FrameParser {
                     }
                 });
             });
-            // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
-            // engine attributes each inbound ACK to the right submission (§6.5.3).
-            self.pending_settings_window_submissions.with_mut(|v| {
-                for w in v.drain(..) {
-                    engine.pending_local_settings_acks.push_back(w);
-                }
-            });
+            self.register_settings_submissions(engine);
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
             // entry and free the legacy slot. free_resources already ran for these (it is the
             // only producer of this queue); duplicate ids are fine — remove() yields None.
@@ -3676,7 +3676,10 @@ impl H2FrameParser {
             let pending = self.rewrite_tail.with_mut(std::mem::take);
             let feed = {
                 let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, &pending)
+                let engine = guard.as_mut().unwrap();
+                // A dispatch above may have sent SETTINGS whose ACK is already in these bytes.
+                self.register_settings_submissions(engine);
+                engine.receive(self, &pending)
             };
             if feed.fatal {
                 self.rewrite_tail.with_mut(|t| t.clear());

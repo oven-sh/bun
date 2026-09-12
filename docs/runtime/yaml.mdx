@@ -5,7 +5,7 @@ description: Use Bun's built-in support for YAML files through both runtime APIs
 
 In Bun, YAML is a first-class citizen alongside JSON and TOML. You can:
 
-- Parse YAML strings with `Bun.YAML.parse`
+- Parse and stringify YAML with `Bun.YAML.parse` and `Bun.YAML.stringify`
 - `import` & `require` YAML files as modules at runtime (including hot reloading & watch mode support)
 - `import` & `require` YAML files in frontend apps with Bun's bundler
 
@@ -119,6 +119,175 @@ try {
 } catch (error) {
   console.error("Failed to parse YAML:", error.message);
 }
+```
+
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript value into a YAML string. The signature matches `JSON.stringify`:
+
+```ts
+YAML.stringify(value, replacer?, space?)
+```
+
+- `value`: the value to convert to YAML
+- `replacer`: not supported. Pass `null` or `undefined`. Any other value throws an error.
+- `space`: the number of spaces for each level of indentation (for example `2`), or a string to use as the indentation. Bun clamps a number to the range 0 to 10 and uses the first 10 characters of a string. YAML indentation must be spaces, so use a string of spaces.
+
+Without `space`, Bun writes flow-style YAML on one line. With `space`, Bun writes block-style YAML on multiple lines.
+
+#### Basic Usage
+
+```ts
+import { YAML } from "bun";
+
+const data = {
+  name: "John Doe",
+  age: 30,
+  hobbies: ["reading", "coding"],
+};
+
+// Without space: flow style (single line)
+console.log(YAML.stringify(data));
+// {name: John Doe,age: 30,hobbies: [reading,coding]}
+
+// With space: block style (multiple lines)
+console.log(YAML.stringify(data, null, 2));
+// name: John Doe
+// age: 30
+// hobbies:
+//   - reading
+//   - coding
+```
+
+Arrays follow the same rule:
+
+```ts
+const arr = [1, 2, 3];
+
+console.log(YAML.stringify(arr));
+// [1,2,3]
+
+console.log(YAML.stringify(arr, null, 2));
+// - 1
+// - 2
+// - 3
+```
+
+#### String Quoting
+
+`YAML.stringify()` double-quotes a string when a YAML parser would otherwise read it as something else:
+
+- Strings that YAML reads as keywords (`true`, `false`, `null`, `yes`, `no`, `~`, and so on)
+- Strings that YAML reads as numbers
+- Empty strings, and strings with special characters or escape sequences
+
+```ts
+const examples = {
+  keyword: "true",
+  number: "123",
+  text: "hello world",
+  empty: "",
+};
+
+console.log(YAML.stringify(examples, null, 2));
+// keyword: "true"
+// number: "123"
+// text: hello world
+// empty: ""
+```
+
+#### Cycles and References
+
+`YAML.stringify()` writes an object that appears more than once as a YAML anchor (`&name`) and aliases (`*name`). Circular references use the same syntax:
+
+```ts
+const obj: Record<string, unknown> = { name: "root" };
+obj.self = obj; // Circular reference
+
+console.log(YAML.stringify(obj, null, 2));
+// &root
+// name: root
+// self:
+//   *root
+
+// Objects with shared references
+const shared = { id: 1 };
+const data = {
+  first: shared,
+  second: shared,
+};
+
+console.log(YAML.stringify(data, null, 2));
+// first:
+//   &first
+//   id: 1
+// second:
+//   *first
+```
+
+`Bun.YAML.parse()` reads the anchors back, so the parsed objects share identity again.
+
+#### Special Values
+
+```ts
+// Special numeric values
+console.log(YAML.stringify(Infinity)); // .inf
+console.log(YAML.stringify(-Infinity)); // -.inf
+console.log(YAML.stringify(NaN)); // .nan
+console.log(YAML.stringify(0)); // 0
+console.log(YAML.stringify(-0)); // -0
+
+// null and undefined
+console.log(YAML.stringify(null)); // null
+console.log(YAML.stringify(undefined)); // undefined (the return value is undefined, not a string)
+
+// Booleans
+console.log(YAML.stringify(true)); // true
+console.log(YAML.stringify(false)); // false
+```
+
+#### Complex Objects
+
+```ts
+const config = {
+  server: {
+    port: 3000,
+    host: "localhost",
+    ssl: {
+      enabled: true,
+      cert: "/path/to/cert.pem",
+      key: "/path/to/key.pem",
+    },
+  },
+  database: {
+    connections: [
+      { name: "primary", host: "db1.example.com" },
+      { name: "replica", host: "db2.example.com" },
+    ],
+  },
+  features: {
+    auth: true,
+    "rate-limit": 100,
+  },
+};
+
+console.log(YAML.stringify(config, null, 2));
+// server:
+//   port: 3000
+//   host: localhost
+//   ssl:
+//     enabled: true
+//     cert: /path/to/cert.pem
+//     key: /path/to/key.pem
+// database:
+//   connections:
+//     - name: primary
+//       host: db1.example.com
+//     - name: replica
+//       host: db2.example.com
+// features:
+//   auth: true
+//   rate-limit: 100
 ```
 
 ---

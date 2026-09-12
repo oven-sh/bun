@@ -4,7 +4,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, shell_join_cwd, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -295,22 +295,8 @@ impl ShellMkdirTask {
     }
 
     fn run_from_thread_pool(this: &mut ShellMkdirTask) {
-        use bun_paths::{Platform, platform, resolve_path};
-        // We have to give an absolute path to our mkdir implementation for it
-        // to work with cwd.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Owned `Vec<u8>`; ensure NUL-terminated.
-            if this.filepath.last() != Some(&0) {
-                this.filepath.push(0);
-            }
-            bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&this.cwd_path, &this.filepath],
-            )
-        };
+        // `NodeFS` mkdir resolves relative paths against the process cwd, not the shell's.
+        let filepath = shell_join_cwd(&this.cwd_path, &this.filepath);
 
         // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.

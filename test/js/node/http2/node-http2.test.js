@@ -6329,3 +6329,96 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () => {
+  // node >= 26.4.0: test/parallel/test-http2-origin-set-max-size.mjs
+  let server;
+  beforeAll(async () => {
+    server = http2.createSecureServer(TLS_CERT);
+    server.on("stream", stream => {
+      stream.respond();
+      stream.end("ok");
+    });
+    // Every session gets ORIGIN frames of 10 new origins each, until it closes.
+    server.on("session", session => {
+      let i = 0;
+      const timer = setInterval(() => {
+        try {
+          session.origin(...Array.from({ length: 10 }, () => `https://o${i++}.example.com`));
+        } catch {
+          clearInterval(timer);
+        }
+      }, 1);
+      session.on("close", () => clearInterval(timer));
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+  });
+  afterAll(() => {
+    server.close();
+  });
+  const url = () => `https://localhost:${server.address().port}`;
+
+  // Connects, sends one request, and resolves with what the session saw once it closes.
+  function run(options) {
+    const { promise, resolve } = Promise.withResolvers();
+    const client = http2.connect(url(), { ...TLS_OPTIONS, ...options });
+    const result = { originEvents: 0, maxSize: 0, error: null, goaway: false };
+    client.on("origin", () => {
+      result.originEvents++;
+      result.maxSize = Math.max(result.maxSize, client.originSet.length);
+      if (options.stopAbove !== undefined && client.originSet.length > options.stopAbove) client.destroy();
+    });
+    client.on("error", err => {
+      result.error = err;
+    });
+    client.on("goaway", () => {
+      result.goaway = true;
+    });
+    client.on("close", () => resolve(result));
+    client.request().resume();
+    return promise;
+  }
+
+  it("rejects a maxOriginSetSize that is not a number", () => {
+    for (const maxOriginSetSize of [Symbol(), "0", 1n, {}, [], true, false, /s/, () => {}]) {
+      expect(() => http2.connect(url(), { ...TLS_OPTIONS, maxOriginSetSize })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+    for (const maxOriginSetSize of [NaN, -1]) {
+      expect(() => http2.connect(url(), { ...TLS_OPTIONS, maxOriginSetSize })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+  });
+
+  it("defaults to 128 and destroys the session with ERR_HTTP2_TOO_MANY_ORIGINS", async () => {
+    const result = await run({});
+    // The set starts with the session's own origin. 12 frames of 10 fit, the 13th overflows.
+    expect(result.originEvents).toBe(12);
+    expect(result.maxSize).toBe(121);
+    expect(result.goaway).toBe(false);
+    expect(result.error?.code).toBe("ERR_HTTP2_TOO_MANY_ORIGINS");
+    expect(result.error?.message).toBe("The server sent more ORIGIN frames than the allowed number of 128");
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it("does not emit 'origin' for the frame that overflows a small maxOriginSetSize", async () => {
+    for (const maxOriginSetSize of [-0, 9, 1.5]) {
+      const result = await run({ maxOriginSetSize });
+      expect(result.originEvents).toBe(0);
+      expect(result.goaway).toBe(false);
+      expect(result.error?.code).toBe("ERR_HTTP2_TOO_MANY_ORIGINS");
+    }
+  });
+
+  it("accepts a maxOriginSetSize above the default", async () => {
+    for (const maxOriginSetSize of [512, Infinity]) {
+      const result = await run({ maxOriginSetSize, stopAbove: 128 });
+      expect(result.originEvents).toBe(13);
+      expect(result.maxSize).toBe(131);
+      expect(result.error).toBeNull();
+      expect(result.goaway).toBe(false);
+    }
+  });
+});

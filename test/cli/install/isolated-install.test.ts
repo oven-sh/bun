@@ -1242,6 +1242,125 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
+// A tarball that cannot even be requested (here: a URL that is not http) hung
+// `bun install` forever with the isolated linker. Creating the download task
+// fails after the task id is recorded as created, so every later request for
+// the same tarball parked its store entry behind a task that does not exist.
+describe("tarball whose download task cannot be created", () => {
+  test("second store entry of the package: fails instead of hanging", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    // `peer-deps@1.0.0` has a peer on `no-deps`. Two workspaces with different
+    // `no-deps` versions give it two store entries sharing one tarball.
+    await write(packageJson, JSON.stringify({ name: "invalid-tarball-url", workspaces: ["packages/*"] }));
+    for (const version of ["1.0.0", "1.0.1"]) {
+      await write(
+        join(packageDir, "packages", `pkg-${version}`, "package.json"),
+        JSON.stringify({
+          name: `pkg-${version}`,
+          version: "1.0.0",
+          dependencies: { "peer-deps": "1.0.0", "no-deps": version },
+        }),
+      );
+    }
+
+    async function install(cacheDir: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        // CI exports BUN_INSTALL_CACHE_DIR; pin it so the second install really
+        // has to download `peer-deps` again.
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const first = await install(join(packageDir, ".bun-cache-1"));
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    expect(
+      (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(entry => entry.startsWith("peer-deps@")),
+    ).toHaveLength(2);
+
+    const lockfile = join(packageDir, "bun.lock");
+    const lockfileBefore = await file(lockfile).text();
+    const lockfileAfter = lockfileBefore.replace(
+      /("peer-deps@1\.0\.0", )"[^"]*"/,
+      '$1"ftp://localhost/peer-deps/-/peer-deps-1.0.0.tgz"',
+    );
+    expect(lockfileAfter).not.toBe(lockfileBefore);
+    await write(lockfile, lockfileAfter);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // Empty cache: the install phase requests the tarball for both entries.
+    const second = await install(join(packageDir, ".bun-cache-2"));
+    expect(second.stderr).toContain("failed to enqueue package for download: peer-deps@1.0.0");
+    expect(second.stdout).not.toContain("packages installed");
+    expect(second.exitCode).toBe(1);
+  });
+
+  test("package resolved from the manifest cache: fails instead of hanging", async () => {
+    // The first install fetches the manifest, caches it, and fails when it
+    // requests the tarball while resolving. The second install resolves from
+    // the cached manifest. That request fails again, and this time the
+    // install phase asks for the same tarball once more.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== "/bad-tarball-url") return new Response("Not found", { status: 404 });
+        return Response.json(
+          {
+            name: "bad-tarball-url",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "bad-tarball-url",
+                version: "1.0.0",
+                dist: { tarball: "ftp://localhost/bad-tarball-url/-/bad-tarball-url-1.0.0.tgz" },
+              },
+            },
+          },
+          { headers: { "Cache-Control": "public, max-age=300" } },
+        );
+      },
+    });
+
+    using packageDir = tempDir("manifest-cache-bad-tarball-", {
+      "package.json": JSON.stringify({
+        name: "manifest-cache-bad-tarball",
+        dependencies: { "bad-tarball-url": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`,
+    });
+
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(packageDir),
+        // One cache for both installs, separate from the other tests' caches.
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(packageDir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const expectedError = 'Expected tarball URL to start with https:// or http://, got "ftp://localhost/';
+    const first = await install();
+    expect(first.stderr).toContain(expectedError);
+    expect(first.exitCode).toBe(1);
+
+    const second = await install();
+    expect(second.stderr).toContain(expectedError);
+    expect(second.stdout).not.toContain("packages installed");
+    expect(second.exitCode).toBe(1);
+  });
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

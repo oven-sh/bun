@@ -152,3 +152,54 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
 
   await Promise.all(runs);
 });
+
+// Each detached editor thread goes through bun.spawnSync's signal-forwarding
+// register/unregister, which swaps every forwarded signal's disposition in a
+// process-global table. With many threads overlapping, an unsynchronized
+// table ends up restoring SIG_DFL (or the forwarding handler itself) instead
+// of the handler that was installed before the burst, so a JS signal
+// listener registered beforehand silently stops working or kills the process.
+test.skipIf(!isLinux)("Bun.openInEditor bursts do not drop previously installed signal handlers", async () => {
+  const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
+  expect(sleep).toBeDefined();
+
+  using dir = tempDir("open-in-editor-signal-table", {
+    "run.js": `
+      let fired = false;
+      process.on("SIGUSR2", () => { fired = true; });
+
+      let spawned = 0;
+      for (let i = 0; i < 64; i++) {
+        try { Bun.openInEditor("0.1", { editor: ${JSON.stringify(sleep)} }); spawned++; } catch {}
+      }
+      if (spawned === 0) { console.log("no editor threads spawned"); process.exit(2); }
+
+      // The editor children each run for 100ms, so by now the burst has
+      // started and the forwarding handler owns SIGUSR2; the original handler
+      // only comes back once the last thread unregisters. Keep delivering
+      // until it does (or the table was corrupted and it never does).
+      await Bun.sleep(50);
+      const deadline = Date.now() + 3000;
+      while (!fired && Date.now() < deadline) {
+        process.kill(process.pid, "SIGUSR2");
+        await Bun.sleep(20);
+      }
+      console.log(fired ? "ok" : "handler lost");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

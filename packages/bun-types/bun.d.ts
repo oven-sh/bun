@@ -6030,6 +6030,11 @@ declare module "bun" {
 
   /**
    * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   *
+   * Compression runs off-thread and borrows the bytes of a `TypedArray`/`ArrayBuffer` input.
+   * Don't modify the buffer until the promise settles. To reuse it right away, pass a copy:
+   * `new Uint8Array(data)` for a `Uint8Array` or `Buffer`, `ab.slice(0)` for an `ArrayBuffer`.
+   * `Buffer#slice()`, `subarray()`, `Buffer.from(arrayBuffer)` and `new Uint8Array(arrayBuffer)` return views.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns A promise that resolves to the output buffer with the compressed data
@@ -6048,6 +6053,11 @@ declare module "bun" {
 
   /**
    * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   *
+   * Decompression runs off-thread and borrows the bytes of a `TypedArray`/`ArrayBuffer` input.
+   * Don't modify the buffer until the promise settles. To reuse it right away, pass a copy:
+   * `new Uint8Array(data)` for a `Uint8Array` or `Buffer`, `ab.slice(0)` for an `ArrayBuffer`.
+   * `Buffer#slice()`, `subarray()`, `Buffer.from(arrayBuffer)` and `new Uint8Array(arrayBuffer)` return views.
    * @param data The buffer of data to decompress
    * @returns A promise that resolves to the output buffer with the decompressed data
    */

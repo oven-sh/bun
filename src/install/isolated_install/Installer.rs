@@ -117,6 +117,9 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// Main-thread only: entries deleted by `on_optional_dependency_scripts_failed`.
+    pub(crate) failed_optional_entries: Vec<StoreEntryId>,
 }
 
 impl<'a> Installer<'a> {
@@ -571,6 +574,14 @@ impl<'a> Installer<'a> {
         let is_duplicate = self.installed.is_set(pkg_id as usize);
         self.summary.success += (!is_duplicate) as u32;
         self.installed.set(pkg_id as usize);
+    }
+
+    /// Called from main thread once the package is deleted; dependents finish without it.
+    pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) {
+        self.failed_optional_entries.push(entry_id);
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Release);
+        self.on_task_complete(entry_id, CompleteState::Skipped);
     }
 
     /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
@@ -2122,7 +2133,8 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
+    /// `node_modules/.bun/node_modules/<package name>`
+    fn hidden_node_modules_link_path(&self, entry_id: StoreEntryId) -> AutoPath {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
@@ -2144,6 +2156,18 @@ impl<'a> Installer<'a> {
             .as_bytes(),
         );
         let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: fire-and-forget
+
+        hidden_hoisted_node_modules
+    }
+
+    pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
+
+        let hidden_hoisted_node_modules = self.hidden_node_modules_link_path(entry_id);
 
         let mut target = AutoRelPath::init();
 
@@ -2264,12 +2288,7 @@ impl<'a> Installer<'a> {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
-            let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
-                // same name as the entry itself: nest one node_modules deeper to avoid the collision
-                let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
-                let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            }
+            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
 
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
             if uses_global_store {
@@ -2296,6 +2315,69 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// Main thread, once every task is done: dependents may still be linking while a script fails.
+    pub(crate) fn unlink_failed_optional_entries(&self) {
+        if self.failed_optional_entries.is_empty() {
+            return;
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+
+        let entries = &self.store.entries;
+        let entry_node_ids = entries.items_node_id();
+        let entry_hoisted = entries.items_hoisted();
+
+        let nodes = &self.store.nodes;
+        let node_pkg_ids = nodes.items_pkg_id();
+        let node_dep_ids = nodes.items_dep_id();
+
+        // Not `parents`: public hoisting adds root dependencies without recording a parent.
+        for (entry_index, entry_deps) in entries.items_dependencies().iter().enumerate() {
+            if !entry_deps
+                .slice()
+                .iter()
+                .any(|dep| self.failed_optional_entries.contains(&dep.entry_id))
+            {
+                continue;
+            }
+
+            let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
+            let node_id = entry_node_ids[entry_index];
+            let pkg_id = node_pkg_ids[node_id.get() as usize];
+            let dep_id = node_dep_ids[node_id.get() as usize];
+            let entry_node_modules_name = self.entry_store_node_modules_package_name(
+                dep_id,
+                pkg_id,
+                &pkg_resolutions[pkg_id as usize],
+                pkg_names,
+            );
+
+            let mut dest = AutoPath::init_top_level_dir();
+            self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
+            let base_len = dest.len();
+
+            for dep in entry_deps.slice() {
+                if !self.failed_optional_entries.contains(&dep.entry_id) {
+                    continue;
+                }
+                let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+                dest.set_length(base_len);
+                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                remove_link(dest.slice_z());
+            }
+        }
+
+        for &entry_id in &self.failed_optional_entries {
+            if entry_hoisted[entry_id.get() as usize] {
+                remove_link(self.hidden_node_modules_link_path(entry_id).slice_z());
+            }
+        }
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
@@ -2828,6 +2910,30 @@ pub enum Which {
     /// steps write into. Use for *destinations* of clonefile/hardlink/
     /// dep-symlink/bin-link when building this entry.
     Staging,
+}
+
+fn append_dependency_link_name(
+    dest: &mut AutoPath,
+    dep_name: &[u8],
+    entry_node_modules_name: Option<&[u8]>,
+) {
+    let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+        // same name as the entry itself: nest one node_modules deeper to avoid the collision
+        let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
+        let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+    }
+}
+
+fn remove_link(path: &ZStr) {
+    #[cfg(windows)]
+    {
+        // directory symlinks and junctions (dangling or not) go through rmdir
+        if sys::rmdir(path).is_ok() {
+            return;
+        }
+    }
+    let _ = sys::unlink(path);
 }
 
 fn is_rename_collision(err: &sys::Error) -> bool {

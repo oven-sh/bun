@@ -846,14 +846,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Exited(exit) => {
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
+                        self.discard_failed_optional_package();
                         return;
                     }
                     self.print_output();
@@ -981,14 +974,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
+                    self.discard_failed_optional_package();
                     return;
                 }
 
@@ -1048,6 +1034,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
         // then frees the allocation.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+
+    /// Frees `self`.
+    fn discard_failed_optional_package(&mut self) {
+        let ctx = self.ctx.take();
+        self.decrement_pending_script_tasks();
+        self.deinit_and_delete_package();
+        // deleted first so the resumed dependents do not link its binaries
+        if let Some(ctx) = ctx {
+            ctx.installer_mut()
+                .on_optional_dependency_scripts_failed(ctx.entry_id);
+        }
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {

@@ -325,6 +325,58 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+describe("jsx with empty children self-closes", () => {
+  function Foo() {}
+
+  it.each([
+    ["{[]}", <div>{[]}</div>, "<div />"],
+    ['{""}', <div>{""}</div>, "<div />"],
+    ["attribute and {[]}", <div id="x">{[]}</div>, '<div id="x" />'],
+    ['attribute and {""}', <div id="x">{""}</div>, '<div id="x" />'],
+    ["key and {[]}", <div key="k">{[]}</div>, '<div key="k" />'],
+    ["component and {[]}", <Foo>{[]}</Foo>, "<Foo />"],
+    ["no children", <div id="x" />, '<div id="x" />'],
+    [
+      "nested single child with {[]}",
+      <div>
+        <span>{[]}</span>
+      </div>,
+      "<div>\n  <span />\n</div>",
+    ],
+    [
+      'nested children with {[]} and {""}',
+      <div>
+        <span>{[]}</span>
+        <b>{""}</b>
+      </div>,
+      "<div>\n  <span />\n  <b />\n</div>",
+    ],
+  ])("%s", (_, element, expected) => {
+    expect(Bun.inspect(element)).toBe(expected);
+  });
+
+  it("with colors", () => {
+    expect(Bun.inspect(<div>{[]}</div>, { colors: true })).toBe("\x1b[0m<\x1b[32mdiv\x1b[0m />");
+  });
+
+  it("console.log", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log({ $$typeof: Symbol.for("react.element"), type: "div", props: { id: "x", children: [] } });
+         console.log({ $$typeof: Symbol.for("react.element"), type: "div", props: { children: "" } });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('<div id="x" />\n<div />\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

@@ -470,6 +470,82 @@ test("Error.captureStackTrace cannot overwrite a non-configurable stack on an un
   expect(error.stack).toBe("original");
 });
 
+// V8 formats the stack lazily, after it installed the accessor. Bun formats it before it writes
+// "stack", so with Error.prepareStackTrace set, user code runs between the first check and the write.
+const lockStack = target =>
+  Object.defineProperty(target, "stack", { value: "locked", writable: false, configurable: false });
+const lockedStack = { value: "locked", writable: false, enumerable: false, configurable: false };
+
+test("Error.captureStackTrace cannot write stack through a lock Error.prepareStackTrace adds", () => {
+  // materialize before the callback is installed, so the callback only runs inside captureStackTrace
+  const materializedError = () => {
+    const error = new Error("materialized");
+    expect(error.stack).toBeString();
+    return error;
+  };
+
+  for (const [frozen, locked] of [
+    [{}, {}],
+    [materializedError(), materializedError()],
+  ]) {
+    Error.prepareStackTrace = error => {
+      Object.freeze(error);
+      return "from-prepare";
+    };
+    expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+    expect(Object.isFrozen(frozen)).toBe(true);
+    // the default-formatted stack the callback was handed, which it then froze
+    expect(frozen.stack).toStartWith("Error");
+
+    Error.prepareStackTrace = error => {
+      lockStack(error);
+      return "from-prepare";
+    };
+    expectTypeError(() => Error.captureStackTrace(locked), NOT_CONFIGURABLE);
+    expect(Object.getOwnPropertyDescriptor(locked, "stack")).toEqual(lockedStack);
+  }
+});
+
+test("Error.captureStackTrace cannot write stack through a lock the message getter adds", () => {
+  let seen;
+  Error.prepareStackTrace = error => {
+    seen = { frozen: Object.isFrozen(error), stack: Object.getOwnPropertyDescriptor(error, "stack") };
+    return "from-prepare";
+  };
+
+  const locked = {
+    get message() {
+      lockStack(this);
+      return "locked";
+    },
+  };
+  expectTypeError(() => Error.captureStackTrace(locked), NOT_CONFIGURABLE);
+  expect(seen).toEqual({ frozen: false, stack: lockedStack });
+  expect(Object.getOwnPropertyDescriptor(locked, "stack")).toEqual(lockedStack);
+
+  const frozen = {
+    get message() {
+      Object.freeze(this);
+      return "frozen";
+    },
+  };
+  expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+  expect(seen).toEqual({ frozen: true, stack: undefined });
+  expect(Object.isFrozen(frozen)).toBe(true);
+  expect(Object.getOwnPropertyNames(frozen)).toEqual(["message"]);
+});
+
+test("Error.prepareStackTrace is still handed the default stack of a non-extensible error", () => {
+  let seen;
+  Error.prepareStackTrace = error => {
+    seen = error.stack;
+    return "from-prepare";
+  };
+  const error = Object.preventExtensions(new Error("non-extensible"));
+  expect(error.stack).toBe("from-prepare");
+  expect(seen).toStartWith("Error: non-extensible\n    at ");
+});
+
 test("Error.captureStackTrace still works on ordinary targets", () => {
   function captureStackTraceHere(target) {
     Error.captureStackTrace(target);

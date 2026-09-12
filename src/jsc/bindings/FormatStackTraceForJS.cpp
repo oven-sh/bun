@@ -32,6 +32,32 @@ using namespace WebCore;
 
 namespace Bun {
 
+// Read via the structure: the method table would materialize an ErrorInstance's lazy error info.
+static bool hasNonConfigurableStack(JSC::VM& vm, JSC::JSObject* object)
+{
+    unsigned attributes = 0;
+    return object->getDirectOffset(vm, vm.propertyNames->stack, attributes) != JSC::invalidOffset
+        && (attributes & JSC::PropertyAttribute::DontDelete);
+}
+
+// JSC adds an ErrorInstance's lazy "stack" whether or not the instance is extensible.
+static bool canPutStackDirect(JSC::VM& vm, JSC::JSObject* object)
+{
+    return (object->isStructureExtensible() || object->inherits<JSC::ErrorInstance>()) && !hasNonConfigurableStack(vm, object);
+}
+
+// putDirect() is unchecked, so Error.captureStackTrace asks this before every "stack" write that user code precedes.
+static void throwIfStackIsNotDefinable(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isExtensible = object->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isExtensible)
+        throwTypeError(globalObject, scope, "Cannot define property stack, object is not extensible"_s);
+    else if (hasNonConfigurableStack(vm, object))
+        throwTypeError(globalObject, scope, "Cannot redefine property: stack"_s);
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -93,7 +119,9 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
             // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
             // it will display the stack as a formatted string, so we have to do the same.
-            errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+            // The "message" getter ran above and may have locked "stack" or the object.
+            if (canPutStackDirect(vm, errorObject))
+                errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
 
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(errorObject);
@@ -770,18 +798,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    bool isExtensible = errorObject->isExtensible(globalObject);
+    throwIfStackIsNotDefinable(vm, lexicalGlobalObject, errorObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!isExtensible) {
-        return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "Cannot define property stack, object is not extensible"_s));
-    }
-
-    // Read via the structure: the method table would materialize an ErrorInstance's lazy error info.
-    unsigned stackAttributes = 0;
-    if (errorObject->getDirectOffset(vm, vm.propertyNames->stack, stackAttributes) != JSC::invalidOffset
-        && (stackAttributes & JSC::PropertyAttribute::DontDelete)) {
-        return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "Cannot redefine property: stack"_s));
-    }
 
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
@@ -804,6 +822,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             String sourceURL;
             JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
             RETURN_IF_EXCEPTION(scope, {});
+            throwIfStackIsNotDefinable(vm, lexicalGlobalObject, errorObject);
+            RETURN_IF_EXCEPTION(scope, {});
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
@@ -822,6 +842,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         OrdinalNumber column;
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwIfStackIsNotDefinable(vm, lexicalGlobalObject, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
         errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     }

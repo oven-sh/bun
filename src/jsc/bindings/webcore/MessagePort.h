@@ -96,6 +96,19 @@ public:
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
+    // Held by a loop that delivers this port's inbox. close() under it waits for the loop to end.
+    class DispatchScope {
+        WTF_MAKE_NONCOPYABLE(DispatchScope);
+
+    public:
+        explicit DispatchScope(MessagePort&);
+        ~DispatchScope();
+
+    private:
+        const Ref<MessagePort> m_port;
+        const bool m_wasDispatching;
+    };
+
     // Only here for JSMessagePortCustom's GC optimization; always null.
     MessagePort* locallyEntangledPort() { return nullptr; }
 
@@ -124,19 +137,21 @@ private:
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
-    // ActiveDOMObject.
+    // ActiveDOMObject. Teardown closes at once: a DispatchScope on the stack never resumes.
     void contextDestroyed() final;
-    void stop() final { close(); }
+    void stop() final { closeNow(); }
     bool virtualHasPendingActivity() const final;
 
-    // Deliver messages already queued when close() is called, before teardown.
+    // close() without the DispatchScope deferral. Runs no script.
+    void closeNow();
+
+    // peerClosed(): deliver what the peer sent before it closed, ahead of its 'close'.
     void flushQueuedMessagesBeforeClose();
 
     bool isEntangled() const { return !m_isDetached; }
 
 public:
-    // Checked by the transfer path so a closing-but-not-yet-detached port
-    // (inside close()'s flush window) is rejected the same as a detached one.
+    // The transfer path rejects a port whose close() is pending under a DispatchScope.
     bool isClosing() const { return m_isClosing; }
 
 private:
@@ -149,9 +164,7 @@ private:
     bool m_started { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
-    // True while a 'message' handler is on the stack. close() called from inside one
-    // must finish delivering the in-flight drain (node does); a close from anywhere
-    // else drops whatever is still queued.
+    // True while a DispatchScope is on the stack. close() then defers to it.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };

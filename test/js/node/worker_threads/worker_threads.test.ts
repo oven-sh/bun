@@ -1818,11 +1818,11 @@ test("MessageEvent ports validation walks the iterator once and gives a detailed
   port1.close();
 });
 
-test("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
-  // Queue two messages. The first handler calls A.close(); close()'s flush
-  // (running because m_inMessageDispatch is true) delivers the second, whose
-  // handler tries to transfer A. A is m_isClosing at that point, so the
-  // transfer path rejects it with DataCloneError.
+test("MessagePort: transferring a port that was close()d earlier in the same batch throws DataCloneError", async () => {
+  // Queue two messages. The first handler calls A.close(), which only marks A closing:
+  // the drain still delivers the second message once that handler returns, and its
+  // handler tries to transfer A. The transfer path rejects a closing port the same as a
+  // detached one.
   const { port1: A, port2: A2 } = new MessageChannel();
   const { port1: B1, port2: B2 } = new MessageChannel();
   let err: any;
@@ -1833,13 +1833,13 @@ test("MessagePort: transferring a port from inside its own close()'s flush windo
     n++;
     if (n === 1) {
       A.close();
-      done();
     } else {
       try {
         B1.postMessage(null, [A]);
       } catch (e) {
         err = e;
       }
+      done();
     }
   });
   A2.postMessage("first");

@@ -32,3 +32,37 @@ impl From<bun_sys::Error> for Error {
 }
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
+
+#[derive(Debug)]
+pub enum ApplyError {
+    Sys(bun_sys::Error),
+    /// The hunk's context and deleted lines match nowhere in the target file.
+    HunkDoesNotApply {
+        path: Box<[u8]>,
+        /// 1-based.
+        hunk: usize,
+        /// The `-` start from the hunk header.
+        line: u32,
+    },
+}
+
+impl From<bun_sys::Error> for ApplyError {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e)
+    }
+}
+
+impl core::fmt::Display for ApplyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Sys(e) => core::fmt::Display::fmt(e, f),
+            Self::HunkDoesNotApply { path, hunk, line } => write!(
+                f,
+                "hunk #{} does not apply to {} (expected at line {})",
+                hunk,
+                bstr::BStr::new(path),
+                line
+            ),
+        }
+    }
+}

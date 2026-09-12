@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import * as pathNamespace from "node:path";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -364,6 +365,224 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   materialized.stack = "overwritten";
   expect(materialized.stack).toBe("overwritten");
   expectNonEnumerableStack(materialized);
+});
+
+function expectTypeError(fn, message) {
+  let caught;
+  try {
+    fn();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(TypeError);
+  expect(caught.message).toBe(message);
+}
+
+const NOT_EXTENSIBLE = "Cannot define property stack, object is not extensible";
+const NOT_CONFIGURABLE = "Cannot redefine property: stack";
+
+test("Error.captureStackTrace cannot add stack to a non-extensible object", () => {
+  const frozen = Object.freeze({});
+  expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+  expect(Object.isFrozen(frozen)).toBe(true);
+  expect(Object.getOwnPropertyNames(frozen)).toEqual([]);
+
+  const sealed = Object.seal({ a: 1 });
+  expectTypeError(() => Error.captureStackTrace(sealed), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(sealed)).toEqual(["a"]);
+
+  const nonExtensible = Object.preventExtensions({});
+  expectTypeError(() => Error.captureStackTrace(nonExtensible), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(nonExtensible)).toEqual([]);
+
+  // an already-present "stack" doesn't make a non-extensible object writable again
+  const withStack = Object.preventExtensions({ stack: "original" });
+  expectTypeError(() => Error.captureStackTrace(withStack), NOT_EXTENSIBLE);
+  expect(withStack.stack).toBe("original");
+
+  const frozenError = Object.freeze(new Error("frozen"));
+  expectTypeError(() => Error.captureStackTrace(frozenError), NOT_EXTENSIBLE);
+  expect(Object.isFrozen(frozenError)).toBe(true);
+
+  const nonExtensibleError = Object.preventExtensions(new Error("non-extensible"));
+  expectTypeError(() => Error.captureStackTrace(nonExtensibleError), NOT_EXTENSIBLE);
+  expect(Object.isExtensible(nonExtensibleError)).toBe(false);
+
+  // a module namespace is an exotic, permanently non-extensible object
+  expectTypeError(() => Error.captureStackTrace(pathNamespace), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(pathNamespace)).not.toContain("stack");
+});
+
+test("Error.captureStackTrace rejects a WebAssembly GC reference", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+
+  // The reference is permanently non-extensible, and its Structure has no global object.
+  // Node also throws a TypeError here ("invalid_argument": V8 does not count the reference as a JSObject).
+  expectTypeError(() => Error.captureStackTrace(struct), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(struct)).toEqual([]);
+});
+
+test("Error.captureStackTrace cannot overwrite a non-configurable stack", () => {
+  for (const writable of [true, false]) {
+    const object = {};
+    Object.defineProperty(object, "stack", { value: "original", writable, configurable: false });
+    expectTypeError(() => Error.captureStackTrace(object), NOT_CONFIGURABLE);
+    expect(object.stack).toBe("original");
+    expect(Object.getOwnPropertyDescriptor(object, "stack")).toEqual({
+      value: "original",
+      writable,
+      enumerable: false,
+      configurable: false,
+    });
+
+    const error = new Error("locked");
+    Object.defineProperty(error, "stack", { value: "original", writable, configurable: false });
+    expectTypeError(() => Error.captureStackTrace(error), NOT_CONFIGURABLE);
+    expect(error.stack).toBe("original");
+  }
+});
+
+test("Error.captureStackTrace cannot overwrite a non-configurable stack on an unmaterialized error", () => {
+  const limit = Error.stackTraceLimit;
+  let error;
+  try {
+    // an empty stack trace leaves the error's info unmaterialized, so the error takes
+    // the lazy ".stack" accessor path rather than the eager one
+    Error.stackTraceLimit = 0;
+    error = new Error("locked");
+    Object.defineProperty(error, "stack", { value: "original", writable: false, configurable: false });
+    expect(Object.getOwnPropertyNames(error)).toEqual(["message", "stack"]);
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+
+  expectTypeError(() => Error.captureStackTrace(error), NOT_CONFIGURABLE);
+  expect(error.stack).toBe("original");
+});
+
+// V8 formats the stack lazily, after it installed the accessor. Bun formats it before it writes
+// "stack", so with Error.prepareStackTrace set, user code runs between the first check and the write.
+const lockStack = target =>
+  Object.defineProperty(target, "stack", { value: "locked", writable: false, configurable: false });
+const lockedStack = { value: "locked", writable: false, enumerable: false, configurable: false };
+
+test("Error.captureStackTrace cannot write stack through a lock Error.prepareStackTrace adds", () => {
+  // materialize before the callback is installed, so the callback only runs inside captureStackTrace
+  const materializedError = () => {
+    const error = new Error("materialized");
+    expect(error.stack).toBeString();
+    return error;
+  };
+
+  for (const [frozen, locked] of [
+    [{}, {}],
+    [materializedError(), materializedError()],
+  ]) {
+    Error.prepareStackTrace = error => {
+      Object.freeze(error);
+      return "from-prepare";
+    };
+    expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+    expect(Object.isFrozen(frozen)).toBe(true);
+    // the default-formatted stack the callback was handed, which it then froze
+    expect(frozen.stack).toStartWith("Error");
+
+    Error.prepareStackTrace = error => {
+      lockStack(error);
+      return "from-prepare";
+    };
+    expectTypeError(() => Error.captureStackTrace(locked), NOT_CONFIGURABLE);
+    expect(Object.getOwnPropertyDescriptor(locked, "stack")).toEqual(lockedStack);
+  }
+});
+
+test("Error.captureStackTrace cannot write stack through a lock the message getter adds", () => {
+  let seen;
+  Error.prepareStackTrace = error => {
+    seen = { frozen: Object.isFrozen(error), stack: Object.getOwnPropertyDescriptor(error, "stack") };
+    return "from-prepare";
+  };
+
+  const locked = {
+    get message() {
+      lockStack(this);
+      return "locked";
+    },
+  };
+  expectTypeError(() => Error.captureStackTrace(locked), NOT_CONFIGURABLE);
+  expect(seen).toEqual({ frozen: false, stack: lockedStack });
+  expect(Object.getOwnPropertyDescriptor(locked, "stack")).toEqual(lockedStack);
+
+  const frozen = {
+    get message() {
+      Object.freeze(this);
+      return "frozen";
+    },
+  };
+  expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+  expect(seen).toEqual({ frozen: true, stack: undefined });
+  expect(Object.isFrozen(frozen)).toBe(true);
+  expect(Object.getOwnPropertyNames(frozen)).toEqual(["message"]);
+});
+
+test("Error.captureStackTrace does not run the isExtensible trap of a Proxy", () => {
+  const isExtensible = mock(target => Reflect.isExtensible(target));
+  const proxy = new Proxy({}, { isExtensible });
+  try {
+    // Node throws "invalid_argument" here: V8 does not count a Proxy as a JSObject
+    Error.captureStackTrace(proxy);
+  } catch {}
+  expect(isExtensible).not.toHaveBeenCalled();
+  expect(Object.isExtensible(proxy)).toBe(true);
+  expect(isExtensible).toHaveBeenCalledTimes(1);
+});
+
+test("Error.prepareStackTrace is still handed the default stack of a non-extensible error", () => {
+  let seen;
+  Error.prepareStackTrace = error => {
+    seen = error.stack;
+    return "from-prepare";
+  };
+  const error = Object.preventExtensions(new Error("non-extensible"));
+  expect(error.stack).toBe("from-prepare");
+  expect(seen).toStartWith("Error: non-extensible\n    at ");
+});
+
+test("Error.captureStackTrace still works on ordinary targets", () => {
+  function captureStackTraceHere(target) {
+    Error.captureStackTrace(target);
+  }
+
+  const object = {};
+  captureStackTraceHere(object);
+  expect(object.stack).toContain("at captureStackTraceHere");
+
+  // a configurable "stack" is replaced, not rejected
+  const replaceable = {};
+  Object.defineProperty(replaceable, "stack", { value: "original", writable: false, configurable: true });
+  captureStackTraceHere(replaceable);
+  expect(replaceable.stack).toContain("at captureStackTraceHere");
+
+  // an error whose stack was already materialized
+  const materialized = new Error("materialized");
+  expect(materialized.stack).toBeString();
+  captureStackTraceHere(materialized);
+  expect(materialized.stack).toContain("at captureStackTraceHere");
+
+  // an error whose stack is still lazy
+  const lazy = new Error("lazy");
+  captureStackTraceHere(lazy);
+  expect(lazy.stack).toContain("at captureStackTraceHere");
 });
 
 test("prepare stack trace call sites", () => {

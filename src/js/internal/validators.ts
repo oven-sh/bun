@@ -121,9 +121,25 @@ function getValidatedFsPath(p: any, propName: string = "path") {
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
+const validateInt32 = $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0);
+const validateUint32 = $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0);
+
+/**
+ * The options check of `rmdir(path, { recursive: true })` in Node 16 to 24. It fills in the
+ * `rm` defaults and pins `force` to false, because rmdir never honored it. Call it before the
+ * path is read, so that a bad option wins over ENOENT. Returns the new options object.
+ */
+function validateRmdirRecursiveOptions(options) {
+  options = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
+  validateBoolean(options.recursive, "options.recursive");
+  validateInt32(options.retryDelay, "options.retryDelay", 0);
+  validateUint32(options.maxRetries, "options.maxRetries");
+  return options;
+}
+
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
-hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
+hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName, validateRmdirRecursiveOptions);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
@@ -162,9 +178,9 @@ export default {
   /** `(value, name, minLength = 0)` */
   validateArray: $newCppFunction("NodeValidator.cpp", "jsFunction_validateArray", 0),
   /** `(value, name, min = -2147483648, max = 2147483647)` */
-  validateInt32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0),
+  validateInt32,
   /** `(value, name, positive = false)` */
-  validateUint32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0),
+  validateUint32,
   /** `(data, encoding)` */
   validateEncoding: $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0),
   /** `(buffer, name = 'buffer')` */
@@ -177,4 +193,6 @@ export default {
   getValidatedFsPath,
   /** `(filename)` */
   throwIfNullBytesInFileName,
+  /** `(options)`: returns the options with the defaults filled in */
+  validateRmdirRecursiveOptions,
 };

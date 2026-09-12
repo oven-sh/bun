@@ -262,7 +262,10 @@ async function fetchDep(
   await mkdir(dest, { recursive: true });
 
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
-  await extractTarGz(tarballPath, dest);
+  // skipUnusedSymlinks: dep builds compile explicit source lists and never
+  // read a symlink entry (zstd ships two as test fixtures), so extraction
+  // must not require symlink privilege (Windows without Developer Mode).
+  await extractTarGz(tarballPath, dest, 1, { skipUnusedSymlinks: true });
 
   // ─── Apply patches / overlays ───
   for (let i = 0; i < patches.length; i++) {

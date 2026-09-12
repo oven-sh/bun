@@ -250,11 +250,35 @@ export async function downloadWithRetry(
  * checks miss the change entirely. With -m, everything extracted is "now",
  * so any .o built BEFORE this extraction is correctly stale.
  *
+ * ## Symlink fallback (opt-in)
+ *
+ * Creating a symlink needs privilege on Windows (Developer Mode or an
+ * elevated shell). Some dep archives carry symlinks the build never reads —
+ * zstd ships two test fixtures under tests/cli-tests/ — and bsdtar extracts
+ * every other entry, then exits 1 on just those. With `skipUnusedSymlinks`
+ * the happy path runs unchanged, and only after a failure do we list the
+ * archive for symlink entries and retry with each excluded. An archive with
+ * no symlinks failed for some other reason and the original error is
+ * rethrown. The same goes for a symlink name that cannot be excluded
+ * literally (see isLiterallyExcludable): declining is safer than excluding
+ * too much.
+ *
  * @param stripComponents How many top-level dirs to strip. 1 for github
  *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
  *   has `bun-webkit/` that the caller wants to keep for a rename step).
+ * @param skipUnusedSymlinks The caller asserts the build reads none of the
+ *   archive's symlink entries, so extraction may skip them instead of
+ *   failing. Only the dep-archive fetch sets this: dep builds compile
+ *   explicit source lists. Leave it off for archives whose symlinks may
+ *   matter (prebuilt WebKit, the xwin sysroot, prefetch trees), where a
+ *   quiet success with entries missing would be worse than the failure.
  */
-export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
+export async function extractTarGz(
+  tarball: string,
+  dest: string,
+  stripComponents = 1,
+  { skipUnusedSymlinks = false }: { skipUnusedSymlinks?: boolean } = {},
+): Promise<void> {
   const args = ["-xzmf", tarball, "-C", dest];
   if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
 
@@ -270,11 +294,63 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
     });
   }
   if (result.status !== 0) {
-    throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    const symlinks = skipUnusedSymlinks ? listSymlinkEntries(tarball) : [];
+    if (symlinks.length === 0 || !symlinks.every(isLiterallyExcludable)) {
+      throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    }
+    console.log(
+      `tar exited ${result.status}; retrying without ${symlinks.length} symlink ` +
+        `${symlinks.length === 1 ? "entry" : "entries"}: ${symlinks.join(", ")}`,
+    );
+    const retry = spawnSync(tarExe, [...args, ...symlinks.map(entry => `--exclude=${entry}`)], {
+      stdio: ["ignore", "ignore", "pipe"],
+      encoding: "utf8",
+    });
+    if (retry.status !== 0) {
+      throw new BuildError(
+        `tar extraction failed even with symlink entries excluded:\n` +
+          `  first attempt (exit ${result.status}): ${result.stderr}\n` +
+          `  retry (exit ${retry.status}): ${retry.error?.message ?? retry.stderr}`,
+        { file: tarball },
+      );
+    }
   }
 
   const entries = await readdir(dest);
   assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+}
+
+/**
+ * `--exclude` takes a glob pattern in both bsdtar and GNU tar, and Windows'
+ * bsdtar has no literal-match mode, so a name with a metacharacter could
+ * also exclude a regular member. A control character is no safer (a newline
+ * breaks the listing pairing in listSymlinkEntries). No pinned dep archive
+ * has such names; if one ever does, the fallback declines and the original
+ * error stands.
+ */
+function isLiterallyExcludable(name: string): boolean {
+  return /^[\x20-\x7e]+$/.test(name) && !/[\\*?[\]]/.test(name);
+}
+
+/**
+ * Archive entries that are symlinks, in archive order. Empty when the
+ * listing itself fails (the caller then rethrows its original error).
+ *
+ * `-tv` marks a symlink with `l` in the mode column, but the entry name is
+ * awkward to parse out of the verbose line (variable date columns, a
+ * ` -> target` suffix). `-t` prints one bare name per line in the same
+ * order, so pair the two listings by index instead.
+ */
+function listSymlinkEntries(tarball: string): string[] {
+  const list = (flags: string) =>
+    spawnSync(tarExe, [flags, tarball], { stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  const verbose = list("-tzvf");
+  const names = list("-tzf");
+  if (verbose.status !== 0 || names.status !== 0) return [];
+  const modes = verbose.stdout.split(/\r?\n/).filter(Boolean);
+  const entries = names.stdout.split(/\r?\n/).filter(Boolean);
+  if (modes.length !== entries.length) return [];
+  return entries.filter((_, i) => modes[i]!.startsWith("l"));
 }
 
 /**

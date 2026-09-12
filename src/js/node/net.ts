@@ -191,8 +191,7 @@ const kUpgradeAttached = Symbol("kUpgradeAttached");
 const kOnreadTail = Symbol("kOnreadTail");
 // Bytes of the chunk deliver() is slicing that the onread callback has not received yet.
 const kOnreadSlicing = Symbol("kOnreadSlicing");
-// Bumped by dropOnreadTail(): deliver() stops a chunk whose connection was replaced under it. `connecting` does
-// not say that: the old connection keeps delivering while a connect() waits for its lookup.
+// Bumped by dropOnreadTail(), so deliver() stops a chunk whose connection was replaced under it.
 const kOnreadEpoch = Symbol("kOnreadEpoch");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");

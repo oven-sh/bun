@@ -283,12 +283,15 @@ var access = function access(path, mode, callback) {
     callback = wrapFsCallback(callback);
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => void callback(null, bytesRead, buffer),
-      err => callback(err),
+      err => void callback(err, 0, buffer),
     );
   },
   write = function write(fd, buffer, offsetOrOptions, length, position, callback) {
     function wrapper(bytesWritten) {
       callback(null, bytesWritten, buffer);
+    }
+    function onError(err) {
+      callback(err, 0, buffer);
     }
 
     // $isTypedArrayView excludes DataView, so a DataView would fall through
@@ -305,7 +308,7 @@ var access = function access(path, mode, callback) {
         } = offsetOrOptions ?? {});
       }
 
-      fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
+      fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, onError);
       return;
     }
 
@@ -328,7 +331,7 @@ var access = function access(path, mode, callback) {
     callback = position;
     callback = ensureCallback(callback);
 
-    fs.write(fd, buffer, offsetOrOptions, length).then(wrapper, callback);
+    fs.write(fd, buffer, offsetOrOptions, length).then(wrapper, onError);
   },
   readdir = function readdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -593,7 +596,10 @@ var access = function access(path, mode, callback) {
 
     callback = ensureCallback(callback);
 
-    fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
+    fs.writev(fd, buffers, position).$then(
+      bytesWritten => callback(null, bytesWritten, buffers),
+      err => callback(err, 0, buffers),
+    );
   },
   writevSync = fs.writevSync.bind(fs),
   readv = function readv(fd, buffers, position, callback) {
@@ -604,7 +610,10 @@ var access = function access(path, mode, callback) {
 
     callback = ensureCallback(callback);
 
-    fs.readv(fd, buffers, position).$then(bytesRead => callback(null, bytesRead, buffers), callback);
+    fs.readv(fd, buffers, position).$then(
+      bytesRead => callback(null, bytesRead, buffers),
+      err => callback(err, 0, buffers),
+    );
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,

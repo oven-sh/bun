@@ -445,15 +445,15 @@ Server.prototype.unref = function () {
 
 Server.prototype.closeAllConnections = function () {
   http1Fallback?.closeAllHttp1Connections(this);
-  const server = this[serverSymbol];
-  if (!server) {
+  const connections = this[kTrackedConnections];
+  if (!connections) {
     return;
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
+  for (const socket of connections) {
+    if (socket.parser !== null) {
+      socket.destroy();
+    }
+  }
 };
 
 Server.prototype.getConnections = function (callback) {

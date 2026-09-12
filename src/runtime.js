@@ -344,6 +344,25 @@ export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
 export var __promiseAll = args => Promise.all(args);
 
+// An HTML entry runs each bundled <script> through one of these: a script
+// that throws is reported like an uncaught error and the next script still
+// runs, the same as separate <script> elements in the browser.
+var __reportError = e => (typeof reportError === "function" ? reportError(e) : console.error(e));
+export var __script = init => {
+  try {
+    init();
+  } catch (e) {
+    __reportError(e);
+  }
+};
+export var __scriptAsync = async init => {
+  try {
+    await init();
+  } catch (e) {
+    __reportError(e);
+  }
+};
+
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");

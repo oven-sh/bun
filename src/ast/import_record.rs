@@ -106,6 +106,10 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// The `src` of a `<script>` element in an HTML file, as opposed to a
+        /// `<link>` or an asset reference.
+        const HTML_SCRIPT_SRC = 1 << 19;
     }
 }
 

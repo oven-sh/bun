@@ -68,7 +68,12 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        flags: ImportRecordFlags,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -115,7 +120,7 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags,
         };
 
         self.import_records.push(record);
@@ -136,13 +141,18 @@ impl<'a> HTMLScanner<'a> {
 
     fn on_tag(
         &mut self,
-        _element: &mut Element<'_, '_>,
+        element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let flags = if element.tag_name().eq_ignore_ascii_case("script") {
+            ImportRecordFlags::HTML_SCRIPT_SRC
+        } else {
+            ImportRecordFlags::default()
+        };
+        let _ = self.create_import_record(path, kind, flags);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {

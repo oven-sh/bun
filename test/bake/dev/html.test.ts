@@ -53,6 +53,60 @@ devTest("html file is watched", {
   },
 });
 
+// Each <script> element is its own error boundary in the browser: an uncaught
+// error is reported and the next script still runs. A script with top-level
+// await does not hold up the next one either.
+devTest("a script that throws does not stop the page's later scripts", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head>
+      <script type="module" src="./slow.js"></script>
+      <script src="./widget.js"></script>
+      <script src="./app.js"></script>
+      <script type="module" src="./mod.js"></script>
+      </head><body></body></html>
+    `,
+    "slow.js": `
+      globalThis.trace = ["slow"];
+      await new Promise(resolve => setTimeout(resolve, 0));
+      trace.push("slow resumed");
+      console.log(trace.join(","));
+    `,
+    "widget.js": `
+      trace.push("widget");
+      if (!document.getElementById("widget-slot")) throw new Error("widget mount point missing");
+      trace.push("unreachable");
+    `,
+    "app.js": `
+      trace.push("app");
+    `,
+    "mod.js": `
+      import { value } from "./dep.js";
+      trace.push("mod " + value);
+    `,
+    "dep.js": `
+      export const value = 42;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["error: widget mount point missing"],
+    });
+    await c.expectMessage("slow,widget,app,mod 42,slow resumed");
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "widget.js",
+        `
+          trace.push("widget");
+        `,
+      );
+    });
+    await c.expectMessage("slow,widget,app,mod 42,slow resumed");
+    await c.expectErrorOverlay([]);
+  },
+});
+
 devTest("image tag", {
   files: {
     "index.html": `

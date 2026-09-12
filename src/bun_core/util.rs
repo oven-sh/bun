@@ -2197,20 +2197,23 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// Stack reserved for the work a frame does before the next check. One
+    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
+    /// path that measures ~160 KB under a sanitizer and a few KB without one.
+    const THRESHOLD: usize = if cfg!(windows) {
+        256 * 1024
+    } else {
+        128 * 1024
+    } + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+
     /// Is there enough stack space to safely recurse?
-    /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.
     #[inline]
     pub fn is_safe_to_recurse(self) -> bool {
         // Saturating sub: if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold
+        remaining > Self::THRESHOLD
     }
 
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
@@ -2221,12 +2224,7 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold.saturating_add(extra)
+        remaining > Self::THRESHOLD.saturating_add(extra)
     }
 
     /// Approximate the current stack position. Reads the stack-pointer

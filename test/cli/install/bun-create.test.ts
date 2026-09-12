@@ -342,6 +342,37 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+it("should preserve package.json indentation from the template", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const template = "tabs-template";
+
+  await Bun.write(
+    join(bunCreateDir, template, "package.json"),
+    `{\n\t"name": "tabs-template",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`,
+  );
+  await Bun.write(join(bunCreateDir, template, "index.js"), "// hi\n");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", template, "dest", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Created tabs-template project successfully");
+  expect(exitCode).toBe(0);
+
+  const packageJson = await Bun.file(join(x_dir, "dest", "package.json")).text();
+  // `name` is rewritten to the destination, so the file is re-printed; the
+  // template's tab indentation must survive the round-trip.
+  expect(packageJson).toBe(
+    `{\n\t"name": "dest",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`,
+  );
+});
+
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
 // CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
 // during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.

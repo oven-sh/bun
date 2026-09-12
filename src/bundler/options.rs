@@ -2319,7 +2319,8 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.

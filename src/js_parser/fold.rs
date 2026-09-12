@@ -264,7 +264,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // imported module end up in the same module group and the namespace
                             // symbol has never been captured, then we don't need to generate
                             // any code for the namespace at all.
-                            p.ignore_usage(id.ref_);
+                            //
+                            // A local holding an `import()` / `require()` namespace is a
+                            // declaration, and an item the linker does not bind prints
+                            // `ns.a`. Its use stays counted, as an accounted-for read, so
+                            // single-use substitution never drops the declaration from
+                            // under it.
+                            if dynamic_record.is_some() {
+                                p.note_tracked_namespace_use(id.ref_);
+                            } else {
+                                p.ignore_usage(id.ref_);
+                            }
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);

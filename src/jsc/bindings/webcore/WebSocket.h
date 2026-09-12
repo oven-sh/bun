@@ -183,7 +183,7 @@ public:
     ExceptionOr<void> pong(JSC::ArrayBufferView&);
     ExceptionOr<void> pong(JSBlob*);
 
-    ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
+    ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason, bool allowEndpointCodes = false);
     ExceptionOr<void> terminate();
     // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
     // stops kernel reads so TCP backpressure reaches the peer; frames already

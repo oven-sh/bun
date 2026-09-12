@@ -288,27 +288,20 @@ impl State {
         self.generated_line < line || (self.generated_line == line && self.generated_column <= col)
     }
 
-    /// `None` for a negative coordinate: only a damaged blob has one.
-    fn to_mapping(self) -> Option<Mapping> {
-        if self.generated_line < 0
-            || self.generated_column < 0
-            || self.original_line < 0
-            || self.original_column < 0
-        {
-            return None;
-        }
-        Some(Mapping {
+    fn to_mapping(self) -> Mapping {
+        // Not `from_zero_based`: a damaged blob can decode to a negative coordinate.
+        Mapping {
             generated: LineColumnOffset {
-                lines: Ordinal::from_zero_based(self.generated_line),
-                columns: Ordinal::from_zero_based(self.generated_column),
+                lines: Ordinal(self.generated_line),
+                columns: Ordinal(self.generated_column),
             },
             original: LineColumnOffset {
-                lines: Ordinal::from_zero_based(self.original_line),
-                columns: Ordinal::from_zero_based(self.original_column),
+                lines: Ordinal(self.original_line),
+                columns: Ordinal(self.original_column),
             },
             source_index: self.source_index,
             name_index: -1,
-        })
+        }
     }
 }
 
@@ -513,13 +506,11 @@ impl WindowReader {
         self.delta_idx + 1 >= self.count
     }
 
-    /// `None`, with the window left `done()`, when a lane runs past the end of the stream.
-    fn next(&mut self, state: &mut State) -> Option<()> {
-        let applied = self.apply_next(state);
-        if applied.is_none() {
+    /// A lane that runs past the end of the stream leaves `state` as it is and `count` 0.
+    fn next(&mut self, state: &mut State) {
+        if self.apply_next(state).is_none() {
             self.count = 0;
         }
-        applied
     }
 
     fn apply_next(&mut self, state: &mut State) -> Option<()> {
@@ -631,7 +622,7 @@ impl InternalSourceMap {
         let mut best = state;
         while !reader.done() {
             let mut nxt = state;
-            reader.next(&mut nxt)?;
+            reader.next(&mut nxt);
             if !nxt.less_or_equal(target_line, target_col) {
                 break;
             }
@@ -639,10 +630,11 @@ impl InternalSourceMap {
             state = nxt;
         }
 
-        if best.generated_line != target_line {
+        // `count` 0: the header said so or a lane overran. The window is damaged.
+        if reader.count == 0 || best.generated_line != target_line {
             return None;
         }
-        best.to_mapping()
+        Some(best.to_mapping())
     }
 }
 
@@ -703,7 +695,7 @@ impl Cursor {
         if self.state.generated_line != target_line {
             return None;
         }
-        self.state.to_mapping()
+        Some(self.state.to_mapping())
     }
 
     fn advance_one(&mut self) -> Option<State> {
@@ -719,7 +711,8 @@ impl Cursor {
             return Some(seed);
         }
         let mut nxt = self.peek.unwrap_or(self.state);
-        self.reader.next(&mut nxt)?;
+        // On a lane overrun `nxt` stays a copy of the current state and the next call leaves the window.
+        self.reader.next(&mut nxt);
         Some(nxt)
     }
 
@@ -765,7 +758,8 @@ impl InternalSourceMap {
             }
             emit_vlq(&state, &mut prev, &mut generated_line, out);
             while !reader.done() {
-                if reader.next(&mut state).is_none() {
+                reader.next(&mut state);
+                if reader.count == 0 {
                     return;
                 }
                 emit_vlq(&state, &mut prev, &mut generated_line, out);

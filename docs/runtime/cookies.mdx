@@ -62,6 +62,8 @@ const server = Bun.serve({
 console.log("Server listening at: " + server.url);
 ```
 
+`req.cookies` is parsed from the request's `Cookie` header. HTTP header values are byte strings, so each byte becomes one character. `cookies.set()` percent-encodes values and `CookieMap` percent-decodes them as UTF-8, so any string you set through this API round-trips. A value that reached the browser some other way as raw UTF-8 (for example `document.cookie = "name=café"` in page JavaScript) arrives as Latin-1 characters (`"cafÃ©"`). Decode such a value with `Buffer.from(value, "latin1").toString("utf8")`.
+
 ### Methods
 
 #### `get(name: string): string | null`
@@ -376,6 +378,16 @@ const cookie = Bun.Cookie.from("session", "abc123", {
   maxAge: 3600,
 });
 ```
+
+## Browser limits
+
+`Bun.Cookie` builds the `Set-Cookie` line you ask for. The browser then applies its own rules ([RFC 6265](https://datatracker.ietf.org/doc/html/rfc6265) and the [6265bis draft](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/)) when it stores the cookie and decides which requests get it back. The ones that most often surprise:
+
+- A cookie whose name plus value is longer than 4096 bytes is not stored at all. The value counts after percent-encoding.
+- An attribute value longer than 1024 bytes is ignored and the cookie is stored with that attribute's default. For `Path` the default is the directory of the request URL. For `Domain` it is the exact request host. Either way the cookie's scope is not the one you wrote.
+- `Path` is matched against the path of later request URLs by whole segments. That path is percent-encoded and never has a query string, a fragment, or `.` and `..` segments, so a `Path` that contains a space, `?`, `#`, `/./` or `/../` never matches and the cookie is never sent.
+- `Max-Age` is a whole number of seconds. Browsers ignore a `Max-Age` attribute with a decimal point in it, which leaves a session cookie, and cap long lifetimes (400 days in Chromium).
+- Every matching cookie comes back on every request in one `Cookie` header. `Bun.serve` rejects a request whose headers exceed `--max-http-header-size` (16 KB by default) with `431 Request Header Fields Too Large`, and the browser keeps sending the same cookies until they expire or the user clears them. Keep the total size of the cookies you set for one site well under that limit.
 
 ## Types
 

@@ -854,3 +854,142 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
     });
   });
 });
+
+// A tarball whose gzip trailer (CRC32 + ISIZE) does not match the data must
+// not install. For `file:` tarballs and manifests without `dist.integrity`
+// the gzip trailer is the only corruption check. Both decompression paths
+// (libdeflate in memory, libarchive streaming) must reject it.
+describe.concurrent("gzip trailer verification", () => {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  function tarHeader(name: string, size: number) {
+    const buf = Buffer.alloc(512, 0);
+    buf.write(name, 0, 100, "utf8");
+    buf.write(octal(0o644, 8), 100);
+    buf.write(octal(0, 8), 108);
+    buf.write(octal(0, 8), 116);
+    buf.write(octal(size, 12), 124);
+    buf.write(octal(0, 12), 136);
+    buf.fill(" ", 148, 156);
+    buf.write("0", 156);
+    buf.write("ustar\0", 257);
+    buf.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(octal(sum, 8), 148);
+    return buf;
+  }
+  function tarFile(name: string, body: Buffer) {
+    return [tarHeader(name, body.length), body, Buffer.alloc((512 - (body.length % 512)) % 512, 0)];
+  }
+  const indexJs = Buffer.from(`module.exports = "pkg@1.0.0:GOOD";\n`);
+  // Stored (level 0) deflate blocks: flipping a payload byte keeps the
+  // deflate stream valid, so only the CRC32 in the trailer can catch it.
+  const goodTgz = gzipSync(
+    Buffer.concat([
+      ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }))),
+      ...tarFile("package/index.js", indexJs),
+      Buffer.alloc(1024, 0),
+    ]),
+    { level: 0 },
+  );
+  const badCrcTgz = Buffer.from(goodTgz);
+  {
+    const i = badCrcTgz.indexOf("module.exports");
+    expect(i).toBeGreaterThan(0);
+    badCrcTgz[i + 18] ^= 0x04; // "pkg" -> "tkg"
+  }
+  // Valid data, but ISIZE claims 100 MB: skips the in-memory path and
+  // goes through libarchive's streaming gzip filter.
+  const badIsizeTgz = Buffer.from(goodTgz);
+  badIsizeTgz.writeUInt32LE(100 * 1024 * 1024, badIsizeTgz.length - 4);
+  // A tar whose end-of-archive blocks end exactly at the 64 KiB boundary of
+  // libarchive's gzip output buffer. The tar reader must still read on to
+  // the end of the gzip member, or the trailer is never checked.
+  const alignedBody = Buffer.alloc(2 * 65536 - 512 - 512 - 512 - 1024, "x");
+  const alignedTar = Buffer.concat([
+    ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }))),
+    ...tarFile("package/big.txt", alignedBody),
+    Buffer.alloc(1024, 0),
+  ]);
+  expect(alignedTar.length).toBe(2 * 65536);
+  const badCrcAlignedTgz = gzipSync(alignedTar, { level: 0 });
+  {
+    const i = badCrcAlignedTgz.indexOf("xxxxxxxx");
+    expect(i).toBeGreaterThan(0);
+    badCrcAlignedTgz[i + 1000] ^= 0x04;
+  }
+
+  async function install(name: string, tgz: Buffer, extraEnv: Record<string, string> = {}) {
+    using dir = tempDir(name, {
+      "pkg.tgz": tgz,
+      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:./pkg.tgz" } }),
+      ".tmp/.keep": "",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+        BUN_TMPDIR: join(String(dir), ".tmp"),
+        ...extraEnv,
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const installed = await file(join(String(dir), "node_modules", "pkg", "index.js")).exists();
+    // A failed extraction must not leave its temp directory behind.
+    const leftovers = (await readdirSorted(join(String(dir), ".tmp"))).filter(e => e !== ".keep");
+    return { stdout, stderr, exitCode, installed, leftovers };
+  }
+
+  it("installs a tarball with a valid trailer", async () => {
+    const { stdout, exitCode, installed } = await install("gzip-trailer-ok", goodTgz);
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(installed).toBe(true);
+  });
+
+  it("rejects a CRC32 mismatch", async () => {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc", badCrcTgz);
+    expect(stderr).toContain("Corrupt gzip data");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
+  });
+
+  it("rejects a CRC32 mismatch on the streaming path", async () => {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc-stream", badCrcTgz, {
+      BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
+    });
+    expect(stderr).toContain("extracting tarball from pkg");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
+  });
+
+  it("rejects a CRC32 mismatch when the tar ends on the filter buffer boundary", async () => {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-aligned", badCrcAlignedTgz, {
+      BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
+    });
+    expect(stderr).toContain("extracting tarball from pkg");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
+  });
+
+  it("rejects an ISIZE mismatch", async () => {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-isize", badIsizeTgz);
+    expect(stderr).toContain("extracting tarball from pkg");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
+  });
+});

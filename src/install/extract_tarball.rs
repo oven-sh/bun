@@ -256,201 +256,237 @@ impl ExtractTarball {
                 return Err(crate::Error::InstallFailed);
             };
 
-        let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
-        {
-            let extract_destination = match bun_sys::make_path::make_open_path(
-                tmpdir,
-                tmpname.as_bytes(),
-                Default::default(),
-            ) {
-                Ok(d) => d,
-                Err(err) => {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
-                            bun_fmt::s(err.name()),
-                            bun_fmt::s(tmpname.as_bytes()),
-                            bun_fmt::s(name),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            };
-
-            use bun_libarchive::Archiver;
-            let mut zlib_pool = Npm::Registry::BodyPool::get();
-            zlib_pool.reset();
-            // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
-
-            let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
-                bun_core::Timespec::now_allow_mocked_time().ns()
-            } else {
-                0
-            };
-
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
-            // so hand it the compressed bytes and never buffer the full tar.
-            // Small tarballs still try libdeflate first for speed; the gzip
-            // ISIZE trailer (size mod 2^32) is only trusted when small.
-            let mut decompressed_in_memory = false;
-            if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
-                let isize: u32 = u32::from_le_bytes(
-                    tgz_bytes[tgz_bytes.len() - 4..][..4]
-                        .try_into()
-                        .expect("infallible: size matches"),
+        let extract_destination = match bun_sys::make_path::make_open_path(
+            tmpdir,
+            tmpname.as_bytes(),
+            Default::default(),
+        ) {
+            Ok(d) => d,
+            Err(err) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
+                        bun_fmt::s(err.name()),
+                        bun_fmt::s(tmpname.as_bytes()),
+                        bun_fmt::s(name),
+                    ),
                 );
-                if isize > 16 && isize < 64 * 1024 * 1024 {
-                    if zlib_pool.list.capacity() == 0 {
-                        let _ = zlib_pool.list.try_reserve_exact(isize as usize);
-                    } else {
-                        let _ = zlib_pool.ensure_unused_capacity(isize as usize);
-                    }
-                    if zlib_pool.list.capacity() > 16 {
-                        use bun_libdeflate_sys::libdeflate;
-                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
-                            zlib_pool.list.clear();
-                            let result = decompressor.decompress_to_vec(
-                                tgz_bytes,
-                                &mut zlib_pool.list,
-                                libdeflate::Encoding::Gzip,
-                            );
-                            if result.status == libdeflate::Status::Success {
-                                decompressed_in_memory = true;
+                return Err(crate::Error::InstallFailed);
+            }
+        };
+
+        let extracted = self.extract_into(log, tgz_bytes, &extract_destination, tmpname, name);
+
+        // Windows cannot rename or delete a directory that still has an open handle.
+        drop(extract_destination);
+
+        let resolved = match extracted {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                // A failed extract leaves the temp directory populated.
+                let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                return Err(err);
+            }
+        };
+
+        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+    }
+
+    /// Decompress `tgz_bytes` and extract it into `extract_destination`.
+    /// Returns the resolved tag for a GitHub tarball (empty otherwise).
+    fn extract_into(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        extract_destination: &Dir,
+        tmpname: &ZStr,
+        name: &[u8],
+    ) -> Result<&'static [u8], Error> {
+        use bun_libarchive::Archiver;
+        let mut resolved: &'static [u8] = b"";
+        let mut zlib_pool = Npm::Registry::BodyPool::get();
+        zlib_pool.reset();
+        // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
+
+        let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
+            bun_core::Timespec::now_allow_mocked_time().ns()
+        } else {
+            0
+        };
+
+        // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+        // so hand it the compressed bytes and never buffer the full tar.
+        // Small tarballs still try libdeflate first for speed; the gzip
+        // ISIZE trailer (size mod 2^32) is only trusted when small.
+        let mut decompressed_in_memory = false;
+        if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
+            let isize: u32 = u32::from_le_bytes(
+                tgz_bytes[tgz_bytes.len() - 4..][..4]
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            if isize > 16 && isize < 64 * 1024 * 1024 {
+                if zlib_pool.list.capacity() == 0 {
+                    let _ = zlib_pool.list.try_reserve_exact(isize as usize);
+                } else {
+                    let _ = zlib_pool.ensure_unused_capacity(isize as usize);
+                }
+                if zlib_pool.list.capacity() > 16 {
+                    use bun_libdeflate_sys::libdeflate;
+                    if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                        zlib_pool.list.clear();
+                        let result = decompressor.decompress_to_vec(
+                            tgz_bytes,
+                            &mut zlib_pool.list,
+                            libdeflate::Encoding::Gzip,
+                        );
+                        match result.status {
+                            libdeflate::Status::Success => decompressed_in_memory = true,
+                            // The ISIZE trailer is only the size mod 2^32, so a
+                            // too-small buffer is not proof of corruption. Stream it.
+                            libdeflate::Status::InsufficientSpace => {}
+                            libdeflate::Status::BadData | libdeflate::Status::ShortOutput => {
+                                log.add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Corrupt gzip data decompressing \"{}\" to \"{}\"",
+                                        bun_fmt::s(name),
+                                        bun_core::fmt::fmt_path_u8(
+                                            tmpname.as_bytes(),
+                                            Default::default()
+                                        ),
+                                    ),
+                                );
+                                return Err(crate::Error::InstallFailed);
                             }
                         }
                     }
                 }
             }
+        }
 
-            let tar_input: &[u8] = if decompressed_in_memory {
-                &zlib_pool.list
-            } else {
-                zlib_pool.list.clear();
-                tgz_bytes
-            };
+        let tar_input: &[u8] = if decompressed_in_memory {
+            &zlib_pool.list
+        } else {
+            zlib_pool.list.clear();
+            tgz_bytes
+        };
 
-            if PackageManager::verbose_install() {
-                bun_core::pretty_errorln!(
-                    "[{}] Extract {}<r> ({} tgz file)",
-                    bun_fmt::s(name),
-                    bun_fmt::s(tmpname.as_bytes()),
-                    bun_core::fmt::size(tgz_bytes.len(), Default::default()),
-                );
-            }
+        if PackageManager::verbose_install() {
+            bun_core::pretty_errorln!(
+                "[{}] Extract {}<r> ({} tgz file)",
+                bun_fmt::s(name),
+                bun_fmt::s(tmpname.as_bytes()),
+                bun_core::fmt::size(tgz_bytes.len(), Default::default()),
+            );
+        }
 
-            match self.resolution.tag {
-                ResolutionTag::Github => {
-                    // BORROW_PARAM: out-param writing the first dirname back into a stack local.
-                    struct DirnameReader<'a> {
-                        needs_first_dirname: bool, // = true
-                        outdirname: &'a mut &'static [u8],
+        match self.resolution.tag {
+            ResolutionTag::Github => {
+                // BORROW_PARAM: out-param writing the first dirname back into a stack local.
+                struct DirnameReader<'a> {
+                    needs_first_dirname: bool, // = true
+                    outdirname: &'a mut &'static [u8],
+                }
+                impl<'a> ArchiveAppender for DirnameReader<'a> {
+                    const HAS_ON_FIRST_DIRECTORY_NAME: bool = true;
+                    fn needs_first_dirname(&self) -> bool {
+                        self.needs_first_dirname
                     }
-                    impl<'a> ArchiveAppender for DirnameReader<'a> {
-                        const HAS_ON_FIRST_DIRECTORY_NAME: bool = true;
-                        fn needs_first_dirname(&self) -> bool {
-                            self.needs_first_dirname
-                        }
-                        fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
-                            debug_assert!(self.needs_first_dirname);
-                            self.needs_first_dirname = false;
-                            *self.outdirname = FileSystem::instance()
-                                .dirname_store()
-                                .append(first_dirname)
-                                .expect("unreachable");
-                        }
-                    }
-                    let mut dirname_reader = DirnameReader {
-                        needs_first_dirname: true,
-                        outdirname: &mut resolved,
-                    };
-
-                    let _ = Archiver::extract_to_dir(
-                        tar_input,
-                        extract_destination.fd(),
-                        None,
-                        &mut dirname_reader,
-                        ExtractOptions {
-                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                            depth_to_skip: 1,
-                            log: PackageManager::verbose_install(),
-                            ..Default::default()
-                        },
-                    )?;
-
-                    let lockfile_tag = self.github_resolved.slice();
-                    if !lockfile_tag.is_empty() {
-                        resolved = FileSystem::instance()
+                    fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
+                        debug_assert!(self.needs_first_dirname);
+                        self.needs_first_dirname = false;
+                        *self.outdirname = FileSystem::instance()
                             .dirname_store()
-                            .append(lockfile_tag)
+                            .append(first_dirname)
                             .expect("unreachable");
                     }
+                }
+                let mut dirname_reader = DirnameReader {
+                    needs_first_dirname: true,
+                    outdirname: &mut resolved,
+                };
 
-                    // This tag is used to know which version of the package was
-                    // installed from GitHub. package.json version becomes sort of
-                    // meaningless in cases like this.
-                    if !resolved.is_empty() {
-                        // Create/truncate `.bun-tag`, then write the resolved tag.
-                        if sys::File::openat(
+                let _ = Archiver::extract_to_dir(
+                    tar_input,
+                    extract_destination.fd(),
+                    None,
+                    &mut dirname_reader,
+                    ExtractOptions {
+                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                        depth_to_skip: 1,
+                        log: PackageManager::verbose_install(),
+                        ..Default::default()
+                    },
+                )?;
+
+                let lockfile_tag = self.github_resolved.slice();
+                if !lockfile_tag.is_empty() {
+                    resolved = FileSystem::instance()
+                        .dirname_store()
+                        .append(lockfile_tag)
+                        .expect("unreachable");
+                }
+
+                // This tag is used to know which version of the package was
+                // installed from GitHub. package.json version becomes sort of
+                // meaningless in cases like this.
+                if !resolved.is_empty() {
+                    // Create/truncate `.bun-tag`, then write the resolved tag.
+                    if sys::File::openat(
+                        extract_destination.fd(),
+                        ZStr::from_static(b".bun-tag\0"),
+                        sys::O::WRONLY
+                            | sys::O::CREAT
+                            | sys::O::TRUNC
+                            | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                        0o664,
+                    )
+                    .and_then(|f| f.write_all(resolved))
+                    .is_err()
+                    {
+                        let _ = sys::unlinkat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            sys::O::WRONLY
-                                | sys::O::CREAT
-                                | sys::O::TRUNC
-                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
-                            0o664,
-                        )
-                        .and_then(|f| f.write_all(resolved))
-                        .is_err()
-                        {
-                            let _ = sys::unlinkat(
-                                extract_destination.fd(),
-                                ZStr::from_static(b".bun-tag\0"),
-                            );
-                        }
+                        );
                     }
                 }
-                _ => {
-                    let _ = Archiver::extract_to_dir(
-                        tar_input,
-                        extract_destination.fd(),
-                        None,
-                        &mut (),
-                        ExtractOptions {
-                            // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
-                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
-                            depth_to_skip: 1,
-                            npm: true,
-                            log: PackageManager::verbose_install(),
-                            ..Default::default()
-                        },
-                    )?;
-                }
             }
-
-            // Explicitly close the temp extraction dir before the rename. On
-            // Windows a still-open handle to the source directory can fail
-            // `NtSetInformationFile` with EBUSY; spelling out the close keeps
-            // the timing visible instead of relying on block-end Drop.
-            drop(extract_destination);
-
-            if PackageManager::verbose_install() {
-                let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
-                    - time_started_for_verbose_logs;
-                bun_core::pretty_errorln!(
-                    "[{}] Extracted to {} ({})<r>",
-                    bun_fmt::s(name),
-                    bun_fmt::s(tmpname.as_bytes()),
-                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
-                );
-                Output::flush();
+            _ => {
+                let _ = Archiver::extract_to_dir(
+                    tar_input,
+                    extract_destination.fd(),
+                    None,
+                    &mut (),
+                    ExtractOptions {
+                        // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
+                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
+                        depth_to_skip: 1,
+                        npm: true,
+                        log: PackageManager::verbose_install(),
+                        ..Default::default()
+                    },
+                )?;
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        if PackageManager::verbose_install() {
+            let elapsed =
+                bun_core::Timespec::now_allow_mocked_time().ns() - time_started_for_verbose_logs;
+            bun_core::pretty_errorln!(
+                "[{}] Extracted to {} ({})<r>",
+                bun_fmt::s(name),
+                bun_fmt::s(tmpname.as_bytes()),
+                bun_core::fmt::fmt_duration_one_decimal(elapsed),
+            );
+            Output::flush();
+        }
+        Ok(resolved)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read

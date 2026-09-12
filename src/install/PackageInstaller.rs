@@ -1824,8 +1824,7 @@ impl<'a> PackageInstaller<'a> {
                         || (resolution.tag == resolution::Tag::Folder
                             && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
                     {
-                        // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
-                        // and is not hoisted.
+                        // This is a transitive folder dependency. It is not hoisted.
                         //
                         // A transitive `Resolution::Folder` declared by a local `file:` package
                         // is relative to the top-level dir (`Package::parse` normalized it), so

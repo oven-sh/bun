@@ -82,8 +82,8 @@ pub enum Method {
     /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
-    /// Used for file: when file: points to a parent directory
-    /// example: "file:../"
+    /// One symlink per file into the source folder. Used for `--backend=symlink`
+    /// and for a package that depends on itself (`file:.`).
     Symlink,
 }
 
@@ -1004,6 +1004,31 @@ impl<'a> PackageInstall<'a> {
             == self.package_name.slice(&self.lockfile.buffers.string_bytes)
     }
 
+    /// The source is a `file:` folder that contains the destination `node_modules`
+    /// (`"pkg": "file:../"`). A walk into that `node_modules` would install the
+    /// destination into itself.
+    fn source_folder_contains_destination(&self, destination_dir: &Dir) -> bool {
+        // Only `file:` folder sources resolve relative to the cwd.
+        if self.cache_dir != Fd::cwd() {
+            return false;
+        }
+        // fd-derived paths: the destination can sit behind a workspace symlink
+        // (node_modules/a -> packages/a), which a lexical compare misses.
+        let Ok(source_dir) = open_dir(self.cache_dir, self.cache_dir_subpath) else {
+            return false;
+        };
+        let mut source_buf = bun_paths::path_buffer_pool::get();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
+        let (Ok(source), Ok(node_modules_dir)) = (
+            sys::get_fd_path(source_dir.fd(), &mut source_buf),
+            sys::get_fd_path(destination_dir.fd(), &mut dest_buf),
+        ) else {
+            return false;
+        };
+        path::resolve_path::is_parent_or_equal(source, node_modules_dir)
+            != path::resolve_path::ParentEqual::Unrelated
+    }
+
     // ───────────────────────────── install backends ─────────────────────────────
 
     #[cfg(target_os = "macos")]
@@ -1015,10 +1040,16 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
+        let skip_dirs: &[&OSPathSlice] = if self.source_folder_contains_destination(destination_dir)
+        {
+            &[bun_paths::os_path_literal!("node_modules")]
+        } else {
+            &[]
+        };
         let mut walker_ = match walker_skippable::walk_owned(
             cached_package_dir,
             &[] as &[&OSPathSlice],
-            &[] as &[&OSPathSlice],
+            skip_dirs,
         ) {
             Ok(w) => w,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
@@ -1079,8 +1110,11 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
-        if let Err(err) = copy(&subdir, &mut walker_) {
-            return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        match copy(&subdir, &mut walker_) {
+            Ok(()) => {}
+            // `install()` falls back to copyfile only on `Err(NotSupported)`.
+            Err(crate::Error::NotSupported) => return Err(crate::Error::NotSupported),
+            Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         }
 
         Ok(InstallResult::Success)
@@ -1089,6 +1123,12 @@ impl<'a> PackageInstall<'a> {
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
+        if self.source_folder_contains_destination(destination_dir) {
+            // A whole-directory clone cannot skip `node_modules`; the
+            // per-directory walk can.
+            return self.install_with_clonefile_each_dir(destination_dir);
+        }
+
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
                 let slash = slash as usize;
@@ -1153,29 +1193,11 @@ impl<'a> PackageInstall<'a> {
             Err(err) => return Err(Failure::boxed(err, Step::OpeningCacheDir, None)),
         };
 
-        // `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
-        #[cfg(windows)]
-        const NODE_MODULES_LIT: &OSPathSlice = &[
-            b'n' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'e' as u16,
-            b'_' as u16,
-            b'm' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'u' as u16,
-            b'l' as u16,
-            b'e' as u16,
-            b's' as u16,
-        ];
-        #[cfg(not(windows))]
-        const NODE_MODULES_LIT: &OSPathSlice = b"node_modules";
-        let skip_dirs: &[&OSPathSlice] = if method == Method::Symlink
-            && self.cache_dir_subpath.len() == 1
-            && self.cache_dir_subpath.as_bytes()[0] == b'.'
+        let skip_dirs: &[&OSPathSlice] = if (method == Method::Symlink
+            && self.cache_dir_subpath.as_bytes() == b".")
+            || self.source_folder_contains_destination(destination_dir)
         {
-            &[NODE_MODULES_LIT]
+            &[bun_paths::os_path_literal!("node_modules")]
         } else {
             &[]
         };
@@ -2236,12 +2258,18 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub(crate) fn get_install_method(&self) -> Method {
-        if self.cache_dir_subpath.as_bytes() == b"."
-            || self.cache_dir_subpath.as_bytes().starts_with(b"..")
-        {
+        if self.cache_dir_subpath.as_bytes() == b"." {
             Method::Symlink
         } else {
             Self::supported_method()
+        }
+    }
+
+    /// A folder is linked from its own directory, so its failure says nothing about the cache.
+    #[cfg(not(windows))]
+    fn remember_copyfile_fallback(is_folder: bool) {
+        if !is_folder {
+            Self::set_supported_method(Method::Copyfile);
         }
     }
 
@@ -2311,15 +2339,16 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
+        // Only the macOS and POSIX fallbacks below lower the method.
+        #[cfg(not(windows))]
         let mut supported_method_to_use = method_;
+        #[cfg(windows)]
+        let supported_method_to_use = method_;
 
-        if resolution_tag == resolution::Tag::Folder
-            && !self
-                .lockfile
-                .is_workspace_tree_id(self.node_modules.tree_id)
-        {
-            supported_method_to_use = Method::Symlink;
-        }
+        #[cfg(not(windows))]
+        let is_folder = resolution_tag == resolution::Tag::Folder;
+        #[cfg(windows)]
+        let _ = resolution_tag;
 
         match supported_method_to_use {
             Method::Clonefile => {
@@ -2331,7 +2360,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2353,7 +2382,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2376,8 +2405,12 @@ impl<'a> PackageInstall<'a> {
                         #[cfg(not(windows))]
                         {
                             if err == crate::Error::NotSameFileSystem {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
+                                // copyfile's O_TRUNC would empty the source through the files already linked.
+                                if self.destination_dir_subpath.as_bytes() != b"." {
+                                    self.uninstall_before_install(destination_dir);
+                                }
                                 break 'outer;
                             }
                         }

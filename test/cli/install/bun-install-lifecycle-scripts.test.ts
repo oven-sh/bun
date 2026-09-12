@@ -259,6 +259,193 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "trustedDependencies added on a later install runs the scripts of an already installed npm: aliased package",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const dependencies = { "esbuild": "npm:uses-what-bin@1.0.0" };
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    // Same name `trustedDependencies` is matched against on a fresh install.
+    // The package is already in node_modules, so this install has to notice
+    // the new entry and run the scripts without a reinstall.
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: ["uses-what-bin"] }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeTrue();
+    expect(await exited).toBe(0);
+
+    // The entry is persisted to bun.lock under the same name, so the next
+    // install sees nothing new: no lockfile rewrite, scripts not run again.
+    await rm(join(packageDir, "node_modules", "esbuild", "what-bin.txt"));
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("(no changes)");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+  },
+);
+
+describe.concurrent.each(["hoisted", "isolated"] as const)(
+  "bun pm trust with an npm: aliased dependency (%s)",
+  linker => {
+    // lifecycle-postinstall's script needs no dependency bins, which are not on
+    // PATH when `bun pm trust` runs a script through the isolated linker's
+    // root symlink.
+    const dependencies = { "esbuild": "npm:lifecycle-postinstall@1.0.0" };
+
+    function scriptRan(ctx: TestCtx) {
+      return exists(join(ctx.packageDir, "node_modules", "esbuild", "postinstall.txt"));
+    }
+
+    async function run(ctx: TestCtx, ...args: string[]) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: ctx.packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: ctx.env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      return { out, err, exitCode };
+    }
+
+    async function installBlocked(ctx: TestCtx) {
+      await verdaccio.writeBunfig(ctx.packageDir, { linker });
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+      const { err, exitCode } = await run(ctx, "install");
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(await scriptRan(ctx)).toBeFalse();
+      expect(exitCode).toBe(0);
+    }
+
+    // The entry `bun pm trust` wrote is only useful if a fresh install honors it.
+    // It also wrote the entry to bun.lock, so the install has no reason to save it again.
+    async function expectFreshInstallRunsScripts(ctx: TestCtx) {
+      await rm(join(ctx.packageDir, "node_modules"), { recursive: true, force: true });
+
+      const { out, err, exitCode } = await run(ctx, "install");
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("Blocked");
+      expect(await scriptRan(ctx)).toBeTrue();
+      expect(exitCode).toBe(0);
+    }
+
+    async function expectTrusted(ctx: TestCtx, names: string[]) {
+      expect(await file(ctx.packageJson).json()).toEqual({
+        name: "foo",
+        version: "1.0.0",
+        dependencies,
+        trustedDependencies: names,
+      });
+      const lockfile = await file(join(ctx.packageDir, "bun.lock")).text();
+      const trusted = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+      expect(trusted).not.toBeNull();
+      expect(trusted![1].match(/"[^"]*"/g)).toEqual(names.map(name => `"${name}"`));
+    }
+
+    test("<name> matches the resolved package name and writes it", async () => {
+      using ctx = await setupTest();
+      await installBlocked(ctx);
+
+      // The listing is by folder name, so it has to say which name the package
+      // is trusted under.
+      let { out, err, exitCode } = await run(ctx, "pm", "untrusted");
+      expect(err).not.toContain("error:");
+      expect(out).toContain('alias of "lifecycle-postinstall"');
+      expect(exitCode).toBe(0);
+
+      // The alias is not the package's name. A package controls the aliases it
+      // declares for its own dependencies, so matching on it would let any
+      // package in the tree claim a name the user is trusting.
+      ({ out, err, exitCode } = await run(ctx, "pm", "trust", "esbuild"));
+      expect(err).toContain("0 scripts ran");
+      expect(err).toContain(" - esbuild");
+      expect(err).toContain(
+        `note: "esbuild" is an alias of "lifecycle-postinstall", run 'bun pm trust "lifecycle-postinstall"' to trust it`,
+      );
+      expect(exitCode).toBe(1);
+      expect(await scriptRan(ctx)).toBeFalse();
+      expect(await file(ctx.packageJson).json()).toEqual({ name: "foo", version: "1.0.0", dependencies });
+
+      ({ out, err, exitCode } = await run(ctx, "pm", "trust", "lifecycle-postinstall"));
+      expect(err).not.toContain("error:");
+      expect(out).toContain('alias of "lifecycle-postinstall"');
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+      expect(await scriptRan(ctx)).toBeTrue();
+
+      await expectTrusted(ctx, ["lifecycle-postinstall"]);
+      await expectFreshInstallRunsScripts(ctx);
+    });
+
+    test("--all writes the resolved package name", async () => {
+      using ctx = await setupTest();
+      await installBlocked(ctx);
+
+      const { out, err, exitCode } = await run(ctx, "pm", "trust", "--all");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+      expect(await scriptRan(ctx)).toBeTrue();
+
+      await expectTrusted(ctx, ["lifecycle-postinstall"]);
+      await expectFreshInstallRunsScripts(ctx);
+    });
+  },
+);
+
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

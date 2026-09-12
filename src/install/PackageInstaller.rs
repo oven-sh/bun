@@ -2002,12 +2002,11 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
-                                    let (trusted_name, trusted_name_hash) =
-                                        if resolution.tag == resolution::Tag::Npm {
-                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                                        } else {
-                                            (alias, truncated_dep_name_hash)
-                                        };
+                                    let (trusted_name, trusted_name_hash) = resolution
+                                        .trusted_name(
+                                            (alias, truncated_dep_name_hash),
+                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
+                                        );
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
                                         .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
@@ -2234,8 +2233,10 @@ impl<'a> PackageInstaller<'a> {
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
-            let truncated_dep_name_hash: TruncatedPackageNameHash =
-                dep.name_hash as TruncatedPackageNameHash;
+            let (trusted_name, trusted_name_hash) = resolution.trusted_name(
+                (alias, dep.name_hash as TruncatedPackageNameHash),
+                (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
+            );
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
@@ -2249,10 +2250,10 @@ impl<'a> PackageInstaller<'a> {
                     .manager()
                     .summary
                     .added_trusted_dependencies
-                    .get(&truncated_dep_name_hash)
+                    .get(&trusted_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!())
+                    if *added.name == *trusted_name.slice(string_buf!())
                         && self.lockfile().has_trusted_dependency(
                             alias.slice(string_buf!()),
                             pkg_name.slice(string_buf!()),
@@ -2310,13 +2311,6 @@ impl<'a> PackageInstaller<'a> {
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
-                        let (trusted_name, trusted_name_hash) =
-                            if resolution.tag == resolution::Tag::Npm {
-                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                            } else {
-                                (alias, truncated_dep_name_hash)
-                            };
-
                         if is_trusted_through_update_request {
                             self.manager_mut()
                                 .trusted_deps_to_add_to_package_json

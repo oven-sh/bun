@@ -120,11 +120,11 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
   expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
 });
 
-// A name that cannot be a host name (a space, a colon, an empty label) is
-// answered ENOTFOUND in-process, without asking the system resolver. Some DNS
-// servers never answer a query for such a label, and the resolver then waits
-// out its own timeout (30s on macOS) before reporting anything.
-test.each(["this is not a hostname", "localhost:80", "a..b"])(
+// A name that cannot be a host name (a space, a colon, a slash, an asterisk, an
+// empty label) is answered ENOTFOUND in-process, without asking the system
+// resolver. Some DNS servers never answer a query for such a label, and the
+// resolver then waits out its own timeout (30s on macOS) before reporting anything.
+test.each(["this is not a hostname", "localhost:80", "a..b", "example.com/path", "*.example.com"])(
   "Bun.connect to %p, which is not a hostname, fails with ENOTFOUND without asking the resolver",
   async hostname => {
     const error = await Bun.connect({
@@ -142,7 +142,7 @@ test.each(["this is not a hostname", "localhost:80", "a..b"])(
 // The listen side binds through a synchronous getaddrinfo, so a name the
 // resolver would sit on blocks the whole thread. The same names are rejected
 // before the call, with the same error the connect side reports.
-test.each(["this is not a hostname", "localhost:80", "a..b"])(
+test.each(["this is not a hostname", "localhost:80", "a..b", "example.com/path", "*.example.com"])(
   "Bun.listen on %p, which is not a hostname, throws ENOTFOUND without asking the resolver",
   hostname => {
     let error: any;

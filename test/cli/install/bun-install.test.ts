@@ -915,16 +915,25 @@ describe.concurrent("bun-install", () => {
     }
 
     // Each row is the userinfo of the dependency URL and the `user:pass` the
-    // header must encode. It is sent as written: like npm (checked with npm
-    // 11), a missing password is sent as an empty one and percent-encoding is
-    // left alone. npm would percent-encode the second colon of the last row
-    // because it serializes the URL first.
+    // header must encode. The userinfo is percent-encoded like the rest of the
+    // URL (`p@ss` can only be written as `p%40ss`), so it is decoded the way
+    // curl and node's `http.get` decode it: the username is split off at the
+    // colon written in the URL, every `%XX` is decoded, a `%` that no two hex
+    // digits follow stays, and a missing password is sent as an empty one.
+    // npm 11 sends the userinfo undecoded, which makes such passwords
+    // impossible to use with it; it would also percent-encode the second
+    // colon of the last row because it serializes the URL first.
     it.each([
       ["a username and a password", "carol:s3cret", "carol:s3cret", []],
       ["a username and a password, isolated linker", "carol:s3cret", "carol:s3cret", ["--linker", "isolated"]],
       ["a username only", "carol", "carol:", []],
       ["a password only", ":s3cret", ":s3cret", []],
-      ["a percent-encoded password", "carol:s3%40cret", "carol:s3%40cret", []],
+      ["a percent-encoded password", "carol:s3%40cret", "carol:s3@cret", []],
+      ["a percent-encoded username and password", "us%25er:p%40ss%3Aw", "us%er:p@ss:w", []],
+      ["lowercase hex digits", "carol:s3%2fcret", "carol:s3/cret", []],
+      ["a percent sign that no hex digits follow", "carol:50%off%2F2", "carol:50%off/2", []],
+      ["a trailing percent sign", "carol:s3cret%", "carol:s3cret%", []],
+      ["a percent-encoded colon in the username", "car%3Aol", "car:ol:", []],
       ["a password containing a colon", "carol:s3:cret", "carol:s3:cret", []],
     ])("sends %s as Basic authorization", async (_, userinfo, userPass, args) => {
       const authorization = basic(userPass);

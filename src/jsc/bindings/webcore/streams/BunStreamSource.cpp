@@ -751,10 +751,19 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     pullArgs.append(sinkController);
     ASSERT(!pullArgs.hasOverflowed());
     JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Resolving without close()/end() ends the sink controller first; a sync return waits for close()/end().
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // A synchronous throw is pull()'s rejection: fail the sink and reject to the owner as onReadDirectStreamPullRejected does. A VM termination is not converted.
+        JSValue reason = exception->value();
+        TRY_CLEAR_EXCEPTION(scope, {});
+        if (sinkController->wrapped()) {
+            sinkController->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() threw"_s)));
+            RETURN_IF_EXCEPTION(scope, {});
+            auto* rejected = promiseRejectedWith(globalObject, reason);
+            markPromiseAsHandled(vm, rejected);
+            return rejected;
+        }
+    } else if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
+        // Resolving without close()/end() ends the sink controller first; a sync return waits for close()/end().
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), result, sinkController);
         return result;

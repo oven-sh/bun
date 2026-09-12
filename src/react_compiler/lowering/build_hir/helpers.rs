@@ -161,27 +161,7 @@ pub(super) fn build_temporary_place(
 }
 
 pub(super) fn promote_temporary(builder: &mut HirBuilder, identifier_id: IdentifierId) {
-    let env = builder.environment_mut();
-    let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
-    let mut buf = [0u8; 12];
-    buf[0] = b'#';
-    buf[1] = b't';
-    let mut n = decl_id.0;
-    let mut len = 2usize;
-    if n == 0 {
-        buf[len] = b'0';
-        len += 1;
-    } else {
-        let start = len;
-        while n > 0 {
-            buf[len] = b'0' + (n % 10) as u8;
-            len += 1;
-            n /= 10;
-        }
-        buf[start..len].reverse();
-    }
-    env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::Promoted(arena_str(&buf[..len])));
+    builder.environment_mut().promote_temporary(identifier_id);
 }
 
 pub(super) fn lower_value_to_temporary(
@@ -1144,7 +1124,7 @@ pub(super) fn lower_object_property_key(
         }
         Data::ENumber(n) if !computed => {
             let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
-            core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value())).ok();
+            let _ = core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value()));
             Ok(Some(ObjectPropertyKey::Identifier {
                 name: StoreStr::new(buf.leak()),
             }))
@@ -1199,7 +1179,7 @@ pub(super) fn lower_optional_member_expression(
 }
 
 /// Returns (object, value_place) pair.
-pub(super) fn lower_optional_member_expression_impl(
+fn lower_optional_member_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,
@@ -1319,7 +1299,7 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
-pub(super) fn lower_optional_call_expression_impl(
+fn lower_optional_call_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,

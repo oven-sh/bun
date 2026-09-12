@@ -1,19 +1,22 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair } from "bun:internal-for-testing";
+import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { closeSync } from "fs";
+import { closeSync, readFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isLinux,
   isWindows,
   libcPathForDlopen,
   tempDir,
   tls,
 } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
@@ -350,11 +353,20 @@ describe.concurrent("socket", () => {
   }, 60_000);
 
   it("should allow large amounts of data to be sent and received", async () => {
-    expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+    const { stderr, exitCode } = await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)));
+    if (exitCode !== 0) console.error(stderr);
+    expect(exitCode).toBe(0);
   }, 60_000);
 
   it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
-    expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
+    expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
+  });
+
+  // ssl_update_handshake set last_write_failed on SSL_ERROR_WANT_READ, so a
+  // paused (writable-armed) socket with a stalled handshake re-fired writable
+  // every tick at 100% CPU until the peer's handshake bytes arrived.
+  it("paused TLS socket with a stalled handshake must not spin the event loop", async () => {
+    expect(await bunRun(fileURLToPath(new URL("./tls-handshake-pause-spin-fixture.ts", import.meta.url)))).toSpawn();
   });
 
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
@@ -489,7 +501,7 @@ describe.concurrent("socket", () => {
   });
 
   it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
-    expect([fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url))]).toRun();
+    expect(await bunRun(fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url)))).toSpawn();
   });
 
   it("should not call open if the connection had an error", async () => {
@@ -592,6 +604,64 @@ describe.concurrent("socket", () => {
     await promise;
     expect(socket.authorized).toBe(true);
   });
+  // A server-side upgradeTLS handed only a SecureContext has no parsed tls
+  // options to take requestCert/rejectUnauthorized from, so the per-socket
+  // verify mode has to come from the context. Clearing it there would silently
+  // stop the server from sending a CertificateRequest.
+  it("upgradeTLS with only a secureContext keeps the context's verify mode", async () => {
+    const secureContext = createSecureContext({
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.cert,
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.upgradeTLS({
+            tls: true,
+            secureContext: (secureContext as any).context,
+            isServer: true,
+            data: {},
+            socket: {
+              handshake(tlsSocket) {
+                const peer = tlsSocket.getPeerCertificate();
+                resolve(!!peer && Object.keys(peer).length > 0);
+              },
+              data() {},
+              close() {},
+              error(_s, err) {
+                reject(err);
+              },
+            },
+          });
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    try {
+      // The client only sends its certificate if the server asked for one.
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        cert: tls.cert,
+        key: tls.key,
+      });
+      client.on("error", () => {});
+      expect(await promise).toBe(true);
+      client.destroy();
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,
@@ -1080,6 +1150,57 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const tls = ${JSON.stringify(tls)};
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data() {}, open() {}, close() {} },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ...tls, rejectUnauthorized: false },
+        socket: {
+          data() {},
+          open() {},
+          handshake(s) {
+            const ctx = Object.assign(new String("ctx"), {
+              [Symbol.toPrimitive]() { s.terminate(); Bun.gc(true); return "ctx"; },
+            });
+            let result;
+            try {
+              result = String(s.exportKeyingMaterial(32, "EXPORTER-test", ctx));
+            } catch (e) {
+              result = "threw: " + e.message;
+            }
+            resolve(result);
+          },
+          close() {},
+          error() {},
+        },
+      });
+      console.log(await promise);
+      listener.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("undefined\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
   // `end()` on a TLS client sends close_notify and defers the raw close until the
   // peer replies, leaving `is_active` set so the eventual onClose can release the
@@ -1385,6 +1506,156 @@ it("TLS mid-read boundary dispatch: writing to another TLS socket from data() do
   }
 }, 60_000);
 
+describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
+  // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /
+  // SNICallback go through. Both run from inside the read that is processing
+  // the ClientHello and hand the accepted socket to JS, so a write() there
+  // lands on a TLS engine that is mid-handshake on this very socket. It gets
+  // the same treatment as any other write issued before the handshake is done:
+  // nothing is consumed (write() reports 0) and drain() fires once the
+  // handshake completes. Encrypting it on the spot instead re-entered the
+  // engine and failed the handshake (client: TLSV1_ALERT_INTERNAL_ERROR).
+  const MESSAGE = "written-from-drain;";
+  const cases: Array<[string, (attempt: (socket: Socket) => void) => object, string | false]> = [
+    [
+      "alpnCallback",
+      attempt => ({
+        alpnCallback(socket: Socket) {
+          attempt(socket);
+          return "x/1";
+        },
+      }),
+      "x/1",
+    ],
+    [
+      "serverName",
+      attempt => ({
+        serverName(_listenerData: unknown, _servername: string, socket: Socket) {
+          attempt(socket);
+        },
+      }),
+      false,
+    ],
+  ];
+  for (const [hook, selection, expectedAlpn] of cases) {
+    it(`${hook}: the write is parked and the handshake still completes`, async () => {
+      const events: string[] = [];
+      const serverSideClosed = Promise.withResolvers<void>();
+      let pending = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          ...selection(socket => {
+            const written = socket.write(MESSAGE);
+            events.push(`write:${written}`);
+            pending = MESSAGE.slice(written);
+          }),
+          handshake(socket, success) {
+            events.push(`handshake:${success}`);
+            if (!pending) socket.end();
+          },
+          drain(socket) {
+            events.push("drain");
+            pending = pending.slice(socket.write(pending));
+            if (!pending) socket.end();
+          },
+          data() {},
+          error(_socket, err) {
+            events.push(`error:${err.message}`);
+          },
+          close() {
+            events.push("close");
+            serverSideClosed.resolve();
+          },
+        },
+      });
+
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        ca: tls.cert,
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+      });
+      const received = await new Promise<string>(resolve => {
+        let data = "";
+        client.setEncoding("utf8");
+        client.on("data", chunk => (data += chunk));
+        client.on("end", () => resolve(data));
+        client.on("error", err => resolve(`client error: ${err.message}`));
+      });
+      client.end();
+      await serverSideClosed.promise;
+
+      expect({ received, alpn: client.alpnProtocol, events }).toEqual({
+        received: MESSAGE,
+        alpn: expectedAlpn,
+        events: ["write:0", "handshake:true", "drain", "close"],
+      });
+    });
+  }
+});
+
+it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, not an engine-internal cell", async () => {
+  // The thrown value must reach the `error` handler as a plain Error, not the
+  // JSC::Exception wrapper cell: `Object.prototype.toString.call` on the cell
+  // aborts the process and `instanceof Error` on it is false. The crash fires
+  // on the first property load of the value, so probe it in a subprocess.
+  using dir = tempDir("alpn-tostring-throw", {
+    "fixture.cjs": `
+      const tlsMod = require("node:tls");
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ${JSON.stringify(tls.key)}, cert: ${JSON.stringify(tls.cert)} },
+        socket: {
+          alpnCallback() {
+            // Not a boolean, and ToString on it throws a TypeError.
+            return Symbol("alpn-choice");
+          },
+          data() {},
+          error(_socket, v) {
+            const tag = Object.prototype.toString.call(v);
+            console.log("error:" + (v instanceof Error) + ":" + tag + ":" + (v && v.name));
+          },
+          close() {},
+        },
+      });
+      const client = tlsMod.connect({
+        port: server.port,
+        host: "127.0.0.1",
+        ca: ${JSON.stringify(tls.cert)},
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+      });
+      // The server refuses the connection with a fatal no_application_protocol
+      // alert after its error handler ran; either client event ends the test.
+      client.on("error", () => server.stop(true));
+      client.on("secureConnect", () => {
+        client.end();
+        server.stop(true);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+    lines: ["error:true:[object Error]:TypeError"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on
@@ -1477,6 +1748,178 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // libuv reports a missing pipe from the connect callback, not from
+  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // writer, so closing the writer reported no close, and the native context
+  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
+  // stayed alive once per failed attempt.
+  it.concurrent.each([
+    ["plain", "", 0],
+    ["tls", "tls: true,", 1],
+  ])(
+    "a connect that fails asynchronously (%s) releases the native context",
+    async (_name, tlsOption, sslCtxPerAttempt) => {
+      const attempts = 8;
+      const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
+      const src = /* js */ `
+        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
+        const contextsBefore = namedPipeInternals.liveCount();
+        const sslCtxBefore = sslCtxLiveCount();
+
+        let connectErrors = 0;
+        let closes = 0;
+        let firstAttempt = null;
+        const outcomes = new Set();
+
+        for (let i = 0; i < ${attempts}; i++) {
+          try {
+            await Bun.connect({
+              unix: ${JSON.stringify(pipePrefix)} + i,
+              ${tlsOption}
+              socket: {
+                data() {},
+                open() {},
+                close() { closes++; },
+                error() {},
+                connectError(_socket, err) {
+                  connectErrors++;
+                  outcomes.add("connectError:" + err.code);
+                  // This attempt's context is still alive while it reports the failure.
+                  firstAttempt ??= {
+                    contexts: namedPipeInternals.liveCount() - contextsBefore,
+                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
+                  };
+                },
+              },
+            });
+            outcomes.add("resolved");
+          } catch (err) {
+            outcomes.add("rejected:" + err.code);
+          }
+        }
+
+        // Finalizing the wrappers must not touch a socket its context already released.
+        Bun.gc(true);
+        // A context frees itself from a task it queues when its last ref drops.
+        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+
+        console.log(JSON.stringify({
+          connectErrors,
+          closes,
+          outcomes: [...outcomes].sort(),
+          firstAttempt,
+          leaked: {
+            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sslCtx: sslCtxLiveCount() - sslCtxBefore,
+          },
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the child died before reporting, the diff shows its raw output.
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ result, stderr, exitCode }).toEqual({
+        result: {
+          connectErrors: attempts,
+          closes: 0,
+          outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
+          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
+          leaked: { contexts: 0, sslCtx: 0 },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+// A socket over a Windows named pipe frees its native context from a task
+// that is queued when the socket closes. A handler can close the socket and
+// then spin the event loop before it returns (`expect().resolves` blocks on
+// the promise and runs queued tasks), so the context is gone by the time the
+// libuv read callback that invoked the handler gets control back. The
+// callback must keep the context alive until it is done with it.
+describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
+  // `trigger` is the server handler that tears the socket down: "end" runs
+  // from the EOF read callback, "data" from the data read callback.
+  function fixture(trigger: "end" | "data") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
+      const serverOpened = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+
+      function closeAndSpinEventLoop(socket) {
+        socket.end();
+        // Blocks until the promise settles. Every queued task, including the
+        // one that frees the native context of this socket, runs before this returns.
+        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          open() { serverOpened.resolve(); },
+          data(socket) { ${trigger === "data" ? "closeAndSpinEventLoop(socket);" : ""} },
+          end(socket) { ${trigger === "end" ? "closeAndSpinEventLoop(socket);" : ""} },
+          close() { serverClosed.resolve(); },
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          open() {},
+          data() {},
+          close() { clientClosed.resolve(); },
+          error() {},
+        },
+      });
+      await serverOpened.promise;
+
+      ${trigger === "data" ? 'client.write("x");' : "client.end();"}
+
+      await serverClosed.promise;
+      await clientClosed.promise;
+      console.log("OK");
+    `;
+  }
+
+  it.each(["end", "data"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -2229,8 +2672,10 @@ Reo=
 
     it("closes a connection whose server certificate is not trusted", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
+      // A rejecting client reports the failed verdict at the callback, like
+      // node v26.3.0 (secureConnect never fires; socket.authorized is false).
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2243,8 +2688,10 @@ Reo=
 
     it("closes an untrusted connection with tls: true", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+      // Same node v26.3.0 contract as above: the rejected handshake reports
+      // authorized=false at the callback.
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2354,7 +2801,9 @@ Reo=
             handshake.resolve({
               authorized: socket.authorized,
               error: authorizationError?.message ?? null,
-              // The raw twin shares the fd: its writes must refuse too.
+              // The raw twin shares the fd: its writes must refuse too. A
+              // rejecting client's REJECTED flag propagates to the twin so a
+              // MITM that failed verification can never receive plaintext.
               rawWrite: raw.write("must-not-reach-the-peer"),
             });
           },
@@ -2373,6 +2822,58 @@ Reo=
       expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
       await closed.promise;
       expect(received).toEqual([]);
+    });
+
+    it("refuses raw-twin writes after a failed (non-policy) handshake", async () => {
+      // rejectUnauthorized: false so the policy-reject path stays out of the
+      // picture: the transport must fail closed purely because the handshake
+      // itself failed (the peer is not speaking TLS), the way node destroys
+      // the underlying socket on a TLS failure.
+      const serverReceived: string[] = [];
+      const failure = Promise.withResolvers<number>();
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.write("this-is-not-a-tls-server\n");
+          },
+          data(_socket, data) {
+            serverReceived.push(data.toString("latin1"));
+          },
+          close() {},
+          error() {},
+        },
+      });
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const [raw, secure] = tcp.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake(_socket: Socket, success: boolean) {
+            if (!success) failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          error() {
+            // Protocol failures surface here; the raw twin must already be
+            // fail-closed by the time JS observes the failure.
+            failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          data() {},
+          close() {
+            closed.resolve();
+          },
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await failure.promise).toBe(-1);
+      await closed.promise;
+      expect(serverReceived.join("")).not.toContain("plaintext-after-failed-handshake");
     });
 
     it("keeps a connection whose server certificate is trusted", async () => {
@@ -2465,6 +2966,9 @@ Reo=
         socket: {
           open() {},
           handshake(socket) {
+            // Fail closed: the rejected peer failed chain verification, so the
+            // write is refused outright (-1) rather than sealed with keys a
+            // malicious server can derive from the ECDHE exchange.
             handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
           },
           data() {},
@@ -2691,6 +3195,149 @@ Reo=
       await t.echoed.promise;
       expect(t.received.join("")).toBe("hello-from-server\nping");
     });
+
+    const NODE_TLS_FIXTURES = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+    const AGENT1_KEY = readFileSync(join(NODE_TLS_FIXTURES, "agent1-key.pem"), "utf8");
+    const AGENT1_CRT = readFileSync(join(NODE_TLS_FIXTURES, "agent1-cert.pem"), "utf8");
+    const CA1_CRT = readFileSync(join(NODE_TLS_FIXTURES, "ca1-cert.pem"), "utf8");
+    const AGENT1_LOCALHOST_MISMATCH =
+      "Hostname/IP does not match certificate's altnames: Host: localhost. is not cert's CN: agent1";
+
+    async function connectOverUnix(prefix: string, clientTls: Record<string, unknown>) {
+      const dir = tempDir(prefix, {});
+      const sock = join(String(dir), "s.sock");
+      const received: string[] = [];
+      const handshake = Promise.withResolvers<{
+        authorizedArg: boolean;
+        authorizedGetter: boolean;
+        callbackError: string | null;
+        callbackCode: string | null;
+        getterError: string | null;
+        getterCode: string | null;
+      }>();
+      const closed = Promise.withResolvers<void>();
+      const echoed = Promise.withResolvers<void>();
+
+      const server = Bun.listen({
+        unix: sock,
+        tls: { key: AGENT1_KEY, cert: AGENT1_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+
+      let client: Bun.Socket;
+      try {
+        client = await Bun.connect({
+          unix: sock,
+          tls: clientTls as Bun.TLSOptions,
+          socket: {
+            open() {},
+            handshake(socket, authorized, authorizationError) {
+              handshake.resolve({
+                authorizedArg: authorized,
+                authorizedGetter: socket.authorized,
+                callbackError: authorizationError?.message ?? null,
+                callbackCode: (authorizationError as any)?.code ?? null,
+                getterError: socket.getAuthorizationError()?.message ?? null,
+                getterCode: (socket.getAuthorizationError() as any)?.code ?? null,
+              });
+            },
+            data(_socket, data) {
+              received.push(data.toString());
+              if (received.join("").includes("ping")) echoed.resolve();
+            },
+            close() {
+              closed.resolve();
+            },
+            error(_socket, err) {
+              handshake.reject(err);
+              echoed.reject(err);
+            },
+            connectError(_socket, err) {
+              handshake.reject(err);
+              closed.reject(err);
+              echoed.reject(err);
+            },
+          },
+        });
+      } catch (e) {
+        server.stop(true);
+        dir[Symbol.dispose]();
+        throw e;
+      }
+
+      return {
+        server,
+        client,
+        received,
+        handshake,
+        closed,
+        echoed,
+        [Symbol.dispose]() {
+          client.end();
+          server.stop(true);
+          dir[Symbol.dispose]();
+        },
+      };
+    }
+
+    it.skipIf(isWindows)(
+      "verifies the server certificate against localhost over a unix socket when no serverName is given",
+      async () => {
+        using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
+        expect(await t.handshake.promise).toEqual({
+          authorizedArg: false,
+          authorizedGetter: false,
+          callbackError: AGENT1_LOCALHOST_MISMATCH,
+          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+          getterError: AGENT1_LOCALHOST_MISMATCH,
+          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        });
+        await t.closed.promise;
+        expect(t.received).toEqual([]);
+        expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+
+        using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
+        expect(await ok.handshake.promise).toEqual({
+          authorizedArg: true,
+          authorizedGetter: true,
+          callbackError: null,
+          callbackCode: null,
+          getterError: null,
+          getterCode: null,
+        });
+        ok.client.write("ping");
+        await ok.echoed.promise;
+        expect(ok.received.join("")).toBe("hello-from-server\nping");
+      },
+    );
+
+    it.skipIf(isWindows)(
+      "reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost",
+      async () => {
+        using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
+        expect(await t.handshake.promise).toEqual({
+          authorizedArg: false,
+          authorizedGetter: false,
+          callbackError: AGENT1_LOCALHOST_MISMATCH,
+          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+          getterError: AGENT1_LOCALHOST_MISMATCH,
+          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        });
+        t.client.write("ping");
+        await t.echoed.promise;
+        expect(t.received.join("")).toBe("hello-from-server\nping");
+      },
+    );
   });
 
   // https://github.com/oven-sh/bun/issues/33754
@@ -3101,4 +3748,961 @@ Reo=
       expect(t.serverReceived.join("")).toBe("client-app-data\n");
     });
   });
+});
+
+// Linux-only: uses /proc/self/fd to find and close the connected socket's fd
+// so getsockname()/getpeername() fail with EBADF.
+it.skipIf(!isLinux)(
+  "socket.localPort / socket.remotePort return undefined when the underlying fd is gone",
+  async () => {
+    const script = /* js */ `
+    import { readdirSync, readlinkSync, closeSync } from "node:fs";
+
+    function socketFds() {
+      const out = new Set();
+      for (const e of readdirSync("/proc/self/fd")) {
+        let link = "";
+        try { link = readlinkSync("/proc/self/fd/" + e); } catch {}
+        if (link.startsWith("socket:")) out.add(Number(e));
+      }
+      return out;
+    }
+
+    const opened = Promise.withResolvers();
+    const server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { open() {}, data() {}, close() {} },
+    });
+
+    const before = socketFds();
+    const client = await Bun.connect({
+      port: server.port,
+      hostname: "127.0.0.1",
+      socket: { open: opened.resolve, data() {}, close() {} },
+    });
+    await opened.promise;
+
+    const after = socketFds();
+    const newFds = [...after].filter(fd => !before.has(fd));
+    if (newFds.length === 0) {
+      console.log(JSON.stringify({ skipped: true }));
+      server.stop(true);
+      process.exit(0);
+    }
+    for (const fd of newFds) closeSync(fd);
+
+    console.log(JSON.stringify({
+      localPort: client.localPort ?? null,
+      remotePort: client.remotePort ?? null,
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const out = JSON.parse(stdout.trim());
+    if (out.skipped) return;
+    expect(out).toEqual({ localPort: null, remotePort: null });
+  },
+);
+
+describe("TLS handshake callback throw", () => {
+  // A throw from a Bun-native handshake callback must reach the socket's own
+  // error handler (the documented contract), not crash the process — node:tls
+  // gets its uncaughtException semantics in net.ts, not in the shared native
+  // dispatch.
+  it("is delivered to the socket's own error handler", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data() {},
+        error() {},
+      },
+    });
+    try {
+      const boom = new Error("boom-native-handshake");
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake() {
+            throw boom;
+          },
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          data() {},
+          close() {
+            reject(new Error("socket closed before the error handler ran"));
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+it("an unref'd Bun.listen() with no other references keeps accepting across GC", async () => {
+  // Listener.unref() used to downgrade the wrapper's GC ref to weak while the
+  // socket was still listening. GC then collected the wrapper (and the
+  // handlers cell it roots), so the next accepted connection either dispatched
+  // on_open into a swept cell (SIGABRT / type confusion) or, once the
+  // finalizer had closed the socket, got ECONNREFUSED. unref() must only
+  // release the event-loop hold; the wrapper stays reachable until stop().
+  // Raw TCP instead of fetch: the server replies and ends without reading the
+  // request, and on Windows closing with the request unread RSTs the exchange.
+  const src = `
+    const churnSink = [];
+    function churn() {
+      let a = [];
+      for (let j = 0; j < 30000; j++) a.push(j & 1 ? { j } : "s" + j);
+      churnSink[0] = a;
+      for (let j = 0; j < 30000; j++) churnSink[1] = function () { return j; };
+    }
+    function makeUnreffedListener() {
+      const l = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+        open(s) {
+          s.write("ok");
+          s.end();
+        },
+        data() {},
+        error() {},
+      }});
+      const port = l.port;
+      l.unref();
+      return port;
+    }
+    async function roundTrip(port) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let received = "";
+      await Bun.connect({ hostname: "127.0.0.1", port, socket: {
+        data(s, d) { received += d; },
+        close() { resolve(received); },
+        error(s, e) { reject(e); },
+      }});
+      return promise;
+    }
+    const ports = [];
+    for (let round = 0; round < 4; round++) {
+      ports.push(makeUnreffedListener());
+      churn();
+      Bun.gc(true);
+      churn();
+      await Bun.sleep(1);
+      Bun.gc(true);
+      for (const port of ports) {
+        const got = await roundTrip(port);
+        if (got !== "ok") throw new Error("listener " + port + " replied " + JSON.stringify(got));
+      }
+    }
+    console.log("served " + ports.length + " listeners");
+  `;
+  // The subprocess must also exit on its own: unref() still has to release
+  // the listeners' event-loop refs even though their wrappers stay reachable.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "served 4 listeners",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent("TLS session/keylog handlers", () => {
+  // `session`/`keylog` dispatch from the event loop after the SSL stack
+  // unwinds. These pin the delivery contract for those native dispatch paths:
+  // Buffer payloads, and a throw from the handler is delivered to the
+  // socket's own error handler instead of being left pending on the VM.
+  function listenTls() {
+    return Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        open(s) {
+          // The client only processes the server's NewSessionTicket during a
+          // read, so give it something to read.
+          s.write("x");
+        },
+        data() {},
+        error() {},
+      },
+    });
+  }
+
+  it("session and keylog deliver Buffers to the client handlers", async () => {
+    const server = listenTls();
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    const keylogLines: Buffer[] = [];
+    try {
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert, serverName: "localhost" },
+        socket: {
+          data() {},
+          error(_socket, err) {
+            reject(err);
+          },
+          session(_socket, sessionBuffer) {
+            resolve(sessionBuffer);
+          },
+          keylog(_socket, line) {
+            keylogLines.push(line);
+          },
+        },
+      });
+      const session = await promise;
+      expect(session).toBeInstanceOf(Buffer);
+      expect(session.length).toBeGreaterThan(0);
+      // The handshake's key material was logged before the session ticket.
+      expect(keylogLines.length).toBeGreaterThan(0);
+      expect(keylogLines[0]).toBeInstanceOf(Buffer);
+      expect(keylogLines[0].toString()).toContain("_TRAFFIC_SECRET");
+      socket.end();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("a throw from session() is delivered to the socket's error handler", async () => {
+    const server = listenTls();
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    const boom = new Error("boom-session");
+    try {
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert, serverName: "localhost" },
+        socket: {
+          data() {},
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          session() {
+            throw boom;
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+      socket.end();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("a throw from keylog() is delivered to the socket's error handler", async () => {
+    const server = listenTls();
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    const boom = new Error("boom-keylog");
+    let thrown = false;
+    try {
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert, serverName: "localhost" },
+        socket: {
+          data() {},
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          keylog() {
+            if (!thrown) {
+              thrown = true;
+              throw boom;
+            }
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+      socket.end();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  // The session Buffer allocation can only fail on JSC heap OOM; the fault
+  // injector simulates exactly that throw. The fixture asserts the failure
+  // surfaces as an unhandled error (not a stale pending exception on the VM)
+  // and that the event loop survives it.
+  it.skipIf(!socketFaultInjection.available())(
+    "an injected session-buffer allocation failure is reported as an unhandled error",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "socket-session-oom-fixture.ts")],
+        env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({
+        armed: lines.includes("ARMED"),
+        // Exactly one: the injected failure, and nothing else leaking later.
+        uncaught: lines.filter(line => line.startsWith("UNCAUGHT:")),
+        roundTrip: lines.includes("ROUNDTRIP: ok"),
+        exitCode,
+        // Only populated when the assertion is about to fail, so the diff shows why.
+        stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+      }).toEqual({
+        armed: true,
+        uncaught: [expect.stringMatching(/out of memory/i)],
+        roundTrip: true,
+        exitCode: 0,
+        stderrTail: "",
+      });
+    },
+    // Symbolizing the crash backtrace of a debug/ASAN binary (the failure
+    // mode this test exists to catch) takes several seconds on its own.
+    30_000,
+  );
+});
+
+describe.concurrent("socket open() callback throw", () => {
+  // open() dispatch settles the connect promise before the callback runs, so
+  // a throw from open() must not reject the promise; it is delivered to the
+  // socket's own error handler.
+  it("client: connect() still resolves and the error handler receives the thrown error", async () => {
+    const boom = new Error("boom-client-open");
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    try {
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open() {
+            throw boom;
+          },
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          data() {},
+        },
+      });
+      expect(socket).toBeDefined();
+      expect(await promise).toBe(boom);
+      socket.end();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("server: the listener's error handler receives the thrown error", async () => {
+    const boom = new Error("boom-server-open");
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          throw boom;
+        },
+        error(_socket, err) {
+          resolve(err as Error);
+        },
+        data() {},
+      },
+    });
+    try {
+      const client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      expect(await promise).toBe(boom);
+      client.end();
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe.concurrent("connect() failure promise settlement", () => {
+  it("a synchronous unix connect failure rejects the promise and fires connectError", async () => {
+    // Runs in a child with a relative unix path: an absolute tempdir path can
+    // exceed sun_path (104 bytes on macOS), where the usockets long-path
+    // fallback reports ENAMETOOLONG/EINVAL instead of the ENOENT this pins.
+    using dir = tempDir("socket-sync-connect-fail", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let cbCode = null;
+        try {
+          await Bun.connect({
+            unix: "does-not-exist/sock.sock",
+            socket: { connectError(_s, e) { cbCode = e.code; }, data() {} },
+          });
+          console.log("RESOLVED");
+        } catch (e) {
+          console.log("rejected:" + e.code + " connectError:" + cbCode);
+        }`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected:ENOENT connectError:ENOENT");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("an error thrown by connectError() becomes the connect() rejection", async () => {
+    // Grab a port nothing is listening on anymore.
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = probe.port;
+    probe.stop(true);
+
+    const boom = new Error("boom-connect-error");
+    await expect(
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        socket: {
+          connectError() {
+            throw boom;
+          },
+          data() {},
+        },
+      }),
+    ).rejects.toBe(boom);
+  });
+});
+
+describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
+  // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
+  // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
+  // this covers the shared usockets core in bun:test form. Unfixed, epoll
+  // re-delivered end on every writable rearm, kqueue spun the writable
+  // dispatch forever, and the libuv backend stranded (the FIN consumed the
+  // only AFD event the reset could ride).
+  it("delivers end exactly once and closes after the reset", async () => {
+    const issued = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let endCount = 0;
+    const big = Buffer.alloc(4 * 1024 * 1024, 0x78);
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(s) {
+          // Write until the kernel refuses a full chunk so the reset is
+          // guaranteed to land behind pending writes (the peer is paused, so
+          // this terminates once its receive buffer and our send buffer fill).
+          while (s.write(big) === big.byteLength) {}
+          issued.resolve();
+        },
+        data() {},
+        drain(s) {
+          s.write(big);
+        },
+        end() {
+          endCount++;
+          ended.resolve();
+        },
+        error() {},
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+
+    const opened = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: {
+        open: s => opened.resolve(s),
+        data() {},
+        end() {},
+        error: (_s, e) => opened.reject(e),
+        close: () => opened.reject(new Error("peer closed before setup finished")),
+      },
+    });
+    const peer = await opened.promise;
+    peer.pause();
+    await issued.promise; // victim has queued more than the kernel will buffer
+    peer.shutdown(); // FIN
+    await ended.promise; // victim saw it
+    // The FIN-to-RST gap is where the bug lived; an immediate RST can overtake
+    // the FIN and just read as ECONNRESET on the readable side.
+    await Bun.sleep(50);
+    peer.terminate(); // RST
+    await closed.promise; // victim must tear down, not spin or strand
+    expect(endCount).toBe(1);
+  });
+});
+
+// A paused socket must not wake the event loop for data it is not going to read. epoll and
+// AFD do not report data without readable interest; kqueue keeps a read knote registered on a
+// non-reading socket so the peer's FIN/RST still arrive, and that knote used to fire once per
+// incoming segment. The paused socket lives in a child so nothing else turns its loop: it
+// samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
+// then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
+// does not reports the handful caused by our two control lines.
+it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+  const SEGMENTS = 200;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      let socket;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            socket = s;
+            s.pause();
+            process.stdout.write("port " + server.port + "\\n");
+          },
+          data() {
+            process.stdout.write("data while paused\\n");
+          },
+          close() {},
+          drain() {},
+        },
+      });
+      process.stdout.write("port " + server.port + "\\n");
+      let before;
+      for await (const line of console) {
+        if (line === "start") {
+          before = getEventLoopStats().iteration;
+          process.stdout.write("started\\n");
+        } else if (line === "stop") {
+          process.stdout.write("iterations " + (getEventLoopStats().iteration - before) + "\\n");
+          server.stop(true);
+          process.exit(0);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  async function line() {
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return buffered;
+      buffered += new TextDecoder().decode(value);
+    }
+    const i = buffered.indexOf("\n");
+    const out = buffered.slice(0, i);
+    buffered = buffered.slice(i + 1);
+    return out;
+  }
+  const port = Number((await line()).split(" ")[1]);
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {}, open() {}, close() {}, drain() {} },
+  });
+  expect(await line()).toBe(`port ${port}`); // open() ran: the socket is paused
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  expect(await line()).toBe("started");
+  for (let i = 0; i < SEGMENTS; i++) {
+    peer.write("x");
+    peer.flush();
+    // Separate segments need separate event-loop turns on our side; this paces the sender,
+    // it is not waiting for a condition in the child.
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  child.stdin.write("stop\n");
+  await child.stdin.flush();
+  const result = await line();
+  peer.end();
+  expect(result).toMatch(/^iterations \d+$/);
+  // Two stdin lines and process bookkeeping account for a few turns; per-segment wakeups
+  // would put this near SEGMENTS.
+  expect(Number(result.split(" ")[1])).toBeLessThan(SEGMENTS / 4);
+  expect(await child.exited).toBe(0);
+});
+
+// A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
+// regardless of interest; kqueue keeps a read knote registered while reads are off, see
+// epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
+// anything: the data queued ahead of the reset is delivered, then the socket closes with read
+// ECONNRESET. Closing without reading discarded that data (a streamed body cut short although
+// every byte arrived, #39846). Windows discards the receive queue on a reset itself. The
+// node:net and node:tls shapes are in test/js/node/tls/node-tls-server.test.ts.
+describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
+  it("delivers the data queued ahead of the reset, then closes with read ECONNRESET, while still paused", async () => {
+    const closedWith = Promise.withResolvers<Error | undefined>();
+    let received = "";
+    const pauseAndGreet = (socket: Socket) => {
+      socket.pause();
+      socket.write("greeting");
+    };
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? tls : undefined,
+      socket: {
+        open(socket) {
+          // A TLS socket cannot be paused before its handshake has been read.
+          if (transport === "tcp") pauseAndGreet(socket);
+        },
+        handshake(socket, success, authorizationError) {
+          if (success) pauseAndGreet(socket);
+          else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
+        },
+        data(_socket, chunk) {
+          received += chunk.toString();
+        },
+        close(_socket, error) {
+          closedWith.resolve(error);
+        },
+      },
+    });
+
+    const greeted = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        data: socket => greeted.resolve(socket),
+        error: (_socket, error) => greeted.reject(error),
+        connectError: (_socket, error) => greeted.reject(error),
+        close: () => greeted.reject(new Error("peer closed before the greeting arrived")),
+      },
+    });
+    const peer = await greeted.promise;
+    peer.write("queued behind the pause");
+    peer.flush();
+    peer.terminate();
+
+    const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+    expect({
+      received: isWindows ? "" : received,
+      reported: error instanceof Error,
+      syscall: error?.syscall,
+      code: error?.code,
+    }).toEqual({
+      received: isWindows ? "" : "queued behind the pause",
+      reported: true,
+      syscall: "read",
+      code: "ECONNRESET",
+    });
+  });
+});
+
+// A paused socket with a backpressured write of its own must also close on the reset: an owner
+// that resumes only after 'drain' (node:http's flood guard) would otherwise wait forever.
+it("a paused socket with a backpressured write still closes when its peer resets", async () => {
+  const closedWith = Promise.withResolvers<Error | undefined>();
+  let backpressured!: () => void;
+  const isBackpressured = new Promise<void>(resolve => (backpressured = resolve));
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.pause();
+        // The peer never reads, so this fills both kernel buffers and is refused part-way.
+        while (socket.write(big) === big.length) {}
+        backpressured();
+      },
+      drain(socket) {
+        while (socket.write(big) === big.length) {}
+      },
+      data() {},
+      close(_socket, error) {
+        closedWith.resolve(error);
+      },
+    },
+  });
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.pause();
+      },
+      data() {},
+      close() {},
+    },
+  });
+  await isBackpressured;
+  peer.terminate();
+  const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+  expect(error?.code).toBe("ECONNRESET");
+});
+
+// A close that the event loop initiated passes the read error to close(). usockets
+// reports that error in the platform's own numbering (an errno on POSIX, a WSA code
+// such as WSAECONNRESET = 10054 on Windows) and on_close has to map it: unmapped, a
+// reset reached JS on Windows as an error without a code (errno -10054, "Unknown
+// Error, read"), and loop.c's poll-error fallback as ESHUTDOWN. The code is the same
+// on every platform, like node's "read ECONNRESET".
+describe.concurrent("close() error after the peer resets the connection", () => {
+  type CloseError = (Error & { code?: string; syscall?: string }) | undefined;
+  function closeErrorShape(error: CloseError) {
+    return { reported: error instanceof Error, code: error?.code, syscall: error?.syscall };
+  }
+  const readReset = { reported: true, code: "ECONNRESET", syscall: "read" };
+
+  describe.each(["tcp", "tls"] as const)("%s", transport => {
+    // The peer lives in a child process that is killed while data it never read sits
+    // in its receive buffer: the kernel then closes its socket with an RST, and
+    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset. An
+    // in-process terminate() is not usable for the TLS case: it writes a close_notify
+    // first, and on POSIX the reading side consumes that as a clean end.
+    const peerSource = `
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.argv[2]),
+        tls: ${transport === "tls" ? JSON.stringify({ ca: tls.cert }) : "undefined"},
+        socket: {
+          data(socket) {
+            // The greeting arrived, so both sides are fully open. Stop reading: what
+            // the server writes next stays unread in this process's receive buffer.
+            socket.pause();
+            socket.write("ready");
+          },
+          close() {},
+          error() {},
+        },
+      });
+      await Bun.stdin.text(); // keeps the process alive until the test kills it
+    `;
+
+    it("the accepted socket reports the reset as read ECONNRESET", async () => {
+      const ready = Promise.withResolvers<Socket>();
+      const closedWith = Promise.withResolvers<CloseError>();
+      let received = "";
+      const greet = (socket: Socket) => socket.write("greeting");
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? tls : undefined,
+        socket: {
+          open(socket) {
+            if (transport === "tcp") greet(socket);
+          },
+          handshake(socket, success, authorizationError) {
+            if (success) greet(socket);
+            else ready.reject(authorizationError ?? new Error("server handshake failed"));
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+            if (received.includes("ready")) ready.resolve(socket);
+          },
+          close(_socket, error) {
+            ready.reject(new Error("the accepted socket closed before the peer was ready"));
+            closedWith.resolve(error as CloseError);
+          },
+        },
+      });
+      using dir = tempDir("socket-peer-reset", { "peer.ts": peerSource });
+      await using peer = Bun.spawn({
+        cmd: [bunExe(), "peer.ts", String(listener.port)],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "pipe",
+      });
+      // A peer that dies before it connects would otherwise leave `ready` pending.
+      // Once `ready` is settled, the exit caused by the kill below is ignored.
+      peer.exited.then(code => ready.reject(new Error(`the peer exited before it was ready (exit code ${code})`)));
+
+      const accepted = await ready.promise;
+      accepted.write("left unread in the peer's receive buffer");
+      peer.kill("SIGKILL");
+
+      expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
+    });
+  });
+
+  it("a connected socket reports the reset the same way (tcp)", async () => {
+    // Plain TCP terminate() queues nothing ahead of the RST, so the server side of
+    // the same process can reset the connection.
+    const accepted = Promise.withResolvers<Socket>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          accepted.resolve(socket);
+          socket.write("greeting");
+        },
+        data() {},
+        close() {},
+      },
+    });
+
+    const greeted = Promise.withResolvers<void>();
+    const closedWith = Promise.withResolvers<CloseError>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        data: () => greeted.resolve(),
+        connectError: (_socket, error) => greeted.reject(error),
+        close(_socket, error) {
+          greeted.reject(new Error("the connected socket closed before the greeting arrived"));
+          closedWith.resolve(error as CloseError);
+        },
+      },
+    });
+
+    const server = await accepted.promise;
+    await greeted.promise;
+    server.terminate();
+
+    expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
+  });
+});
+
+// The event that carries a peer's reset is dispatched in two steps: the read loop runs
+// data(), then the dispatcher closes the socket with its SO_ERROR. When data() already
+// closed the socket, its fd number is free again and a socket opened in the meantime
+// (here: from close()) can own it. Reading SO_ERROR from that number consumed the new
+// socket's error, and its refused connect reported ECONNRESET.
+//
+// The fd arrangement in the fixture is what makes the stale read land on the new socket
+// on POSIX, where a new socket gets the lowest free number. The outcome it checks, a
+// refused connect reports ECONNREFUSED, holds on every platform, so it is not skipped
+// anywhere: on Windows the fixture is only that check.
+describe.concurrent("a socket closed by data() while its peer's reset is being dispatched", () => {
+  it("does not consume the connect error of a socket opened from close()", async () => {
+    const source = `
+      import { closeSync, openSync } from "node:fs";
+
+      // A port nothing listens on. The established connection keeps it bound, so no
+      // listener can take it while the test runs.
+      const sink = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const holder = await Bun.connect({ hostname: "127.0.0.1", port: sink.port, socket: { data() {} } });
+      const refusedPort = holder.localPort;
+
+      const outcome = Promise.withResolvers();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.terminate();
+          },
+          close() {
+            Bun.connect({
+              hostname: "127.0.0.1",
+              port: refusedPort,
+              socket: {
+                data() {},
+                open: () => outcome.resolve("open"),
+                connectError: (_socket, error) => outcome.resolve(error.code),
+              },
+            }).catch(() => {});
+          },
+        },
+      });
+
+      // The connect opened from close() takes the lowest free fd number, and
+      // peer.terminate() below frees the peer's number first. So the accepted socket
+      // has to get a lower number than the peer: reserve one (any file does) before the
+      // peer's socket is created and free it again before the event loop accepts.
+      const reserved = openSync(import.meta.path, "r");
+      const connecting = Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      closeSync(reserved);
+      const peer = await connecting;
+      // Both are queued before the event loop runs again, so the accepted socket's next
+      // event carries the data and the reset together.
+      peer.write("x");
+      peer.terminate();
+
+      console.log(await outcome.promise);
+      holder.terminate();
+      sink.stop(true);
+      server.stop(true);
+    `;
+    // Its own process: the fd numbers have to line up as described in the fixture.
+    using dir = tempDir("socket-close-during-reset", { "fixture.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
+  // Each end() sends close_notify and defers its fd close for the peer's
+  // reply. The reply arrives without a FIN, so the ZERO_RETURN path has to
+  // complete the deferred close instead of keeping the socket half-open.
+  const serverOpen = Promise.withResolvers<Socket>();
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const serverShake = Promise.withResolvers<void>();
+  const clientShake = Promise.withResolvers<void>();
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    tls: { key: tls.key, cert: tls.cert },
+    socket: {
+      open: s => serverOpen.resolve(s),
+      handshake: () => serverShake.resolve(),
+      data() {},
+      close: () => serverClosed.resolve(),
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    allowHalfOpen: true,
+    tls: { ca: tls.cert },
+    socket: {
+      handshake: () => clientShake.resolve(),
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+
+  const serverSock = await serverOpen.promise;
+  await Promise.all([serverShake.promise, clientShake.promise]);
+
+  // Both sides end before either reads the peer's close_notify.
+  client.end();
+  serverSock.end();
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
 });

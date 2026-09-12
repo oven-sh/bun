@@ -3,12 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), every x64 at the nehalem floor (no separate -baseline variant),
-// typed-array constructor ClassInfo kept address-unique under LTO, and the
-// Windows ICU data table filtered + per-item zstd compressed.
-export const WEBKIT_VERSION = "c9296e353e365ecf0de82f273bb0a88a3df465be";
+export const WEBKIT_VERSION = "cf1b36ec8703d8e87436094d21d478d358c7d886";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -110,6 +105,11 @@ function prebuiltDestDir(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
+
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
 
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {
@@ -331,6 +331,8 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
+      // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
+      ...(cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",
@@ -338,6 +340,9 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      // Bun's C++ is compiled with ASSERT_ENABLED=1 when cfg.assertions (release-asan,
+      // release-assertions); WebKit must match or ASSERT-only symbols fail to link.
+      ...(cfg.assertions && cfg.release ? { ENABLE_ASSERTS: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

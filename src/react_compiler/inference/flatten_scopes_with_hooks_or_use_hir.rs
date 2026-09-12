@@ -34,7 +34,7 @@ use crate::hir::{BlockId, HirFunction, InstructionValue, Terminal, Type};
 ///
 /// Hooks and `use` must be called unconditionally, so any reactive scope containing
 /// such a call must be flattened to avoid making the call conditional.
-pub fn flatten_scopes_with_hooks_or_use_hir(
+pub(crate) fn flatten_scopes_with_hooks_or_use_hir(
     func: &mut HirFunction,
     env: &Environment,
 ) -> Result<(), CompilerDiagnostic> {

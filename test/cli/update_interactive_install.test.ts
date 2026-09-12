@@ -200,4 +200,43 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       throw err;
     }
   });
+
+  test("refuses to prompt when stdin is not a TTY", async () => {
+    using dir = tempDir("update-interactive-no-tty", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "is-even": "0.1.0" },
+      }),
+    });
+
+    // stdin is a pipe we never write to. Previously this reached the menu and
+    // blocked on read(); now the gate fires before any manifest resolution.
+    await using updateProc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        // Drop the harness bypass so the real isatty gate is exercised.
+        BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: undefined,
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      updateProc.stdout.text(),
+      updateProc.stderr.text(),
+      updateProc.exited,
+    ]);
+
+    expect(stderr).toContain("requires an interactive terminal");
+    // No cursor-control escapes leaked into piped output.
+    expect(stdout).not.toContain("\x1b[");
+    expect(exitCode).toBe(1);
+
+    // package.json untouched
+    const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+    expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+  });
 });

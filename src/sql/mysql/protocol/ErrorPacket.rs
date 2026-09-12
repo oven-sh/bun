@@ -68,11 +68,4 @@ impl ErrorPacket {
     }
 }
 
-pub fn decode<Context: ReaderContext>(
-    this: &mut ErrorPacket,
-    reader: NewReader<Context>,
-) -> Result<(), AnyMySQLError> {
-    this.decode_internal(reader)
-}
-
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.

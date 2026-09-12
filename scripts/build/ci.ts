@@ -8,17 +8,28 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOrderFile } from "../orderfile/generate.ts";
+import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
+import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -203,7 +214,7 @@ export async function spawnWithAnnotations(
 //
 // CI splits builds per-platform into three parallel steps:
 //   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-rust → libbun_rust.a (this node uploads)
+//   build-rust → libbun_runtime.a (this node uploads)
 //   build-bun  → downloads both, links (this node downloads first)
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
@@ -274,6 +285,12 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     upload(depPaths, cfg.buildDir);
   }
 
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    console.log("Uploading testFFI...");
+    upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
+  }
+
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
   // (sources already compiled into the archive), obj/ (.o files archived),
@@ -323,8 +340,12 @@ function upload(paths: string[], cwd: string): void {
 //   ${bunTriplet}-profile.zip   (plain release)
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
+//           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
-//           ├── bun-profile.linker-map   (linux/mac non-asan)
+//           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
+//           ├── bun-profile.map          (windows; with the above, what the
+//           │                             trace-order step resolves addresses with)
+//           ├── linker.order             (the order file this binary was linked with, if any)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -359,14 +380,14 @@ export function computeBunTriplet(cfg: Config): string {
 }
 
 /**
- * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * Post-link packaging and upload for the modes that link in CI. Runs
  * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
+  if (!isBuildkite) return;
 
   const exe = output.exe;
   if (exe === undefined) {
@@ -405,16 +426,21 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    chmodSync(testFFI, 0o755);
+    files.push(testFFI);
+  }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }
-  // Linker map: posix non-asan (cmake gate: (APPLE OR LINUX) AND NOT ENABLE_ASAN).
-  if (cfg.unix && !cfg.asan) {
-    files.push(`${exeName}.linker-map`);
-  }
+  // Linker map(s). On windows they are also what the trace-order step
+  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // having no symbol table, so without them that step has nothing to work from.
+  files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
   // map. Skip the seeded placeholder — it has no functions in it.
   const hasOrderFile = usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0;
@@ -424,9 +450,11 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   zipPaths.push(makeZip(cfg, bunPath, files));
 
   // Also upload it standalone, so the next build inherits it with a small
-  // download instead of pulling the whole profile zip. Named per target.
-  // Relative, like makeZip's return — upload() runs with cwd = buildDir.
-  if (hasOrderFile) {
+  // download instead of pulling the whole profile zip. Only when this lane
+  // traced the file itself — a cross-compiled lane's fresh trace comes from the
+  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
+  // copy would give inheritOrderFile() two same-named artifacts to race over.
+  if (hasOrderFile && canTraceOrderFile(cfg)) {
     const artifact = orderFileArtifact(cfg);
     cpSync(orderFilePath(cfg), resolve(buildDir, artifact));
     zipPaths.push(artifact);
@@ -677,7 +705,6 @@ export interface OrderFileContext {
   buildUrl: string | undefined;
   branch: string | undefined;
   buildNumber: number | undefined;
-  stepKey: string | undefined;
   commitMessage: string;
   pullRequest: boolean;
 }
@@ -690,7 +717,6 @@ export function orderFileContext(): OrderFileContext {
     buildUrl: process.env.BUILDKITE_BUILD_URL,
     branch: process.env.BUILDKITE_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
-    stepKey: process.env.BUILDKITE_STEP_KEY,
     commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
     pullRequest: pr !== undefined && pr !== "" && pr !== "false",
   };
@@ -699,7 +725,7 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
+  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */
@@ -709,13 +735,17 @@ export function canTraceOrderFile(cfg: Config): boolean {
 
 /**
  * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
- * shipping unordered with no way to recover on this host. Annotate so it is
- * visible; the fix is tracing under qemu-user or on a native-arch step.
+ * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
+ * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
+ * the first build and then the next build inherits that trace. If it persists,
+ * the trace step is failing or missing for this target.
  */
 export function reportOrderFileCannotTrace(cfg: Config): void {
   const msg =
     `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
-    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered.`;
+    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered. ` +
+    `Expected once while the native-arch trace-order step seeds the chain; if this ` +
+    `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
   utils.reportAnnotationToBuildKite({
@@ -833,22 +863,20 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  if (!ctx.stepKey) {
-    console.log("~ symbol order: BUILDKITE_STEP_KEY unset — linking unordered");
-    return false;
-  }
-
   console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
     if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    const result = spawnSync(
-      "buildkite-agent",
-      ["artifact", "download", artifact, ".", "--step", ctx.stepKey, "--build", build.id],
-      { cwd: cfg.buildDir, stdio: "ignore", timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS },
-    );
+    // No --step: exactly one step per build publishes the target-unique name —
+    // packageAndUpload() for a lane that traced its own binary, the sibling
+    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+    const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
+      cwd: cfg.buildDir,
+      stdio: "ignore",
+      timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    });
     if (result.status !== 0 || !existsSync(downloaded)) {
       console.log(`  #${build.number ?? "?"}: no ${artifact} (cancelled, failed, or too old) — looking further back`);
       continue;
@@ -889,7 +917,7 @@ export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
       ? "[generate symbol order] in the commit message"
       : "nothing to inherit";
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
-  console.log("Each workload runs under an LD_PRELOAD page-fault tracer, so it is slower than a normal run.\n");
+  console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
 
   const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
 
@@ -968,24 +996,21 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
     return;
   }
 
-  // Same resolution as generate.ts: honor NM, else llvm-nm, else nm.
-  let nm = { status: null, stdout: "" } as { status: number | null; stdout: string };
-  for (const tool of [process.env.NM, "llvm-nm", "nm"].filter(Boolean) as string[]) {
-    nm = spawnSync(tool, ["--defined-only", exe], { encoding: "utf8", maxBuffer: 1 << 29 });
-    if (nm.status === 0) break;
-  }
-  if (nm.status !== 0) {
-    console.log("~ symbol order: no working nm — skipping verification");
+  // The same names the generator traces against: nm's, or on windows the link's maps'.
+  let symbols: Map<number, string[]>;
+  try {
+    symbols = readTextSymbols(exe);
+  } catch (error) {
+    console.log(
+      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
+    );
     return;
   }
 
   const addresses = new Map<string, number>();
   let textBase = Number.MAX_SAFE_INTEGER;
-  for (const line of nm.stdout.split("\n")) {
-    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
-    if (!m) continue;
-    const address = parseInt(m[1]!, 16);
-    addresses.set(m[3]!, address);
+  for (const [address, names] of symbols) {
+    for (const name of names) addresses.set(name, address);
     if (address < textBase) textBase = address;
   }
 
@@ -1028,7 +1053,11 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
   if (control > 0 && hot > control * MAX_FRACTION_OF_CONTROL) {
     fail(
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
-      "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+      cfg.darwin
+        ? "Apple ld ignored it — check -order_file and that the names match nm's"
+        : cfg.windows
+          ? "lld-link ignored it — check /order and that /Gy survived"
+          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

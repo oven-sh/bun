@@ -43,10 +43,9 @@
 
 namespace WebCore {
 
-class WebCoreOpaqueRoot;
-
 enum class CryptoKeyClass {
     AES,
+    AKP,
     EC,
     HMAC,
     OKP,
@@ -87,8 +86,6 @@ inline auto CryptoKey::type() const -> Type
 {
     return m_type;
 }
-
-WebCoreOpaqueRoot root(CryptoKey*);
 
 } // namespace WebCore
 

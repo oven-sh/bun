@@ -492,9 +492,7 @@ fn collect_dependencies(
     for (_block_id, block) in &func.body.blocks {
         // Process phis
         for phi in &block.phis {
-            // TS collects an array and stores `new Set(deps)`, which holds each
-            // object once. `deps` is that set. `deps_len` is the array length,
-            // which TS tests before it builds the set.
+            // TS tests `deps.length`, then stores `new Set(deps)`.
             let mut deps: Vec<InferredDependency> = Vec::new();
             let mut deps_len: usize = 0;
             for (_pred_id, operand) in &phi.operands {
@@ -1604,15 +1602,8 @@ fn is_optional_dependency_inferred(
 // Equality check for temporaries
 // =============================================================================
 
-/// True when `a` and `b` are copies of one dependency. TS keeps the
-/// dependencies of a phi in a `Set`, which compares object identity. This port
-/// clones where TS shares an object, so it compares every field. Without this
-/// a phi that another phi reaches along many paths holds one copy per path,
-/// and the list grows exponentially with the depth of the control flow.
-///
-/// A `Global` has no field that tells two loads of one global apart, so they
-/// are one entry here and two in TS. `add_dependency` merges globals by name
-/// anyway, so the inferred dependencies are the same.
+/// Membership in a TS `Set<InferredDependency>`, which is object identity. The
+/// port clones where TS shares an object, so every field decides, `loc` too.
 fn is_same_dependency(a: &InferredDependency, b: &InferredDependency) -> bool {
     match (a, b) {
         (

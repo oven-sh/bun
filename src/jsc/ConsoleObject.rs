@@ -3841,29 +3841,15 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Temporarily remove from the visited map to allow
-            // printErrorlikeObject to process it. The circular reference
-            // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
-                self.map.remove(&value).is_some()
-            } else {
-                false
-            };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
-
+            // The value stays in the visited map so re-entrant property
+            // formatting hits the `[Circular]` guard.
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            if self.global_this.has_exception() {
+                return Err(jsc::JsError::Thrown);
+            }
             Ok(())
         }
 

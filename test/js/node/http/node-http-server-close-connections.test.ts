@@ -31,33 +31,55 @@ function waitClose(client: Socket) {
 }
 
 describe.each(["closeIdleConnections", "closeAllConnections"] as const)("%s", method => {
-  test("does not touch a socket handed to the 'upgrade' listener", async () => {
-    const server = createServer();
-    let upgraded!: Socket;
-    server.on("upgrade", (req, sock) => {
-      upgraded = sock;
-      sock.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  // Node.js's ConnectionsList is parser-keyed; a CONNECT or body-less upgrade
+  // request is complete when it is handed off, so freeParser() has removed the
+  // entry by the time the event is emitted and neither call reaches the socket.
+  describe.each(["upgrade", "connect"] as const)("socket handed to the '%s' listener", kind => {
+    test("stays open and usable", async () => {
+      const server = createServer();
+      let handedOff!: Socket;
+      server.on(kind, (req, sock) => {
+        handedOff = sock;
+        sock.write(
+          kind === "upgrade"
+            ? "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"
+            : "HTTP/1.1 200 Connection Established\r\n\r\n",
+        );
+      });
+      try {
+        const port = await listen(server);
+        const { client } = await openConnection(server, port);
+        const gotResponse = once(client, "data");
+        client.write(
+          kind === "upgrade"
+            ? "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"
+            : "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+        );
+        await gotResponse;
+
+        server[method]();
+        expect({ listening: server.listening, destroyed: handedOff.destroyed }).toEqual({
+          listening: true,
+          destroyed: false,
+        });
+
+        // `destroyed` stays false when only the native connection is closed,
+        // so also send data through the handed-off socket.
+        const echoed = Promise.race([
+          once(client, "data").then(([chunk]) => String(chunk)),
+          waitClose(client).then(() => "client closed"),
+        ]);
+        handedOff.write("still-open");
+        expect(await echoed).toBe("still-open");
+
+        handedOff.destroy();
+        client.destroy();
+        await new Promise<void>(r => server.close(() => r()));
+      } finally {
+        server.closeAllConnections();
+        if (server.listening) server.close();
+      }
     });
-    try {
-      const port = await listen(server);
-      const { client } = await openConnection(server, port);
-      const gotResponse = once(client, "data");
-      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
-      await gotResponse;
-
-      // Node.js's ConnectionsList is parser-keyed; a body-less upgrade request
-      // is complete when it is handed off, so freeParser() has removed the
-      // entry by the time 'upgrade' is emitted and neither call reaches it.
-      server[method]();
-      expect(upgraded.destroyed).toBe(false);
-
-      upgraded.destroy();
-      client.destroy();
-      await new Promise<void>(r => server.close(() => r()));
-    } finally {
-      server.closeAllConnections();
-      if (server.listening) server.close();
-    }
   });
 
   test("treats an upgrade request whose body is still arriving like Node.js", async () => {
@@ -358,14 +380,20 @@ describe("closeAllConnections", () => {
     const server = createServer((req, res) => res.end("ok"));
     try {
       const port = await listen(server);
+      const address = server.address();
 
       // No client has connected yet: must not throw and must not affect the listener.
       expect(() => server.closeAllConnections()).not.toThrow();
-      expect(server.listening).toBe(true);
+      expect({ listening: server.listening, address: server.address() }).toEqual({ listening: true, address });
 
       const res = await fetch(`http://127.0.0.1:${port}/`);
       expect(await res.text()).toBe("ok");
       expect(res.status).toBe(200);
+
+      // close() afterwards still finds a running server (no ERR_SERVER_NOT_RUNNING).
+      const { promise, resolve } = Promise.withResolvers<Error | undefined>();
+      server.close(resolve);
+      expect(await promise).toBeUndefined();
     } finally {
       server.closeAllConnections();
       if (server.listening) server.close();

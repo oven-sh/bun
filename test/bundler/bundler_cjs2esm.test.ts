@@ -2404,4 +2404,124 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+  // A top-level `var exports` / `var module` merges with the CommonJS wrapper
+  // parameter in Node. When it has a value of its own, the file must keep its
+  // wrapper, keep the declaration, and leave `exports.x` / `module.exports.x` as
+  // plain property accesses. `var exports;` and `var exports = module.exports;`
+  // keep the wrapper value and still lift to ESM.
+  itBundled("cjs2esm/VarWithTheNameOfModuleOrExportsKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        import fake from "./fake-module.cjs";
+        import reassigned from "./reassigned.cjs";
+        import uninit from "./uninit.cjs";
+        import nested from "./nested.cjs";
+        import { a as aliasedA } from "./aliased.cjs";
+        import { b as chainedB } from "./chained.cjs";
+        import destructured from "./destructured.cjs";
+        import forHeader from "./for-header.cjs";
+        import forOf from "./for-of.cjs";
+        import moduleRequire from "./module-require.cjs";
+        import { ok as ambientOk } from "./ambient.cts";
+        console.log(
+          JSON.stringify({
+            lib,
+            fake,
+            reassigned,
+            uninit,
+            nested,
+            aliasedA,
+            chainedB,
+            destructured,
+            forHeader,
+            forOf,
+            moduleRequire,
+            ambientOk,
+          }),
+        );
+      `,
+      "/destructured.cjs": /* js */ `
+        var { exports } = { exports: { local: true } };
+        module.exports.kind = typeof exports.local;
+      `,
+      "/for-header.cjs": /* js */ `
+        for (var exports = { local: true }; false; ) {}
+        module.exports.kind = typeof exports.local;
+      `,
+      "/for-of.cjs": /* js */ `
+        for (var exports of [{ local: true }]) {}
+        for (var [module] in { m: 1 }) {}
+        exports.kind = typeof exports.local + module;
+      `,
+      "/module-require.cjs": /* js */ `
+        var exports = { local: true };
+        module.exports.dep = module.require("./dep.cjs").value;
+        module.exports.kind = typeof exports.local;
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "dep";
+      `,
+      "/ambient.cts": /* ts */ `
+        declare var exports = {};
+        module.exports.ok = 1;
+      `,
+      "/aliased.cjs": /* js */ `
+        var exports = module.exports;
+        exports.a = "aliased";
+      `,
+      "/chained.cjs": /* js */ `
+        var exports = module.exports = {};
+        exports.b = "chained";
+      `,
+      "/lib.cjs": /* js */ `
+        var exports = { local: true };
+        module.exports.answer = 42;
+        module.exports.kind = typeof exports.local;
+      `,
+      "/fake-module.cjs": /* js */ `
+        var module = { exports: { fake: true }, id: "user" };
+        module.exports.x = 1;
+        exports.viaParam = typeof module.exports.fake;
+        exports.id = module.id;
+      `,
+      "/reassigned.cjs": /* js */ `
+        exports.before = 1;
+        var exports = "shadow";
+        module.exports.after = typeof exports;
+      `,
+      "/uninit.cjs": /* js */ `
+        var exports;
+        module.exports.foo = 123;
+        exports.bar = exports.foo + 1;
+      `,
+      "/nested.cjs": /* js */ `
+        if (true) {
+          var module = { exports: { nested: true } };
+        }
+        module.exports.x = 1;
+        exports.viaParam = typeof module.exports.nested;
+      `,
+    },
+    cjs2esm: {
+      // chained.cjs keeps its wrapper because of the `module.exports = {}` assignment, as before.
+      unhandled: [
+        "/lib.cjs",
+        "/fake-module.cjs",
+        "/reassigned.cjs",
+        "/nested.cjs",
+        "/chained.cjs",
+        "/destructured.cjs",
+        "/for-header.cjs",
+        "/for-of.cjs",
+        "/module-require.cjs",
+        // dep.cjs is loaded through require(), which always keeps the wrapper.
+        "/dep.cjs",
+      ],
+    },
+    run: {
+      stdout:
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1}',
+    },
+  });
 });

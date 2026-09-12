@@ -150,6 +150,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
+        if !opts.is_typescript_declare {
+            p.note_var_shadowing_module_or_exports(decls.slice(), false);
+        }
         Ok(p.s(
             S::Local {
                 kind: js_ast::s::Kind::KVar,
@@ -159,6 +162,99 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         ))
+    }
+
+    /// `var exports;` and `var exports = module.exports;` keep the wrapper value and do not count.
+    fn note_var_shadowing_module_or_exports(&mut self, decls: &[G::Decl], is_loop_target: bool) {
+        for decl in decls {
+            if decl.value.is_none() && !is_loop_target {
+                continue;
+            }
+            match decl.binding.data {
+                js_ast::b::B::BIdentifier(id) => {
+                    let name = self.load_name_from_ref(id.r#ref);
+                    if name != b"module" && name != b"exports" {
+                        continue;
+                    }
+                    if name == b"exports"
+                        && !is_loop_target
+                        && decl
+                            .value
+                            .is_some_and(|value| self.is_module_dot_exports_at_parse(value))
+                    {
+                        continue;
+                    }
+                    if !self.var_hoists_to_module_scope() {
+                        return;
+                    }
+                    if name == b"module" {
+                        self.has_user_declared_module = true;
+                    } else {
+                        self.has_user_declared_exports = true;
+                    }
+                }
+                js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_) => {
+                    let (module, exports) = self.binding_names_module_or_exports(&decl.binding);
+                    if (module || exports) && self.var_hoists_to_module_scope() {
+                        self.has_user_declared_module |= module;
+                        self.has_user_declared_exports |= exports;
+                    }
+                }
+                js_ast::b::B::BMissing(_) => {}
+            }
+        }
+    }
+
+    /// (`module`, `exports`) found anywhere in a destructuring pattern.
+    fn binding_names_module_or_exports(&self, binding: &js_ast::Binding) -> (bool, bool) {
+        match binding.data {
+            js_ast::b::B::BIdentifier(id) => {
+                let name = self.load_name_from_ref(id.r#ref);
+                (name == b"module", name == b"exports")
+            }
+            js_ast::b::B::BArray(array) => {
+                array.items().iter().fold((false, false), |acc, item| {
+                    let (m, e) = self.binding_names_module_or_exports(&item.binding);
+                    (acc.0 || m, acc.1 || e)
+                })
+            }
+            js_ast::b::B::BObject(object) => {
+                object
+                    .properties()
+                    .iter()
+                    .fold((false, false), |acc, prop| {
+                        let (m, e) = self.binding_names_module_or_exports(&prop.value);
+                        (acc.0 || m, acc.1 || e)
+                    })
+            }
+            js_ast::b::B::BMissing(_) => (false, false),
+        }
+    }
+
+    fn var_hoists_to_module_scope(&self) -> bool {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.unwrap();
+        }
+        scope == self.module_scope_ref()
+    }
+
+    /// `module.exports` or `module.exports = ...` before the visit pass resolves names.
+    fn is_module_dot_exports_at_parse(&self, mut expr: Expr) -> bool {
+        if let Some(bin) = expr.data.e_binary()
+            && bin.op == js_ast::OpCode::BinAssign
+        {
+            expr = bin.left;
+        }
+        let Some(dot) = expr.data.e_dot() else {
+            return false;
+        };
+        dot.name == b"exports"
+            && dot
+                .target
+                .data
+                .e_identifier()
+                .is_some_and(|id| self.load_name_from_ref(id.ref_) == b"module")
     }
 
     #[inline]
@@ -653,6 +749,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                if is_var {
+                    p.note_var_shadowing_module_or_exports(decls_ptr.slice(), true);
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -672,6 +771,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Detect for-in loops
             if p.lexer.token == T::TIn {
                 p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
+                if is_var {
+                    p.note_var_shadowing_module_or_exports(decls_ptr.slice(), true);
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -685,6 +787,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 ));
+            }
+
+            if is_var {
+                p.note_var_shadowing_module_or_exports(decls_ptr.slice(), false);
             }
 
             // Only require "const" statement initializers when we know we're a normal for loop

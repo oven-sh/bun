@@ -110,6 +110,8 @@ void HTTPParser::init(llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t l
     m_haveFlushed = false;
     m_headersCompleted = false;
     m_maxHttpHeaderSize = maxHttpHeaderSize;
+    m_headerPairs = 0;
+    m_maxHeaderPairs = -1;
 }
 
 JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size_t len)
@@ -353,6 +355,7 @@ int HTTPParser::onMessageBegin()
     m_lastMessageStart = uv_hrtime();
     m_url.reset();
     m_statusMessage.reset();
+    m_maxHeaderPairs = -1;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->push(globalObject, thisParser);
@@ -408,6 +411,12 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
 
     if (m_numFields == m_numValues) {
         // start of new field name
+        rv = trackHeaderPair();
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
+        if (rv != 0) {
+            return rv;
+        }
+
         m_numFields++;
         if (m_numFields == kMaxHeaderFieldsCount) {
             // ran out of space - flush to javascript land
@@ -522,6 +531,8 @@ int HTTPParser::onHeadersComplete()
 
     m_numFields = 0;
     m_numValues = 0;
+    m_headerPairs = 0;
+    m_maxHeaderPairs = -1;
 
     if (m_parserData.type == HTTP_REQUEST) {
         args.at(A_METHOD) = jsNumber(m_parserData.method);
@@ -609,6 +620,8 @@ int HTTPParser::onMessageComplete()
         RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
+    m_headerPairs = 0;
+
     JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageComplete));
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
@@ -644,6 +657,36 @@ int HTTPParser::trackHeader(size_t len)
         llhttp_set_error_reason(&m_parserData, "HPE_HEADER_OVERFLOW:Header overflow");
         return HPE_USER;
     }
+    return 0;
+}
+
+// Requests only: a response with too many fields is still truncated by node:_http_common.
+// https://github.com/nodejs/node/blob/v26.8.0/src/node_http_parser.cc#L1042-L1071
+int HTTPParser::trackHeaderPair()
+{
+    if (m_parserData.type != HTTP_REQUEST) {
+        return 0;
+    }
+
+    m_headerPairs += 2;
+
+    if (m_maxHeaderPairs < 0) {
+        JSGlobalObject* globalObject = m_globalObject;
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSValue maxHeaderPairsValue = m_thisParser->get(globalObject, WebCore::builtinNames(vm).maxHeaderPairsPublicName());
+        RETURN_IF_EXCEPTION(scope, 0);
+
+        const double value = maxHeaderPairsValue.isNumber() ? maxHeaderPairsValue.asNumber() : 0;
+        m_maxHeaderPairs = value > 0 ? value : 0;
+    }
+
+    if (m_maxHeaderPairs > 0 && static_cast<double>(m_headerPairs) > m_maxHeaderPairs) {
+        llhttp_set_error_reason(&m_parserData, "HPE_HEADER_OVERFLOW:Header overflow");
+        return HPE_USER;
+    }
+
     return 0;
 }
 

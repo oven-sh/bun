@@ -3768,6 +3768,31 @@ fn server_set_max_http_header_size(
     Ok(JSValue::UNDEFINED)
 }
 
+fn server_set_max_headers_count(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JsResult<JSValue> {
+    if server.is_object() {
+        macro_rules! handle {
+            ($T:ty) => {
+                if let Some(this) = server.as_::<$T>() {
+                    // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+                    unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+                    return Ok(JSValue::UNDEFINED);
+                }
+            };
+        }
+        handle!(HTTPServer);
+        handle!(HTTPSServer);
+        handle!(DebugHTTPServer);
+        handle!(DebugHTTPSServer);
+    }
+    Err(global.throw(format_args!(
+        "Failed to set maxHeadersCount: The 'this' value is not a Server."
+    )))
+}
+
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
 // (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
 // exception left on the global. Signatures match the C++ callers in
@@ -3827,6 +3852,18 @@ extern "C" fn server_set_max_http_header_size_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_max_http_header_size(global, server, max_header_size),
+    )
+}
+
+#[unsafe(export_name = "Server__setMaxHeadersCount")]
+extern "C" fn server_set_max_headers_count_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_max_headers_count(global, server, max_headers_count),
     )
 }
 

@@ -99,7 +99,8 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub(crate) fn len(self) -> usize {
+        /// `StringID` slots the record occupies in `ModuleInfo::buffer` (part of the serialized format).
+        pub fn len(self) -> usize {
             match self {
                 Self::ImportInfoSingle => 4,
                 Self::ImportInfoSingleTypeScript => 4,
@@ -464,30 +465,6 @@ pub mod analyze_transpiled_module {
             self.phases.push(phase);
             false
         }
-        /// Replace every occurrence of `old` with `new` **in place**,
-        /// preserving insertion order.
-        fn rename_key(&mut self, old: StringID, new: StringID) {
-            let mut touched = false;
-            for k in self.keys.iter_mut() {
-                if *k == old {
-                    *k = new;
-                    touched = true;
-                }
-            }
-            if touched {
-                self.index.clear();
-                for (i, ((&k, &v), &p)) in self
-                    .keys
-                    .iter()
-                    .zip(self.values.iter())
-                    .zip(self.phases.iter())
-                    .enumerate()
-                {
-                    self.index
-                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
-                }
-            }
-        }
     }
 
     pub struct ModuleInfo {
@@ -667,13 +644,48 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
-        /// Read-only view of the interned string table — `(buf, lens)` —
-        /// safe to call before `finalize()`. Unlike `as_deserialized()` this
-        /// does not assert `finalized`; it exists so the bundler can rewrite
-        /// cross-chunk specifier StringIDs (which must happen pre-finalize
-        /// because `replace_string_id` debug-asserts `!finalized`).
+        /// The interned string table, `(buf, lens)`; usable before `finalize()`.
         pub fn strings(&self) -> (&[u8], &[u32]) {
             (&self.strings_buf, &self.strings_lens)
+        }
+
+        /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
+        pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
+            debug_assert!(!self.finalized);
+            let mut buf: Vec<u8> = Vec::new();
+            let mut rewritten: Vec<(u32, &'r [u8])> = Vec::new();
+            let mut offset = 0usize;
+            for (index, len) in self.strings_lens.iter_mut().enumerate() {
+                let start = offset;
+                offset += *len as usize;
+                let old = &self.strings_buf[start..offset];
+                let Some(new) = replace(old) else {
+                    if !rewritten.is_empty() {
+                        buf.extend_from_slice(old);
+                    }
+                    continue;
+                };
+                if rewritten.is_empty() {
+                    buf.reserve(self.strings_buf.len() + new.len());
+                    buf.extend_from_slice(&self.strings_buf[..start]);
+                }
+                self.strings_map.remove(old);
+                rewritten.push((index as u32, new));
+                buf.extend_from_slice(new);
+                *len = u32::try_from(new.len()).unwrap();
+            }
+            if rewritten.is_empty() {
+                return;
+            }
+            self.strings_buf = buf;
+            for (index, new) in rewritten {
+                let previous = self.strings_map.insert(new.to_vec(), index);
+                debug_assert!(
+                    previous.is_none(),
+                    "rewrite_strings: two ids now hold {:?}",
+                    bstr::BStr::new(new)
+                );
+            }
         }
 
         pub fn str(&mut self, value: &[u8]) -> StringID {
@@ -771,20 +783,6 @@ pub mod analyze_transpiled_module {
 
             self.flags.contains_import_meta |= other.flags.contains_import_meta;
             self.flags.has_tla |= other.flags.has_tla;
-        }
-
-        /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
-        /// Used to fix up cross-chunk import specifiers after final paths are computed.
-        pub fn replace_string_id(&mut self, old_id: StringID, new_id: StringID) {
-            debug_assert!(!self.finalized);
-            for item in self.buffer.iter_mut() {
-                if *item == old_id {
-                    *item = new_id;
-                }
-            }
-            // Must preserve
-            // insertion order (serialized verbatim into ModuleInfo for JSC).
-            self.requested_modules.rename_key(old_id, new_id);
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -1350,6 +1348,9 @@ pub struct Options<'a> {
     pub print_dce_annotations: bool,
 
     pub inline_require_and_import_errors: bool,
+    /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
+    /// `Infinity` and `undefined`, so the printer may emit those globals as
+    /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
@@ -3429,60 +3430,7 @@ pub(crate) mod __gated_printer {
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(expr.loc);
-
-                    // reshaped for borrowck — find the matching index first,
-                    // then drop the immutable iter borrow before printing.
-                    let mut found: Option<usize> = None;
-                    if let Some(exports) = self.options.commonjs_named_exports {
-                        for (idx, value) in exports.values().iter().enumerate() {
-                            if value.loc_ref.ref_.eql(id.ref_) {
-                                found = Some(idx);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(idx) = found {
-                        let exports = self.options.commonjs_named_exports.unwrap();
-                        // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
-                        // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
-                        // `&mut self` print calls below.
-                        let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
-                        let value_loc_ref = exports.values()[idx].loc_ref;
-                        let value_needs_decl = exports.values()[idx].needs_decl;
-                        struct V {
-                            loc_ref: js_ast::LocRef,
-                            needs_decl: bool,
-                        }
-                        let value = V {
-                            loc_ref: value_loc_ref,
-                            needs_decl: value_needs_decl,
-                        };
-                        if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
-                            if self.options.commonjs_module_exports_assigned_deoptimized
-                                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
-                                && self.options.commonjs_module_ref.is_valid()
-                            {
-                                self.print_symbol(self.options.commonjs_module_ref);
-                                self.print(b".exports");
-                            } else {
-                                self.print_symbol(self.options.commonjs_named_exports_ref);
-                            }
-
-                            let key: &[u8] = key.get();
-                            if lexer::is_identifier(key) {
-                                self.print(b".");
-                                self.print(key);
-                            } else {
-                                self.print(b"[");
-                                self.print_string_literal_utf8(key, false);
-                                self.print(b"]");
-                            }
-                        } else {
-                            self.print_symbol(value.loc_ref.ref_);
-                        }
-                    }
+                    self.print_commonjs_export_identifier(*id, expr.loc, false);
                 }
                 ExprData::ENew(e) => {
                     let has_pure_comment = e.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnused
@@ -3565,6 +3513,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
+                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
+                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
@@ -4251,6 +4201,8 @@ pub(crate) mod __gated_printer {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
+                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
+                            self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
@@ -4662,6 +4614,63 @@ pub(crate) mod __gated_printer {
             } else {
                 self.print(b"[");
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
+                self.print(b"]");
+            }
+        }
+
+        /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
+        fn print_commonjs_export_identifier(
+            &mut self,
+            id: E::CommonJSExportIdentifier,
+            loc: bun_ast::Loc,
+            is_call_target: bool,
+        ) {
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+
+            let Some(exports) = self.options.commonjs_named_exports else {
+                return;
+            };
+            let Some(idx) = exports
+                .values()
+                .iter()
+                .position(|value| value.loc_ref.ref_.eql(id.ref_))
+            else {
+                return;
+            };
+            // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
+            // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
+            // `&mut self` print calls below.
+            let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
+            let value = &exports.values()[idx];
+            let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
+            let call_needs_this = is_call_target
+                && self
+                    .symbols()
+                    .get_const(id.ref_)
+                    .is_some_and(|symbol| symbol.called_as_method() && !symbol.call_ignores_this());
+
+            if !(self.options.commonjs_named_exports_deoptimized || needs_decl || call_needs_this) {
+                self.print_symbol(binding);
+                return;
+            }
+            if self.options.commonjs_module_exports_assigned_deoptimized
+                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
+                && self.options.commonjs_module_ref.is_valid()
+            {
+                self.print_symbol(self.options.commonjs_module_ref);
+                self.print(b".exports");
+            } else {
+                self.print_symbol(self.options.commonjs_named_exports_ref);
+            }
+
+            let key: &[u8] = key.get();
+            if lexer::is_identifier(key) {
+                self.print(b".");
+                self.print(key);
+            } else {
+                self.print(b"[");
+                self.print_string_literal_utf8(key, false);
                 self.print(b"]");
             }
         }
@@ -7256,9 +7265,6 @@ pub trait WriterContext {
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
-    fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
     fn done(&mut self) -> crate::Result<()> {
         Ok(())
     }
@@ -7398,9 +7404,6 @@ impl<C: WriterContext> Writer<C> {
         }
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
-        self.ctx.flush()
-    }
     pub(crate) fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
@@ -7630,10 +7633,6 @@ impl BufferWriter {
         self.written_len = self.buffer.list.len();
         Ok(())
     }
-
-    pub(crate) fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
 }
 
 impl WriterContext for BufferWriter {
@@ -7668,10 +7667,6 @@ impl WriterContext for BufferWriter {
     #[inline]
     fn take_buffer(&mut self) -> MutableString {
         self.take_buffer()
-    }
-    #[inline]
-    fn flush(&mut self) -> crate::Result<()> {
-        self.flush()
     }
     #[inline]
     fn done(&mut self) -> crate::Result<()> {

@@ -20,10 +20,7 @@ function listen(server: Server, protocol: string = "http"): Promise<URL> {
   });
 }
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const baseline = rss();
 let count = 0;
 

@@ -760,6 +760,35 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// The side of the output file of `chunk`.
+    pub(crate) fn chunk_side(&self, chunk: &Chunk) -> crate::options::Side {
+        use crate::options::Side;
+        if matches!(chunk.content, crate::chunk::Content::Css(_))
+            || chunk
+                .flags
+                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            return Side::Client;
+        }
+        match self.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
+            Target::Browser => Side::Client,
+            _ => Side::Server,
+        }
+    }
+
+    /// The output kind of the output file of `chunk`.
+    pub(crate) fn chunk_output_kind(&self, chunk: &Chunk) -> crate::options::OutputKind {
+        use crate::options::OutputKind;
+        if matches!(chunk.content, crate::chunk::Content::Css(_)) {
+            OutputKind::Asset
+        } else if chunk.entry_point.is_entry_point() {
+            self.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
+                .output_kind()
+        } else {
+            OutputKind::Chunk
+        }
+    }
+
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
     /// `self` while the receiver is `self.linker`; field-disjoint access only).
     ///
@@ -1352,6 +1381,7 @@ pub struct LinkerOptions {
     /// See `CompileTargetBuiltins::Target`.
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
+    pub(crate) optimize_bytecode: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1400,6 +1430,7 @@ impl Default for LinkerOptions {
             generate_internal_module_bytecode: false,
             target_builtins: None,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -2562,7 +2593,16 @@ impl<'a> LinkerContext<'a> {
     /// is a fixpoint over bitsets, and each chunk digests its own hash first,
     /// then the rest of its closure in chunk order (so two chunks that reach
     /// each other still differ).
-    pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
+    ///
+    /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
+    /// chunks with different hashes would print the same characters; those
+    /// widen until they differ, and every chunk that reaches a widened chunk
+    /// (its output embeds that chunk's path or id) has the widths folded into
+    /// its own hash so that its name changes with its bytes.
+    pub(crate) fn final_chunk_hashes(
+        &self,
+        chunks: &[Chunk],
+    ) -> Result<Vec<bun_core::fmt::ContentHash>, AllocError> {
         let n = chunks.len();
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
@@ -2645,7 +2685,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        Ok(reach
+        let closure: Vec<u64> = reach
             .iter()
             .enumerate()
             .map(|(i, bits)| {
@@ -2659,7 +2699,37 @@ impl<'a> LinkerContext<'a> {
                 }
                 hash.digest()
             })
-            .collect())
+            .collect();
+
+        use bun_core::fmt::ContentHash;
+        let min_len: Vec<usize> = chunks
+            .iter()
+            .map(|chunk| chunk.template.hash_len())
+            .collect();
+        let mut names: Vec<ContentHash> = (0..n)
+            .map(|i| ContentHash::new(closure[i], min_len[i]))
+            .collect();
+        for _ in 0..ContentHash::MAX_LEN {
+            if !ContentHash::widen_to_distinguish(&mut names) {
+                break;
+            }
+            for i in 0..n {
+                let mut hash = ContentHasher::default();
+                let mut any = false;
+                let mut iter = reach[i].iterator::<true, true>();
+                while let Some(j) = iter.next() {
+                    if j != i && names[j].len() != min_len[j] {
+                        hash.write_ints(&[j as u32, names[j].len() as u32]);
+                        any = true;
+                    }
+                }
+                if any {
+                    hash.write(&closure[i].to_ne_bytes());
+                    names[i] = ContentHash::new(hash.digest(), names[i].len());
+                }
+            }
+        }
+        Ok(names)
     }
 
     // Sort cross-chunk exports by chunk name for determinism
@@ -3410,7 +3480,7 @@ impl<'a> LinkerContext<'a> {
                     };
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
                 let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
@@ -3528,7 +3598,7 @@ impl<'a> LinkerContext<'a> {
 
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let part_index = self
                     .graph
@@ -4606,11 +4676,11 @@ impl<'a> LinkerContext<'a> {
                     .iter()
                     .zip(part.symbol_uses.values())
                 {
-                    if item_use.count_estimate == 0 {
+                    if item_use.count_estimate() == 0 {
                         continue;
                     }
                     if let Some(&namespace_ref) = method_call_items.get(item) {
-                        namespace_uses.push((namespace_ref, item_use.count_estimate));
+                        namespace_uses.push((namespace_ref, item_use.count_estimate()));
                     }
                 }
                 for &(namespace_ref, count) in &namespace_uses {
@@ -4618,7 +4688,7 @@ impl<'a> LinkerContext<'a> {
                         .get_or_put_value(namespace_ref, Default::default())
                         .expect("OOM")
                         .value_ptr
-                        .count_estimate += count;
+                        .merge(SymbolUse::unscoped(count));
                 }
             }
         }
@@ -4809,7 +4879,7 @@ impl<'a> LinkerContext<'a> {
                         .get_or_put_value(resolved.r#ref, Default::default())
                         .expect("OOM")
                         .value_ptr
-                        .count_estimate += count;
+                        .merge(SymbolUse::unscoped(count));
                 }
                 if resolved.source_index != source_index
                     && !imports_to_bind.contains(&resolved.r#ref)

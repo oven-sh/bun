@@ -85,8 +85,8 @@ public:
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
-     * (both in milliseconds; 0 disables the respective check). */
-    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const;
+     * (ms; 0 disables a check). Reports a given message at most once. */
+    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still

@@ -858,10 +858,7 @@ pub(crate) fn merge_small_chunks(
     // entry point has exports: absorbing one adds the bindings other chunks
     // need to its module namespace (Rollup's `preserveEntrySignatures:
     // "exports-only"`). Chunks loaded together with it still fold into each
-    // other. `--compile` keys the user entry point's module at
-    // `/$bunfs/root/<outfile>` after linking (see `js_bundle_completion_task`
-    // / `build_command`), so a chunk importing from that chunk would name a
-    // path that no longer exists in the executable; leave those alone too.
+    // other. `--compile` leaves the chunks of user entry points alone too.
     let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
     let pin_entry_chunk = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;

@@ -380,6 +380,19 @@ const skipsForLeaksan = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
+// Informational: a file that passes only on a retry and is not listed here is annotated as a new flake.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) return new Set();
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+const isKnownFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
+
 const parallelAllowlist = (() => {
   try {
     const { dirs, excludeFiles } = JSON.parse(readFileSync(join(cwd, "test", "parallel-allowlist.json"), "utf-8"));
@@ -723,21 +736,17 @@ async function runTests() {
     }
 
     if (isBuildkite) {
-      // Group flaky tests together, regardless of the title
-      const context = flaky ? "flaky" : title;
+      // Group flaky tests together, regardless of the title; unlisted flakes get their own group above the known ones.
+      const newFlaky = flaky && !title.endsWith("package.json") && !isKnownFlakyTest(title);
+      const context = flaky ? (newFlaky ? "flaky-new" : "flaky") : title;
       const style = flaky ? "warning" : "error";
+      const priority = newFlaky ? 4 : 3;
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
-      if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
-      } else {
-        const content = formatTestToMarkdown(failure, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
+      const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
+      const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
+      if (content) {
+        reportAnnotationToBuildKite({ context, label: title, content, style, priority });
       }
     }
 
@@ -1091,7 +1100,7 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: retrying ${failed.size} failed and ${rerun.length - failed.size} unfinished file(s) one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
@@ -1106,11 +1115,13 @@ async function runTests() {
             const detail = cases.length
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
+            const unlisted = !isKnownFlakyTest(title);
             reportAnnotationToBuildKite({
-              context: "flaky",
+              context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              priority: unlisted ? 4 : 3,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }
@@ -2822,9 +2833,10 @@ function getTestLabel() {
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @param  {number} retries
+ * @param  {boolean} [unlisted] passed on a retry but test/flaky-tests.txt does not list it
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise, retries) {
+function formatTestToMarkdown(result, concise, retries, unlisted = false) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2870,6 +2882,9 @@ function formatTestToMarkdown(result, concise, retries) {
     }
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
+    }
+    if (unlisted) {
+      markdown += ` <b>(not in test/flaky-tests.txt)</b>`;
     }
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
@@ -3350,6 +3365,39 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
+ * hashes every unsigned executable on its first launch and asks the cloud for
+ * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
+ * output. bundler_compile.test.ts launches about 85 of those, which puts the file
+ * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
+ * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
+ * same at image bake time; this covers images baked before that change.
+ *
+ * Only on Buildkite: the policy cannot be turned on again without a reinstall,
+ * so a developer's machine running with CI=true must not get this.
+ */
+async function disableSmartAppControl() {
+  if (!isBuildkite) return;
+  const script = [
+    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
+    "if (-not (Test-Path $p)) { exit 0 }",
+    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
+    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
+    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
+    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
+    'Write-Output "Smart App Control: state $state -> 0"',
+  ].join("; ");
+  const { ok, error } = await spawnSafe({
+    command: "pwsh",
+    args: ["-NoProfile", "-Command", script],
+    timeout: 60_000,
+  });
+  if (!ok) {
+    console.warn(`Failed to disable Smart App Control: ${error}`);
+  }
+}
+
 export async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
@@ -3367,6 +3415,7 @@ export async function main() {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
+    await disableSmartAppControl();
   }
 
   let doRunTests = true;

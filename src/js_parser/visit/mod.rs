@@ -62,16 +62,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
+        self.record_declared_symbol_in(r#ref, false);
+    }
+
+    /// `own_scope`: the name of a function or class expression, bound in the
+    /// expression's own scope rather than the one being visited.
+    pub(crate) fn record_declared_symbol_in(&mut self, r#ref: Ref, own_scope: bool) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
                 ref_: r#ref,
-                is_top_level: self.current_scope == self.module_scope,
+                is_top_level: !own_scope && self.current_scope == self.module_scope,
             })
             .expect("oom");
     }
 
-    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(
+        &mut self,
+        mut func: G::Fn,
+        open_parens_loc: bun_ast::Loc,
+        is_expr: bool,
+    ) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -89,7 +100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
-                self.record_declared_symbol(name_ref);
+                self.record_declared_symbol_in(name_ref, is_expr);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
                     self.mark_strict_mode_feature(
@@ -104,6 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
+            func.name.map(|n| n.ref_),
+            func.flags
+                .contains(flags::Function::HasReactHooksSuppression),
+            body_stmts,
+        );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -193,6 +210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -789,6 +807,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BIdentifier(bind) => {
                 let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
+                // Bindings the renamer must see outside the scope that owns
+                // them (`ScopeUses::sees`): a hoisted `var`, a parameter, a
+                // catch binding.
+                let scope_kind = self.current_scope.kind;
+                if scope_kind == js_ast::scope::Kind::FunctionArgs
+                    || scope_kind == js_ast::scope::Kind::CatchBinding
+                    || (self.symbols[bind.r#ref.inner_index() as usize].is_hoisted()
+                        && !self.current_scope.kind_stops_hoisting())
+                {
+                    self.record_scope_use(bind.r#ref);
+                }
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
@@ -962,6 +991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
         default_name_ref: Ref,
+        is_expr: bool,
     ) -> Ref {
         debug_assert!(
             !SCAN_ONLY,
@@ -971,7 +1001,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_);
+            self.record_declared_symbol_in(name.ref_, is_expr);
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -993,16 +1023,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            self.vis_scope()
-                .members
-                .put(
+            // SAFETY: `original_name` is an AST-arena slice.
+            unsafe {
+                self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
                         ref_: name.ref_,
                         loc: name.loc,
                     },
                 )
-                .expect("oom");
+            };
             name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
@@ -1072,7 +1102,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
+                    // Lowering may move a field's computed key into the
+                    // constructor along with its initializer.
+                    let is_field = !property.flags.contains(flags::Property::IsMethod);
+                    if is_field {
+                        let class_body = self.current_scope;
+                        self.field_init_class_bodies.push(class_body);
+                    }
                     self.visit_expr(key);
+                    if is_field {
+                        self.field_init_class_bodies.pop();
+                    }
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -1151,7 +1191,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
+                    let class_body = self.current_scope;
+                    self.field_init_class_bodies.push(class_body);
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1170,6 +1211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.field_init_class_bodies.pop();
                 }
 
                 // manual restore for the two `defer`s above
@@ -1729,6 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
+            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

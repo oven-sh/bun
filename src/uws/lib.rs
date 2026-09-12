@@ -1367,6 +1367,7 @@ pub use bun_uws_sys::SocketKind;
 pub type DispatchKind = SocketKind;
 
 pub use bun_uws_sys::CloseCode;
+pub use bun_uws_sys::QueuedInput;
 /// Legacy alias — `bun_uws_sys::CloseCode` is the one canonical `#[repr(i32)]`
 /// enum (`normal`/`failure`/`fast_shutdown`, with `Normal`/`Failure`/
 /// `FastShutdown` associated-const aliases).
@@ -1430,12 +1431,6 @@ impl MaybeAnySocket {
 /// Variants: `H1(*mut Request)`, `H3(*mut H3::Request)` (same field types as
 /// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
 pub use bun_uws_sys::AnyRequest;
-
-/// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
-/// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without
-/// a separate local opaque. Both are `#[repr(C)]` zero-sized handles, so this is
-/// a pure namespace reconciliation.
-pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 
 /// Transport-agnostic response handle. Re-exported from `bun_uws_sys` — the
 /// sys-crate version already carries the full dispatch impl (`write`, `end`,

@@ -1865,4 +1865,32 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // Two entry point names that onResolve maps to one file make one output file.
+  for (const splitting of [false, true]) {
+    test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {
+      using dir = tempDir("plugin-two-entry-points-one-file", {
+        "entry.ts": `console.log("entry");`,
+      });
+      const result = await Bun.build({
+        entrypoints: ["first-name", "second-name"],
+        outdir: join(String(dir), "out"),
+        splitting,
+        throw: false,
+        plugins: [
+          {
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /-name$/ }, () => ({ path: join(String(dir), "entry.ts") }));
+            },
+          },
+        ],
+      });
+      expect({
+        success: result.success,
+        logs: result.logs.map(log => log.message),
+        outputs: result.outputs.map(output => path.basename(output.path)),
+      }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
+    });
+  }
 });

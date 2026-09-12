@@ -1154,6 +1154,151 @@ describe("ES Decorators", () => {
     });
   });
 
+  // `bun run` has no symbol renamer: the lowering's `var _init`, `var _dec` and the
+  // WeakMap behind each accessor or `#private` are printed under the name the
+  // parser gave them, so that name has to be unique in the file.
+  describe("lowering temporaries", () => {
+    test.concurrent("an accessor decorator's init does not leak into another class (#40761)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("field initializers run for their own class (#28316, #28010)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const d = name => (_, ctx) => v => (log.push(name + ":" + ctx.name + "=" + v), v);
+        class Parent { @d("Parent") foo = "p1"; @d("Parent") shared = "p2"; }
+        class Child extends Parent { @d("Child") foo = "c1"; @d("Child") own = "c2"; }
+        new Child();
+        class Test1 { @d("Test1") field1 = "t1"; }
+        class Test2 { @d("Test2") field2 = "t2"; }
+        new Test1();
+        console.log(log.join(" "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Parent:foo=p1 Parent:shared=p2 Child:foo=c1 Child:own=c2 Test1:field1=t1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("two classes with an accessor of the same name keep separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        class A { @dec accessor x = "a"; }
+        class B { @dec accessor x = "b"; }
+        const a = new A();
+        const b = new B();
+        console.log(a.x, b.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a subclass can redeclare an accessor of its base class (#29837)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor name = "A"; }
+        class B extends A {
+          accessor name = "B";
+          logName() { console.log(this.name, super.name); }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B A\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("private members of the same name in two classes, and next to an accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        class A {
+          accessor x = "A.x";
+          @dec #x = "A.#x";
+          #m() { return "A.#m"; }
+          read() { return [this.x, this.#x, this.#m()].join(" "); }
+        }
+        class B {
+          @dec #m() { return "B.#m"; }
+          read() { return this.#m(); }
+        }
+        console.log(new A().read(), new B().read());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A.x A.#x A.#m B.#m\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("two decorated classes inside one function keep separate initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, ctx) {
+          ctx.addInitializer(function () { this.tag = ctx.name; });
+        }
+        function make() {
+          class A { @dec a() {} }
+          class B { @dec b() {} }
+          return [new A().tag, new B().tag];
+        }
+        console.log(make().join(" "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class expressions in sibling blocks keep separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        let A, B;
+        { A = class { @dec accessor x = "a"; }; }
+        { B = class { @dec accessor x = "b"; }; }
+        console.log(new A().x, new B().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("user bindings named like a temporary are left alone", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _init = "init", _dec = "dec", _obj = "obj";
+        let _x = "x";
+        function dec(_, _c) {}
+        class A {
+          @dec accessor x = 1;
+          @dec #m() { return "m"; }
+          call(o) { return o.get().#m(); }
+        }
+        const a = new A();
+        console.log(_init, _dec, _obj, _x, a.x, a.call({ get: () => a }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("init dec obj x 1 m\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an accessor whose key is not an identifier gets a valid storage name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        class A { @dec accessor "x y" = 1; accessor "a-b" = 2; @dec accessor 3 = 3; }
+        const a = new A();
+        console.log(a["x y"], a["a-b"], a[3]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2 3\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

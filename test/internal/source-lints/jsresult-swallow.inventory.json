@@ -1,5 +1,9 @@
 {
+  "src/js_parser_jsc/Macro.rs": {
+    "JsResult collapsed on the spot": 1
+  },
   "src/jsc/VirtualMachine.rs": {
+    "JsResult collapsed on the spot": 1,
     "discarded result of a call that enters script": 1
   },
   "src/jsc/web_worker.rs": {
@@ -7,6 +11,9 @@
   },
   "src/runtime/api/bun/h2_frame_parser.rs": {
     "discarded result of a call that enters script": 4
+  },
+  "src/runtime/bake/DevServer.rs": {
+    "JsResult collapsed on the spot": 2
   },
   "src/runtime/ipc.rs": {
     "discarded result of a call that enters script": 4

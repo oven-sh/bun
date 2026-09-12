@@ -1,8 +1,12 @@
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import {
+  isPathExpr,
+  parseRustFragment,
+  unwrapParens,
+  type Local,
+  type RustFile,
+} from "../../../scripts/rust-parser/index.ts";
+import { ratchet, rustSources } from "./rust-sources.ts";
 
 // `let this = unsafe { &mut *this };` — the fn-long exclusive reborrow of a
 // callback's raw pointer — is banned, under any binding name.
@@ -30,70 +34,117 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // Sibling guards: frozen-nonnull-reborrow.test.ts, unsound-erased-box.test.ts.
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
+// The raw-pointer callback-parameter names used across the tree. The list is
+// the enforcement boundary: reborrows of locals or fields (`&mut *self.log()`,
+// `&mut *existing_ptr`) are a separate, pre-existing population outside this
+// lint's scope. If you add a new raw callback-param name, add it here.
+const PARAMS = [
+  "this",
+  "ctx",
+  "p",
+  "ptr",
+  "self_ptr",
+  "this_ptr",
+  "raw",
+  "task",
+  "handle",
+  "data",
+  "context",
+  "user_data",
+  "parent",
+  "client",
+  "ws",
+  "req",
+  "resp",
+  "socket",
+];
 
-// Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
-// `.rs` files in the working tree; CI runs on a clean checkout). Same guard as
-// dead-code-escapes.test.ts.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
+/**
+ * A `let` statement whose entire initializer is `unsafe { &mut *<param> }`.
+ * The unsafe block must be the initializer itself and the reborrow must be the
+ * block's value, so a call-scoped `unsafe { &mut *p }.method()` (a
+ * `MethodCall` initializer) and `unsafe { &mut *p; }` (no value) do not count.
+ * Parentheses around any part are seen through. Any pattern and any type
+ * ascription count: `let (a, b) = unsafe { &mut *p };` holds the same fn-long
+ * borrow through its two bindings.
+ */
+function isFnLongReborrow(local: Local): boolean {
+  if (local.init === null) return false;
+  const init = unwrapParens(local.init);
+  if (init.kind !== "Unsafe" || init.block.stmts.length !== 1) return false;
+  const stmt = init.block.stmts[0];
+  if (stmt.kind !== "ExprStmt" || stmt.semi) return false;
+  const ref = unwrapParens(stmt.expr);
+  if (ref.kind !== "Ref" || !ref.mutable || ref.raw) return false;
+  const deref = unwrapParens(ref.expr);
+  if (deref.kind !== "Unary" || deref.op !== "*") return false;
+  const place = unwrapParens(deref.expr);
+  return PARAMS.some(name => isPathExpr(place, name));
+}
 
-// A `let` binding (any name, optionally typed) of `unsafe { &mut *<param> }`
-// where <param> is one of the raw-pointer callback-parameter names used across
-// the tree. Matched across newlines so a rustfmt-wrapped binding can't evade
-// it. `[^=;{}]*` after the binding name permits a type ascription but cannot
-// cross into a different statement; the trailing `;` requires the unsafe
-// block to be the entire initializer, so a call-scoped
-// `unsafe { &mut *p }.method()` expression does not count.
-//
-// The name list is the enforcement boundary: reborrows of locals or fields
-// (`&mut *self.log()`, `&mut *existing_ptr`) are a separate, pre-existing
-// population outside this lint's scope. If you add a new raw callback-param
-// name, add it here.
-const BANNED =
-  /let\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*unsafe\s*\{\s*&mut\s+\*(?:this|ctx|p|ptr|self_ptr|this_ptr|raw|task|handle|data|context|user_data|parent|client|ws|req|resp|socket)\b\s*\}\s*;/g;
+function findFnLongReborrows(file: RustFile): Local[] {
+  return file.find("Local").filter(isFnLongReborrow);
+}
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape, with a stated reason. Empty by design — the whole tree is at zero.
 // Prefer converting over adding an entry here.
 const ALLOW: Record<string, number> = {};
 
-const counts: Record<string, number> = {};
-const offenders: string[] = [];
-let scanned = 0;
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
-  // its canonical path.
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  scanned++;
-  const content = await file(abs).text();
-  // Strip full-line comments so prose mentions (including this file) don't
-  // count. `[ \t]*`, not `\s*`: `\s` crosses newlines, so a comment preceded
-  // by blank lines would swallow them and shift every reported line number.
-  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const m of stripped.matchAll(BANNED)) {
-    const line = stripped.slice(0, m.index).split("\n").length;
-    counts[source] = (counts[source] ?? 0) + 1;
-    if ((counts[source] ?? 0) > (ALLOW[source] ?? 0)) {
-      offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
-    }
+const sources = rustSources();
+const findings: { path: string; message: string }[] = [];
+for (const src of sources) {
+  for (const local of findFnLongReborrows(src.file)) {
+    findings.push({
+      path: src.path,
+      message: `${src.file.location(local)}: ${src.file.text(local).replace(/\s+/g, " ")}`,
+    });
   }
 }
+const { offenders, stale } = ratchet(findings, ALLOW);
 
 test("scans a non-empty set of tracked Rust sources", () => {
-  // Guards against the tracked/realpath filters above over-firing and leaving
-  // nothing to scan, which would make the ban below pass vacuously.
-  expect(scanned).toBeGreaterThan(0);
+  // Guards against the corpus filters over-firing and leaving nothing to
+  // scan, which would make the ban below pass vacuously.
+  expect(sources.length).toBeGreaterThan(0);
+});
+
+test("the pattern recognizes the spellings it claims to", () => {
+  const matches = (snippet: string) => findFnLongReborrows(parseRustFragment(snippet)).length > 0;
+  const banned = [
+    "let this = unsafe { &mut *this };",
+    "let this: &mut Foo = unsafe { &mut *ptr };",
+    "let mut this = unsafe { &mut *p };",
+    "let handle = unsafe { &mut *user_data };",
+    // rustfmt-wrapped binding.
+    "let this: &mut WebSocketClient<Ssl> =\n    unsafe { &mut *this };",
+    "let this = unsafe {\n    &mut *this\n};",
+    // Spellings the old text match missed.
+    "let this = unsafe { &mut (*this) };",
+    "let this = (unsafe { &mut *this });",
+  ];
+  const allowed = [
+    // Call-scoped: the reborrow ends with the call.
+    "unsafe { &mut *p }.method();",
+    "let x = unsafe { &mut *p }.method();",
+    "foo(unsafe { &mut *p });",
+    // Shared reborrow (TRAMPOLINE) and raw place access (DEAD).
+    "let x = unsafe { &*p };",
+    "let x = unsafe { (*p).field };",
+    "unsafe { (*p).field = v };",
+    // Raw pointer, not a reference.
+    "let x = unsafe { &raw mut *p };",
+    // A name outside the enforcement boundary.
+    "let x = unsafe { &mut *other };",
+    "let x = unsafe { &mut *self.inner };",
+    // No value: the block is a statement, not a reborrow.
+    "let x = unsafe { &mut *p; };",
+    // Prose about the shape is not the shape.
+    "// let this = unsafe { &mut *this };",
+    'log("let this = unsafe { &mut *this };");',
+  ];
+  expect(banned.filter(s => !matches(s))).toEqual([]);
+  expect(allowed.filter(matches)).toEqual([]);
 });
 
 test("fn-long `&mut *<callback param>` reborrow is banned", () => {
@@ -103,7 +154,5 @@ test("fn-long `&mut *<callback param>` reborrow is banned", () => {
 test("allowlisted files still carry exactly their documented count", () => {
   // Ratchet: if an allowlisted file drops below its budget (the shape was
   // finally converted), lower the ALLOW entry so no new one can slip back in.
-  for (const [f, n] of Object.entries(ALLOW)) {
-    expect(counts[f] ?? 0).toBe(n);
-  }
+  expect(stale).toEqual([]);
 });

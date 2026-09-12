@@ -6,12 +6,9 @@
 // "cfg-gated" on its own is NOT banned here: it is used legitimately to
 // describe real platform/feature `#[cfg(...)]` attributes.
 
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import path from "node:path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
-
-const root = path.resolve(import.meta.dir, "..", "..", "..");
+import { parseRustFragment } from "../../../scripts/rust-parser/index.ts";
+import { rustSources } from "./rust-sources.ts";
 
 // Patterns that indicate stale port-era comments. Each was driven to zero
 // occurrences in src/**/*.rs; any reappearance is almost certainly copied
@@ -47,29 +44,48 @@ const banned: { pattern: RegExp; reason: string }[] = [
   },
 ];
 
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
-
 const hits: Record<string, string[]> = {};
 for (const { pattern } of banned) {
   hits[pattern.source] = [];
 }
 
-for (const abs of rustSources) {
-  const rel = path.relative(root, abs);
-  const content = await file(abs).text();
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // These markers are comment jargon; skip non-comment lines so an
-    // identifier or string literal that happens to match never trips the lint.
-    if (!line.includes("//")) continue;
-    for (const { pattern } of banned) {
-      if (pattern.test(line)) {
-        hits[pattern.source].push(`${rel}:${i + 1}`);
-      }
+// Only comment text is searched, every style included (`//`, `///`, `//!` and
+// block comments, which a "does the line contain `//`" heuristic missed), so an
+// identifier or a string literal that happens to match (or a `//` inside a URL
+// string) never trips the lint. Tracked files only (the corpus filters on
+// `git ls-tree`), so a stray `.rs` left in the working tree is not linted.
+for (const src of rustSources()) {
+  for (const { pattern } of banned) {
+    for (const offset of src.file.commentsMatching(pattern).map(m => m.offset)) {
+      hits[pattern.source].push(src.file.location(offset));
     }
   }
 }
+
+test("the patterns recognize the comment jargon they claim to", () => {
+  const matches = (snippet: string) =>
+    banned.some(({ pattern }) => parseRustFragment(snippet).commentsMatching(pattern).length > 0);
+  const stale = [
+    "// blocked_on: the Zig side still owns the handle",
+    "/* this un-gates the fast path */",
+    "/// re-gated until the port of the parent lands",
+    "//! ``-gated: see the tracking issue",
+    "let x = 1; // Ungated now",
+    "// un-gate once the event loop lands",
+    "// un-gated in the last sweep",
+  ];
+  const fine = [
+    // Real `#[cfg]` gating is described as cfg-gated.
+    "// cfg-gated behind #[cfg(windows)]",
+    "/// The feature is gated by a runtime flag.",
+    // Code and string literals are not comments.
+    "let blocked_on = 1;",
+    'log("un-gates");',
+    'let x = "// blocked_on";',
+  ];
+  expect(stale.filter(s => !matches(s))).toEqual([]);
+  expect(fine.filter(matches)).toEqual([]);
+});
 
 for (const { pattern, reason } of banned) {
   test(`no stale port marker: ${pattern}`, () => {

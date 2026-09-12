@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import path from "path";
+import { parseRustFragment, type RustFile } from "../../../scripts/rust-parser/index.ts";
+import { repoRoot, rustSources } from "./rust-sources.ts";
 
 // Every `// HOST_EXPORT(Symbol[, abi])` marker in the Rust sources whose thunk
 // is `extern "C"` must have a caller on the C++ side.
@@ -30,16 +31,16 @@ import path from "path";
 //   live in generated C++ (`GeneratedBindings.cpp`, `GeneratedJS2Native.h`)
 //   that is not part of the tracked tree.
 //
-// Both scans go through `git grep` so they see tracked files only (a
+// The markers come from the comments of the parsed Rust sources (tracked files
+// only). The C++ scan goes through `git grep` so it sees tracked files only (a
 // `git stash` round-trip can leave stray files in the working directory) and
-// finish in milliseconds under a debug build.
+// finishes in milliseconds under a debug build.
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-
-// Same grammar as `markerRe` in src/codegen/generate-host-exports.ts: the
-// marker is the whole line. Prose such as "from the `// HOST_EXPORT(Sym, c)`
-// markers" in a doc comment does not match. Group 1 is the symbol, group 2
-// the abi (`jsc` when absent).
+// Same grammar as `markerRe` in src/codegen/generate-host-exports.ts, applied
+// to the text of a `//` comment (which starts at the `//`): the marker is the
+// whole comment. Prose such as "from the `// HOST_EXPORT(Sym, c)` markers" in a
+// doc comment does not match. Group 1 is the symbol, group 2 the abi (`jsc`
+// when absent).
 const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 
 const GENERATED_PREFIXES = ["bindgen_", "js2native_"];
@@ -65,7 +66,7 @@ function gitGrep(args: string[]): string[] {
     cmd: [
       "git",
       "-C",
-      root,
+      repoRoot,
       "-c",
       "grep.lineNumber=false",
       "-c",
@@ -83,21 +84,39 @@ function gitGrep(args: string[]): string[] {
   return r.stdout.toString().split("\n").filter(Boolean);
 }
 
+interface Marker {
+  symbol: string;
+  abi: string;
+  /** `file:line` of the marker. */
+  where: string;
+}
+
+/** The `// HOST_EXPORT(Symbol[, abi])` markers of a file, in source order. */
+function findMarkers(file: RustFile): Marker[] {
+  const out: Marker[] = [];
+  for (const comment of file.comments) {
+    if (comment.style !== "line") continue;
+    const m = MARKER.exec(comment.text);
+    if (!m) continue;
+    // generate-host-exports.ts matches whole lines, so a marker written after
+    // code on the same line is not a marker there either.
+    const lineStart = file.source.lastIndexOf("\n", comment.start - 1) + 1;
+    if (file.source.slice(lineStart, comment.start).trim() !== "") continue;
+    out.push({ symbol: m[1], abi: m[2] ?? "jsc", where: file.location(comment) });
+  }
+  return out;
+}
+
 // symbol -> "file:line" of its marker
 const exports = new Map<string, string>();
 const rustAbi = new Set<string>();
 const duplicates: string[] = [];
-const markerLines = gitGrep(["-n", "-E", "^[[:space:]]*//[[:space:]]*HOST_EXPORT\\(", "--", ":(glob)src/**/*.rs"]);
-for (const hit of markerLines) {
-  // `<file>:<line>:<content>`; the content may itself contain `:`.
-  const first = hit.indexOf(":");
-  const second = hit.indexOf(":", first + 1);
-  const where = hit.slice(0, second);
-  const m = MARKER.exec(hit.slice(second + 1));
-  if (!m) continue;
-  if (exports.has(m[1])) duplicates.push(`${where}: HOST_EXPORT(${m[1]}) also at ${exports.get(m[1])}`);
-  else exports.set(m[1], where);
-  if (m[2] === "rust") rustAbi.add(m[1]);
+for (const src of rustSources()) {
+  for (const { symbol, abi, where } of findMarkers(src.file)) {
+    if (exports.has(symbol)) duplicates.push(`${where}: HOST_EXPORT(${symbol}) also at ${exports.get(symbol)}`);
+    else exports.set(symbol, where);
+    if (abi === "rust") rustAbi.add(symbol);
+  }
 }
 
 const checked = [...exports.keys()].filter(
@@ -117,6 +136,21 @@ const orphans = checked
   .filter(symbol => !named.has(symbol))
   .map(symbol => `${exports.get(symbol)}: HOST_EXPORT(${symbol})`)
   .sort();
+
+test("the marker grammar recognizes whole-line markers only", () => {
+  const markers = (snippet: string) => findMarkers(parseRustFragment(snippet)).map(m => `${m.symbol},${m.abi}`);
+  expect(markers("// HOST_EXPORT(Bun__foo)\nfn foo() {}")).toEqual(["Bun__foo,jsc"]);
+  expect(markers("    // HOST_EXPORT( Bun__foo , c )\r\n")).toEqual(["Bun__foo,c"]);
+  expect(markers("//HOST_EXPORT(Bun__foo,rust)")).toEqual(["Bun__foo,rust"]);
+  expect(markers("// HOST_EXPORT(Bun__a)\n// HOST_EXPORT(Bun__b)")).toEqual(["Bun__a,jsc", "Bun__b,jsc"]);
+  // Prose, doc and block comments, an unknown abi, and a marker after code
+  // on the same line are not markers, for this lint or for the generator.
+  expect(markers("// from the `// HOST_EXPORT(Sym, c)` markers")).toEqual([]);
+  expect(markers("/// HOST_EXPORT(Bun__foo)")).toEqual([]);
+  expect(markers("/* HOST_EXPORT(Bun__foo) */")).toEqual([]);
+  expect(markers("// HOST_EXPORT(Bun__foo, zig)")).toEqual([]);
+  expect(markers("let x = 1; // HOST_EXPORT(Bun__foo)")).toEqual([]);
+});
 
 test("the marker grammar still recognizes the tree's host exports", () => {
   // If this goes empty, the marker syntax changed and MARKER above needs

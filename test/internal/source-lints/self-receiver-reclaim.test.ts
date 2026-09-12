@@ -1,8 +1,14 @@
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import {
+  isSelf,
+  parseRustFragment,
+  pathEndsWith,
+  unwrapParens,
+  type Call,
+  type Expr,
+  type RustFile,
+} from "../../../scripts/rust-parser/index.ts";
+import { ratchet, rustSources } from "./rust-sources.ts";
 
 // A method must not reclaim its own receiver's allocation: `heap::take` /
 // `heap::destroy` / `Box::from_raw` applied to `self` or to a pointer spelled
@@ -37,41 +43,53 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
 // unsound-erased-box.test.ts.
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
-
-// Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
-// `.rs` files in the working tree; CI runs on a clean checkout). Same guard as
-// dead-code-escapes.test.ts.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
-
 // Everything that turns a raw pointer back into an owning `Box` (and so frees
-// it on drop), optionally path-qualified and turbofished.
-const RECLAIM = String.raw`(?:heap::(?:take|destroy)|Box(?:::<[^>]*>)?::from_(?:raw|non_null))(?:::<[^>]*>)?\s*\(\s*`;
+// it on drop). Matched by path suffix, so `bun_core::heap::take::<T>` counts.
+const RECLAIM = ["heap::take", "heap::destroy", "Box::from_raw", "Box::from_non_null"];
 
-// The ways of spelling "`self`, as a raw pointer" as the first argument.
-// `(?!\s*\.)` after a bare `self` keeps `&raw mut *self.field` (a field's
-// pointee) and similar out of it; the bare `self` form needs the closing paren
-// (optionally after rustfmt's trailing comma) for the same reason.
-const SELF_AS_POINTER = [
-  // `heap::take(self)`: `&mut T` coerces to `*mut T` at the call.
-  String.raw`self\s*,?\s*\)`,
-  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-  String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
-  String.raw`self\s+as\s+\*(?:mut|const)\b`,
-  String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
-  String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
-].join("|");
+// Calls that produce a raw pointer from a reference.
+const TO_POINTER = ["from_mut", "from_ref", "NonNull::from"];
 
-const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
+/** `self`, spelled as a raw pointer. */
+function isSelfAsPointer(expr: Expr): boolean {
+  expr = unwrapParens(expr);
+  switch (expr.kind) {
+    // `heap::take(self)`: `&mut T` coerces to `*mut T` at the call.
+    case "PathExpr":
+      return isSelf(expr);
+    // `ptr::from_mut::<T>(self)`, `NonNull::from(self)`.
+    case "Call":
+      return expr.args.length === 1 && isSelf(expr.args[0]) && TO_POINTER.some(name => pathEndsWith(expr.callee, name));
+    // `self as *mut Self`, `self as *const _ as *mut _`.
+    case "Cast":
+      return expr.ty.kind === "TypePtr" && isSelfAsPointer(expr.expr);
+    // `&mut *self`, `&raw mut *self`, `&raw const *self`. A field's pointee
+    // (`&raw mut *self.inner`) is the receiver's own allocation to free.
+    case "Ref":
+      return (expr.mutable || expr.raw) && expr.expr.kind === "Unary" && expr.expr.op === "*" && isSelf(expr.expr.expr);
+    // `addr_of_mut!(*self)`.
+    case "Macro": {
+      if (!pathEndsWith(expr.path, "addr_of") && !pathEndsWith(expr.path, "addr_of_mut")) return false;
+      const arg = expr.args[0];
+      return expr.args.length === 1 && arg !== null && arg.kind === "Unary" && arg.op === "*" && isSelf(arg.expr);
+    }
+    // `ptr::from_ref(self).cast_mut()`, `NonNull::from(self).as_ptr()`: any
+    // method on one of the pointer spellings above. Methods on bare `self`
+    // (`self.as_ptr()`) return something the receiver owns, not the receiver.
+    case "MethodCall":
+      return unwrapParens(expr.receiver).kind !== "PathExpr" && isSelfAsPointer(expr.receiver);
+    default:
+      return false;
+  }
+}
+
+/** Reclaim calls whose first argument is `self` as a pointer. */
+function findReclaimsOfSelf(file: RustFile): Call[] {
+  return file.find("Call").filter(call => {
+    if (call.args.length === 0 || !RECLAIM.some(name => pathEndsWith(call.callee, name))) return false;
+    return isSelfAsPointer(call.args[0]);
+  });
+}
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Prefer converting over adding an entry here.
@@ -82,42 +100,24 @@ const ALLOW: Record<string, number> = {
   "src/jsc/webcore_types.rs": 1,
 };
 
-const counts: Record<string, number> = {};
-const offenders: string[] = [];
-let scanned = 0;
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
-  // its canonical path.
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  scanned++;
-  const content = await file(abs).text();
-  // Strip full-line comments so prose mentions (including the in-tree comments
-  // describing this hazard) don't count. `[ \t]*`, not `\s*`: `\s` crosses
-  // newlines and would swallow blank lines, shifting the reported line numbers.
-  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const m of stripped.matchAll(BANNED)) {
-    const line = stripped.slice(0, m.index).split("\n").length;
-    counts[source] = (counts[source] ?? 0) + 1;
-    if ((counts[source] ?? 0) > (ALLOW[source] ?? 0)) {
-      offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
-    }
+const sources = rustSources();
+const findings: { path: string; message: string }[] = [];
+for (const src of sources) {
+  for (const call of findReclaimsOfSelf(src.file)) {
+    findings.push({
+      path: src.path,
+      message: `${src.file.location(call)}: ${src.file.text(call).replace(/\s+/g, " ")}`,
+    });
   }
 }
-
-function matches(snippet: string): boolean {
-  BANNED.lastIndex = 0;
-  return BANNED.test(snippet);
-}
+const { offenders, stale } = ratchet(findings, ALLOW);
 
 test("scans a non-empty set of tracked Rust sources", () => {
-  // Guards against the tracked/realpath filters above over-firing and leaving
-  // nothing to scan, which would make the ban below pass vacuously.
-  expect(scanned).toBeGreaterThan(0);
+  expect(sources.length).toBeGreaterThan(0);
 });
 
 test("the pattern recognizes the spellings it claims to", () => {
+  const matches = (snippet: string) => findReclaimsOfSelf(parseRustFragment(snippet)).length > 0;
   const banned = [
     // `<BlobReadChain as ReadBytesHandler>::on_read_bytes(&mut self)`, as it
     // was before the trait handed the pointer over.
@@ -136,6 +136,9 @@ test("the pattern recognizes the spellings it claims to", () => {
     // rustfmt-wrapped calls.
     "unsafe {\n    bun_core::heap::take(\n        std::ptr::from_mut::<Blob>(self),\n    )\n}",
     "unsafe {\n    bun_core::heap::destroy(\n        self,\n    )\n}",
+    // Spellings the old text match missed.
+    "unsafe { heap::destroy((self as *mut Self)) }",
+    "debug_assert!(unsafe { Box::from_raw(self) }.is_empty());",
   ];
   const allowed = [
     // Freeing something the receiver owns is fine.
@@ -145,6 +148,7 @@ test("the pattern recognizes the spellings it claims to", () => {
     "drop(unsafe { Box::from_raw(self.walker) });",
     "drop(unsafe { Box::from_raw(&raw mut *self.inner) });",
     "unsafe { heap::take(std::ptr::from_mut(self.inner)) }",
+    "unsafe { heap::take(self.as_ptr()) }",
     // Raw-pointer receivers and other parameters are the intended shape /
     // out of scope.
     "unsafe { drop(bun_core::heap::take(this)) };",
@@ -154,6 +158,9 @@ test("the pattern recognizes the spellings it claims to", () => {
     // Producing a pointer from `self` without reclaiming it is fine.
     "let this = std::ptr::from_ref::<Blob>(self).cast_mut();",
     "Self::finalize(core::ptr::from_mut(self));",
+    // Prose about the shape is not the shape.
+    "// unsafe { heap::destroy(self) }",
+    'log("heap::destroy(self)");',
   ];
   expect(banned.filter(s => !matches(s))).toEqual([]);
   expect(allowed.filter(matches)).toEqual([]);
@@ -166,7 +173,5 @@ test("no method reclaims its own receiver's allocation", () => {
 test("allowlisted files still carry exactly their documented count", () => {
   // Ratchet: once an allowlisted instance is converted, delete its entry so
   // a new one cannot take its place.
-  for (const [f, n] of Object.entries(ALLOW)) {
-    expect(counts[f] ?? 0).toBe(n);
-  }
+  expect(stale).toEqual([]);
 });

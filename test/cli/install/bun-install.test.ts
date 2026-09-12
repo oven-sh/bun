@@ -2917,6 +2917,103 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should avoid deprecated versions when resolving a range, issue#7571", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": { as: "0.0.3" },
+          "0.0.5": { as: "0.0.5", deprecated: "This is a stub types definition." },
+          latest: "0.0.5",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "*",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ baz@0.0.3 (v0.0.5 available)",
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.3",
+        bin: {
+          "baz-run": "index.js",
+        },
+      });
+    });
+  });
+
+  it("should fall back to a deprecated version when every match is deprecated", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": { as: "0.0.3", deprecated: "old" },
+          "0.0.5": { as: "0.0.5", deprecated: "also old" },
+          latest: "0.0.5",
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "*",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out).toContain("+ baz@0.0.5");
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.5",
+        bin: {
+          "baz-exec": "index.js",
+        },
+      });
+    });
+  });
+
   it("should install latest with prereleases", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

@@ -59,7 +59,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Some(auth_type) => auth_type.as_str().as_bytes(),
         None => b"web",
     };
-    let ci_name = crate::ci_info::detect_ci_name();
+    let ci_name = bun_core::ci_info::detect_ci_name();
 
     let mut print_buf: Vec<u8> = Vec::new();
 

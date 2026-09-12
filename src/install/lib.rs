@@ -326,22 +326,6 @@ pub use package_manager_real::{
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
-/// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
-/// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
-/// CI-probe table itself is generated at build time in `bun_runtime` and is
-/// not reachable from this tier, so the shim returns the `CI` env var name
-/// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub(crate) mod ci_info {
-    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
-        // The per-vendor probes live in `bun_runtime` (T6) and are wired in
-        // there; install only needs *some* answer for the user-agent string.
-        if bun_core::env_var::CI::get().is_some() {
-            return Some(b"ci");
-        }
-        None
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Only the `Shell` enum (variant detection) is consumed here — the embedded
 // completion script bodies stay in bun_cli (they pull in embedded script assets).

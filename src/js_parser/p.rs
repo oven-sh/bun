@@ -472,6 +472,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
+    /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
+    pub(crate) react_compiler_may_replace_body: bool,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -1191,6 +1193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // name leaves the pattern, and `...rest` would then collect it.
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
+            || self.react_compiler_may_replace_body
             || properties
                 .iter()
                 .any(|p| p.flags.contains(bun_ast::flags::Property::IsSpread))
@@ -1255,6 +1258,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(local, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(local, records.to_vec());
+        if self.react_compiler_may_replace_body {
+            self.dynamic_import_copied_locals.insert(local, ());
+        }
         for &import_record_id in records {
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {
@@ -4357,15 +4363,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut item_refs = ImportItemForNamespaceMap::new();
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-        let count_excluding_namespace = u16::try_from(stmt.items.len()).expect("int cast")
-            + u16::from(stmt.default_name.is_some());
+        let count_excluding_namespace = stmt.items.len() + usize::from(stmt.default_name.is_some());
 
-        item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
+        item_refs.ensure_unused_capacity(count_excluding_namespace)?;
         // Even though we allocate ahead of time here
         // we cannot use putAssumeCapacity because a symbol can have existing links
         // those may write to this hash table, so this estimate may be innaccurate
-        self.is_import_item
-            .reserve(count_excluding_namespace as usize);
+        self.is_import_item.reserve(count_excluding_namespace);
         let mut remap_count: u32 = 0;
         // Link the default item to the namespace
         if let Some(name_loc) = &mut stmt.default_name {
@@ -5495,6 +5499,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(value)
+    }
+
+    /// The classic runtime's `options.jsx.factory` / `options.jsx.fragment` as
+    /// a member expression (`React.createElement`), resolved from the current
+    /// scope. `options.jsx` is dropped when `Parser::parse` returns, but the
+    /// parts live on in symbols and `E::Dot.name` until the printer runs, so
+    /// they are duped into the AST arena.
+    pub(crate) fn jsx_classic_member_expression(
+        &mut self,
+        loc: bun_ast::Loc,
+        members: fn(&options::JSX::Pragma) -> &options::JSX::MemberList,
+    ) -> Expr {
+        let arena = self.arena;
+        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
+            members(&self.options.jsx)
+                .iter()
+                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
+        );
+        self.jsx_strings_to_member_expression(loc, parts)
+            .expect("unreachable")
     }
 
     fn member_expression(
@@ -9461,6 +9485,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
         map.ensure_total_capacity(self.top_level_enums.len())?;
         for r#ref in self.top_level_enums.iter() {
+            // Only the newest symbol of a merged `enum E {} enum E {}` is looked up. It has no link.
+            if self.symbols[r#ref.inner_index() as usize].has_link() {
+                continue;
+            }
             let Some(js_ast::ts::Data::Namespace(namespace)) =
                 self.ref_to_ts_namespace_member.get(r#ref)
             else {
@@ -9795,6 +9823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,
+            react_compiler_may_replace_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

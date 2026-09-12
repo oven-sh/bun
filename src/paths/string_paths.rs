@@ -472,6 +472,30 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
+/// Strips trailing separators the way Node's `fs` does on Windows before every
+/// syscall (`path.toNamespacedPath()` resolves the argument, dropping them), so
+/// `dir\file.txt\` names `file.txt`. Roots (`C:\`, `\`, `\\server\share\`) and
+/// `\\?\` / `\\.\` / `\??\` paths are returned unchanged. Unlike
+/// [`without_trailing_slash_windows_path`], every path shape is floored at its
+/// root, not only drive-letter paths.
+pub fn without_trailing_separators_windows_arg(path: &[u8]) -> &[u8] {
+    let is_device_path = path.len() >= 4
+        && resolve_path::is_sep_any(path[0])
+        && resolve_path::is_sep_any(path[1])
+        && (path[2] == b'?' || path[2] == b'.')
+        && resolve_path::is_sep_any(path[3]);
+    if is_device_path || path.starts_with(&windows::NT_OBJECT_PREFIX_U8) {
+        return path;
+    }
+
+    let root_len = resolve_path::windows_filesystem_root(path).len();
+    let mut end = path.len();
+    while end > root_len && resolve_path::is_sep_any(path[end - 1]) {
+        end -= 1;
+    }
+    &path[..end]
+}
+
 pub fn without_leading_slash(this: &[u8]) -> &[u8] {
     strings::trim_left(this, b"/")
 }
@@ -720,5 +744,84 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    #[test]
+    fn without_trailing_separators_windows_arg_strips_to_the_last_component() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"C:\\dir\\file.txt\\", b"C:\\dir\\file.txt"),
+            (b"C:\\dir\\file.txt/", b"C:\\dir\\file.txt"),
+            (b"C:\\dir\\file.txt\\\\/", b"C:\\dir\\file.txt"),
+            (b"C:/dir/", b"C:/dir"),
+            (b"C:file.txt\\", b"C:file.txt"),
+            (b"file.txt\\", b"file.txt"),
+            (b"file.txt/", b"file.txt"),
+            (b"dir\\sub\\", b"dir\\sub"),
+            (b".\\", b"."),
+            (b"..\\", b".."),
+            (b"\\dir\\file.txt\\", b"\\dir\\file.txt"),
+            (
+                b"\\\\server\\share\\file.txt\\",
+                b"\\\\server\\share\\file.txt",
+            ),
+            (b"//server/share/dir//", b"//server/share/dir"),
+            // Already in the form the syscall needs.
+            (b"C:\\dir\\file.txt", b"C:\\dir\\file.txt"),
+            (b"file.txt", b"file.txt"),
+            (b"", b""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                without_trailing_separators_windows_arg(input),
+                *expected,
+                "{:?}",
+                bstr::BStr::new(input)
+            );
+        }
+    }
+
+    #[test]
+    fn without_trailing_separators_windows_arg_keeps_roots() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"C:\\", b"C:\\"),
+            (b"C:/", b"C:/"),
+            (b"C:\\\\", b"C:\\"),
+            (b"C:", b"C:"),
+            (b"\\", b"\\"),
+            (b"/", b"/"),
+            (b"\\\\", b"\\"),
+            (b"\\\\server\\share\\", b"\\\\server\\share\\"),
+            (b"\\\\server\\share\\\\", b"\\\\server\\share\\"),
+            (b"\\\\server\\share", b"\\\\server\\share"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                without_trailing_separators_windows_arg(input),
+                *expected,
+                "{:?}",
+                bstr::BStr::new(input)
+            );
+        }
+    }
+
+    #[test]
+    fn without_trailing_separators_windows_arg_passes_device_paths_through() {
+        for path in [
+            b"\\\\?\\C:\\dir\\".as_slice(),
+            b"\\\\?\\C:\\",
+            b"\\\\?\\UNC\\server\\share\\dir\\",
+            b"\\\\.\\pipe\\name\\",
+            b"\\\\.\\C:\\",
+            b"//?/C:/dir/",
+            b"\\??\\C:\\dir\\",
+            b"\\??\\C:\\",
+        ] {
+            assert_eq!(
+                without_trailing_separators_windows_arg(path),
+                path,
+                "{:?}",
+                bstr::BStr::new(path)
+            );
+        }
     }
 }

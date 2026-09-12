@@ -363,10 +363,22 @@ export function runSetupFunction(
       ...config,
       bundle: true,
       entryPoints: config.entrypoints ?? config.entryPoints ?? [],
-      minify: typeof config.minify === "boolean" ? config.minify : false,
-      minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
-      minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
-      minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
+      // `production: true` defaults every minify pass on; an explicit
+      // `minify` value wins per field, like the native config parser.
+      minify:
+        typeof config.minify === "boolean" ? config.minify : config.minify == null ? config.production === true : false,
+      minifyIdentifiers:
+        typeof config.minify === "boolean"
+          ? config.minify
+          : ((config.minify as MinifyObj)?.identifiers ?? (config.production === true ? true : undefined)),
+      minifyWhitespace:
+        typeof config.minify === "boolean"
+          ? config.minify
+          : ((config.minify as MinifyObj)?.whitespace ?? (config.production === true ? true : undefined)),
+      minifySyntax:
+        typeof config.minify === "boolean"
+          ? config.minify
+          : ((config.minify as MinifyObj)?.syntax ?? (config.production === true ? true : undefined)),
       outbase: config.root,
       platform: config.target === "bun" ? "node" : config.target,
     },

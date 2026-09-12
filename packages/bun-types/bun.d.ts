@@ -6171,7 +6171,16 @@ declare module "bun" {
      */
     namespace: string;
     /**
-     * The default loader for this file extension
+     * The default loader for this module. `Bun.build` uses it when the callback
+     * returns `contents` without a `loader`.
+     *
+     * It is the loader that Bun picks for the module without the plugin: the
+     * `type` attribute of the import (`with { type: "text" }`) when the import
+     * has one, and the loader for the file extension otherwise.
+     *
+     * One case differs. For an extension that has no loader, Bun picks the
+     * `"file"` loader, but the default loader is `"js"`. The default loader is
+     * also `"js"` when the import of such a file has `with { type: "file" }`.
      */
     loader: Loader;
     /**

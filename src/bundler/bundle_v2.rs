@@ -1241,10 +1241,14 @@ pub mod bv2_impl {
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
-                    let default_loader = parse
-                        .path
-                        .loader(&bv2.transpiler.options.loaders)
-                        .unwrap_or(Loader::Js);
+                    let path_loader = parse.path.loader(&bv2.transpiler.options.loaders);
+                    let default_loader = match parse.loader {
+                        // They differ when something requested the loader, such as an import's `with { type }`.
+                        Some(requested) if requested != path_loader.unwrap_or(Loader::File) => {
+                            requested
+                        }
+                        _ => path_loader.unwrap_or(Loader::Js),
+                    };
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     parse_task: bun_ptr::BackRef::new_mut(parse),
@@ -4632,6 +4636,13 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
+                        // The enqueue site left the asset bookkeeping to the plugin's answer.
+                        let index = load.source_index.get() as usize;
+                        if this.graph.input_files.items_loader()[index].should_copy_for_bundling() {
+                            this.graph.input_files.items_side_effects_mut()[index] =
+                                bun_ast::SideEffects::NoSideEffectsPureData;
+                            this.graph.estimated_file_loader_count += 1;
+                        }
                         this.graph.pool().schedule(load.parse_task_mut());
                         return;
                     }
@@ -4980,14 +4991,22 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
+                            let requested_loader =
+                                if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                                    // A file that a plugin resolved the entry point to instead keeps its own loader.
+                                    resolve
+                                        .import_record
+                                        .loader
+                                        .filter(|_| path.text == &*resolve.import_record.specifier)
+                                } else {
+                                    // A `with { type }` loader belongs to the import, whichever path the plugin returned.
+                                    this.graph.ast.items_import_records()
+                                        [resolve.import_record.importer_source_index as usize]
+                                        .as_slice()
+                                        [resolve.import_record.import_record_index as usize]
+                                        .loader
+                                };
+                            let loader = this.requested_file_loader(&path, requested_loader);
 
                             this.graph
                                 .input_files

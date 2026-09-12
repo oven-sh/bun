@@ -206,6 +206,92 @@ test("re-wrapped native entries, timing and observer keep JS identity", async ()
   expect(await promise).toBe(true);
 });
 
+test("PerformanceObserver delivers entries to a callback created in a node:vm context", async () => {
+  // A context has no PerformanceObserver of its own. A test runner or a sandbox hands it the host class,
+  // and the callback is then a function of the context's realm. Delivery used to crash the process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+       const perfHooks = require("node:perf_hooks");
+
+       // Only its source is used: a context evaluates it, so the function belongs to the context's realm.
+       function contextCallback(list, observer) {
+         observer.disconnect();
+         report({ receiver: this, passed: observer, list, names: list.getEntries().map(entry => entry.name) });
+       }
+       const callbackSource = "(" + contextCallback + ")";
+       const check = ({ receiver, passed, list, names }, observer, callback) => ({
+         foreignCallback: !(callback instanceof Function),
+         receiver: receiver === observer,
+         observer: passed === observer,
+         list: list instanceof PerformanceObserverEntryList,
+         names,
+       });
+
+       // The context gets the host class and constructs the observer itself.
+       function insideTheContext() {
+         const { promise, resolve } = Promise.withResolvers();
+         const context = vm.createContext({
+           PerformanceObserver,
+           performance,
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const { observer, callback } = vm.runInContext(
+           "const callback = " + callbackSource + ";" +
+           "const observer = new PerformanceObserver(callback);" +
+           "observer.observe({ entryTypes: ['mark'] });" +
+           "performance.mark('inside-the-context');" +
+           "({ observer, callback });",
+           context,
+         );
+         return promise;
+       }
+
+       // The host constructs the observer around a function that a context returned.
+       function fromTheHost(Observer, options, trigger) {
+         const { promise, resolve } = Promise.withResolvers();
+         const callback = vm.runInNewContext(callbackSource, {
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const observer = new Observer(callback);
+         observer.observe(options);
+         trigger?.();
+         return promise;
+       }
+
+       (async () => {
+         performance.measure("buffered", { start: 0, end: 1 });
+         console.log(
+           JSON.stringify({
+             insideTheContext: await insideTheContext(),
+             globalClass: await fromTheHost(PerformanceObserver, { entryTypes: ["mark"] }, () => performance.mark("global")),
+             perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
+               performance.mark("perf_hooks"),
+             ),
+             // observe({ buffered: true }) delivers before it returns, not from a task.
+             buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
+           }),
+         );
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const delivered = { foreignCallback: true, receiver: true, observer: true, list: true };
+  expect(JSON.parse(stdout)).toEqual({
+    insideTheContext: { ...delivered, names: ["inside-the-context"] },
+    globalClass: { ...delivered, names: ["global"] },
+    perfHooksClass: { ...delivered, names: ["perf_hooks"] },
+    buffered: { ...delivered, names: ["buffered"] },
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {
   // These used to be patched onto the prototypes when node:perf_hooks was first required,
   // so JSON.stringify(performance.mark(...)) dropped `detail` until then.

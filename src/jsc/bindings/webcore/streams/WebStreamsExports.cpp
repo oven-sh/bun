@@ -199,6 +199,20 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     stream->m_consumedAsBody = true;
 }
 
+// markConsumedAsBody for Rust `to_any_blob`, which took the payload of a stream nothing started: no reader exists to close it.
+extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_consumedAsBody = true;
+    ASSERT(!stream->m_reader);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    readableStreamCloseIfPossible(globalObject, stream);
+    scope.assertNoExceptionExceptTermination();
+}
+
 // The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
@@ -253,12 +267,18 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+// A locked stand-in for a body's stream. `consumed`: the body was read to its end (closed, disturbed), not still being read.
+extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject, bool consumed)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
+    if (consumed) {
+        stream->m_disturbed = true;
+        readableStreamClose(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);

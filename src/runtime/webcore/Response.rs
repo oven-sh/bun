@@ -1197,6 +1197,8 @@ pub struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
+    /// `method` is the `GET` fallback for a token `Method::which` does not know (#42497).
+    pub(crate) method_unknown: bool,
 }
 
 impl Default for Init {
@@ -1206,6 +1208,7 @@ impl Default for Init {
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
+            method_unknown: false,
         }
     }
 }
@@ -1224,6 +1227,7 @@ impl Init {
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
+            method_unknown: self.method_unknown,
         })
     }
 
@@ -1317,8 +1321,14 @@ impl Init {
         if let Some(method_value) =
             response_init.fast_get_truthy(global_this, BuiltinName::method)?
         {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
-                result.method = method;
+            let token = method_value.to_utf8(global_this)?;
+            match Method::which(&token) {
+                Some(method) => result.method = method,
+                // A case variant of GET or HEAD keeps the fallback on purpose.
+                None => {
+                    result.method_unknown =
+                        !token.eq_ignore_ascii_case(b"GET") && !token.eq_ignore_ascii_case(b"HEAD")
+                }
             }
         }
 

@@ -973,19 +973,6 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// True when `Init::init` fell back to `GET` for a method token it does not know.
-    fn init_method_is_unknown(global_this: &JSGlobalObject, init: JSValue) -> JsResult<bool> {
-        let Some(method) = init.fast_get_truthy(global_this, bun_jsc::BuiltinName::method)? else {
-            return Ok(false);
-        };
-        let str = BunString::from_js(method, global_this)?;
-        let utf8 = str.to_utf8();
-        let token: &[u8] = &utf8;
-        Ok(Method::which(token).is_none()
-            && !token.eq_ignore_ascii_case(b"GET")
-            && !token.eq_ignore_ascii_case(b"HEAD"))
-    }
-
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
@@ -1343,12 +1330,8 @@ impl Request {
                             if !fields.contains(Fields::Method) {
                                 req.method = response_init.method;
                                 fields.insert(Fields::Method);
-                                if req.method == Method::GET {
-                                    match Self::init_method_is_unknown(global_this, value) {
-                                        Ok(true) => skip_body_check = true,
-                                        Ok(false) => {}
-                                        Err(e) => bail!(Err(e)),
-                                    }
+                                if response_init.method_unknown {
+                                    skip_body_check = true;
                                 }
                             }
                         }

@@ -141,6 +141,18 @@ describe("new Request() with a GET/HEAD method and a body", () => {
     expect(await request.text()).toBe("x");
   });
 
+  test("init.method is read once, so a getter cannot change the answer", () => {
+    let reads = 0;
+    const init = {
+      get method() {
+        return reads++ === 0 ? "GET" : "LIST";
+      },
+      body: "x",
+    };
+    expect(() => new Request("http://example.com/", init)).toThrow(new TypeError(message));
+    expect(reads).toBe(1);
+  });
+
   test("a body taken from a Response init is kept (Bun extension)", async () => {
     // @ts-expect-error Bun accepts a Response as init
     const request = new Request("http://example.com/", new Response("from response"));

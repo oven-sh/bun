@@ -314,6 +314,9 @@ async function setDestTimestamps(src, dest) {
   return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
+// node's async cp refuses an existing destination directory outright. Its
+// cpSync merges into one and only raises ERR_FS_CP_EEXIST per colliding file,
+// so internal/fs/cp-sync.ts onDir deliberately lacks this branch.
 function onDir(srcStat, destStat, src, dest, opts) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
   if (opts.errorOnExist && !opts.force) {

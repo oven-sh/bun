@@ -423,6 +423,76 @@ for (const [name, copy] of impls) {
   });
 }
 
+// node applies `errorOnExist` per copied entry in cpSync, so an existing
+// destination directory is merged into and only a colliding file raises
+// ERR_FS_CP_EEXIST. node's async cp refuses the directory itself; match both.
+describe("'force: false' + 'errorOnExist: true' on an existing destination directory", () => {
+  test("cpSync merges into it and keeps the entries already there", () => {
+    const basename = tempDirWithFiles("cp", {
+      "from/a.txt": "a",
+      "from/nested/b.txt": "b",
+      "result/other.txt": "keep this",
+      "result/nested/c.txt": "keep this too",
+    });
+    const from = join(basename, "from");
+    const result = join(basename, "result");
+
+    fs.cpSync(from, result, { recursive: true, force: false, errorOnExist: true });
+
+    expect({
+      result: fs.readdirSync(result).sort(),
+      nested: fs.readdirSync(join(result, "nested")).sort(),
+      "a.txt": fs.readFileSync(join(result, "a.txt"), "utf8"),
+      "nested/b.txt": fs.readFileSync(join(result, "nested", "b.txt"), "utf8"),
+      "other.txt": fs.readFileSync(join(result, "other.txt"), "utf8"),
+      "nested/c.txt": fs.readFileSync(join(result, "nested", "c.txt"), "utf8"),
+    }).toEqual({
+      result: ["a.txt", "nested", "other.txt"],
+      nested: ["b.txt", "c.txt"],
+      "a.txt": "a",
+      "nested/b.txt": "b",
+      "other.txt": "keep this",
+      "nested/c.txt": "keep this too",
+    });
+  });
+
+  test("cpSync still throws ERR_FS_CP_EEXIST on a colliding file", () => {
+    const basename = tempDirWithFiles("cp", {
+      "from/nested/a.txt": "lose",
+      "result/nested/a.txt": "win",
+    });
+    const result = join(basename, "result");
+
+    let err: any;
+    try {
+      fs.cpSync(join(basename, "from"), result, { recursive: true, force: false, errorOnExist: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_FS_CP_EEXIST");
+    expect(err?.path).toBe(join(result, "nested", "a.txt"));
+    expect(fs.readFileSync(join(result, "nested", "a.txt"), "utf8")).toBe("win");
+  });
+
+  test("promises.cp refuses the destination directory and copies nothing", async () => {
+    const basename = tempDirWithFiles("cp", {
+      "from/a.txt": "a",
+      "result/other.txt": "keep this",
+    });
+    const result = join(basename, "result");
+
+    let err: any;
+    try {
+      await fs.promises.cp(join(basename, "from"), result, { recursive: true, force: false, errorOnExist: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_FS_CP_EEXIST");
+    expect(err?.path).toBe(result);
+    expect(fs.readdirSync(result)).toEqual(["other.txt"]);
+  });
+});
+
 test("cp with missing callback throws", () => {
   expect(() => {
     // @ts-expect-error

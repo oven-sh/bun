@@ -232,6 +232,68 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("relative color keywords inside nested math functions", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors: a channel keyword
+    // may appear anywhere in a channel's math, including inside a math function
+    // nested in another one. #336699 is r 51, g 102, b 153, hsl(210 50% 40%),
+    // alpha 1. Every expression below is homogeneous in its keywords, so the
+    // expected colors hold whatever number a keyword stands for.
+    minify_test(".foo { color: rgb(from #336699 calc(calc(r)) g b) }", ".foo{color:#369}");
+    minify_test(".foo { color: rgb(from #336699 calc(r + calc(g)) b b) }", ".foo{color:#999}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(abs(r - b))) }", ".foo{color:#366}");
+    minify_test(".foo { color: rgb(from #336699 calc(b * sign(g)) g b) }", ".foo{color:#969}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(rem(b, g))) }", ".foo{color:#363}");
+    minify_test(".foo { color: rgb(from #336699 calc(max(r, g)) g calc(min(r, b))) }", ".foo{color:#663}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(b + min(r, g))) }", ".foo{color:#36c}");
+    // sqrt() parses its argument as a plain number; the pow() inside it still sees the keywords.
+    minify_test(".foo { color: rgb(from #336699 r g sqrt(pow(r, 2))) }", ".foo{color:#363}");
+    minify_test(".foo { color: rgb(from #336699 r calc(sqrt(pow(b, 2))) b) }", ".foo{color:#399}");
+    // An alpha that did not resolve was not left as written: rgb() and hsl()
+    // were re-parsed as a color with an unresolved alpha and printed without
+    // their `from`, as rgb(51 102 153/calc(alpha - calc(alpha/2))), which
+    // browsers reject.
+    minify_test(".foo { color: rgb(from #336699 r g b / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(".foo { color: hsl(from #336699 h s l / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(
+      ".foo { color: rgb(from light-dark(#336699, #996633) calc(r + calc(g)) b b) }",
+      ".foo{color:light-dark(#999,#f33)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(g)) b b / var(--a)) }",
+      ".foo{color:rgb(153 153 153/var(--a))}",
+    );
+    // Hues: as a number, and as an angle once a unit is involved.
+    minify_test(".foo { color: hsl(from #336699 calc(h + calc(h)) s l) }", ".foo{color:#993}");
+    minify_test(".foo { color: hsl(from #336699 calc(calc(h) + 30deg) s l) }", ".foo{color:#339}");
+    minify_test(".foo { color: lch(from lch(50% 30 120) l c calc(h + calc(h))) }", ".foo{color:lch(50% 30 240)}");
+    // Channels written as percentages.
+    minify_test(".foo { color: hsl(from #336699 h calc(s + calc(s)) l) }", ".foo{color:#06c}");
+    minify_test(".foo { color: hsl(from #336699 h calc(min(s, l)) l) }", ".foo{color:#3d668f}");
+    minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + calc(l)) a b) }", ".foo{color:lab(100% 20 30)}");
+    // Channels written as numbers.
+    minify_test(".foo { color: lab(from lab(50% 20 30) l calc(a + calc(b)) b) }", ".foo{color:lab(50% 50 30)}");
+    minify_test(
+      ".foo { color: color(from color(srgb 0.8 0.4 0.2) srgb calc(r - calc(g)) g b) }",
+      ".foo{color:color(srgb .4 .4 .2)}",
+    );
+    minify_test(
+      ".foo { color: color(from color(display-p3 0.8 0.4 0.2) display-p3 r g calc(max(g, b))) }",
+      ".foo{color:color(display-p3 .8 .4 .4)}",
+    );
+    // The nested function sees exactly the keywords of the function it is
+    // written in: an unknown identifier, another color space's keyword, and a
+    // keyword outside relative syntax are still invalid, and the declaration
+    // is left as written.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(x)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(x))g b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(h)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(h))g b)}",
+    );
+    minify_test(".foo { color: rgb(calc(1 + calc(r)) 0 0) }", ".foo{color:rgb(calc(1 + calc(r))0 0)}");
+  });
   describe("border_spacing", () => {
     minify_test(
       `

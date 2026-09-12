@@ -28,7 +28,7 @@ pub(crate) fn to_have_last_returned_with(
     let mut last_error_value: JSValue = JSValue::UNDEFINED;
 
     if calls_count > 0 {
-        let last_result = returns.get_direct_index(global_this, calls_count - 1);
+        let last_result = returns.get_direct_index(global_this, calls_count - 1)?;
 
         if last_result.is_object() {
             let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
@@ -95,14 +95,7 @@ pub(crate) fn to_have_last_returned_with(
 
     // Diff if possible
     if expected.is_string() && last_return_value.is_string() {
-        let diff_format = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            expected: Some(expected),
-            received: Some(last_return_value),
-            global_this: Some(global_this),
-            not: false,
-        };
+        let diff_format = DiffFormatter::new(global_this, last_return_value, expected, false)?;
         return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
     }
 

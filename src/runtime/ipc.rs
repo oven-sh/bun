@@ -3,6 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_jsc::JsCell;
+use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -469,10 +470,6 @@ mod json {
         };
 
         let mut json_data = &data[0..idx as usize];
-        // An empty payload (newline with no preceding data) is invalid JSON.
-        if json_data.is_empty() {
-            return Err(IPCDecodeError::InvalidFormat);
-        }
 
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Kind {
@@ -480,10 +477,14 @@ mod json {
             Internal,
         }
         let mut kind = Kind::Regular;
-        if json_data[0] == 2 {
+        if json_data.first() == Some(&2) {
             // internal message
             json_data = &json_data[1..];
             kind = Kind::Internal;
+        }
+        // A bare newline or a lone tag byte is invalid JSON.
+        if json_data.is_empty() {
+            return Err(IPCDecodeError::InvalidFormat);
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
@@ -1017,9 +1018,13 @@ impl SendQueue {
         self.owner.set(None);
     }
 
-    pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
+    pub fn new(
+        mode: Mode,
+        owner: Option<SendQueueOwner>,
+        socket: SocketUnion,
+    ) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
@@ -1041,9 +1046,8 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             windows: JsCell::new(WindowsState::default()),
-        }));
-        // SAFETY: `this` is the fresh, non-null allocation root.
-        unsafe { (*this).root.set(core::ptr::NonNull::new(this)) };
+        });
+        this.root.set(Some(this.as_non_null()));
         this
     }
 
@@ -2021,8 +2025,14 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
-    Ok(Some(Fd::from_system(sock as *mut c_void)))
+    let fd = Fd::from_system(sock as *mut c_void);
+    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
+        // The imported socket is not owned by anything yet; do not leak it
+        // with the exception.
+        fd.close();
+        return Err(err);
+    }
+    Ok(Some(fd))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {

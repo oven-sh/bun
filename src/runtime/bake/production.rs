@@ -30,7 +30,6 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -84,7 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -527,7 +526,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
@@ -743,12 +742,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
+                                    let str = BunString::create_format(format_args!(
                                         "bake:/{}",
                                         BStr::new(without_prefix)
                                     ));
-                                    str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] =
+                                        str.thread_isolated_copy();
                                 }
                             }
 
@@ -771,7 +770,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::Sourcemap => {}
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
-                        | OutputKind::BytecodeStringTable => {}
+                        | OutputKind::BytecodeStringTable
+                        | OutputKind::ModuleInfoStringTable
+                        | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }

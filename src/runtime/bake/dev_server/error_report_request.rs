@@ -510,7 +510,7 @@ fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Resu
         .pos
         .checked_add(len)
         .filter(|&e| e <= buf.len())
-        .ok_or(crate::Error::EndOfStream)?;
+        .ok_or(bun_core::Error::EndOfStream)?;
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)

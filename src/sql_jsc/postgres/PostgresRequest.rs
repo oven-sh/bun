@@ -189,11 +189,18 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::bytea => {
-                let buf = value.as_array_buffer(global);
-                let bytes: &[u8] = match buf.as_ref() {
-                    Some(b) => b.byte_slice(),
-                    None => b"",
+                let Some(buf) = value.as_array_buffer(global) else {
+                    let received = JSGlobalObject::determine_specific_type(global, value)
+                        .map_err(js_error_to_postgres)?;
+                    return Err(js_error_to_postgres(global.throw_value(
+                        global.ERR_INVALID_ARG_TYPE(format_args!(
+                            "Query parameter ${} of type bytea must be a Buffer, TypedArray, ArrayBuffer or string. Received {}",
+                            i + 1,
+                            received,
+                        )),
+                    )));
                 };
+                let bytes = buf.byte_slice();
                 let l = writer.length()?;
                 bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
                 writer.write(bytes)?;
@@ -531,11 +538,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
     }
 }
 
-// `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
-// (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
-    *mut PostgresSQLQuery,
-    bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
->;
+/// Each entry holds a ref on its query.
+pub(crate) type Queue = std::collections::VecDeque<bun_ptr::RefPtr<PostgresSQLQuery>>;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};

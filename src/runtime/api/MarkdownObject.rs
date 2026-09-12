@@ -3,7 +3,7 @@
 use bun_core::StackCheck;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
+    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
     RangeErrorOptions, StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
@@ -64,28 +64,14 @@ fn parser_err_to_js(
     }
 }
 
-struct PinnedView(ArrayBuffer);
-
-impl PinnedView {
-    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
-        let Some(b) = buffer.buffer() else {
-            return Ok(None);
-        };
-        match b.buffer.value.as_pinned_arraybuffer(global) {
-            Some(pinned) => Ok(Some(Self(pinned))),
-            None => Err(global.throw_out_of_memory()),
-        }
-    }
-
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        self.0.byte_slice()
-    }
-}
-
-impl Drop for PinnedView {
-    fn drop(&mut self) {
-        self.0.unpin();
+/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
+fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+    let StringOrBuffer::Buffer(buffer) = input else {
+        return Ok(None);
+    };
+    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
+        Some(pinned) => Ok(Some(pinned)),
+        None => Err(global.throw_out_of_memory()),
     }
 }
 
@@ -142,7 +128,7 @@ pub(crate) fn render_to_ansi(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -210,7 +196,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -313,7 +299,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -406,7 +392,7 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),

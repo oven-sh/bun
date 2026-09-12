@@ -132,6 +132,17 @@ impl JSGlobalObject {
         .throw()
     }
 
+    /// Node's error for a failed allocation, as opposed to JSC's
+    /// [`Self::throw_out_of_memory`].
+    #[cold]
+    pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.err(
+            crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
+            format_args!("Failed to allocate memory"),
+        )
+        .throw()
+    }
+
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
@@ -685,7 +696,7 @@ impl JSGlobalObject {
 
     pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
-        self.vm().collect_async();
+        self.vm().collect_async(false);
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 
@@ -1113,28 +1124,38 @@ impl JSGlobalObject {
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
-    pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToArrayBuffer(self, value)
+    // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
+    // `value` is not a `ReadableStream` and propagate what the consumer throws.
+    pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToArrayBuffer(self, value)
+        })
     }
 
-    pub fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBytes(self, value)
+    pub fn readable_stream_to_bytes(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBytes(self, value))
     }
 
-    pub fn readable_stream_to_text(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToText(self, value)
+    pub fn readable_stream_to_text(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToText(self, value))
     }
 
-    pub fn readable_stream_to_json(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToJSON(self, value)
+    pub fn readable_stream_to_json(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBlob(self, value)
+    pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
 
-    pub fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToFormData(self, value, content_type)
+    pub fn readable_stream_to_form_data(
+        &self,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToFormData(self, value, content_type)
+        })
     }
 
     /// Returns a freshly-created `napi_env` owned by this global, for use by

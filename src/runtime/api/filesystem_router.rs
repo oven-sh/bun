@@ -654,12 +654,7 @@ impl FileSystemRouter {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
             paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
-        Ok(JSValue::from_entries(
-            global_this,
-            name_strings_slice,
-            paths_strings,
-            true,
-        ))
+        JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -896,16 +891,12 @@ impl MatchedRoute {
         let count = map.get_name_count();
         let mut creator = QueryObjectCreator { query: map };
 
-        let value = JSObject::create_with_initializer(&mut creator, ctx, count);
-
-        Ok(value)
+        JSObject::create_with_initializer(&mut creator, ctx, count)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
-        // into a `String` (path components are UTF-8 in practice).
-        let mut writer = String::with_capacity(MAX_PATH_BYTES);
+        let mut src: Vec<u8> = Vec::new();
         let origin_url = if let Some(ref origin) = this.origin {
             URL::parse(origin.leak())
         } else {
@@ -924,10 +915,10 @@ impl MatchedRoute {
             } else {
                 b""
             },
-            &mut writer,
+            &mut src,
             path::Platform::Posix,
         );
-        bun_string_jsc::create_utf8_for_js(global_this, writer.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global_this, &src)
     }
 
     #[bun_jsc::host_fn(getter)]

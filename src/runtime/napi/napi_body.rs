@@ -2438,9 +2438,7 @@ extern "C" fn napi_internal_enqueue_finalizer(
 // ThreadSafeFunction
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ownership: the JS thread owns this allocation while the env lives and frees
-/// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
-/// `thread_count` references, and whoever drops the last one frees it.
+/// Ownership: the JS thread owns this allocation until `finalize` or `env_teardown` sets `resources_released`; then the remaining `thread_count` references own it and the last one dropped frees it.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
@@ -2492,11 +2490,8 @@ pub(crate) struct ThreadSafeFunction {
     /// that would reach `event_loop` from another thread reads it under the
     /// same lock, so teardown cannot land between the check and the enqueue.
     pub(crate) env_dead: AtomicBool,
-    /// Also written under `lock`, once `env_teardown` has released every
-    /// JS-thread-owned resource. Until then teardown still owns this object,
-    /// so a thread that drops the last `thread_count` reference must not free
-    /// it (Node's `kClosed`).
-    pub(crate) env_teardown_done: AtomicBool,
+    /// Also written under `lock`, once `finalize` or `env_teardown` has released every JS-thread-owned resource; until then the thread that drops the last `thread_count` reference must not free this (Node's `kClosed`).
+    pub(crate) resources_released: AtomicBool,
 }
 
 pub(crate) enum TsfnCallback {
@@ -2593,9 +2588,9 @@ impl ThreadSafeFunction {
         }
         // SAFETY: as above.
         if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
-            // Finalize the ThreadSafeFunction.
-            // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
-            unsafe { ThreadSafeFunction::destroy(this) };
+            // SAFETY: `this` is the live heap allocation `maybe_queue_finalizer`
+            // queued this task for.
+            unsafe { ThreadSafeFunction::finalize(this) };
             return;
         }
 
@@ -2714,15 +2709,12 @@ impl ThreadSafeFunction {
                 // Closing (napi_tsfn_abort, or the last call already ran):
                 // nothing still queued runs any more, as in Node's DispatchOne.
                 // An abort's leftovers go back to the addon, with no lock held
-                // since that re-enters it; the function finalizes once the last
-                // thread reference is gone.
+                // since that re-enters it. Then it finalizes whatever thread_count is: after an abort the other threads may never release (Node's CloseHandlesAndMaybeDelete).
                 let leftovers = self.take_queue();
                 drop(_g);
                 self.hand_back(leftovers);
                 let _g = self.lock.lock_guard();
-                if self.thread_count.load(Ordering::SeqCst) == 0 {
-                    self.maybe_queue_finalizer();
-                }
+                self.maybe_queue_finalizer();
                 return Ok(false);
             }
             let was_blocked = self.queue.is_blocked();
@@ -2865,8 +2857,8 @@ impl ThreadSafeFunction {
         let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
         if orphaned {
-            // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and `env_teardown` already released everything it owned.
+            // SAFETY: the lock is dropped, this was the last thread reference,
+            // and the JS thread already released what only it may release.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -2943,40 +2935,62 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
-    /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
-    /// and not aliased; caller transfers ownership.
-    pub(crate) unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation and we are
-        // the sole owner; reclaim the Box up front so the body works on owned
-        // state and the drop at scope end frees it.
-        let mut self_ = unsafe { bun_core::heap::take(this) };
-        self_.unref();
+    /// Runs on the JS thread once the function has closed. Runs the addon's
+    /// finalizer, releases what only this thread may release, and frees the
+    /// allocation unless another thread still holds a reference; then the last
+    /// release frees it (Node's Finalize + MaybeDelete).
+    ///
+    /// SAFETY: `this` is a live allocation from `new` that no other event-loop
+    /// task will reach again.
+    unsafe fn finalize(this: *mut ThreadSafeFunction) {
+        // SAFETY: caller contract. The borrow ends before the addon's finalizer
+        // runs; it may still use the handle (napi_get_threadsafe_function_context).
+        let finalizer = unsafe {
+            let self_ = &mut *this;
+            if let Some(env) = self_.env.as_ref() {
+                // SAFETY: env is live (we hold a ref). `this` is an opaque
+                // registry key here, never dereferenced.
+                NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast());
+            }
+            self_
+                .finalizer_fun
+                .take()
+                .zip(self_.env.as_ref())
+                .map(|(fun, env)| Finalizer {
+                    env: env.clone(),
+                    fun,
+                    data: self_.finalizer_data,
+                    hint: self_.ctx,
+                })
+        };
 
-        if let Some(env) = self_.env.as_ref() {
-            // SAFETY: env is live (we hold a ref); drops our registry entry so
-            // teardown cannot hand this pointer out after we free it. `this` is
-            // passed as an opaque registry key only, never dereferenced.
-            unsafe { NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast()) };
+        // Before anything is released, as in Node and `env_teardown`.
+        if let Some(mut finalizer) = finalizer {
+            crate::dispatch::fold(finalizer.run());
         }
 
-        if let (Some(fun), Some(env)) = (self_.finalizer_fun, self_.env.as_ref()) {
-            // Note: ownership transfer of `env` into the Finalizer. We clone (bumps the
-            // external refcount) and let the original drop with the Box below — net refcount
-            // delta is zero.
-            let finalizer = Finalizer {
-                env: env.clone(),
-                fun,
-                data: self_.finalizer_data,
-                hint: self_.ctx,
-            };
-            finalizer.enqueue();
+        // SAFETY: caller contract; the finalizer has returned and the borrow
+        // ends before the free below.
+        let free = unsafe {
+            let self_ = &mut *this;
+            // The same critical section reads thread_count, so a thread that drops the last reference frees only if it sees this store.
+            let _g = self_.lock.lock_guard();
+            self_.event_loop = None;
+            drop(self_.env.take());
+            self_.resources_released.store(true, Ordering::SeqCst);
+            self_.thread_count.load(Ordering::SeqCst) <= 0
+        };
+
+        if free {
+            // SAFETY: no thread reference is left, the lock is dropped, and
+            // nothing else can reach this allocation.
+            unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,
     /// no event loop. Every JS-thread-owned resource must already be released
-    /// (`env_teardown`) or be safe to drop here (a creation that failed).
+    /// (`finalize`, `env_teardown`) or be safe to drop here (a creation that failed).
     ///
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
@@ -3056,15 +3070,13 @@ impl ThreadSafeFunction {
         }
 
         // Phase 3: release what only the JS thread may release, then hand the
-        // allocation over: `env_teardown_done` is what lets another thread free
-        // it, so it is published in the same critical section that reads
-        // thread_count (Node's ReleaseResources + MaybeDelete).
+        // allocation over. `resources_released` is published in the critical section that reads thread_count (Node's ReleaseResources + MaybeDelete).
         let _g = self.lock.lock_guard();
         self.callback = TsfnCallback::Js(StrongOptional::empty());
         self.poll_ref.disable();
         self.event_loop = None;
         drop(self.env.take());
-        self.env_teardown_done.store(true, Ordering::SeqCst);
+        self.resources_released.store(true, Ordering::SeqCst);
         // Cleanup hooks are the loop's last tick: a task still queued for this
         // TSFN will never run (and its `release_unrun` does not dereference it).
         // With no thread_count reference left, nobody else can reach this, so
@@ -3111,8 +3123,8 @@ impl ThreadSafeFunction {
         };
 
         if orphaned {
-            // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and `env_teardown` already released everything it owned.
+            // SAFETY: the lock is dropped, this was the last thread reference,
+            // and the JS thread already released what only it may release.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -3130,34 +3142,27 @@ impl ThreadSafeFunction {
 
         let prev_remaining = self.thread_count.fetch_sub(1, Ordering::SeqCst);
 
-        if self.env_dead.load(Ordering::SeqCst) {
-            // The event loop we were created on is gone (`env_teardown` set
-            // this under the lock we hold). Never schedule onto it. Whoever
-            // drops the last reference frees us -- but only once teardown has
-            // released the JS-thread-owned resources; until then it owns us
-            // and will free us itself if we are the last to let go.
-            let orphaned = prev_remaining == 1 && self.env_teardown_done.load(Ordering::SeqCst);
+        if self.env_dead.load(Ordering::SeqCst)
+            || self.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8
+        {
+            // The JS thread owns the finalization (`finalize` queued or done, or `env_teardown` ran): never schedule onto the loop again. The last reference frees us once `resources_released` is set; before that the JS thread frees us itself.
+            let orphaned = prev_remaining == 1 && self.resources_released.load(Ordering::SeqCst);
             return (NapiStatus::ok as napi_status, orphaned);
         }
 
-        if mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1 {
-            if !self.is_closing() {
-                if mode == napi_threadsafe_function_release_mode::abort {
-                    self.closing
-                        .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    if self.queue.max_queue_size > 0 {
-                        // Wake all producers blocked in enqueue()'s bounded
-                        // queue wait so they observe is_closing and release.
-                        self.blocking_condvar.broadcast();
-                    }
+        // Already closing: the abort's dispatch is pending or running and finalizes whatever thread_count is by then.
+        if (mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1)
+            && !self.is_closing()
+        {
+            if mode == napi_threadsafe_function_release_mode::abort {
+                self.closing
+                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
+                if self.queue.max_queue_size > 0 {
+                    // Wake all producers blocked in enqueue()'s bounded queue wait so they observe is_closing and release.
+                    self.blocking_condvar.broadcast();
                 }
-                self.schedule_dispatch();
-            } else if prev_remaining == 1 {
-                // Already closing from an earlier abort. The last release must
-                // still reach dispatch_one's thread_count==0 path so the
-                // finalizer runs and the event-loop keepalive is dropped.
-                self.schedule_dispatch();
             }
+            self.schedule_dispatch();
         }
 
         (NapiStatus::ok as napi_status, false)
@@ -3169,7 +3174,7 @@ impl ThreadSafeFunction {
 #[unsafe(no_mangle)]
 extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
-    // SAFETY: the registry only holds live TSFN pointers — `destroy` and
+    // SAFETY: the registry only holds live TSFN pointers — `finalize` and
     // `env_teardown` both remove the entry before freeing. Exclusive borrow
     // scoped to this call.
     if unsafe { (*this).env_teardown() } {
@@ -3245,7 +3250,7 @@ extern "C" fn napi_create_threadsafe_function(
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         env_dead: AtomicBool::new(false),
-        env_teardown_done: AtomicBool::new(false),
+        resources_released: AtomicBool::new(false),
     });
 
     // Register with the env so that VM/worker teardown neutralizes this TSFN
@@ -3557,6 +3562,20 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value12IsUint8ArrayEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function15GetScriptOriginEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function19GetScriptLineNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function21GetScriptColumnNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ResourceNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin10LineOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ColumnOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin8ScriptIdEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12SourceMapUrlEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin7OptionsEv() -> *mut c_void;
+        pub(super) static _ZN2v88Function19kLineOffsetNotFoundE: i32;
         pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
         pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
@@ -3892,6 +3911,34 @@ mod v8_api {
         pub(super) fn v8_Value_ToString() -> *mut c_void;
         #[link_name = "?ToInteger@Value@v8@@QEBA?AV?$MaybeLocal@VInteger@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_Value_ToInteger() -> *mut c_void;
+        #[link_name = "?GetScriptOrigin@Function@v8@@QEBA?AVScriptOrigin@2@XZ"]
+        pub(super) fn v8_Function_GetScriptOrigin() -> *mut c_void;
+        #[link_name = "?GetScriptLineNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptLineNumber() -> *mut c_void;
+        #[link_name = "?GetScriptColumnNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptColumnNumber() -> *mut c_void;
+        #[link_name = "?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInt32() -> *mut c_void;
+        #[link_name = "?Value@Int32@v8@@QEBAHXZ"]
+        pub(super) fn v8_Int32_Value() -> *mut c_void;
+        #[link_name = "?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ"]
+        pub(super) fn v8_ScriptOrigin_VerifyHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?ResourceName@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_ResourceName() -> *mut c_void;
+        #[link_name = "?LineOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_LineOffset() -> *mut c_void;
+        #[link_name = "?ColumnOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ColumnOffset() -> *mut c_void;
+        #[link_name = "?ScriptId@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ScriptId() -> *mut c_void;
+        #[link_name = "?SourceMapUrl@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_SourceMapUrl() -> *mut c_void;
+        #[link_name = "?GetHostDefinedOptions@ScriptOrigin@v8@@QEBA?AV?$Local@VData@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_GetHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?Options@ScriptOrigin@v8@@QEBA?AVScriptOriginOptions@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_Options() -> *mut c_void;
+        #[link_name = "?kLineOffsetNotFound@Function@v8@@2HB"]
+        pub(super) static v8_Function_kLineOffsetNotFound: i32;
         #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
         pub(super) fn v8_Context_Global() -> *mut c_void;
         #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
@@ -4988,6 +5035,19 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v85Value12IsUint8ArrayEv,
             _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE,
             _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE,
+            _ZNK2v88Function15GetScriptOriginEv,
+            _ZNK2v88Function19GetScriptLineNumberEv,
+            _ZNK2v88Function21GetScriptColumnNumberEv,
+            _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Int325ValueEv,
+            _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin12ResourceNameEv,
+            _ZNK2v812ScriptOrigin10LineOffsetEv,
+            _ZNK2v812ScriptOrigin12ColumnOffsetEv,
+            _ZNK2v812ScriptOrigin8ScriptIdEv,
+            _ZNK2v812ScriptOrigin12SourceMapUrlEv,
+            _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin7OptionsEv,
             _ZN2v87Context6GlobalEv,
             _ZNK2v86Object18InternalFieldCountEv,
             _ZN2v86Object15GetIdentityHashEv,
@@ -5025,6 +5085,8 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
         );
+        // Data symbol: keep_symbols! only takes function paths.
+        ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);
     }
     #[cfg(windows)]
     {
@@ -5167,6 +5229,19 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Value_IsUint8Array,
             v8_Value_ToString,
             v8_Value_ToInteger,
+            v8_Function_GetScriptOrigin,
+            v8_Function_GetScriptLineNumber,
+            v8_Function_GetScriptColumnNumber,
+            v8_Value_ToInt32,
+            v8_Int32_Value,
+            v8_ScriptOrigin_VerifyHostDefinedOptions,
+            v8_ScriptOrigin_ResourceName,
+            v8_ScriptOrigin_LineOffset,
+            v8_ScriptOrigin_ColumnOffset,
+            v8_ScriptOrigin_ScriptId,
+            v8_ScriptOrigin_SourceMapUrl,
+            v8_ScriptOrigin_GetHostDefinedOptions,
+            v8_ScriptOrigin_Options,
             v8_Context_Global,
             v8_Object_InternalFieldCount,
             v8_Object_GetIdentityHash,
@@ -5213,6 +5288,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Map_Set,
             v8_Map_Delete,
         );
+        ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }
 
     // posix_platform_specific_v8_apis

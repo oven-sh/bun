@@ -80,10 +80,14 @@ export function satisfiesRange(version: string, range: string | undefined): bool
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface ToolSpec {
-  /** Names to try, in order. On Windows `.exe` is appended automatically. */
+  /** Names to try, in order. On Windows `windowsExt` is appended automatically. */
   names: string[];
+  /** The file extension on Windows. Default `.exe`. npm is `npm.cmd`. */
+  windowsExt?: string;
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
+  /** Search only `paths`, never $PATH. */
+  pathsOnly?: boolean;
   /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
   version?: string;
   /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
@@ -130,6 +134,16 @@ export function findBun(os: OS): string {
     names: ["bun"],
     required: true,
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
+  })!.path;
+}
+
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
+export function findNpm(): string {
+  return findTool({
+    names: ["npm"],
+    windowsExt: ".cmd",
+    required: true,
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
   })!.path;
 }
 
@@ -210,8 +224,10 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
-  const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
+  const exeSuffix = process.platform === "win32" ? (spec.windowsExt ?? ".exe") : "";
+  const searchPaths = spec.pathsOnly
+    ? [...(spec.paths ?? [])]
+    : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
@@ -270,12 +286,29 @@ const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
 /**
+ * Explicit toolchain directories, for building Bun with a self-built LLVM /
+ * Rust (the oven-sh/rust toolchain build trains its PGO profiles this way).
+ * When set they are the ONLY place the corresponding tools are taken from,
+ * and the LLVM version pin above is not enforced — the directory is the pin.
+ *
+ *   BUN_TOOLCHAIN_LLVM   dir containing bin/clang, bin/ld.lld, bin/llvm-ar, …
+ *   BUN_TOOLCHAIN_RUST   rustc sysroot dir containing bin/rustc (and bin/cargo)
+ *   BUN_TOOLCHAIN_CARGO  cargo binary, if not <BUN_TOOLCHAIN_RUST>/bin/cargo
+ */
+export const toolchainOverride = {
+  llvm: process.env.BUN_TOOLCHAIN_LLVM,
+  rust: process.env.BUN_TOOLCHAIN_RUST,
+  cargo: process.env.BUN_TOOLCHAIN_CARGO,
+};
+
+/**
  * Known LLVM install locations per platform. Call ONCE from
  * resolveLlvmToolchain — it contains a spawn on macOS (brew --prefix as
  * fallback) which takes ~100ms, so calling it per-tool would dominate
  * configure time.
  */
 function llvmSearchPaths(os: OS, arch: Arch): string[] {
+  if (toolchainOverride.llvm !== undefined) return [join(toolchainOverride.llvm, "bin")];
   const paths: string[] = [];
 
   if (os === "darwin") {
@@ -352,7 +385,8 @@ function findLlvmTool(
     required: opts.required,
     hint: llvmInstallHint(os),
   };
-  if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
+  if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
+  if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
   return findTool(spec);
 }
 
@@ -392,8 +426,6 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
@@ -552,7 +584,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -579,8 +611,6 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
@@ -638,15 +668,14 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
-  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const rustc =
+    toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", os === "windows" ? "rustc.exe" : "rustc")
+      : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
@@ -691,7 +720,7 @@ export function findRustLld(os: OS): {
   // ensured. Without it the proxy, running in the repo root, applies
   // rust-toolchain.toml in full: besides selecting the channel it installs
   // every entry of its `components` and `targets` lists that is missing
-  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
   // with its output piped into nowhere here. The build itself installs what
   // it needs (rust-src above, the target's std in the rust_build_cross rule),
   // and the toml still applies to anyone running cargo directly. Generous
@@ -714,7 +743,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -724,7 +753,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**
@@ -735,6 +764,7 @@ export function findRustLld(os: OS): {
  * same file; keeping the parse local avoids an import cycle.
  */
 function readRustToolchainChannel(): string | undefined {
+  if (toolchainOverride.rust !== undefined) return undefined; // not a rustup toolchain
   // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
   const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
   if (!existsSync(path)) return undefined;
@@ -757,16 +787,12 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
 
   // Search $CARGO_HOME/bin BEFORE $PATH. Some systems have an outdated
   // distro cargo in /usr/bin that shadows rustup's — we want rustup's.
-  const cargo = findTool({
-    names: ["cargo"],
-    paths: [join(cargoHome, "bin")],
-    required: false,
-  })?.path;
+  const cargo =
+    toolchainOverride.cargo ??
+    (toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", hostOs === "windows" ? "cargo.exe" : "cargo")
+      : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
-
-  // Suppress unused warning for hostOs — kept in signature for future
-  // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
-  void hostOs;
 
   return { cargo, cargoHome, rustupHome };
 }

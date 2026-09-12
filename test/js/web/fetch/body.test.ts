@@ -1,7 +1,8 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
+import { Readable } from "node:stream";
 
 const exampleServer = exampleSite("http");
 
@@ -47,6 +48,15 @@ function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) 
       : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   crypto.getRandomValues(bytes);
   return buffer;
+}
+
+function jsonParseError(text: string): SyntaxError {
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    return error as SyntaxError;
+  }
+  throw new Error(`JSON.parse accepted ${JSON.stringify(text)}`);
 }
 
 const utf8 = [
@@ -286,6 +296,59 @@ for (const { body, fn } of bodyTypes) {
         expect(subject.body).toBeInstanceOf(ReadableStream);
         expect(await subject.text()).toBe("bye");
         expect(subject.bodyUsed).toBe(true);
+      });
+
+      // The readers move an unread Bun.file() stream back into a Blob the same
+      // way. That Blob has to cover the slice the stream was made from, not
+      // the whole file. (text() is not in here: it pumps the stream instead.)
+      describe("made from a sliced Bun.file()", () => {
+        const alphabet = "abcdefghijklmnopqrstuvwxyz";
+
+        test("bytes() returns the window of the slice the stream was made from", async () => {
+          using dir = tempDir("body-file-slice-stream", { "data.txt": alphabet });
+          const file = () => Bun.file(`${dir}/data.txt`);
+          const bytesOf = async (blob: Blob) => Buffer.from(await fn(blob.stream()).bytes()).toString();
+          expect({
+            "slice(3, 8)": await bytesOf(file().slice(3, 8)),
+            "slice(21)": await bytesOf(file().slice(21)),
+            "slice(3, 1000)": await bytesOf(file().slice(3, 1000)),
+            "slice(4, 4)": await bytesOf(file().slice(4, 4)),
+            "slice(3, 20).slice(2, 6)": await bytesOf(file().slice(3, 20).slice(2, 6)),
+            "whole file": await bytesOf(file()),
+          }).toEqual({
+            "slice(3, 8)": "defgh",
+            "slice(21)": "vwxyz",
+            "slice(3, 1000)": "defghijklmnopqrstuvwxyz",
+            "slice(4, 4)": "",
+            "slice(3, 20).slice(2, 6)": "fghi",
+            "whole file": alphabet,
+          });
+        });
+
+        test("arrayBuffer() and blob() return the slice too", async () => {
+          using dir = tempDir("body-file-slice-stream-readers", { "data.txt": alphabet });
+          const slice = () => Bun.file(`${dir}/data.txt`).slice(3, 8);
+          const blob = await fn(slice().stream()).blob();
+          expect({
+            arrayBuffer: Buffer.from(await fn(slice().stream()).arrayBuffer()).toString(),
+            blob: [blob.size, await blob.text()],
+          }).toEqual({
+            arrayBuffer: "defgh",
+            blob: [5, "defgh"],
+          });
+        });
+
+        test("json() parses only the slice", async () => {
+          using dir = tempDir("body-file-slice-stream-json", { "data.json": `--{"ok":true}--` });
+          expect(await fn(Bun.file(`${dir}/data.json`).slice(2, 13).stream()).json()).toEqual({ ok: true });
+        });
+
+        test("bytes() after the body getter turned a sliced Bun.file() body into a stream", async () => {
+          using dir = tempDir("body-file-slice-body-getter", { "data.txt": alphabet });
+          const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
+          expect(subject.body).toBeInstanceOf(ReadableStream);
+          expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
       });
     });
     for (const { string, buffer } of utf8) {
@@ -696,17 +759,29 @@ for (const { body, fn } of bodyTypes) {
           },
         );
         test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          // The client must consume "A" before the drop reaches the HTTP
+          // thread: a failure that arrives in the same progress update as
+          // unread body bytes errors the body and discards those bytes.
+          const consumedFirstChunk = Promise.withResolvers<void>();
           await using server = await rawChunkedServer(async sock => {
-            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            await writeChunk(sock, [0x41]);
+            await consumedFirstChunk.promise;
+            for (const p of [[0xf0], [0x9f]]) await writeChunk(sock, p);
             sock.destroy();
           });
           const res = await fetch(`http://127.0.0.1:${server.port}/`);
           let received = "";
           let error: any;
           try {
-            for await (const ch of res.textStream()) received += ch;
+            for await (const ch of res.textStream()) {
+              received += ch;
+              consumedFirstChunk.resolve();
+            }
           } catch (e) {
             error = e;
+          } finally {
+            // Let the server finish (and close the socket) if the stream ended early.
+            consumedFirstChunk.resolve();
           }
           expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
@@ -855,6 +930,13 @@ for (const { body, fn } of bodyTypes) {
       for (const actual of invalidTests) {
         test(actual || "<empty>", async () => {
           expect(async () => await fn(actual).json()).toThrow(SyntaxError);
+          // An empty body is rejected before the parser runs, with its own message.
+          if (actual !== "") {
+            const error = await fn(actual)
+              .json()
+              .catch(error => error);
+            expect(error.message).toBe(jsonParseError(actual).message);
+          }
         });
       }
     });
@@ -1246,7 +1328,7 @@ describe.concurrent("string body consumption does not leak", () => {
           : `b => new Response(b)`;
       const src = `
         const SZ = 2_000_000, WARM = 50, BLOCK = 40;
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};
@@ -1415,11 +1497,11 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(await response.text()).toBe("");
   });
 
-  test("content that arrives after a 205 resolved is drained, so the process can exit", async () => {
+  test("content still arriving after a 205 resolved does not hold the process", async () => {
     // The server sends 3 of the 5 declared bytes with the head and the other 2
     // only once fetch() has resolved. Nothing but the fetch refs the event loop,
-    // so the process only exits if the fetch takes those 2 bytes off the socket
-    // instead of keeping them for a body reader that cannot exist.
+    // so the process only exits if the fetch stops waiting for a body no reader
+    // can exist for: it closes the connection instead (the server sees the reset).
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1430,6 +1512,7 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
           const server = net.createServer(socket => {
             upstream = socket;
             socket.unref();
+            socket.on("error", () => {});
             socket.once("data", () => {
               socket.write("HTTP/1.1 205 Reset Content\\r\\nContent-Length: 5\\r\\n\\r\\nhel");
             });
@@ -1450,5 +1533,309 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A body's ReadableStream is one object no matter whether the body started out
+// as a string, a Blob, a typed array, a JS ReadableStream, or zero bytes, so the
+// disturbed/locked bookkeeping on it must not depend on what backs the body or
+// on which mixin method reads it. Every expectation below is what undici does.
+describe("body stream bookkeeping does not depend on the body's source", () => {
+  const jsStream = (chunk: string) =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(chunk));
+        c.close();
+      },
+    });
+  const sources: [string, () => BodyInit, string][] = [
+    ["string", () => "payload", "payload"],
+    ["Blob", () => new Blob(["payload"]), "payload"],
+    ["Uint8Array", () => new TextEncoder().encode("payload"), "payload"],
+    ["URLSearchParams", () => new URLSearchParams("a=1"), "a=1"],
+    ["ReadableStream", () => jsStream("payload"), "payload"],
+    ['""', () => "", ""],
+    ["Uint8Array(0)", () => new Uint8Array(0), ""],
+    ["Blob([])", () => new Blob([]), ""],
+  ];
+  const owners: [string, (body: BodyInit, headers?: HeadersInit) => Request | Response][] = [
+    // `duplex` is what undici wants for a stream body; Bun accepts and ignores it.
+    [
+      "Request",
+      (body, headers) => new Request("http://a/", { method: "POST", body, headers, duplex: "half" } as RequestInit),
+    ],
+    ["Response", (body, headers) => new Response(body, { headers })],
+  ];
+  const errorName = (fn: () => unknown) => {
+    try {
+      fn();
+      return "ok";
+    } catch (e) {
+      return (e as Error).constructor.name;
+    }
+  };
+  const settled = (p: Promise<unknown>) => p.then(String, e => (e as Error).constructor.name);
+
+  for (const [ownerName, make] of owners) {
+    describe(ownerName, () => {
+      // https://fetch.spec.whatwg.org/#concept-bodyinit-extract: a ReadableStream
+      // init is adopted as the new body's stream. Nothing reads it until the new
+      // body is read, and reading the new body is what uses up the old one.
+      describe("new (stream) adopts another body's stream without reading it", () => {
+        for (const [name, init, content] of sources) {
+          test(name, async () => {
+            const from = make(init());
+            const stream = from.body!;
+            const to = make(stream);
+            expect({
+              same: to.body === stream,
+              locked: stream.locked,
+              fromUsed: from.bodyUsed,
+              toUsed: to.bodyUsed,
+              fromClone: errorName(() => from.clone()),
+            }).toEqual({ same: true, locked: false, fromUsed: false, toUsed: false, fromClone: "ok" });
+            // from.clone() teed the stream: `from` now reads one branch and the
+            // tee's reader holds the original, which is still `to`'s body.
+            expect(stream.locked).toBe(true);
+            expect(await settled(to.text())).toBe("TypeError");
+
+            const from2 = make(init());
+            const stream2 = from2.body!;
+            const to2 = make(stream2);
+            expect(await to2.text()).toBe(content);
+            expect({ locked: stream2.locked, fromUsed: from2.bodyUsed, toUsed: to2.bodyUsed }).toEqual({
+              locked: true,
+              fromUsed: true,
+              toUsed: true,
+            });
+            expect(await settled(from2.text())).toBe("TypeError");
+            expect(errorName(() => from2.clone())).toBe("TypeError");
+          });
+        }
+      });
+
+      // Consuming a body acquires a reader on its stream and never releases it.
+      describe("a consumed body's stream stays locked", () => {
+        for (const [name, init] of sources) {
+          const methods = ["text", "json", "arrayBuffer", "bytes", "blob"] as const;
+          for (const method of name === "URLSearchParams" ? ([...methods, "formData"] as const) : methods) {
+            test(`${name} .body then ${method}()`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              // json() rejects on most of these payloads; the body is read either way.
+              await owner[method]().catch(() => {});
+              expect({
+                same: owner.body === stream,
+                locked: stream.locked,
+                bodyUsed: owner.bodyUsed,
+                getReader: errorName(() => stream.getReader()),
+                rewrap: errorName(() => make(stream)),
+                again: await settled(owner[method]()),
+                clone: errorName(() => owner.clone()),
+              }).toEqual({
+                same: true,
+                locked: true,
+                bodyUsed: true,
+                getReader: "TypeError",
+                rewrap: "TypeError",
+                again: "TypeError",
+                clone: "TypeError",
+              });
+            });
+          }
+        }
+        for (const method of ["text", "json", "arrayBuffer", "bytes", "blob"] as const) {
+          test(`${method}() then .body`, async () => {
+            const owner = make("[1]");
+            await owner[method]();
+            const stream = owner.body!;
+            expect({
+              locked: stream.locked,
+              bodyUsed: owner.bodyUsed,
+              getReader: errorName(() => stream.getReader()),
+            }).toEqual({ locked: true, bodyUsed: true, getReader: "TypeError" });
+          });
+        }
+        test("when the stream errors instead of closing", async () => {
+          const stream = new ReadableStream({
+            pull(c) {
+              c.error(new Error("boom"));
+            },
+          });
+          const owner = make(stream);
+          expect(await settled(owner.text())).toBe("Error");
+          expect({
+            locked: stream.locked,
+            bodyUsed: owner.bodyUsed,
+            getReader: errorName(() => stream.getReader()),
+          }).toEqual({ locked: true, bodyUsed: true, getReader: "TypeError" });
+        });
+      });
+
+      // A zero-length body is a body: reading it, through a mixin method or
+      // through its stream, uses it up.
+      describe("a zero-length body is used up like any other", () => {
+        for (const [name, init] of sources.filter(([, , content]) => content === "")) {
+          test(`${name}: blob()`, async () => {
+            const owner = make(init());
+            expect((await owner.blob()).size).toBe(0);
+            expect({
+              bodyUsed: owner.bodyUsed,
+              text: await settled(owner.text()),
+              clone: errorName(() => owner.clone()),
+            }).toEqual({ bodyUsed: true, text: "TypeError", clone: "TypeError" });
+          });
+          test(`${name}: draining .body with a reader`, async () => {
+            const owner = make(init());
+            const reader = owner.body!.getReader();
+            expect(await reader.read()).toEqual({ done: true, value: undefined });
+            reader.releaseLock();
+            expect({ text: await settled(owner.text()), bodyUsed: owner.bodyUsed }).toEqual({
+              text: "TypeError",
+              bodyUsed: true,
+            });
+          });
+          test(`${name}: piping .body through a TransformStream`, async () => {
+            const owner = make(init());
+            const piped = owner.body!.pipeThrough(new TransformStream());
+            expect({ text: await settled(owner.text()), bodyUsed: owner.bodyUsed }).toEqual({
+              text: "TypeError",
+              bodyUsed: true,
+            });
+            expect(await new Response(piped).text()).toBe("");
+          });
+          test(`${name}: .body then text()`, async () => {
+            const owner = make(init());
+            const stream = owner.body!;
+            expect(await owner.text()).toBe("");
+            expect({ locked: stream.locked, bodyUsed: owner.bodyUsed }).toEqual({ locked: true, bodyUsed: true });
+          });
+          test(`${name}: .body then blob() keeps the Content-Type`, async () => {
+            const owner = make(init(), { "content-type": "text/x-custom" });
+            owner.body;
+            const blob = await owner.blob();
+            expect({ size: blob.size, type: blob.type, bodyUsed: owner.bodyUsed }).toEqual({
+              size: 0,
+              type: "text/x-custom",
+              bodyUsed: true,
+            });
+          });
+        }
+      });
+
+      // A consumed body's stream is locked for every other consumer too,
+      // including the node:stream adapter's native fast path.
+      describe("Readable.fromWeb() refuses a consumed body's stream", () => {
+        for (const [name, init] of sources) {
+          test(name, async () => {
+            const owner = make(init());
+            const stream = owner.body!;
+            await owner.text();
+            expect(() => Readable.fromWeb(stream)).toThrow(
+              expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+            );
+          });
+        }
+      });
+    });
+  }
+
+  // A null body is not a zero-length body: nothing can use it up.
+  test("Response.redirect() and Response.error() have a null body", async () => {
+    for (const response of [Response.redirect("http://a/"), Response.error()]) {
+      expect(await response.text()).toBe("");
+      expect({
+        body: response.body,
+        bodyUsed: response.bodyUsed,
+        again: await response.text(),
+        clone: errorName(() => response.clone()),
+      }).toEqual({ body: null, bodyUsed: false, again: "", clone: "ok" });
+    }
+  });
+
+  // fetch() lifts a payload that is already in memory back out of an unread
+  // body stream and uploads it with a Content-Length; a JS stream still streams.
+  test("fetch() uploads an in-memory body behind a stream with a Content-Length", async () => {
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    const server = net.createServer(socket => {
+      let head = "";
+      socket.setEncoding("latin1");
+      socket.on("error", () => socket.destroy());
+      socket.on("data", chunk => {
+        if (head.includes("\r\n\r\n")) return;
+        head += chunk;
+        if (!head.includes("\r\n\r\n")) return;
+        const lower = head.slice(0, head.indexOf("\r\n\r\n")).toLowerCase();
+        const framing = lower.includes("transfer-encoding: chunked")
+          ? "chunked"
+          : (lower.match(/content-length: \d+/)?.[0] ?? "none");
+        socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${framing.length}\r\nConnection: close\r\n\r\n${framing}`);
+      });
+    });
+    server.listen(0, "127.0.0.1", onListening);
+    await listening;
+    try {
+      const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
+      const post = (body: BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
+      const touched = (body: BodyInit) => {
+        const request = new Request(url, post(body));
+        request.body;
+        return request;
+      };
+      const framing = async (input: Request | RequestInit) =>
+        (await fetch(...((input instanceof Request ? [input] : [url, input]) as [any]))).text();
+      expect({
+        responseStream: await framing(post(new Response("x").body!)),
+        requestAroundStream: await framing(new Request(url, post(new Response("xy").body!))),
+        blobStream: await framing(post(new Blob(["abcd"]).stream())),
+        touchedString: await framing(touched("xyz")),
+        touchedEmpty: await framing(touched("")),
+        jsStream: await framing(post(jsStream("q"))),
+      }).toEqual({
+        responseStream: "content-length: 1",
+        requestAroundStream: "content-length: 2",
+        blobStream: "content-length: 4",
+        touchedString: "content-length: 3",
+        touchedEmpty: "content-length: 0",
+        jsStream: "chunked",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The re-wrap idiom keeps the blob fast path on the wire: the server lifts
+  // the payload back out of the adopted stream and frames it with a
+  // Content-Length instead of chunking it.
+  test("Bun.serve sends a re-wrapped blob-backed body with a Content-Length", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        const inner =
+          path === "/blob"
+            ? new Response(new Blob(["payload"]))
+            : path === "/empty"
+              ? new Response("")
+              : new Response("payload", { headers: { "x-inner": "1" } });
+        return new Response(inner.body, inner);
+      },
+    });
+    for (const path of ["/string", "/blob", "/empty"]) {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let raw = "";
+      const socket = net.connect(server.port, "127.0.0.1", () =>
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
+      );
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => (raw += chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(raw));
+      const response = await promise;
+      const expected = path === "/empty" ? "" : "payload";
+      expect(response.toLowerCase()).toContain(`content-length: ${expected.length}\r\n`);
+      expect(response.toLowerCase()).not.toContain("transfer-encoding");
+      expect(response.endsWith(`\r\n\r\n${expected}`)).toBe(true);
+    }
   });
 });

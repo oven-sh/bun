@@ -1319,15 +1319,16 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // Expect: 100-continue is handled at the uWS layer for both transports
-  // (HttpContext.h / Http3Context.h call writeContinue before routing); a
-  // curl --expect100-timeout assertion was flaky enough to drop here.
+  // Expect handling over H3 is covered by "Expect dispatch" in the request
+  // validation describe below via h3Exchange (no curl dependency).
 });
 
 async function h3Exchange(
   port: number,
   headers: Record<string, string>,
   options: Record<string, unknown> = {},
+  /* When given, every received :status (interim and final) is appended. */
+  statuses?: string[],
 ): Promise<string> {
   await using endpoint = new QuicEndpoint();
   const client = await connect(`127.0.0.1:${port}`, {
@@ -1351,6 +1352,7 @@ async function h3Exchange(
         headers,
         onheaders(received: Record<string, string>) {
           status = received[":status"];
+          statuses?.push(status);
         },
       });
       stream.closed.catch(() => {});
@@ -1375,6 +1377,49 @@ const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
 });
 
 describe("Bun.serve HTTP/3 request validation", () => {
+  // https://github.com/oven-sh/bun/issues/30248 — Http3Context.h's Expect
+  // dispatch: recognized 100-continue forms route to the handler, anything
+  // else answers 417 before the handler runs.
+  test("Expect dispatch: 100-continue casings reach the handler, unknown expectations 417", async () => {
+    let dispatched = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch() {
+        dispatched++;
+        return new Response("ok:" + dispatched);
+      },
+    });
+
+    const results: Record<string, { result: string; statuses: string[] }> = {};
+    for (const value of ["100-continue", "100-Continue", "100-CONTINUE"]) {
+      const statuses: string[] = [];
+      const result = await h3Exchange(server.port, requestHeaders("/", { expect: value }), {}, statuses);
+      results[value] = { result, statuses };
+    }
+    const dispatchedAfterAccepted = dispatched;
+    for (const value of ["muffins", "x100-continue"]) {
+      const statuses: string[] = [];
+      const result = await h3Exchange(server.port, requestHeaders("/", { expect: value }), {}, statuses);
+      results[value] = { result, statuses };
+    }
+
+    // node:quic's h3 client does not deliver interim responses to onheaders,
+    // so only the final status is observable here; the 100-before-dispatch
+    // ordering is asserted byte-exact on the HTTP/1 path and via the client
+    // "headers" event on the HTTP/2 path.
+    expect(results).toEqual({
+      "100-continue": { result: "200 ok:1", statuses: ["200"] },
+      "100-Continue": { result: "200 ok:2", statuses: ["200"] },
+      "100-CONTINUE": { result: "200 ok:3", statuses: ["200"] },
+      "muffins": { result: "417 ", statuses: ["417"] },
+      "x100-continue": { result: "417 ", statuses: ["417"] },
+    });
+    expect(dispatchedAfterAccepted).toBe(3);
+    expect(dispatched).toBe(3);
+  });
+
   test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
     let reachedWithProbe = 0;
     await using server = Bun.serve({

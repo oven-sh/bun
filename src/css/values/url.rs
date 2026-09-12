@@ -100,13 +100,14 @@ impl Url {
         let is_internal = import_record
             .flags
             .contains(bun_ast::ImportRecordFlags::IS_INTERNAL);
-        let url = dest.get_import_record_url(self.import_record_idx)?;
+        let resolved = dest.resolve_import_record_url(self.import_record_idx)?;
+        let is_placeholder = resolved.is_placeholder;
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
         // Printer arena, not parser source — route to the raw primitive.
-        let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
+        let url: &[u8] = unsafe { bun_collections::detach_lifetime(resolved.url) };
 
-        if dest.minify && !is_internal {
+        if dest.minify && !is_internal && !is_placeholder {
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —

@@ -95,13 +95,16 @@ mod ext {
         let is_internal = import_record.tag.is_internal();
         // `get_import_record_url` reborrows &mut *dest, so capture
         // `is_internal` first.
-        let url: &'static [u8] = {
-            let u = dest.get_import_record_url(this.import_record_idx)?;
+        let (url, is_placeholder): (&'static [u8], bool) = {
+            let resolved = dest.resolve_import_record_url(this.import_record_idx)?;
             // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
-            unsafe { &*std::ptr::from_ref::<[u8]>(u) }
+            (
+                unsafe { &*std::ptr::from_ref::<[u8]>(resolved.url) },
+                resolved.is_placeholder,
+            )
         };
 
-        if dest.minify && !is_internal {
+        if dest.minify && !is_internal && !is_placeholder {
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);

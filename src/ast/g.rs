@@ -328,6 +328,9 @@ pub struct Arg {
     pub is_typescript_ctor_field: bool,
 
     pub ts_metadata: TypeScript::Metadata,
+
+    // `function(/* token */ arg)` — kept for Function.prototype.toString()
+    pub leading_comments: StoreSlice<Comment>,
 }
 
 impl Default for Arg {
@@ -338,6 +341,7 @@ impl Default for Arg {
             default: None,
             is_typescript_ctor_field: false,
             ts_metadata: TypeScript::Metadata::MNone,
+            leading_comments: StoreSlice::EMPTY,
         }
     }
 }
@@ -359,6 +363,7 @@ impl Arg {
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
             ts_metadata: self.ts_metadata.clone(),
+            leading_comments: self.leading_comments,
         })
     }
 }

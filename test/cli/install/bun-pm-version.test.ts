@@ -205,6 +205,20 @@ describe.concurrent("bun pm version", () => {
       expect(packageJson.version).toBe("2.0.0");
     });
 
+    // `npm version patch` writes the same version, although both tools then refuse to increment it again.
+    it("increments a number equal to Number.MAX_SAFE_INTEGER", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.9007199254740991" }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        testDir,
+      );
+
+      expect({ output, error, code }).toEqual({ output: "v1.0.9007199254740992\n", error: "", code: 0 });
+    });
+
     it("should set specific version", async () => {
       const testDir = setupTest();
 
@@ -299,6 +313,25 @@ describe.concurrent("bun pm version", () => {
         error: `error: Current version "${version}" is not a valid semver\n`,
         code: 1,
         version,
+      });
+    });
+
+    // The same limit applies to a version given as the argument. `npm version` prints "Invalid version".
+    it("rejects a specific version with a number above Number.MAX_SAFE_INTEGER", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "1.0.9007199254740992", "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, error: error.split("\n")[0], code, version: packageJson.version }).toEqual({
+        output: "",
+        error: 'error: Invalid version argument: "1.0.9007199254740992"',
+        code: 1,
+        version: "1.0.0",
       });
     });
 

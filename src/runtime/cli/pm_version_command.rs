@@ -321,13 +321,22 @@ impl PmVersionCommand {
         Ok(())
     }
 
+    /// `npm version` refuses a major, minor or patch above Number.MAX_SAFE_INTEGER. Below that
+    /// limit, `+ 1` cannot wrap.
+    /// https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        let version = result.version.min();
+        result.valid && version.major.max(version.minor).max(version.patch) <= MAX_SAFE_INTEGER
+    }
+
     fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
         if let Some(vtype) = VersionType::from_string(arg) {
             return (vtype, None);
         }
 
         let version = Semver::Version::parse(Semver::SlicedString::init(arg, arg));
-        if version.valid {
+        if Self::is_valid_version(&version) {
             return (VersionType::Specific, Some(arg));
         }
 
@@ -498,12 +507,7 @@ impl PmVersionCommand {
         }
 
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
-        // `npm version` calls such a version invalid too. Below the limit, `+ 1` cannot wrap.
-        // https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
-        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
-        let version = current.version.min();
-        if !current.valid || version.major.max(version.minor).max(version.patch) > MAX_SAFE_INTEGER
-        {
+        if !Self::is_valid_version(&current) {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
                 (BStr::new(current_str),),

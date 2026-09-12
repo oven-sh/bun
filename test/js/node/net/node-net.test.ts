@@ -3130,3 +3130,76 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// `_onTimeout` suppressed the idle timeout whenever the handle had ANY buffered
+// bytes, and returned without refreshing a one-shot timer — so a peer that stops
+// reading silenced the timeout permanently, which is the exact condition the
+// timeout exists to surface. node compares against the previous tick's queue
+// size instead: a queue that moved is draining (reschedule), a queue that has
+// not moved is stalled (fire), so it fires after two idle periods rather than
+// never.
+describe("socket.setTimeout() with a stalled write queue", () => {
+  const IDLE = 200;
+
+  it("fires when the peer stops reading and the queue stops draining", async () => {
+    // Never read from the accepted socket, so the client's queue fills and stays put.
+    const server = createServer(sock => sock.pause()).listen(0, "127.0.0.1");
+    try {
+      await once(server, "listening");
+      const socket = connect({ host: "127.0.0.1", port: (server.address() as any).port });
+      socket.on("error", () => {});
+      await once(socket, "connect");
+
+      const chunk = Buffer.alloc(1 << 20, "x");
+      for (let i = 0; i < 64; i++) socket.write(chunk);
+      socket.setTimeout(IDLE);
+
+      try {
+        const outcome = await Promise.race([
+          once(socket, "timeout").then(() => ({ fired: "timeout", stalled: socket.bufferSize > 0 })),
+          Bun.sleep(IDLE * 25).then(() => ({ fired: `none within ${IDLE * 25}ms`, stalled: socket.bufferSize > 0 })),
+        ]);
+        // Asserting the queue is still backed up is what makes this a stalled-write
+        // test rather than an ordinary idle one.
+        expect(outcome).toEqual({ fired: "timeout", stalled: true });
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("does not fire while the queue is still draining", async () => {
+    const server = createServer(sock => sock.on("data", () => {})).listen(0, "127.0.0.1");
+    let pumping = true;
+    try {
+      await once(server, "listening");
+      const socket = connect({ host: "127.0.0.1", port: (server.address() as any).port });
+      socket.on("error", () => {});
+      await once(socket, "connect");
+
+      const chunk = Buffer.alloc(1 << 16, "x");
+      (function pump() {
+        if (!pumping) return;
+        socket.write(chunk);
+        setTimeout(pump, 10);
+      })();
+      socket.setTimeout(IDLE);
+
+      try {
+        const outcome = await Promise.race([
+          once(socket, "timeout").then(() => "timed out while draining"),
+          Bun.sleep(IDLE * 10).then(() => "no timeout"),
+        ]);
+        expect(outcome).toBe("no timeout");
+      } finally {
+        pumping = false;
+        socket.destroy();
+      }
+    } finally {
+      pumping = false;
+      server.close();
+    }
+  });
+});

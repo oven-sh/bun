@@ -251,7 +251,7 @@ describe("fs.watch", () => {
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "world");
     });
-  }, 10000);
+  });
 
   test("should error on invalid path", done => {
     try {
@@ -337,7 +337,7 @@ describe("fs.watch", () => {
       clearInterval(interval);
       watchers.forEach(watcher => watcher.close());
     }
-  }, 10000);
+  });
 
   test("should work with url", done => {
     const filepath = path.join(testDir, "url.txt");
@@ -505,30 +505,18 @@ describe("fs.watch", () => {
     const filepath = path.join(testDir, "sym-symlink2.txt");
     await fs.promises.symlink(path.join(testDir, "sym-sync.txt"), filepath);
 
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const watcher = fs.watch(filepath, eventType => resolve(eventType));
+    watcher.once("error", reject);
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "hello");
     });
-
-    const promise = new Promise((resolve, reject) => {
-      let timeout: any = null;
-      const watcher = fs.watch(filepath, event => {
-        clearTimeout(timeout);
-        clearInterval(interval);
-        try {
-          resolve(event);
-        } catch (e: any) {
-          reject(e);
-        } finally {
-          watcher.close();
-        }
-      });
-      setTimeout(() => {
-        clearInterval(interval);
-        watcher?.close();
-        reject("timeout");
-      }, 3000);
-    });
-    expect(promise).resolves.toBe("change");
+    try {
+      expect(await promise).toBe("change");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
   });
 
   // on windows 0o200 will be readable (match nodejs behavior)
@@ -631,68 +619,127 @@ describe("fs.watch", () => {
     }
   };
   const maxQueuedEvents = isLinux ? inotifySysctl("max_queued_events") : 0;
-  // Enough directories that unregistering one watch per directory overflows
-  // the queue even if the reader thread drains a full 64KB read (4096 events).
-  const overflowDirCount = maxQueuedEvents + 6144;
+  // Closing a recursive watcher unregisters one watch per directory while
+  // holding the manager mutex, and every unregister queues a 16-byte
+  // IN_IGNORED. The reader thread (thread_main in path_watcher.rs) gets at most
+  // one 64KB read() in before it blocks on that mutex, so every later removal
+  // stays queued; once max_queued_events of them are, the next one is dropped
+  // and replaced by IN_Q_OVERFLOW.
+  const readerDrainEvents = (64 * 1024) / 16;
+  const overflowMargin = 512;
+  const overflowDirCount = maxQueuedEvents + readerDrainEvents + overflowMargin;
+  // Watches (and tmpfs inodes, below) the rest of this user's processes may hold.
+  const headroom = 1024;
   // 16384 is the kernel default; a host tuned above that would need an
   // impractically large directory tree, so skip there.
   const canOverflowInotify =
     isLinux &&
     maxQueuedEvents > 0 &&
     maxQueuedEvents <= 16384 &&
-    inotifySysctl("max_user_watches") >= overflowDirCount + 1024;
+    inotifySysctl("max_user_watches") >= overflowDirCount + headroom;
 
-  // The directory count is fixed by the kernel (the overflow needs more watch
-  // removals than max_queued_events=16384 plus one 64KB read the reader may
-  // drain), so setup is ~22k syscalls: well past the 5s default under ASAN.
+  // include/uapi/linux/magic.h
+  const TMPFS_MAGIC = 0x01021994;
+  // mkdir + inotify_add_watch + rmdir on ~21k directories takes ~0.3s on tmpfs,
+  // but 10s+ on overlayfs and ~30s on the alpine CI lanes' root filesystem, so
+  // the tree goes on a tmpfs mount when there is one: the test's own tmpdir if
+  // that already is one, else /dev/shm, else the tmpdir anyway.
+  function makeOverflowTree(tmpdir: string): { path: string } & Disposable {
+    let onTmpfs: string | undefined;
+    for (const base of [tmpdir, "/dev/shm"]) {
+      try {
+        const { type, files, ffree } = fs.statfsSync(base);
+        // files === 0 is a tmpfs mounted without an inode limit.
+        if (type !== TMPFS_MAGIC || (files !== 0 && ffree < overflowDirCount + headroom)) continue;
+        onTmpfs = fs.mkdtempSync(path.join(base, "fs-watch-overflow-"));
+        break;
+      } catch {}
+    }
+    const treeDir = onTmpfs ?? fs.mkdtempSync(path.join(tmpdir, "tree-"));
+    const tree = { path: treeDir, [Symbol.dispose]: () => fs.rmSync(treeDir, { recursive: true, force: true }) };
+    try {
+      // One recursive mkdirSync per chain of `depth` nested directories: a flat
+      // loop is one native call per directory, which dominates in debug builds.
+      const depth = 16;
+      const chain = Array(depth - 1).fill("d");
+      for (let i = 0; i * depth < overflowDirCount; i++) {
+        fs.mkdirSync(path.join(treeDir, "c" + i, ...chain), { recursive: true });
+      }
+    } catch (err) {
+      tree[Symbol.dispose]();
+      throw err;
+    }
+    return tree;
+  }
+
+  // The timeout is for the non-tmpfs fallback, which takes tens of seconds
+  // under ASAN; on tmpfs the test takes ~0.5s (~3s under ASAN).
   test.skipIf(!canOverflowInotify)(
     "inotify queue overflow is delivered as ('change', null)",
     async () => {
       using dir = tempDir("fs-watch-overflow", { "observed": {} });
-      const root = String(dir);
-      const observedDir = path.join(root, "observed");
-      const treeDir = path.join(root, "tree");
-      fs.mkdirSync(treeDir);
-      for (let i = 0; i < overflowDirCount; i++) fs.mkdirSync(path.join(treeDir, "d" + i));
+      const observedDir = path.join(String(dir), "observed");
+      using tree = makeOverflowTree(String(dir));
 
-      const overflow = Promise.withResolvers<[string, string | null]>();
-      const bufferOverflow = Promise.withResolvers<[string, Buffer | null]>();
-      const survived = Promise.withResolvers<[string, string | null]>();
-      // An error or unexpected close on either watcher must reject every pending
-      // promise so the test reports the failure instead of hanging to the
-      // timeout. The no-op catch keeps the not-yet-awaited ones handled.
-      const pending = [overflow, bufferOverflow, survived];
-      for (const p of pending) p.promise.catch(() => {});
-      const fail = (err: unknown) => pending.forEach(p => p.reject(err));
-      const watcher = fs.watch(observedDir, (eventType, filename) => {
-        if (filename === null) overflow.resolve([eventType, filename]);
-        else if (filename === "f.txt") survived.resolve([eventType, filename]);
-      });
-      // The overflow event carries no name to encode, so every encoding gets null.
-      const bufferWatcher = fs.watch(observedDir, { encoding: "buffer" }, (eventType, filename) => {
-        if (filename === null) bufferOverflow.resolve([eventType, filename]);
-      });
+      // Every event both watchers deliver, so the final toEqual also proves the
+      // tree's IN_IGNORED storm stays invisible to watchers of other paths. The
+      // overflow event carries no name to encode, so every encoding gets null.
+      const seen: { utf8: [string, string | null][]; buffer: [string, Buffer | null][] } = { utf8: [], buffer: [] };
+      let failure: unknown;
+      let progressed = () => {};
+      const watchers = [
+        fs.watch(observedDir, (eventType, filename) => {
+          seen.utf8.push([eventType, filename]);
+          progressed();
+        }),
+        fs.watch(observedDir, { encoding: "buffer" }, (eventType, filename) => {
+          seen.buffer.push([eventType, filename]);
+          progressed();
+        }),
+      ];
+      // An error or unexpected close on either watcher fails the pending wait
+      // so the test reports it instead of hanging to the timeout.
+      const fail = (err: unknown) => {
+        failure = err;
+        progressed();
+      };
       let closing = false;
-      for (const w of [watcher, bufferWatcher]) {
+      for (const w of watchers) {
         w.once("error", fail);
         w.once("close", () => {
           if (!closing) fail(new Error("watcher closed unexpectedly"));
         });
       }
+      const bothDelivered = (count: number) =>
+        new Promise<void>((resolve, reject) => {
+          progressed = () => {
+            if (failure !== undefined) reject(failure);
+            else if (seen.utf8.length >= count && seen.buffer.length >= count) resolve();
+          };
+          progressed();
+        });
       try {
-        // Closing the recursive watcher unregisters one inotify watch per
-        // directory in a single critical section; each unregister queues an
-        // IN_IGNORED the blocked reader can't drain, overflowing the queue.
-        fs.watch(treeDir, { recursive: true }, () => {}).close();
-        expect(await overflow.promise).toEqual(["change", null]);
-        expect(await bufferOverflow.promise).toEqual(["change", null]);
-        // Overflow signals lost events; the watcher itself must keep working.
-        fs.writeFileSync(path.join(observedDir, "f.txt"), "x");
-        expect(await survived.promise).toEqual(["rename", "f.txt"]);
+        // This close() is what overflows the queue; see overflowDirCount.
+        fs.watch(tree.path, { recursive: true }, () => {}).close();
+        await bothDelivered(1);
+        // Overflow means events were lost, not that the watchers stopped working.
+        // By the time it reached JS the reader had drained the queue, so this
+        // mkdir (exactly one IN_CREATE) must come through.
+        fs.mkdirSync(path.join(observedDir, "after"));
+        await bothDelivered(2);
+        expect(seen).toEqual({
+          utf8: [
+            ["change", null],
+            ["rename", "after"],
+          ],
+          buffer: [
+            ["change", null],
+            ["rename", Buffer.from("after")],
+          ],
+        });
       } finally {
         closing = true;
-        watcher.close();
-        bufferWatcher.close();
+        for (const w of watchers) w.close();
       }
     },
     90_000,
@@ -779,14 +826,12 @@ describe("fs.watch", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        const result = JSON.parse(stdout.trim());
-        expect(result.errorEvent).not.toBeNull();
         // internal/fs/watch.ts rewrites EACCES to EPERM for watchpack compat.
-        expect(result.errorEvent.code).toBe("EPERM");
-        expect(result.errorEvent.syscall).toBe("watch");
-        expect(result.errorEvent.path).toContain("locked");
-        expect(result.closed).toBe(false);
-        expect(result.openDelivered).toBe(true);
+        expect(JSON.parse(stdout.trim())).toEqual({
+          errorEvent: { code: "EPERM", syscall: "watch", path: path.join(root, "locked") },
+          closed: false,
+          openDelivered: true,
+        });
         expect(exitCode).toBe(0);
 
         // fs.promises.watch wraps the native watcher in an async iterator with
@@ -1118,6 +1163,25 @@ describe("fs.promises.watch", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Repeats `touch` until the watcher yields; returning out of the for-await
+  // closes it.
+  async function firstEvent(target: string, touch: () => void): Promise<[string, string | null]> {
+    const watcher = fs.promises.watch(target);
+    const interval = repeat(touch);
+    try {
+      for await (const event of watcher) return [event.eventType, event.filename];
+    } finally {
+      clearInterval(interval);
+    }
+    throw new Error("watcher ended without an event");
+  }
+  // Re-creating the file on every tick instead of overwriting it keeps the
+  // first delivered event a rename even if the watcher only arms after tick 1.
+  const recreate = (file: string) => () => {
+    fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, "hello");
+  };
+
   test("should work with symlink -> symlink -> dir", async () => {
     const filepath = path.join(testDir, "sym-symlink-indirect");
     const dest = path.join(testDir, "sym-symlink-dest");
@@ -1129,23 +1193,8 @@ describe("fs.promises.watch", () => {
     const indirect_sym = path.join(testDir, "sym-symlink-to-symlink-dir");
     await fs.promises.symlink(filepath, indirect_sym);
 
-    const watcher = fs.promises.watch(indirect_sym);
-    const interval = setInterval(() => {
-      fs.writeFileSync(path.join(indirect_sym, "hello.txt"), "hello");
-    }, 10);
-
-    const promise = (async () => {
-      try {
-        for await (const event of watcher) {
-          return event.eventType;
-        }
-      } catch {
-        expect.unreachable();
-      } finally {
-        clearInterval(interval);
-      }
-    })();
-    expect(promise).resolves.toBe("rename");
+    const touch = recreate(path.join(indirect_sym, "hello.txt"));
+    expect(await firstEvent(indirect_sym, touch)).toEqual(["rename", "hello.txt"]);
   });
 
   test("should work with symlink dir", async () => {
@@ -1157,46 +1206,17 @@ describe("fs.promises.watch", () => {
     fs.mkdirSync(dest, { recursive: true });
     await fs.promises.symlink(dest, filepath);
 
-    const watcher = fs.promises.watch(filepath);
-    const interval = setInterval(() => {
-      fs.writeFileSync(path.join(filepath, "hello.txt"), "hello");
-    }, 10);
-
-    const promise = (async () => {
-      try {
-        for await (const event of watcher) {
-          return event.eventType;
-        }
-      } catch {
-        expect.unreachable();
-      } finally {
-        clearInterval(interval);
-      }
-    })();
-    expect(promise).resolves.toBe("rename");
+    const touch = recreate(path.join(filepath, "hello.txt"));
+    expect(await firstEvent(filepath, touch)).toEqual(["rename", "hello.txt"]);
   });
 
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink.txt");
     await fs.promises.symlink(path.join(testDir, "sym.txt"), filepath);
 
-    const watcher = fs.promises.watch(filepath);
-    const interval = repeat(() => {
-      fs.writeFileSync(filepath, "hello");
-    });
-
-    const promise = (async () => {
-      try {
-        for await (const event of watcher) {
-          return event.eventType;
-        }
-      } catch (e: any) {
-        expect.unreachable();
-      } finally {
-        clearInterval(interval);
-      }
-    })();
-    expect(promise).resolves.toBe("change");
+    // Which name a file watch reports through a symlink is backend-specific.
+    const [eventType] = await firstEvent(filepath, () => fs.writeFileSync(filepath, "hello"));
+    expect(eventType).toBe("change");
   });
 
   test("yields events with a null prototype", async () => {
@@ -1253,7 +1273,7 @@ describe("immediately closing", () => {
 // per watcher. Persistent watchers only landed at 0 by accident (start=2, -2).
 describe("closed FSWatcher is collectable", () => {
   for (const persistent of [false, true]) {
-    test(`persistent: ${persistent}`, async () => {
+    test.concurrent(`persistent: ${persistent}`, async () => {
       using dir = tempDir("fswatch-gc", { "f.txt": "x" });
       const watchDir = String(dir);
 
@@ -1539,8 +1559,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 
   // stderr first so a leak regression surfaces the thrown growth message.
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   expect(stdout).toContain("RSS growth:");
+  expect(exitCode).toBe(0);
 });
 
 // On Windows, fs.watch() registered every watcher into a single process-global

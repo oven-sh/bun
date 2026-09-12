@@ -737,6 +737,7 @@ _bun_prune_completion() {
         '--prod[Also remove packages that are only needed by devDependencies]' \
         '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
         '--dry-run[Print what would be removed without deleting anything]' \
+        '--check[Exit with code 1 if node_modules has packages that can be removed, without deleting anything]' \
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
         '--linker[Linker to assume when node_modules mixes isolated and hoisted installs]:linker:(isolated hoisted)' \

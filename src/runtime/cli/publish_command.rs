@@ -348,38 +348,16 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            if let Some(config) = json.get(b"publishConfig") {
-                if manager.options.publish_config.tag.is_empty() {
-                    if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
-                        // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
-                        // bump-owned slice into the process-lifetime CLI arena.
-                        manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
-                    }
-                }
-
-                if manager.options.publish_config.access.is_none() {
-                    if let Some(access) = json_get_string_cloned(&config, &bump, b"access")? {
-                        manager.options.publish_config.access = match Access::from_str(access) {
-                            Some(a) => Some(a),
-                            None => {
-                                Output::err_generic(
-                                    "invalid `access` value: '{}'",
-                                    (bstr::BStr::new(access),),
-                                );
-                                Global::crash();
-                            }
-                        };
-                    }
-                }
-
-                // maybe otp
-            }
-
             let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
                 .ok_or(FromTarballError::MissingPackageName)?
                 .into();
             let is_scoped = dependency::is_scoped_package_name(&name)
                 .map_err(|_| FromTarballError::InvalidPackageName)?;
+
+            let env = manager.env_mut();
+            manager
+                .options
+                .apply_publish_config(&json, &bump, &name, env)?;
 
             if let Some(access) = manager.options.publish_config.access {
                 if access == Access::Restricted && !is_scoped {

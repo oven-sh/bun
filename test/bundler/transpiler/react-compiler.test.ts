@@ -1057,7 +1057,11 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).not.toContain("!== staticStatus");
+      const out = api.readFile("/out.js");
+      // The element still reads the local by its name, so a dependency on it
+      // would be spelled `!== staticStatus`.
+      expect(out).toContain("children: staticStatus");
+      expect(out).not.toContain("!== staticStatus");
     },
   });
 

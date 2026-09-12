@@ -1,58 +1,71 @@
 import { expect, test } from "bun:test";
-import { RequestInit } from "undici-types";
+import type { RequestInit } from "undici-types";
 
 // https://github.com/oven-sh/bun/issues/4718
-test("fetch() calls request.method & request.url getters on subclass", async () => {
+// A Request subclass is still a Request: fetch() reads its internal state
+// (the url, method, and headers captured by the constructor) and never
+// consults JS-visible getter overrides, matching the fetch spec and Node.
+test("fetch() uses a subclass Request's internal state, not getter overrides", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.method, { headers: req.headers });
+    },
+  });
+
+  let getterCalls = 0;
   class MyRequest extends Request {
-    constructor(input: string, init?: RequestInit, actual_url?: string) {
+    constructor(input: string | URL, init?: RequestInit, decoy_url?: string) {
       super(input, init);
 
       Object.defineProperty(this, "url", {
         get() {
-          return actual_url;
+          getterCalls++;
+          return decoy_url;
         },
       });
 
       Object.defineProperty(this, "headers", {
         get() {
-          return {
-            "X-My-Header": "123",
-          };
+          getterCalls++;
+          return { "x-decoy": "1" };
         },
       });
     }
 
     // @ts-ignore
     get method() {
-      return "POST";
+      getterCalls++;
+      return "DELETE";
     }
   }
 
-  using server = Bun.serve({
-    fetch(req) {
-      return new Response(req.method, { headers: req.headers });
-    },
-    port: 0,
-  });
+  // port 1 refuses connections, so the old getter-reading behavior fails fast
+  // without touching the network.
+  const request = new MyRequest(
+    server.url,
+    { method: "POST", headers: { "x-my-header": "123" } },
+    "http://127.0.0.1:1/decoy",
+  );
 
-  const request = new MyRequest("https://example.com", {}, server.url.href);
-
-  expect(request.method).toBe("POST");
   const response = await fetch(request);
   expect(await response.text()).toBe("POST");
-  expect(response.headers.get("X-My-Header")).toBe("123");
+  expect(response.headers.get("x-my-header")).toBe("123");
+  expect(response.headers.get("x-decoy")).toBeNull();
+  expect(getterCalls).toBe(0);
 });
 
-test("fetch() with subclass containing invalid HTTP headers throws without crashing", async () => {
-  class MyRequest extends Request {
-    constructor(input: string, init?: RequestInit, actual_url?: string) {
-      super(input, init);
+test("fetch() ignores a subclass headers getter returning invalid header names", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("ok", { headers: req.headers });
+    },
+  });
 
-      Object.defineProperty(this, "url", {
-        get() {
-          return actual_url;
-        },
-      });
+  class MyRequest extends Request {
+    constructor(input: string | URL, init?: RequestInit) {
+      super(input, init);
 
       Object.defineProperty(this, "headers", {
         get() {
@@ -62,22 +75,10 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
         },
       });
     }
-
-    // @ts-ignore
-    get method() {
-      return "POST";
-    }
   }
 
-  const request = new MyRequest("https://example.com", {}, "https://example.com");
-  expect(request.method).toBe("POST");
-  await expect(fetch(request)).rejects.toThrow("Invalid header name");
-
-  // quick gc test; 1e3 iterations since each now allocates a rejected Promise
-  // (previously 1e4 sync throws, which allocated nothing).
-  for (let i = 0; i < 1e3; i++) {
-    fetch(request).catch(() => {});
-  }
-
-  await expect(fetch(request)).rejects.toThrow("Invalid header name");
+  const request = new MyRequest(server.url, { headers: { "x-ok": "1" } });
+  const response = await fetch(request);
+  expect(await response.text()).toBe("ok");
+  expect(response.headers.get("x-ok")).toBe("1");
 });

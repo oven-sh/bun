@@ -384,15 +384,6 @@ pub struct TarballInfo {
     pub package_name: SemverString,
 }
 
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
-}
-
 impl TarballInfo {
     pub fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
         URI::eql(self.uri, that.uri, this_buf, that_buf)
@@ -1521,7 +1512,6 @@ pub trait AutoInstaller {
 pub trait PackageJsonView {
     fn name(&self) -> &[u8];
     fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
     /// Backing string-bytes buffer the dependency `SemverString`s slice into.
     fn dependency_source_buf(&self) -> &[u8];
     fn arch(&self) -> Architecture;

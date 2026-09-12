@@ -156,8 +156,6 @@ public:
 
     JSC::JSValue promise() const;
 
-    void whenSettled(Function<void()>&&);
-
 private:
     DeferredPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred, Mode mode)
         : DOMGuarded<JSC::JSPromise>(globalObject, deferred)
@@ -194,27 +192,6 @@ enum class RejectedPromiseWithTypeErrorCause { NativeGetter,
     InvalidThis };
 JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject&, const String&, RejectedPromiseWithTypeErrorCause);
 
-using PromiseFunction = void(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&&);
-
-template<PromiseFunction promiseFunction>
-inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    auto& globalObject = *downcast<JSDOMGlobalObject>(&lexicalGlobalObject);
-    auto* promise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
-    ASSERT(promise);
-
-    promiseFunction(lexicalGlobalObject, callFrame, DeferredPromise::create(globalObject, *promise));
-
-    rejectPromiseWithExceptionIfAny(lexicalGlobalObject, globalObject, *promise, topExceptionScope);
-    // FIXME: We could have error since any JS call can throw stack-overflow errors.
-    // https://bugs.webkit.org/show_bug.cgi?id=203402
-    RETURN_IF_EXCEPTION(topExceptionScope, JSC::jsUndefined());
-    return promise;
-}
-
 template<typename PromiseFunctor>
 inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, PromiseFunctor functor)
 {
@@ -232,19 +209,6 @@ inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject
     // https://bugs.webkit.org/show_bug.cgi?id=203402
     RETURN_IF_EXCEPTION(topExceptionScope, JSC::jsUndefined());
     return promise;
-}
-
-using BindingPromiseFunction = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, Ref<DeferredPromise>&&);
-template<BindingPromiseFunction bindingFunction>
-inline void bindingPromiseFunctionAdapter(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise)
-{
-    bindingFunction(&lexicalGlobalObject, &callFrame, WTF::move(promise));
-}
-
-template<BindingPromiseFunction bindingPromiseFunction>
-inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame)
-{
-    return callPromiseFunction<bindingPromiseFunctionAdapter<bindingPromiseFunction>>(lexicalGlobalObject, callFrame);
 }
 
 } // namespace WebCore

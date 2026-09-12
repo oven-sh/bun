@@ -19,7 +19,6 @@ public:
     ~DOMIsoSubspaces();
     /*-- BUN --*/
     IsoSubspace* m_subspaceForBunClassConstructor { nullptr };
-    IsoSubspace* m_subspaceForBufferList { nullptr };
     IsoSubspace* m_subspaceForFFIFunction { nullptr };
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
@@ -104,8 +103,8 @@ public:
     IsoSubspace* m_subspaceForCrossRealmTransformState { nullptr };
     IsoSubspace* m_subspaceForStreamFromIterableContext { nullptr };
     IsoSubspace* m_subspaceForDirectStreamController { nullptr };
+    IsoSubspace* m_subspaceForDirectStreamSource { nullptr };
     IsoSubspace* m_subspaceForNativeStreamSourceAdapter { nullptr };
-    IsoSubspace* m_subspaceForDirectSinkCloseState { nullptr };
     IsoSubspace* m_subspaceForAsyncIteratorSourceOperation { nullptr };
     IsoSubspace* m_subspaceForReadStreamIntoSinkOperation { nullptr };
     IsoSubspace* m_subspaceForBunStandaloneTextSink { nullptr };

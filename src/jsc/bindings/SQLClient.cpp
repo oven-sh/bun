@@ -310,7 +310,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Objects: // objects
 
     {
-        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject);
 
         // cells[i] corresponds to fields[i]: the slow path below advances
         // structureOffsetIndex only on named cells, so it visits them in the

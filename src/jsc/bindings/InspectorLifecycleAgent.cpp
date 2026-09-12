@@ -62,7 +62,7 @@ void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 
 void InspectorLifecycleAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::enable()
@@ -160,6 +160,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         RETURN_IF_EXCEPTION(scope, fail("Failed to create iterator"_s));
         JSC::JSValue value;
         while (iter2->next(global, value)) {
+            RETURN_IF_EXCEPTION(scope, fail("Failed to iterate over cjs map"_s));
             cjs->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, fail("Failed to add item to cjs array"_s));
         }

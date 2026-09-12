@@ -32,10 +32,10 @@ static int64_t nowMicroseconds()
         WTF::MonotonicTime::now().secondsSinceEpoch().microseconds());
 }
 
-uint32_t CpuProfilerImpl::start(bool recordSamples)
+uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
 {
     uint32_t id = m_nextId++;
-    m_sessions.append(Session { id, nowMicroseconds(), recordSamples });
+    m_sessions.append(Session { id, WTF::move(title), nowMicroseconds(), recordSamples });
 
     if (m_sessions.size() == 1) {
         auto& vm = m_isolate->vm();
@@ -48,6 +48,15 @@ uint32_t CpuProfilerImpl::start(bool recordSamples)
     }
 
     return id;
+}
+
+const CpuProfilerImpl::Session* CpuProfilerImpl::sessionWithTitle(const WTF::String& title) const
+{
+    for (const Session& session : m_sessions) {
+        if (session.title == title)
+            return &session;
+    }
+    return nullptr;
 }
 
 // Build the top-down call tree from JSC::SamplingProfiler stack traces. Mirrors
@@ -278,11 +287,12 @@ CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
     if (index == WTF::notFound)
         return nullptr;
 
-    Session session = m_sessions[index];
+    Session session = WTF::move(m_sessions[index]);
     m_sessions.removeAt(index);
 
     auto& vm = m_isolate->vm();
     auto* profile = new CpuProfileImpl();
+    profile->m_title = WTF::move(session.title);
     buildProfileTree(vm, *profile, session.startTime, session.recordSamples);
 
     if (m_sessions.isEmpty()) {
@@ -386,6 +396,14 @@ static inline const shim::CpuProfileImpl* toImpl(const CpuProfile* p)
     return reinterpret_cast<const shim::CpuProfileImpl*>(p);
 }
 
+Local<String> CpuProfile::GetTitle() const
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    auto& vm = isolate->vm();
+    JSC::JSString* js = JSC::jsString(vm, toImpl(this)->m_title);
+    return isolate->currentHandleScope()->createLocal<String>(vm, js);
+}
+
 const CpuProfileNode* CpuProfile::GetTopDownRoot() const
 {
     return reinterpret_cast<const CpuProfileNode*>(toImpl(this)->m_root);
@@ -463,23 +481,65 @@ void CpuProfiler::SetSamplingInterval(int us)
     toImpl(this)->m_samplingIntervalUs = us > 0 ? us : 1000;
 }
 
-CpuProfilingResult CpuProfiler::Start(Local<String>, CpuProfilingMode, bool record_samples, unsigned)
+static WTF::String titleString(shim::CpuProfilerImpl* impl, Local<String> title)
 {
-    // Overlapping sessions are allowed. JSC::SamplingProfiler is a single
-    // VM-global consumer and Stop() drains all traces via releaseStackTraces(),
-    // so a session that overlaps a Stop() of another session loses the samples
-    // taken before that Stop(). In practice the only overlapping caller is
-    // @datadog/pprof's restart path, which calls Start(new) immediately followed
-    // by Stop(old), so the window is microseconds. Refusing the overlap is
-    // worse: pprof ignores kAlreadyStarted, later calls Stop(0), gets nullptr,
-    // and dereferences it.
-    uint32_t id = toImpl(this)->start(record_samples);
+    return title->localToJSString()->value(impl->m_isolate->globalObject());
+}
+
+CpuProfilingResult CpuProfiler::Start(Local<String> title, CpuProfilingMode, bool record_samples, unsigned)
+{
+    auto* impl = toImpl(this);
+    WTF::String name = titleString(impl, title);
+
+    // Like V8, a second Start() with the title of a running session is ignored
+    // and reports that session. StopProfiling(title) relies on titles being
+    // unique among running sessions.
+    if (const auto* running = impl->sessionWithTitle(name))
+        return CpuProfilingResult { running->id, CpuProfilingStatus::kAlreadyStarted };
+
+    // Sessions with different titles may overlap. JSC::SamplingProfiler is a
+    // single VM-global consumer and Stop() drains all traces via
+    // releaseStackTraces(), so a session that overlaps a Stop() of another
+    // session loses the samples taken before that Stop(). In practice the only
+    // overlapping caller is @datadog/pprof's restart path, which calls
+    // Start(new) immediately followed by Stop(old), so the window is
+    // microseconds. Refusing the overlap is worse: pprof ignores
+    // kAlreadyStarted, later calls Stop(0), gets nullptr, and dereferences it.
+    uint32_t id = impl->start(WTF::move(name), record_samples);
     return CpuProfilingResult { id, CpuProfilingStatus::kStarted };
+}
+
+CpuProfilingStatus CpuProfiler::StartProfiling(Local<String> title, CpuProfilingMode mode, bool record_samples, unsigned max_samples)
+{
+    return Start(title, mode, record_samples, max_samples).status;
+}
+
+CpuProfilingStatus CpuProfiler::StartProfiling(Local<String> title, bool record_samples)
+{
+    return Start(title, kLeafNodeLineNumbers, record_samples).status;
 }
 
 CpuProfile* CpuProfiler::Stop(ProfilerId id)
 {
     return reinterpret_cast<CpuProfile*>(toImpl(this)->stop(id));
+}
+
+CpuProfile* CpuProfiler::StopProfiling(Local<String> title)
+{
+    auto* impl = toImpl(this);
+    WTF::String name = titleString(impl, title);
+
+    // Like V8, an empty title stops the most recently started session.
+    if (name.isEmpty()) {
+        if (impl->m_sessions.isEmpty())
+            return nullptr;
+        return Stop(impl->m_sessions.last().id);
+    }
+
+    const auto* session = impl->sessionWithTitle(name);
+    if (!session)
+        return nullptr;
+    return Stop(session->id);
 }
 
 } // namespace v8

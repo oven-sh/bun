@@ -17,9 +17,9 @@
   queueMicrotask                  functionQueueMicrotask                               Function 1
   removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1
-  setImmediate                    functionSetImmediate                                 Function 1
-  setInterval                     functionSetInterval                                  Function 1
-  setTimeout                      functionSetTimeout                                   Function 1
+  setImmediate                    createSetImmediateFunction                           PropertyCallback
+  setInterval                     createSetIntervalFunction                            PropertyCallback
+  setTimeout                      createSetTimeoutFunction                             PropertyCallback
   structuredClone                 WebCore::jsFunctionStructuredClone                    Function 2
 
   global                          GlobalObject_getGlobalThis                           PropertyCallback

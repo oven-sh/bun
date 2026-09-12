@@ -112,6 +112,7 @@ pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
 pub mod dedupe;
+pub mod git_runner;
 pub mod hoisted_install;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
@@ -204,10 +205,6 @@ pub mod package_manager {
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
 
-    /// `PackageManifestMap.load` `When` enum — re-export the real enum so
-    /// callers naming either path agree on one type.
-    pub use crate::package_manifest_map::CacheBehavior as ManifestLoad;
-
     /// `CommandLineArguments.AuditLevel` (subset surfaced for
     /// `bun_runtime::cli::audit_command`). Re-exported alongside the full
     /// `command_line_arguments` module from `package_manager_real`.
@@ -291,20 +288,18 @@ pub use integrity::Integrity;
 
 pub use bin::Bin;
 pub use lockfile_real::bun_lock as TextLockfile;
-pub use patch_install as patch;
 
 pub use dependency::Tag as DependencyVersionTag;
 pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{
-    GetJsonOptions, GetJsonResult, ManifestLoad, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+    GetJsonOptions, GetJsonResult, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
-pub use _folder_resolver::FolderResolution;
 pub use isolated_install::Store;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
@@ -313,7 +308,6 @@ pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use package_manager_task::Task;
 pub use package_manifest_map::PackageManifestMap;
 pub use patch_install::PatchTask;
-pub use postinstall_optimizer::PostinstallOptimizer;
 pub use tarball_stream::TarballStream;
 
 // PackageManager + its associated types — re-exported from the file-backed
@@ -484,7 +478,7 @@ impl RunCommand {
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::PathBuffer::uninit();
+            let mut scratch = bun_paths::path_buffer_pool::get();
             let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
@@ -621,7 +615,7 @@ impl RunCommand {
                             // would make every `--bun` child of the SECOND
                             // binary silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let mut buf = bun_paths::path_buffer_pool::get();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
                                 .unwrap_or(false);
@@ -653,7 +647,7 @@ impl RunCommand {
             use bun_core::strings;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::WPathBuffer::default();
+            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
             let prefix: &[u16] = strings::w!("\\??\\");
 
             // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.

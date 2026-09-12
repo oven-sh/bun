@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
   test("running a non-existent absolute file path is a 1 exit code", () => {
@@ -718,6 +718,68 @@ describe("bun test", () => {
         },
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
+    test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
+      // Longer than a path buffer on every platform (98302 bytes on Windows).
+      const padding = 100_000;
+      const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
+      const base64 = btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
+      const longPath = "/" + Buffer.alloc(padding, "y").toString();
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("data url", async () => {
+            const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
+            const m = await import("data:text/javascript;base64," + btoa(source));
+            m.default();
+          });
+          test("long sourceURL", () => {
+            const sourceURL = "/" + Buffer.alloc(${padding}, "y").toString();
+            (0, eval)("(function fromLongPath() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [dataUrl, longSourceUrl] = annotations;
+      expect(dataUrl).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
+      expect(dataUrl).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+      expect(longSourceUrl).toStartWith(`::error file=${longPath},line=1,col=`);
+      expect(longSourceUrl).toContain(`%0A      at fromLongPath (${longPath}:1:`);
+    });
+    test("should make the annotation file relative to GITHUB_WORKSPACE only when it is a path", () => {
+      const cwd = createTest([
+        {
+          filename: "workspace.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            test("in the test file", () => {
+              throw new Error("boom");
+            });
+            test("in a sourceURL that is not a path", () => {
+              (0, eval)("(function fromSourceUrl() { throw new Error('boom'); })\\n//# sourceURL=webpack://app/./src/x.ts")();
+            });
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: dirname(cwd),
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [testFile, sourceUrl] = annotations;
+      expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
+      expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
+      expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
     });
   });
   describe(".each", () => {
@@ -1999,4 +2061,34 @@ describe.concurrent("test file discovery (scanner)", () => {
       },
     );
   }
+
+  // https://github.com/oven-sh/bun/issues/39852
+  test.skipIf(isWindows)("does not keep a directory fd open per scanned directory", async () => {
+    const N = 64;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < N; i++) {
+      files[`sub${i}/a/b/c/.gitkeep`] = "";
+    }
+    files["sub0/probe.test.ts"] = /* ts */ `
+      import { test } from "bun:test";
+      import { readdirSync } from "node:fs";
+      test("probe", () => {
+        console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+      });
+    `;
+    using dir = tempDir("scanner-dir-fds", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 4N+1 directories are scanned; none of them may stay open.
+    expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -92,12 +92,4 @@ void JSPerformanceObserverCallback::visitJSFunction(JSC::SlotVisitor& visitor)
     m_data->visitJSFunction(visitor);
 }
 
-JSC::JSValue toJS(PerformanceObserverCallback& impl)
-{
-    if (!static_cast<JSPerformanceObserverCallback&>(impl).callbackData())
-        return jsNull();
-
-    return static_cast<JSPerformanceObserverCallback&>(impl).callbackData()->callback();
-}
-
 } // namespace WebCore

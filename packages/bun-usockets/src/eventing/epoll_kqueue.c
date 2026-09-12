@@ -18,6 +18,7 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <time.h>
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
@@ -73,10 +74,6 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     loop->num_polls--;
     us_free(p);
-}
-
-__attribute__((always_inline)) void *us_poll_ext(struct us_poll_t *p) {
-    return p + 1;
 }
 
 /* Todo: why have us_poll_create AND us_poll_init!? libuv legacy! */
@@ -243,8 +240,17 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 #else
     loop->fd = kqueue();
 #endif
+    /* EMFILE/ENFILE: the caller decides whether this is fatal. */
+    if (loop->fd == -1) {
+        us_free(loop);
+        return NULL;
+    }
 
-    us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+    if (us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb) != 0) {
+        close(loop->fd);
+        us_free(loop);
+        return NULL;
+    }
     return loop;
 }
 
@@ -585,13 +591,16 @@ static int kqueue_is_socket_poll(struct us_poll_t *p) {
  * stays registered while the socket does not poll for reads (paused, half-open after the
  * peer's FIN, shut down with reads off, parked as low priority), re-added with EV_CLEAR.
  * It is kqueue's stand-in for epoll's implicit EPOLLHUP/EPOLLERR: the peer's FIN or RST
- * still reaches the dispatcher as eof/error (us_poll_events masks the readable bit out),
- * and EV_CLEAR keeps unread data or a consumed EOF from re-firing every tick. Nothing else
+ * still reaches the dispatcher as eof/error (us_poll_events masks the readable bit out).
+ * NOTE_LOWAT with an unreachable low-water mark keeps arriving data from waking the loop
+ * while reads are off (the socket filter reports EOF and so_error before it consults the
+ * mark; xnu clamps the mark to the receive buffer size, so there it can fire once more when
+ * the buffer fills), and EV_CLEAR keeps a consumed EOF from re-firing. Nothing else
  * reports them: the one-shot write filter is consumed by the first, immediate, writable
  * event, so a reset of a paused socket went unreported until resume(), unlike on epoll
- * and libuv. EV_ADD on an existing knote updates its udata but keeps its flags, so each
- * switch between the two modes deletes the knote and adds a new one; us_poll_resize relies
- * on the same rule to move the udata without changing the mode. */
+ * and libuv. EV_ADD on an existing knote updates its udata but keeps its flags (and would
+ * reset the sentinel's NOTE_LOWAT), so each switch between the two modes, and the udata
+ * move in us_poll_resize, deletes the knote and adds a new one. */
 int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data, int keep_read_knote) {
     struct kevent64_s change_list[3];
     int change_length = 0;
@@ -600,7 +609,11 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     if (is_readable != (old_events & LIBUS_SOCKET_READABLE)) {
         if (keep_read_knote) {
             EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_DELETE, 0, 0, 0, 0, 0);
-            EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | (is_readable ? 0 : EV_CLEAR), 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            if (is_readable) {
+                EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            } else {
+                EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | EV_CLEAR, NOTE_LOWAT, INT_MAX, (uint64_t)(void*)user_data, 0, 0);
+            }
         } else {
             EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
@@ -653,10 +666,10 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     new_p->state.poll_type = us_internal_poll_type(new_p);
     us_poll_change(new_p, loop, events);
 #else
-    /* Re-add both filters to move their udata to new_p, whether or not they are polled: the
-     * EV_CLEAR read knote of a socket that is not reading (see kqueue_change) has to follow
-     * the relocation too, and EV_ADD keeps the mode of a knote that already exists. */
-    kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p, 0);
+    /* Move the udata to new_p: re-register the polled filters, and for a socket poll re-create
+     * its read knote in its current mode (it has one whether or not it reads, see kqueue_change). */
+    const int is_socket = kqueue_is_socket_poll(new_p);
+    kqueue_change(loop->fd, new_p->state.fd, is_socket ? (~events & LIBUS_SOCKET_READABLE) : 0, events, new_p, is_socket);
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
     us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
@@ -694,7 +707,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     } while (IS_EINTR(ret));
     return ret;
 #else
-    return kqueue_change(loop->fd, p->state.fd, 0, events, p, 0);
+    /* A socket that starts without read interest (LIBUS_SOCKET_OPEN_PAUSED) takes the same
+     * transition as one that pauses, so it too keeps the read knote that reports the peer's
+     * FIN or RST while it is paused (see kqueue_change). */
+    int starts_paused = kqueue_is_socket_poll(p) && !(events & LIBUS_SOCKET_READABLE);
+    return kqueue_change(loop->fd, p->state.fd, starts_paused ? LIBUS_SOCKET_READABLE : 0, events, p, starts_paused);
 #endif
 }
 
@@ -782,10 +799,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
-        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
-        // rather than NULL-deref or store -1 as a poll fd.
-        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+        /* EMFILE/ENFILE: us_create_loop unwinds and returns NULL. */
+        if (!fallthrough) {
+            loop->num_polls--;
+        }
+        us_free(p);
+        return NULL;
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 
@@ -859,26 +878,32 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (kr == KERN_SUCCESS) {
+        // Insert a send right into the port since we also use this to send
+        kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
+        if (kr == KERN_SUCCESS) {
+            // Modify the port queue size to be 1 because we are only
+            // using it for notifications and not for any other purpose.
+            mach_port_limits_t limits = { .mpl_qlimit = 1 };
+            kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
+            if (kr == KERN_SUCCESS) {
+                return (struct us_internal_async *) cb;
+            }
+        }
+        /* Dropping the receive right destroys the port; release the send
+         * right (now a dead name) so the port-name-table entry is freed too.
+         * mach_port_deallocate is a harmless KERN_INVALID_RIGHT no-op when
+         * insert_right failed and no send right exists. */
+        mach_port_mod_refs(self, cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
+        mach_port_deallocate(self, cb->port);
     }
 
-    // Insert a send right into the port since we also use this to send
-    kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (!fallthrough) {
+        loop->num_polls--;
     }
-
-    // Modify the port queue size to be 1 because we are only
-    // using it for notifications and not for any other purpose.
-    mach_port_limits_t limits = { .mpl_qlimit = 1 };
-    kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
-
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
-    }
-
-    return (struct us_internal_async *) cb;
+    us_free(cb->machport_buf);
+    us_free(cb);
+    return NULL;
 }
 
 // identical code as for timer, make it shared for "callback types"

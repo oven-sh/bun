@@ -54,6 +54,26 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.options.jsx.development
     }
 
+    fn is_jsx_classic(&self) -> bool {
+        self.p.options.jsx.runtime != crate::parser::options::JSX::Runtime::Automatic
+    }
+
+    fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr {
+        self.p
+            .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
+    }
+
+    fn jsx_import_kind(&self, ref_: js_ast::Ref) -> Option<bun_react_compiler::JsxImportKind> {
+        use bun_react_compiler::JsxImportKind as K;
+        Some(match self.p.jsx_imports.tag_of(ref_)? {
+            JSXImport::Jsx => K::Jsx,
+            JSXImport::Jsxs => K::Jsxs,
+            JSXImport::JsxDEV => K::JsxDEV,
+            JSXImport::Fragment => K::Fragment,
+            JSXImport::CreateElement => K::CreateElement,
+        })
+    }
+
     fn jsx_import(&mut self, kind: bun_react_compiler::JsxImportKind) -> js_ast::Ref {
         use bun_react_compiler::JsxImportKind as K;
         let kind = match kind {
@@ -130,6 +150,33 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
+    pub(crate) fn enter_react_compiler_candidate(
+        &mut self,
+        name: Option<js_ast::Ref>,
+        has_react_hooks_suppression: bool,
+        body: &[js_ast::Stmt],
+    ) -> bool {
+        let prev = self.react_compiler_may_replace_body;
+        if !prev
+            && let Some(candidate) = self.react_compiler_candidate_name
+            && let Some(rc) = self.react_compiler.as_deref()
+        {
+            let name = name
+                .filter(|r| r.is_valid())
+                .or(Some(candidate))
+                .filter(|r| *r != js_ast::Ref::NONE)
+                .map(|r| self.load_name_from_ref(r));
+            self.react_compiler_may_replace_body = rc.may_compile(
+                name,
+                self.react_compiler_in_react_hoc,
+                has_react_hooks_suppression,
+                body,
+            );
+        }
+        prev
+    }
+
     /// Port of upstream `findFunctionDeclarationOrExpression` for the
     /// expression positions (decl init / `export default` / expression
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the

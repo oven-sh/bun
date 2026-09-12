@@ -28,7 +28,6 @@
 
 // #include "DOMWindow.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSDOMPromise.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -75,14 +74,6 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
 
     if (m_mode == Mode::ClearPromiseOnResolve)
         clear();
-}
-
-void DeferredPromise::whenSettled(Function<void()>&& callback)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-
-    DOMPromise::whenPromiseIsSettled(globalObject(), deferred(), WTF::move(callback));
 }
 
 void DeferredPromise::reject(RejectAsHandled rejectAsHandled)

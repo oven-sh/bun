@@ -665,6 +665,7 @@ function Install-Buildkite {
 
 function Optimize-System {
   Disable-Windows-Defender
+  Disable-Smart-App-Control
   Disable-Windows-Threat-Protection
   Disable-Windows-Services
   Disable-Power-Management
@@ -678,6 +679,24 @@ function Disable-Windows-Defender {
   Write-Output "Disabling Windows Defender..."
   Set-MpPreference -DisableRealtimeMonitoring $true
   Add-MpPreference -ExclusionPath "C:\", "D:\"
+}
+
+# Windows 11 ships Smart App Control in evaluation mode (Server has no such
+# policy). It hashes every unsigned executable on its first launch and asks the
+# cloud for its reputation: 2 to 3.5 seconds per `bun build --compile` output,
+# which the compile test suites launch by the dozen. Defender exclusions do not
+# cover it, and tamper protection does not guard this key. The change takes
+# effect after `CiTool --refresh` or a reboot, and cannot be undone without a
+# reinstall, which is fine for a CI image.
+function Disable-Smart-App-Control {
+  $itemPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+  if (Test-Path $itemPath) {
+    Write-Output "Disabling Smart App Control..."
+    Set-ItemProperty -Path $itemPath -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWORD
+    if (Get-Command CiTool -ErrorAction SilentlyContinue) {
+      CiTool --refresh -json | Out-Null
+    }
+  }
 }
 
 function Disable-Windows-Threat-Protection {

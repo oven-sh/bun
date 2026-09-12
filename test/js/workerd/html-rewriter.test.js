@@ -13,7 +13,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
-import { createServer as createTcpServer } from "net";
+import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -471,10 +471,9 @@ describe("HTMLRewriter", () => {
     });
 
     // `rsisAbrupt` calls `controller.close(error)` synchronously before
-    // rejecting the pump promise, and the generated `__close` drops its error
-    // argument. The pipe must defer its terminal step to the reject reaction
-    // so the real error reaches the output body instead of resolving with
-    // truncated HTML.
+    // rejecting the pump promise. The pipe must defer its terminal step to the
+    // reject reaction so the real error reaches the output body instead of
+    // resolving with truncated HTML.
     it.each(["default", "pull"])(
       "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
       async kind => {
@@ -500,6 +499,58 @@ describe("HTMLRewriter", () => {
         await expect(res.text()).rejects.toThrow("upstream boom");
       },
     );
+
+    // The input is already errored when transform() runs: the pump's first
+    // read throws, so `controller.close(error)` and the pump rejection both
+    // happen inside transform(), before any reject reaction is attached. The
+    // close must carry the error to the pipe, or the body resolves to "".
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("<p>partial"));
+          controller.error(reason);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
+    });
+
+    // A `type: 'direct'` pull() ends the input through the sink controller's
+    // own `close(error?)`. The argument is optional: a falsy one is the same
+    // clean close as `close()` and the body resolves with the rewritten HTML.
+    // Only a truthy error fails the rewrite.
+    it.each([
+      ["close()", c => c.close(), { resolved: "<p>hello</p>" }],
+      ["close(undefined)", c => c.close(undefined), { resolved: "<p>hello</p>" }],
+      ["close(null)", c => c.close(null), { resolved: "<p>hello</p>" }],
+      ["close(false)", c => c.close(false), { resolved: "<p>hello</p>" }],
+      ['close("")', c => c.close(""), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() ends with %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hello</p>");
+          close(controller);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
@@ -547,6 +598,113 @@ describe("HTMLRewriter", () => {
       await expect(res.text()).rejects.toThrow("handler rejected");
       await setImmediatePromise();
       expect(afterFlush).toBe(1);
+    });
+
+    // The rewrite's consumer going away while a `type: 'direct'` input is
+    // still open is a cancel of that input: its `cancel(reason)` runs once,
+    // and a later write() reports 0 bytes instead of throwing. A detach alone
+    // (what the source's own close() does) no longer calls cancel(), so the
+    // failed or cancelled pipe has to close the controller itself.
+    describe("a still-open direct ReadableStream input is cancelled when", () => {
+      function directInput(events) {
+        const hold = Promise.withResolvers();
+        const settled = Promise.withResolvers();
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            try {
+              controller.write("<p>one</p>");
+              controller.flush();
+              await hold.promise;
+              events.push("write after: " + controller.write("<p>two</p>"));
+            } catch (e) {
+              events.push("pull threw: " + e.message);
+            } finally {
+              settled.resolve();
+            }
+          },
+          cancel(reason) {
+            events.push("cancel: " + (reason instanceof Error ? `${reason.name}: ${reason.message}` : reason));
+          },
+        });
+        return { response: new Response(stream), hold, settled: settled.promise };
+      }
+
+      it("the output reader cancels", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(response);
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel(new Error("reader went away"));
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      it("a handler throws", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(response);
+        await expect(res.text()).rejects.toThrow("handler threw");
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: Error: handler threw", "write after: 0"]);
+      });
+
+      it("the HTTP client disconnects from a Bun.serve response", async () => {
+        const events = [];
+        const flushed = Promise.withResolvers();
+        let settled;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            const input = directInput(events);
+            settled = input.settled;
+            flushed.resolve(input.hold);
+            return new HTMLRewriter().on("p", { element() {} }).transform(input.response);
+          },
+        });
+        const socket = createConnection(server.port, "127.0.0.1");
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(socket, "data");
+        const hold = await flushed.promise;
+        socket.destroy();
+        while (server.pendingRequests > 0) await setImmediatePromise();
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      // A default ReadableStream input was already cancelled here (the pump
+      // cancels its stream on any close), but with `undefined`; it gets the
+      // same reason now.
+      it("the output reader cancels (default ReadableStream input gets the reason too)", async () => {
+        const cancelled = [];
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue("<p>one</p>");
+          },
+          cancel(reason) {
+            cancelled.push(reason instanceof Error ? `${reason.name}: ${reason.message}` : reason);
+          },
+        });
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel();
+        expect(cancelled).toEqual(["AbortError: The operation was aborted."]);
+      });
     });
 
     // Two rewriters chained, both suspending: `init()`'s own comment names

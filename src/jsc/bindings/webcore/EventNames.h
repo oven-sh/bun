@@ -65,9 +65,6 @@ public:
     // FIXME: Inelegant to call these both event names and event types.
     // We should choose one term and stick to it.
     bool isWheelEventType(const AtomString& eventType) const;
-#if ENABLE(GAMEPAD)
-    bool isGamepadEventType(const AtomString& eventType) const;
-#endif
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().

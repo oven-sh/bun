@@ -3,8 +3,6 @@ use bun_valkey::valkey_protocol as protocol;
 
 use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
-type Slice = bun_core::ZigStringSlice;
-
 // Note: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
 // that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
@@ -23,7 +21,7 @@ pub struct Command<'a> {
 
 #[derive(Copy, Clone)]
 pub enum Args<'a> {
-    Slices(&'a [Slice]),
+    Slices(&'a [bun_core::Utf8Bytes<'a>]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
 }

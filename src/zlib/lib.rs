@@ -370,7 +370,6 @@ impl<'a> ZlibReaderArrayList<'a> {
             Ok(())
         })();
 
-        // defer epilogue (runs unconditionally):
         let total_out = self.zlib.total_out as usize;
         if self.list_ptr.len() > total_out {
             self.list_ptr.truncate(total_out);

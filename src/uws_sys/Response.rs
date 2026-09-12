@@ -17,6 +17,7 @@ use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 use bun_core::{BoundedArray, Fd};
+use bun_ptr::ThisPtr;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. The IP text is copied into
@@ -85,6 +86,16 @@ impl<const SSL: bool> Response<SSL> {
     #[inline]
     pub fn cast_res(res: *mut c::uws_res) -> *mut Response<SSL> {
         res.cast::<Response<SSL>>()
+    }
+
+    /// The `AnyResponse` variant for this `SSL` flag.
+    #[inline]
+    pub fn res_to_any(res: *mut c::uws_res) -> AnyResponse {
+        if SSL {
+            AnyResponse::SSL(res.cast())
+        } else {
+            AnyResponse::TCP(res.cast())
+        }
     }
 
     #[inline]
@@ -157,6 +168,12 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn should_close_connection(&self) -> bool {
         self.state().is_http_connection_close()
+    }
+
+    /// Valid after the close callback: uSockets frees a closed socket only when the outermost tick ends.
+    pub(crate) fn is_closed(&self) -> bool {
+        // Same view as `downcast_socket`: the response handle is the socket.
+        us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
     }
 
     pub(crate) fn prepare_for_sendfile(&mut self) {
@@ -300,18 +317,6 @@ impl<const SSL: bool> Response<SSL> {
         unsafe {
             c::uws_res_spill_body(Self::ssl_flag(), self.downcast(), data.as_ptr(), data.len())
         }
-    }
-
-    pub fn override_write_offset<T>(&mut self, offset: T)
-    where
-        u64: TryFrom<T>,
-        <u64 as TryFrom<T>>::Error: core::fmt::Debug,
-    {
-        c::uws_res_override_write_offset(
-            Self::ssl_flag(),
-            self.as_raw(),
-            u64::try_from(offset).expect("int cast"),
-        )
     }
 
     pub(crate) fn has_responded(&mut self) -> bool {
@@ -618,12 +623,15 @@ unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
 // SAFETY: `h3::Response` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
 // align 1; C++ owns the real bytes.
 unsafe impl OpaqueHandle for H3Response {}
+// SAFETY: as above for `h2::Response`.
+unsafe impl OpaqueHandle for H2Response {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AnyResponse {
     SSL(*mut TLSResponse),
     TCP(*mut TCPResponse),
     H3(*mut H3Response),
+    H2(*mut H2Response),
 }
 
 // Helper: dispatch to the underlying response, calling the same-named method on each
@@ -645,6 +653,10 @@ macro_rules! any_dispatch {
             }
             AnyResponse::H3(ptr) => {
                 let $r = H3Response::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H2(ptr) => {
+                let $r = H2Response::as_handle(ptr);
                 $body
             }
         }
@@ -688,10 +700,16 @@ macro_rules! any_response_register_cb {
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
         }
+        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
+            let $u = std::ptr::from_mut::<$U>($u);
+            let $any = AnyResponse::H2(std::ptr::from_mut($r));
+            $($body)*
+        }
         match $self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl::<$U, $H>, $opt_data),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp::<$U, $H>, $opt_data),
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3::<$U, $H>, $opt_data),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).$method(h2::<$U, $H>, $opt_data),
         }
     }};
 }
@@ -701,7 +719,9 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(resp) => resp,
             AnyResponse::TCP(_) => panic!("Expected SSL response, got TCP response"),
-            AnyResponse::H3(_) => panic!("Expected SSL response, got H3 response"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("Expected SSL response, got a stream response")
+            }
         }
     }
 
@@ -709,7 +729,9 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(_) => panic!("Expected TCP response, got SSL response"),
             AnyResponse::TCP(resp) => resp,
-            AnyResponse::H3(_) => panic!("Expected TCP response, got H3 response"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("Expected TCP response, got a stream response")
+            }
         }
     }
 
@@ -741,7 +763,9 @@ impl AnyResponse {
 
     pub fn socket(self) -> *mut c::uws_res {
         match self {
-            AnyResponse::H3(_) => panic!("socket() is not available for HTTP/3 responses"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("socket() is only available for HTTP/1 responses")
+            }
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).downcast(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).downcast(),
         }
@@ -757,6 +781,7 @@ impl AnyResponse {
             AnyResponse::SSL(ptr) => ptr.cast::<c_void>(),
             AnyResponse::TCP(ptr) => ptr.cast::<c_void>(),
             AnyResponse::H3(ptr) => ptr.cast::<c_void>(),
+            AnyResponse::H2(ptr) => ptr.cast::<c_void>(),
         }
     }
 
@@ -835,10 +860,21 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.should_close_connection())
     }
 
+    /// See `Response::is_closed`; always `false` for HTTP/3 (see `h3::Response::is_closed`).
+    pub fn is_closed(self) -> bool {
+        any_dispatch!(self, |r| r.is_closed())
+    }
+
     pub fn try_end(self, data: &[u8], total_size: usize, close_connection: bool) -> bool {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
 
+    /// HTTP/2: widen the stream receive window once the body is wanted.
+    pub fn grow_request_window(self) {
+        if let AnyResponse::H2(r) = self {
+            bun_opaque::opaque_deref_mut(r).grow_request_window();
+        }
+    }
     pub fn pause(self) {
         any_dispatch!(self, |r| r.pause())
     }
@@ -867,12 +903,13 @@ impl AnyResponse {
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).force_close(),
         }
     }
 
     pub fn get_native_handle(self) -> Fd {
         match self {
-            AnyResponse::H3(_) => bun_core::Fd::INVALID,
+            AnyResponse::H3(_) | AnyResponse::H2(_) => bun_core::Fd::INVALID,
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
         }
@@ -913,6 +950,38 @@ impl AnyResponse {
             <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
             |u; r, any| -> () { thunk::zst::<H>()(u, any) }
         }
+    }
+
+    /// [`on_writable`](Self::on_writable) for a handler owned by an
+    /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
+    /// dispatched with and keeps a ref on `U` until it clears the handler, so
+    /// the trampoline can hand the handler a `ThisPtr` again.
+    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
+    {
+        self.on_writable(
+            |u: *mut U, off, any| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
+            },
+            this.as_ptr(),
+        )
+    }
+
+    /// [`on_aborted`](Self::on_aborted) counterpart of
+    /// [`on_writable_this`](Self::on_writable_this).
+    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+    {
+        self.on_aborted(
+            |u: *mut U, any| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+            },
+            this.as_ptr(),
+        )
     }
 
     pub fn clear_aborted(self) {
@@ -967,7 +1036,7 @@ impl AnyResponse {
             // server.upgrade() returns false before reaching here for H3
             // (request_context.get(RequestContext) is null — the H3 ctx is a
             // different type and upgrade_context is never set).
-            AnyResponse::H3(_) => unreachable!(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).upgrade(
                 data,
                 sec_web_socket_key,
@@ -1004,8 +1073,15 @@ impl From<*mut H3Response> for AnyResponse {
         AnyResponse::H3(r)
     }
 }
+impl From<*mut H2Response> for AnyResponse {
+    #[inline]
+    fn from(r: *mut H2Response) -> Self {
+        AnyResponse::H2(r)
+    }
+}
 
 pub(crate) type H3Response = crate::h3::Response;
+pub(crate) type H2Response = crate::h2::Response;
 
 bitflags::bitflags! {
     /// Non-exhaustive bitset — values may carry
@@ -1176,7 +1252,6 @@ pub mod c {
             data: *const u8,
             length: usize,
         );
-        pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
         // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the

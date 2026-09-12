@@ -18,26 +18,6 @@ pub struct LayerName {
     pub v: SmallList<&'static [u8], 1>,
 }
 
-// The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
-// Iteration order is insertion order (collections/array_hash_map.rs)
-// regardless of hash function.
-
-impl core::hash::Hash for LayerName {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Hash each part's bytes.
-        for part in self.v.slice() {
-            state.write(part);
-        }
-    }
-}
-
-impl PartialEq for LayerName {
-    fn eq(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl Eq for LayerName {}
-
 // Trait `Clone` (not just inherent `deep_clone`) so the bundler's
 // `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
 // arena-borrowed `&'static [u8]` (Copy), so this is the same shallow

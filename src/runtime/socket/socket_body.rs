@@ -2387,7 +2387,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // A fatal send's errno (< -1) is for node:net only. This API documents -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2536,6 +2537,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
+        self.write_maybe_corked_impl::<true>(buffer)
+    }
+
+    /// Like `write_maybe_corked`, but a send the kernel rejected stays backpressure (no errno).
+    pub(crate) fn write_maybe_corked_without_fatal_report(&self, buffer: &[u8]) -> i32 {
+        self.write_maybe_corked_impl::<false>(buffer)
+    }
+
+    fn write_maybe_corked_impl<const REPORT_FATAL_SEND: bool>(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
@@ -2547,8 +2557,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
-        // route it through the SSL-encrypting us_socket_write, and its fatal
-        // signal is never set for TLS sockets anyway.
+        // route it through the SSL-encrypting write.
         if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -2558,7 +2567,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return res;
         }
 
-        let (res, fatal_errno) = socket.write_check_error(buffer);
+        let (res, fatal_errno) = if REPORT_FATAL_SEND {
+            socket.write_check_error(buffer)
+        } else {
+            (socket.write(buffer), 0)
+        };
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
@@ -3053,8 +3066,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
-            // BYPASS_TLS twins keep the raw write path; TLS errors propagate
-            // through the SSL layer.
+            // BYPASS_TLS twins keep the raw write path.
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
@@ -3238,7 +3250,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number(f64::from(wrote.max(-1)))
             }
         };
         Ok(result)

@@ -255,9 +255,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error as the positive
-    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
-    /// sockets fall back to the plain write (no fatal signal).
+    /// Write that also returns the errno of a fatal send (0 = none, always 0 for a duplex or pipe).
     pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),

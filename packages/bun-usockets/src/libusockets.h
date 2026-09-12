@@ -657,8 +657,8 @@ int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count)
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
- * write instead of retrying forever. TLS sockets fall back to
- * us_socket_write (their errors propagate through the SSL layer). */
+ * write instead of retrying forever. For a TLS socket that is a raw send of
+ * the write's ciphertext, once the handshake has been reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;

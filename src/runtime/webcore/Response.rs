@@ -921,7 +921,7 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
+                if let Some(init) = Init::init::<true>(global_this, arg_init)? {
                     response.init.set(init);
                 }
             }
@@ -1001,7 +1001,7 @@ impl Response {
                     let status =
                         Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                     response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
+                } else if let Some(init) = Init::init::<true>(global_this, arg_init)? {
                     // cleanup is handled by Init's drop glue on `?` below
                     response.init.set(init);
 
@@ -1128,7 +1128,7 @@ impl Response {
                 };
             }
             if arguments[1].is_object() {
-                break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
+                break 'brk Init::init::<true>(global_this, arguments[1])?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1197,6 +1197,8 @@ pub struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
+    /// `method` is the `GET` fallback for a token `Method::which` does not know (#42497).
+    pub(crate) method_unknown: bool,
 }
 
 impl Default for Init {
@@ -1206,6 +1208,7 @@ impl Default for Init {
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
+            method_unknown: false,
         }
     }
 }
@@ -1224,10 +1227,12 @@ impl Init {
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
+            method_unknown: self.method_unknown,
         })
     }
 
-    pub(crate) fn init(
+    /// `FOR_RESPONSE` is false when `new Request()` parses its `RequestInit` through this.
+    pub(crate) fn init<const FOR_RESPONSE: bool>(
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
@@ -1308,17 +1313,38 @@ impl Init {
             response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
         {
             result.status_text = status_text.to_bun_string(global_this)?;
+            if FOR_RESPONSE && !is_reason_phrase(&result.status_text) {
+                return Err(global_this.throw_type_error(format_args!("Invalid statusText")));
+            }
         }
 
         if let Some(method_value) =
             response_init.fast_get_truthy(global_this, BuiltinName::method)?
         {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
-                result.method = method;
+            let token = method_value.to_utf8(global_this)?;
+            match Method::which(&token) {
+                Some(method) => result.method = method,
+                // A case variant of GET or HEAD keeps the fallback on purpose.
+                None => {
+                    result.method_unknown =
+                        !token.eq_ignore_ascii_case(b"GET") && !token.eq_ignore_ascii_case(b"HEAD")
+                }
             }
         }
 
         Ok(Some(result))
+    }
+}
+
+/// Fetch spec `reason-phrase`: HTAB, 0x20-0x7E, 0x80-0xFF, per code unit.
+fn is_reason_phrase(status_text: &BunString) -> bool {
+    fn ok(c: u32) -> bool {
+        c == 0x09 || (0x20..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)
+    }
+    if status_text.is_utf16() {
+        status_text.utf16().iter().all(|&c| ok(u32::from(c)))
+    } else {
+        status_text.byte_slice().iter().all(|&c| ok(u32::from(c)))
     }
 }
 

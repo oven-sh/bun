@@ -163,7 +163,9 @@ describe("FormData", () => {
     for (const C of Class) {
       it(`should parse multipart/form-data (${name}) with ${C.name}`, async () => {
         const response =
-          C === Response ? new Response(body, { headers }) : new Request({ headers, body, url: "http://hello.com" });
+          C === Response
+            ? new Response(body, { headers })
+            : new Request({ headers, body, url: "http://hello.com", method: "POST" });
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
         const entry: { [k: string]: any } = {};
@@ -192,7 +194,9 @@ describe("FormData", () => {
 
       it(`should roundtrip multipart/form-data (${name}) with ${C.name}`, async () => {
         const response =
-          C === Response ? new Response(body, { headers }) : new Request({ headers, body, url: "http://hello.com" });
+          C === Response
+            ? new Response(body, { headers })
+            : new Request({ headers, body, url: "http://hello.com", method: "POST" });
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
 
@@ -584,7 +588,9 @@ describe("FormData", () => {
           const formData = new FormData();
           formData.append("foo", Bun.file(path));
           const response =
-            C === Response ? new Response(formData) : new Request({ body: formData, url: "http://example.com" });
+            C === Response
+              ? new Response(formData)
+              : new Request({ body: formData, url: "http://example.com", method: "POST" });
           expect(response.headers.get("content-type")?.startsWith("multipart/form-data;")).toBe(true);
 
           const formData2 = await response.formData();

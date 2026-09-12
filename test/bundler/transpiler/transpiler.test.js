@@ -3037,12 +3037,41 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_("for ((let) of [7]);", "for ((let) of [7])\n  ;\n");
 
       // The keyword spelling is a syntax error, which is why the parentheses matter
-      expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+      expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
       expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
       expectPrinted_(
         "async function f() { for await (async\nof [7]); }",
         "async function f() {\n  for await ((async) of [7])\n    ;\n}",
       );
+
+      // "for await (async of" has no such restriction: "async" is a plain identifier there
+      expectPrinted_(
+        "async function f() { for await (async of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+      expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
+      expectPrinted_("x = async of => of", "x = async (of) => of");
+      expectParseError("async of", 'Expected ";" but found "of"');
+    });
+
+    it("let [ at the start of a statement keeps its parentheses", () => {
+      // An expression statement and a for loop head must not start with "let [".
+      expectPrinted_("var let = []; (let)[0] = 1;", "var let = [];\n(let)[0] = 1;\n");
+      expectPrinted_("if (1) (let)[0] = 2;", "if (1)\n  (let)[0] = 2;\n");
+      expectPrinted_("(let)[0].x = 1;", "(let)[0].x = 1;\n");
+      expectPrinted_("(let)[0]();", "(let)[0]();\n");
+      expectPrinted_("(let)[0]++;", "(let)[0]++;\n");
+      expectPrinted_("for ((let)[0] in x);", "for ((let)[0] in x)\n  ;\n");
+      expectPrinted_("for ((let)[0] of x);", "for ((let)[0] of x)\n  ;\n");
+      expectPrinted_("for ((let)[0];;);", "for ((let)[0];; )\n  ;\n");
+
+      // No parentheses are needed anywhere else
+      expectPrinted_("var let = {}; (let).x = 1;", "var let = {};\nlet.x = 1;\n");
+      expectPrinted_("x = (let)[0];", "x = let[0];\n");
+      expectPrinted_("x, (let)[0] = 1;", "x, let[0] = 1;\n");
+      expectPrinted_("for (x; (let)[0];);", "for (x;let[0]; )\n  ;\n");
+      expectPrinted_("for (x in (let)[0]);", "for (x in let[0])\n  ;\n");
+      expectPrinted_("(lett)[0] = 1;", "lett[0] = 1;\n");
     });
 
     it("await", () => {
@@ -3072,6 +3101,16 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
+    });
+
+    it("import attributes on the next line", () => {
+      // "with" has no [no LineTerminator here] restriction, unlike the legacy "assert"
+      expectPrinted_(`import json from "./foo.json"\nwith { type: "json" };`, `import json from "./foo.json"`);
+      expectPrinted_(`import json from "./foo.json"\n  with { type: "json" };`, `import json from "./foo.json"`);
+      expectPrinted_(`import "./foo.json"\nwith { type: "json" };`, `import"./foo.json"`);
+      expectPrinted_(`export { a } from "./foo.json"\nwith { type: "json" };`, `export { a } from "./foo.json"`);
+      expectPrinted_(`export * from "./foo.json"\nwith { type: "json" };`, `export * from "./foo.json"`);
+      expect(() => parsed(`import json from "./foo.json"\nassert { type: "json" };`, false, false)).toThrow();
     });
 
     it("import with unicode", () => {

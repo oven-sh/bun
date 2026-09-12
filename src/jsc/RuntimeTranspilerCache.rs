@@ -510,6 +510,9 @@ impl Entry {
             }
 
             self.sourcemap = sourcemap;
+        } else {
+            // `put` never writes one. A hit would leave the module's stack traces unmapped.
+            return Err(crate::CrateError::InvalidSourceMap);
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -969,6 +972,10 @@ bun_ast::link_impl_TranspilerCacheImpl! {
         put(output_code_bytes, sourcemap, esm_record) => {
             let this = &mut *this;
             if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
+                return;
+            }
+            // Printed with source maps off. `Entry::load` rejects an entry with no sourcemap.
+            if sourcemap.is_empty() {
                 return;
             }
             debug_assert!(this.entry.is_none());

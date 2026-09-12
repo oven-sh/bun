@@ -4,7 +4,7 @@
  *
  * DirectBuild. SIMD: arm64 uses the Neon intrinsics kernels. x64 assembles
  * the upstream NASM SSE2/AVX2 kernels; simd/jsimd.c picks between them per
- * call from cpuid at runtime, so the AVX2 objects are safe under the
+ * codec instance from cpuid at runtime, so the AVX2 objects are safe under the
  * -march=nehalem floor.
  * The hand-written jconfig.h/jconfigint.h below replace cmake's
  * configure_file — the only probes that matter are sizeof(size_t) and

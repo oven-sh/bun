@@ -921,14 +921,11 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
      * in-flight streams that this abrupt close will never serve.
      *
      * lsquic_conn_abort (IFC_ABORTED -> immediate_close) is used instead of
-     * lsquic_conn_close: for a *server* connection, ci_close only schedules
-     * SF_SEND_CONN_CLOSE if conn_ok_to_close(), and even then the tick at
-     * lsquic_full_conn_ietf.c's end_write only packs the frame when
-     * IFC_GOAWAY_CLOSE is set, CONNECTION_CLOSE was received, or packets are
-     * already scheduled. An idle server conn satisfies none of those, so
-     * abrupt stop() went silent and pooled clients reused the dead session
-     * until idle-timeout. IFC_ABORTED takes the IFC_IMMEDIATE_CLOSE_FLAGS
-     * path which always packs CONNECTION_CLOSE. */
+     * lsquic_conn_close: ci_close only packs CONNECTION_CLOSE from the tick's
+     * end_write once conn_ok_to_close() holds, i.e. after every stream has
+     * finished, and the fd is about to disappear. IFC_ABORTED takes the
+     * IFC_IMMEDIATE_CLOSE_FLAGS path, which packs the frame on the next tick
+     * regardless of open streams. */
     if (ls->ctx->engine) {
         for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
             if (qs->conn) lsquic_conn_abort(qs->conn);

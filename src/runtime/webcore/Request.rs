@@ -1398,10 +1398,10 @@ impl Request {
 
         req.url.set(href);
 
-        // Fetch spec `new Request()` step 36. `fetch()` has the same check in
-        // `fetch_impl`, and an empty string body counts as no body in both.
-        if matches!(req.method, Method::GET | Method::HEAD)
-            && !matches!(req.body_value(), BodyValue::Null | BodyValue::Empty)
+        // Fetch spec `new Request()` step 36. Looser than the spec (which
+        // rejects any non-null body) to match `fetch_impl`: a zero-byte body
+        // is treated as absent by both entry points.
+        if matches!(req.method, Method::GET | Method::HEAD) && req.body_value_mut().has_request_body()
         {
             bail!(Err(global_this.throw_type_error(format_args!(
                 "Request with GET/HEAD method cannot have body."

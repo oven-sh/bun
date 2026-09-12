@@ -863,8 +863,10 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // Neither a process.exit() during load nor the parent's terminate() is a load failure.
+                if !self.exit_called.load(Ordering::Relaxed)
+                    && !self.termination_requested_by_parent()
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1091,6 +1093,14 @@ impl WebWorker {
     pub fn stopped_by_parent(&self) -> bool {
         self.terminated_by_parent.load(Ordering::Relaxed)
             && !self.exit_called.load(Ordering::Relaxed)
+    }
+
+    /// The parent's `terminate()` asked this thread to stop. Worker thread. Taken under the
+    /// `vm_handle` lock that `request_termination` holds while it sets both flags, so a thread
+    /// that already saw `requested_terminate` never reads a stale `false` here.
+    fn termination_requested_by_parent(&self) -> bool {
+        let _handle = self.vm_handle.lock();
+        self.terminated_by_parent.load(Ordering::Relaxed)
     }
 
     /// process.exit() inside the worker. Worker-thread only.

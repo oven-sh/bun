@@ -1,0 +1,56 @@
+--- a/src/jdhuff.h
++++ b/src/jdhuff.h
+@@ -220,7 +220,7 @@
+   } \
+ }
+ 
+-#define HUFF_DECODE_FAST(s, nb, htbl) \
++#define HUFF_DECODE_FAST(s, nb, htbl, cinfo) \
+   FILL_BIT_BUFFER_FAST; \
+   s = PEEK_BITS(HUFF_LOOKAHEAD); \
+   s = htbl->lookup[s]; \
+@@ -237,9 +237,13 @@
+       s |= GET_BITS(1); \
+       nb++; \
+     } \
+-    if (nb > 16) \
++    if (nb > 16) { \
++      /* Bun: emit the same warning as jpeg_huff_decode() so that callers \
++       * which treat warnings as fatal (tj3Decompress8) reject the corrupt \
++       * bitstream instead of silently decoding a faked zero. */ \
++      WARNMS(cinfo, JWRN_HUFF_BAD_CODE); \
+       s = 0; \
+-    else \
++    } else \
+       s = htbl->pub->huffval[(int)(s + htbl->valoffset[nb]) & 0xFF]; \
+   }
+ 
+--- a/src/jdhuff.c
++++ b/src/jdhuff.c
+@@ -680,7 +680,7 @@
+     d_derived_tbl *actbl = entropy->ac_cur_tbls[blkn];
+     register int s, k, r, l;
+ 
+-    HUFF_DECODE_FAST(s, l, dctbl);
++    HUFF_DECODE_FAST(s, l, dctbl, cinfo);
+     if (s) {
+       FILL_BIT_BUFFER_FAST
+       r = GET_BITS(s);
+@@ -701,7 +701,7 @@
+     if (entropy->ac_needed[blkn] && block) {
+ 
+       for (k = 1; k < DCTSIZE2; k++) {
+-        HUFF_DECODE_FAST(s, l, actbl);
++        HUFF_DECODE_FAST(s, l, actbl, cinfo);
+         r = s >> 4;
+         s &= 15;
+ 
+@@ -720,7 +720,7 @@
+     } else {
+ 
+       for (k = 1; k < DCTSIZE2; k++) {
+-        HUFF_DECODE_FAST(s, l, actbl);
++        HUFF_DECODE_FAST(s, l, actbl, cinfo);
+         r = s >> 4;
+         s &= 15;
+ 

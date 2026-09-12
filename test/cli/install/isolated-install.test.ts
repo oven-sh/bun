@@ -3400,6 +3400,126 @@ describe("global virtual store", () => {
     expect(JSON.parse(out.trim())).toEqual({ direct: "two-range-deps", transitive: "no-deps" });
   });
 
+  test("a phantom dependency the project installs resolves from inside a global-store entry", async () => {
+    // Regression test for #40243: `a-dep` never declares `no-deps`, but the
+    // project does. A module inside `a-dep`'s global-store entry realpaths
+    // into `<cache>/links/`, so the node_modules walk runs out inside the
+    // shared cache and used to miss the project's hidden hoisted fallback
+    // (`node_modules/.bun/node_modules`). The resolver now re-enters the walk
+    // there, matching how a project-local entry resolves the same import.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    // `createTestDir` puts the cache (and with it `<cache>/links/`) inside
+    // the project dir, where the walk out of a store entry still reaches the
+    // project's `node_modules`. Real installs keep the cache under
+    // `~/.bun/install/cache`. Move it to a sibling temp dir so the walk runs
+    // out like it does in a real install.
+    using cacheDir = tempDir("gvs-phantom-cache-", {});
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(String(cacheDir), "cache"),
+          registry: registry.registryUrl(),
+          linker: "isolated",
+          globalStore: true,
+        },
+      }),
+    );
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-phantom",
+        dependencies: { "a-dep": "1.0.1", "@types/is-number": "1.0.0", "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // A decoy in an ancestor of the cache must not shadow the project's
+    // hoisted layer: the fallback jumps from the store entry straight to the
+    // project, the same order a project-local entry's walk produces.
+    const decoy = join(String(cacheDir), "node_modules", "no-deps", "package.json");
+    await write(decoy, JSON.stringify({ name: "no-deps", version: "999.999.999" }));
+
+    // Plant modules inside the shared entries that import the undeclared
+    // package, like an adapter package that expects the consumer to install
+    // the validator it wraps. The cache is private to this test dir. The
+    // scoped consumer pins the `@scope+name@version` entry-name shape the
+    // resolver's store-entry check recognizes.
+    const consumers = {
+      "a-dep": join(packageDir, "node_modules", ".bun", "a-dep@1.0.1"),
+      "@types/is-number": join(packageDir, "node_modules", ".bun", "@types+is-number@1.0.0"),
+    };
+    for (const [pkg, entry] of Object.entries(consumers)) {
+      expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+      const target = readlinkSync(entry);
+      await write(
+        join(target, "node_modules", pkg, "phantom.js"),
+        `module.exports = require("no-deps/package.json").version;`,
+      );
+      await write(
+        join(target, "node_modules", pkg, "phantom.mjs"),
+        `import pkg from "no-deps/package.json";\nexport const version = pkg.version;`,
+      );
+    }
+    await write(
+      join(packageDir, "index.mjs"),
+      `import { createRequire } from "module";
+      const require = createRequire(import.meta.url);
+      console.log(JSON.stringify({
+        cjs: require("a-dep/phantom.js"),
+        esm: (await import("a-dep/phantom.mjs")).version,
+        scopedCjs: require("@types/is-number/phantom.js"),
+        scopedEsm: (await import("@types/is-number/phantom.mjs")).version,
+      }));`,
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toBe("");
+    expect(JSON.parse(out.trim())).toEqual({
+      cjs: "1.0.0",
+      esm: "1.0.0",
+      scopedCjs: "1.0.0",
+      scopedEsm: "1.0.0",
+    });
+    expect(code).toBe(0);
+
+    // A working directory that does not link the entry must not answer for
+    // it: the fallback anchors at the project that owns the store entry, so
+    // an unrelated project's hoisted layer stays out of the resolution.
+    await rm(join(String(cacheDir), "node_modules"), { recursive: true, force: true });
+    using strangerDir = tempDir("gvs-phantom-stranger-", {
+      "node_modules/.bun/node_modules/no-deps/package.json": JSON.stringify({
+        name: "no-deps",
+        version: "6.6.6",
+      }),
+    });
+    const phantomAbs = join(readlinkSync(consumers["a-dep"]), "node_modules", "a-dep", "phantom.js");
+    const stranger = spawn({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(phantomAbs)})`],
+      cwd: String(strangerDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, strangerErr, strangerCode] = await Promise.all([
+      stranger.stdout.text(),
+      stranger.stderr.text(),
+      stranger.exited,
+    ]);
+    expect(strangerErr).toContain("Cannot find module");
+    expect(strangerCode).not.toBe(0);
+  });
+
   test("an entry that loses global-store eligibility detaches without mutating the shared entry", async () => {
     // Regression: a previously-GVS entry that becomes project-local on the
     // next install (newly patched, newly trusted, …) used to write its new

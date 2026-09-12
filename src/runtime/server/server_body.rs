@@ -2150,12 +2150,14 @@ where
             dev_server.html_router.fallback = None;
         }
 
-        // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
-        // a move-assign frees the old `static_routes`.
-        self.config.static_routes = core::mem::take(&mut new_config.static_routes);
-        self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
-
+        // A reload without a `routes` object keeps every kind of route, like
+        // it keeps `fetch` and `error`. `set_routes` registers the kept
+        // static routes again on the cleared app.
         if new_config.had_routes_object {
+            // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
+            // a move-assign frees the old `static_routes`.
+            self.config.static_routes = core::mem::take(&mut new_config.static_routes);
+            self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
             self.config.user_routes_to_build =
                 core::mem::take(&mut new_config.user_routes_to_build);
             // `UserRoute`'s owned `RouteDeclaration` drops via `Vec::clear`.
@@ -2217,7 +2219,8 @@ where
                 allow_bake_config: false,
                 is_fetch_required: true,
                 previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
-                previous_routes: !self.user_routes.is_empty(),
+                previous_routes: !self.user_routes.is_empty()
+                    || !self.config.static_routes.is_empty(),
             },
         )?;
 

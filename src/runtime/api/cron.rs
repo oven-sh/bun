@@ -1872,8 +1872,7 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         bun_core::time::milli_timestamp() as f64
     };
 
-    // Out-of-range ms hits UB in WTF::msToGregorianDateTime's int casts and
-    // the resulting garbage components panic next()'s u32 conversions.
+    // An out-of-range `from` is an invalid argument. next() would report it as "no match".
     if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
@@ -1883,10 +1882,6 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
         return Ok(JSValue::NULL);
     };
-    // Return null (not Invalid Date) so callers can rely on `=== null` for "no future match".
-    if next_ms > jsc::wtf::MAX_ECMASCRIPT_TIME {
-        return Ok(JSValue::NULL);
-    }
     Ok(JSValue::from_date_number(global, next_ms))
 }
 

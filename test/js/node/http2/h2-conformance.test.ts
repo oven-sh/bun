@@ -1964,28 +1964,24 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
     ["PRIORITY", [PRIORITY]],
     ["unknown frame types", [UNKNOWN]],
     ["ALTSVC and ORIGIN", [ALTSVC, ORIGIN]],
-  ])(
-    "server: %s",
-    async (_, kinds) => {
-      let sessionError: any;
-      const server = http2.createServer();
-      server.on("sessionError", e => (sessionError = e));
-      const c = await listenRaw(server);
-      try {
-        c.send(Buffer.concat([flood(kinds, BURST), pingFrame(1)]));
-        await c.waitFor(isPingAck(1), 10_000);
-        expect(c.frames.filter(isFatal)).toEqual([]);
-        c.send(flood(kinds, BURST));
-        expect(goawayErrorCode(await c.waitForGoaway(10_000))).toBe(ErrorCode.ENHANCE_YOUR_CALM);
-        await c.waitClosed(10_000);
-        expect({ code: sessionError?.code, message: sessionError?.message }).toEqual(PROTOCOL_ERROR_SESSION);
-      } finally {
-        c.destroy();
-        server.close();
-      }
-    },
-    30_000,
-  );
+  ])("server: %s", async (_, kinds) => {
+    let sessionError: any;
+    const server = http2.createServer();
+    server.on("sessionError", e => (sessionError = e));
+    const c = await listenRaw(server);
+    try {
+      c.send(Buffer.concat([flood(kinds, BURST), pingFrame(1)]));
+      await c.waitFor(isPingAck(1), 4_000);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+      c.send(flood(kinds, BURST));
+      expect(goawayErrorCode(await c.waitForGoaway(4_000))).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      await c.waitClosed(4_000);
+      expect({ code: sessionError?.code, message: sessionError?.message }).toEqual(PROTOCOL_ERROR_SESSION);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 
   test("client: PRIORITY and unknown frame types", async () => {
     const kinds = [PRIORITY, UNKNOWN];
@@ -1997,10 +1993,10 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
       raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
       raw.socket!.write(Buffer.concat([flood(kinds, BURST), pingFrame(1)]));
-      await raw.waitFor(isPingAck(1), 10_000);
+      await raw.waitFor(isPingAck(1), 4_000);
       expect(raw.frames.filter(isFatal)).toEqual([]);
       raw.socket!.write(flood(kinds, BURST));
-      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY, 10_000))).toBe(
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY, 4_000))).toBe(
         ErrorCode.ENHANCE_YOUR_CALM,
       );
       const [err] = await sessionError;
@@ -2009,21 +2005,21 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
       client.destroy();
       raw.close();
     }
-  }, 30_000);
+  });
 
   test("an empty bucket gets 330 tokens back per second", async () => {
     const server = http2.createServer();
     const c = await listenRaw(server);
     try {
       c.send(Buffer.concat([flood([PRIORITY], BURST), pingFrame(1)]));
-      await c.waitFor(isPingAck(1), 10_000);
+      await c.waitFor(isPingAck(1), 4_000);
       await Bun.sleep(1100); // the refill under test is per whole second of wall clock
       c.send(Buffer.concat([flood([PRIORITY], 300), pingFrame(2)]));
-      await c.waitFor(isPingAck(2), 10_000);
+      await c.waitFor(isPingAck(2), 4_000);
       expect(c.frames.filter(isFatal)).toEqual([]);
     } finally {
       c.destroy();
       server.close();
     }
-  }, 30_000);
+  });
 });

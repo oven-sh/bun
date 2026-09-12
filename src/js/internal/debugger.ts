@@ -96,6 +96,8 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+const addInspectorUnixSocketPath = $newCppFunction("BunDebugger.cpp", "jsFunction_addInspectorUnixSocketPath", 1);
+
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
 function cdpAdapterConstructor() {
@@ -386,6 +388,8 @@ class Debugger {
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
+      // Unlinked by a --watch reload, which execs over this process and binds it again.
+      addInspectorUnixSocketPath(pathname);
       return;
     }
 

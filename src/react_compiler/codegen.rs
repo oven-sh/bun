@@ -380,11 +380,7 @@ struct Context<'a, 'h> {
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
-    /// The node (`NonLocalBinding::require_call_node`) that each callee
-    /// temporary of a `require("x")` or `require.resolve("x")` call loads. The
-    /// call is matched by that temporary. Its printed callee is not enough:
-    /// the call's result prints as the same node, so `require("x")()` would
-    /// read as `require("x")`.
+    /// By callee temporary, as `require("x")()` prints the same callee as `require("x")`.
     require_call_nodes: IdMap<IdentifierId, Expr>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,

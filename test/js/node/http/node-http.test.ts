@@ -201,57 +201,58 @@ describe("node:http", () => {
       }
     });
 
-    it.each(["upgrade", "connect"] as const)("leaves handed-off %s sockets open", async kind => {
-      const server = createServer();
-      const { promise: handedOff, resolve: onHandedOff } =
-        Promise.withResolvers<import("node:net").Socket>();
-      const onHandoff = (_request: IncomingMessage, socket: import("node:net").Socket) => {
-        socket.write(
-          kind === "upgrade"
-            ? "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"
-            : "HTTP/1.1 200 Connection Established\r\n\r\n",
-        );
-        onHandedOff(socket);
-      };
-      if (kind === "upgrade") {
-        server.on("upgrade", onHandoff);
-      } else {
-        server.on("connect", onHandoff);
-      }
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const address = server.address() as AddressInfo;
-      const client = connect(address.port, "127.0.0.1");
-      let serverSocket: import("node:net").Socket | undefined;
-
-      try {
-        await once(client, "connect");
-        client.write(
-          kind === "upgrade"
-            ? "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"
-            : "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
-        );
-        serverSocket = await handedOff;
-        await once(client, "data");
-
-        server.closeAllConnections();
-        expect({ listening: server.listening, serverSocketDestroyed: serverSocket.destroyed }).toEqual({
-          listening: true,
-          serverSocketDestroyed: false,
-        });
-        serverSocket.write("still-open");
-        const [data] = await once(client, "data");
-        expect(data.toString()).toBe("still-open");
-      } finally {
-        client.destroy();
-        serverSocket?.destroy();
-        server.closeAllConnections();
-        if (server.listening) {
-          const closed = once(server, "close");
-          server.close();
-          await closed;
+    describe.each(["upgrade", "connect"] as const)("%s handoff", kind => {
+      it("stays open after closeAllConnections()", async () => {
+        const server = createServer();
+        const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<import("node:net").Socket>();
+        const onHandoff = (_request: IncomingMessage, socket: import("node:net").Socket) => {
+          socket.write(
+            kind === "upgrade"
+              ? "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"
+              : "HTTP/1.1 200 Connection Established\r\n\r\n",
+          );
+          onHandedOff(socket);
+        };
+        if (kind === "upgrade") {
+          server.on("upgrade", onHandoff);
+        } else {
+          server.on("connect", onHandoff);
         }
-      }
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const address = server.address() as AddressInfo;
+        const client = connect(address.port, "127.0.0.1");
+        let serverSocket: import("node:net").Socket | undefined;
+
+        try {
+          await once(client, "connect");
+          client.write(
+            kind === "upgrade"
+              ? "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"
+              : "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+          );
+          serverSocket = await handedOff;
+          await once(client, "data");
+
+          server.closeAllConnections();
+          expect({ listening: server.listening, serverSocketDestroyed: serverSocket.destroyed }).toEqual({
+            listening: true,
+            serverSocketDestroyed: false,
+          });
+          serverSocket.write("still-open");
+          const [data] = await once(client, "data");
+          expect(data.toString()).toBe("still-open");
+        } finally {
+          client.destroy();
+          serverSocket?.destroy();
+          server.closeAllConnections();
+          if (server.listening) {
+            const closed = once(server, "close");
+            server.close();
+            await closed;
+          }
+        }
+      });
     });
 
     it("emits a listen() error on the next tick, before the event loop polls", async () => {

@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { chownSync, existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
@@ -349,6 +349,50 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
   // The bogus archive must not be installed; the upgrade fails cleanly.
   expect(exitCode).toBe(1);
 });
+
+// The staging directory is created under the temp dir and the new binary is
+// unpacked and run from it by path. The owner of a directory renames any
+// entry in it whatever that entry's own mode bits say, so a user who owns the
+// temp dir could swap the staging directory for their own between the
+// download and the exec. Making a directory that another user owns takes
+// root.
+it.skipIf(isWindows || process.getuid?.() !== 0)(
+  "refuses to stage the download in a temp dir that another local user owns",
+  async () => {
+    const tagName = "bun-v9.9.9";
+    const otherUser = 4242;
+    using stagingRoot = tempDir("bun-upgrade-foreign-staging", {});
+    const stagingRootPath = String(stagingRoot);
+    chownSync(stagingRootPath, otherUser, otherUser);
+
+    using server = startReleaseServer({ tagName });
+
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...server.env,
+        BUN_TMPDIR: stagingRootPath,
+      },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("9.9.9");
+    expect(stderr).toContain(
+      `error: refusing to use temp directory "${stagingRootPath}": it is owned by uid ${otherUser}, not by the current user or root`,
+    );
+    expect(readdirSync(stagingRootPath)).toEqual([]);
+    expect(exitCode).toBe(1);
+  },
+);
 
 it("verifies the downloaded release archive against the digest reported by the release asset", async () => {
   const archiveBody = "this is not a real zip archive";

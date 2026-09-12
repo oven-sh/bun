@@ -500,6 +500,40 @@ test.concurrent("prompt() with input spanning the 4 KiB read-buffer boundary", a
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  ["LF", "\n"],
+  ["CRLF", "\r\n"],
+])("prompt(), confirm() and alert() each consume exactly one line of piped stdin (%s)", async (_, eol) => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const name = prompt("name?");
+     const yes = confirm("sure?");
+     const no = confirm("really?");
+     alert("hi");
+     const dflt = prompt("dflt?", "D");
+     const rest = await Bun.stdin.text();
+     console.error(JSON.stringify({ name, yes, no, dflt, rest }));`,
+    ["Alice", "y", "n", "", "", "rest", ""].join(eol),
+  );
+  expect(JSON.parse(stderr)).toEqual({ name: "Alice", yes: true, no: false, dflt: "D", rest: "rest" + eol });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([
+  ["LF", "n\nrest\n"],
+  ["CRLF", "n\r\nrest\n"],
+  ["word that starts with y, CRLF", "yes\r\nrest\n"],
+  ["CR inside the line", "no\rway\nrest\n"],
+])("confirm() consumes the whole line of a rejected answer (%s)", async (_, input) => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const c = confirm("sure?");
+     const rest = await Bun.stdin.text();
+     console.error(JSON.stringify({ c, rest }));`,
+    input,
+  );
+  expect(JSON.parse(stderr)).toEqual({ c: false, rest: "rest\n" });
+  expect(exitCode).toBe(0);
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

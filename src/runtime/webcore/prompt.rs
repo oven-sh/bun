@@ -149,7 +149,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     while let Ok(b) = reader.take_byte() {
-        if b == b'\n' || b == b'\r' {
+        if b == b'\n' {
             break;
         }
     }

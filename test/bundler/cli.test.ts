@@ -351,6 +351,120 @@ test("you can use --outfile=... and --sourcemap", async () => {
   `);
 });
 
+describe.concurrent("--sourcemap never writes next to the entry point", () => {
+  // The entry lives in src/, the build runs from work/ (or from the root for
+  // the --outfile rows). Nothing may appear in src/ or work/ unless it was
+  // asked for.
+  const src = {
+    "dep.js": `export const dep = 42;\n`,
+    "entry.js": `import { dep } from "./dep.js";\nconsole.log(dep);\n`,
+    "entry.ts": `import { dep } from "./dep.js";\nexport const out: number = dep;\nconsole.log(out);\n`,
+    "index.html": `<!doctype html><html><head><script type="module" src="./entry.js"></script></head><body></body></html>\n`,
+  };
+  const fixture = {
+    ...Object.fromEntries(Object.entries(src).map(([name, contents]) => [`src/${name}`, contents])),
+    "work/.keep": "",
+  };
+
+  function tree(dir: string) {
+    const out: Record<string, string> = {};
+    for (const rel of fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).sort()) {
+      const file = join(dir, rel);
+      if (fs.statSync(file).isFile()) out[rel.replaceAll("\\", "/")] = fs.readFileSync(file, "utf8");
+    }
+    return out;
+  }
+
+  async function build(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(["entry.js", "entry.ts"])("bare --sourcemap prints %s with an inline map to stdout", async entry => {
+    using dir = tempDir("build-sourcemap-stdout", fixture);
+    const { stdout, stderr, exitCode } = await build(join(String(dir), "work"), `../src/${entry}`, "--sourcemap");
+    expect(stderr).toBe("");
+    expect(stdout).toContain("console.log(");
+    expect(stdout).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(tree(String(dir))).toEqual(fixture);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["linked", "external"])("--sourcemap=%s without --outdir or --outfile is an error", async kind => {
+    using dir = tempDir("build-sourcemap-stdout-error", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      join(String(dir), "work"),
+      "../src/entry.js",
+      `--sourcemap=${kind}`,
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      `error: cannot use ${kind === "external" ? "an external" : "a linked"} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
+    );
+    expect(tree(String(dir))).toEqual(fixture);
+    expect(exitCode).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/19729. The outfile has the entry's
+  // basename on purpose: `bun build src/entry.js --outfile dist/js/entry.js
+  // --sourcemap` used to replace src/entry.js with its own bundle.
+  test.each(["--sourcemap", "--sourcemap=linked", "--sourcemap=external", "--sourcemap=inline"])(
+    "--outfile in another directory with %s writes there",
+    async flag => {
+      using dir = tempDir("build-sourcemap-outfile-dir", fixture);
+      const { stdout, stderr, exitCode } = await build(String(dir), "src/entry.js", "--outfile=dist/js/entry.js", flag);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("entry.js");
+      expect(exitCode).toBe(0);
+
+      const after = tree(String(dir));
+      const bundle = after["dist/js/entry.js"];
+      expect(bundle).toContain("console.log(");
+      if (flag === "--sourcemap=inline") {
+        expect(Object.keys(after)).toEqual(["dist/js/entry.js", ...Object.keys(fixture)]);
+        expect(bundle).toContain("//# sourceMappingURL=data:application/json;base64,");
+      } else {
+        expect(Object.keys(after)).toEqual(["dist/js/entry.js", "dist/js/entry.js.map", ...Object.keys(fixture)]);
+        if (flag === "--sourcemap=external") {
+          expect(bundle).not.toContain("sourceMappingURL");
+        } else {
+          expect(bundle).toContain("//# sourceMappingURL=entry.js.map");
+        }
+        // Relative to the map in dist/js/, not to the cwd.
+        expect(JSON.parse(after["dist/js/entry.js.map"]).sources).toEqual(["../../src/dep.js", "../../src/entry.js"]);
+      }
+      for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+    },
+  );
+
+  test("a standalone html build with --sourcemap and no --outdir writes to the cwd", async () => {
+    using dir = tempDir("build-sourcemap-standalone-html", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      join(String(dir), "work"),
+      "../src/index.html",
+      "--compile",
+      "--target=browser",
+      "--sourcemap",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("index.html");
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    const written = Object.keys(after).filter(file => !(file in fixture));
+    expect(written).toEqual([expect.stringMatching(/^work\/index(-\w+)?\.js\.map$/), "work/index.html"]);
+    expect(after["work/index.html"]).toContain("console.log(");
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+});
+
 test("some log cases", async () => {
   const tmpdir = tmpdirSync();
   const inputFile = path.join(tmpdir, "input.js");

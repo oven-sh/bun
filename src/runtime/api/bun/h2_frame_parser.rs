@@ -2996,9 +2996,19 @@ impl H2FrameParser {
         handler.close(bun_uws::CloseCode::Normal);
     }
 
+    /// Frames corked after the failing send share its registration (cork() never adds a
+    /// second one), so releasing it would strand them in the cork slot.
+    fn fatal_send_recovered_with_corked_frames(&self) -> bool {
+        if self.has_backpressure() || CORKED_H2.with(|c| c.get()) != Some(self.as_ctx_ptr()) {
+            return false;
+        }
+        self.transport_write_fatal.set(false);
+        true
+    }
+
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
-        if self.transport_write_fatal.get() {
+        if self.transport_write_fatal.get() && !self.fatal_send_recovered_with_corked_frames() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
             // - never a re-entrant map mutation from inside run(). The flag is
@@ -3286,11 +3296,16 @@ impl H2FrameParser {
 }
 
 /// Trait to abstract over TLSSocket / TCPSocket for `generic_flush`/`generic_write`.
+/// A socket that is still connecting answers -1 like a detached one: send() on a
+/// connecting fd is ENOTCONN on macOS and Windows, which the socket layer reports as fatal.
 pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
 impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
+        if !self.socket.get().is_established() {
+            return -1;
+        }
         // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
         // takes `&self`). UFCS to avoid resolving back to this trait impl.
         TLSSocket::write_maybe_corked(*self, buf)
@@ -3298,6 +3313,9 @@ impl NativeSocketWrite for &TLSSocket {
 }
 impl NativeSocketWrite for &TCPSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
+        if !self.socket.get().is_established() {
+            return -1;
+        }
         TCPSocket::write_maybe_corked(*self, buf)
     }
 }

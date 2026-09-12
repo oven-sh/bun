@@ -890,7 +890,7 @@ impl Value {
         // producer's remaining callbacks with that foreign context.
         if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
         {
-            return ReadableStream::used(global_this);
+            return ReadableStream::in_use(global_this);
         }
         let mut drain_result = DrainResult::EstimatedSize(0);
 

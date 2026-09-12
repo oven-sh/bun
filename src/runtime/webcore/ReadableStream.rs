@@ -142,11 +142,12 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
     ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
-    safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__used(global: &JSGlobalObject, consumed: bool) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
     safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__closeConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
     safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
@@ -191,7 +192,7 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole payload out of an unread stream. On success the stream is spent (disturbed, locked).
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -239,7 +240,7 @@ impl ReadableStream {
         };
 
         self.done();
-        self.mark_consumed_as_body(global_this);
+        ReadableStream__closeConsumedAsBody(self.value, global_this);
         Some(blob)
     }
 
@@ -642,11 +643,18 @@ impl ReadableStream {
         })
     }
 
+    /// A locked stand-in for the stream of a body that was read to its end: closed and disturbed.
     pub fn used(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
-            ReadableStream__used(global_this)
+            ReadableStream__used(global_this, true)
         })
+    }
+
+    /// A locked stand-in for the stream of a body a consumer is still reading. Nothing tells it how
+    /// that read ends, so it stays readable.
+    pub fn in_use(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || ReadableStream__used(global_this, false))
     }
 
     /// A stream already in the `errored` state, so every read rejects with

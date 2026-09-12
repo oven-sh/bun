@@ -199,6 +199,22 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     stream->m_consumedAsBody = true;
 }
 
+// markConsumedAsBody for the consumer that lifted the whole payload out of a stream nothing had started
+// (Rust `to_any_blob`): no reader or controller will ever run it to its end, so it closes here. With no
+// reader, closing only settles the stream-level closed promise: no script runs and nothing throws.
+extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_consumedAsBody = true;
+    ASSERT(!stream->m_reader);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    readableStreamCloseIfPossible(globalObject, stream);
+    scope.assertNoExceptionExceptTermination();
+}
+
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
 // Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
 // disturbed checks behave as they do after readStreamIntoSink acquires a reader.
@@ -222,12 +238,20 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+// A stand-in for the stream of a body a consumer owns, locked by a reader nothing holds. `consumed`: that
+// consumer already read the body to its end, so the stand-in is closed and disturbed like the real stream.
+// Otherwise the read is still going, and nothing tells the stand-in how it ends: it stays readable.
+extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject, bool consumed)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
+    if (consumed) {
+        stream->m_disturbed = true;
+        readableStreamClose(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);

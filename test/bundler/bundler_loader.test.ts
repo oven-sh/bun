@@ -188,6 +188,29 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A top-level key that is also imported by name becomes a variable, and the default object
+  // references it. Once the minifier renames that variable the property is no longer shorthand,
+  // so a `"__proto__"` key must keep its computed form.
+  itBundled("bun/loader-json-proto-key-imported-by-name", {
+    target: "bun",
+    minifyIdentifiers: true,
+    files: {
+      "/entry.ts": /* js */ `
+    import data, { __proto__ as proto, a } from './data.json';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      proto === data["__proto__"],
+      a,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json": `{"__proto__": {"x": 1}, "a": 2}`,
+    },
+    run: { stdout: '[true,true,true,2,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
   itBundled("bun/loader-toml-proto-key-is-own-property", {
     target: "bun",
     files: {

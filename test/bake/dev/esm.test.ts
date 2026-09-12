@@ -232,6 +232,84 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+// The exports of a module become keys of an object literal. A key named
+// "__proto__" has to be a computed key, or it sets the prototype of that
+// object and the export disappears.
+devTest("export named __proto__", {
+  framework: minimalFramework,
+  files: {
+    // an unused constant with a literal value is moved into the exports literal
+    "moved.ts": `
+      export const __proto__ = "moved";
+    `,
+    "local.ts": `
+      export const __proto__ = { local: true };
+    `,
+    "klass.ts": `
+      export class __proto__ { static tag = "class"; }
+    `,
+    "clause.ts": `
+      function p() { return "clause"; }
+      export { p as __proto__, p as other };
+    `,
+    "star.ts": `
+      export * as __proto__ from './clause';
+    `,
+    "routes/index.ts": `
+      import * as moved from '../moved';
+      import * as local from '../local';
+      import * as klass from '../klass';
+      import * as clause from '../clause';
+      import * as star from '../star';
+      import { __proto__ as p } from '../clause';
+      export default function(req, meta) {
+        return new Response(JSON.stringify([
+          Object.hasOwn(moved, "__proto__") && moved.__proto__ === "moved",
+          Object.hasOwn(local, "__proto__") && local.__proto__.local,
+          Object.hasOwn(klass, "__proto__") && klass.__proto__.tag === "class",
+          Object.hasOwn(clause, "__proto__") && clause.__proto__ === p && p() === "clause",
+          Object.hasOwn(star, "__proto__") && star.__proto__.other === p,
+        ]));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("[true,true,true,true,true]");
+  },
+});
+// With a separate SSR graph, the server sees a "use client" module through a
+// generated proxy module. Its exports literal is built from the export names
+// of the client module, so it has the same "__proto__" hole.
+devTest("use client export named __proto__", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "components/Comp.ts": `
+      "use client";
+      function C() { return "C"; }
+      export { C as __proto__, C as other };
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response(JSON.stringify([
+          Object.getPrototypeOf(Comp) === Object.prototype,
+          Object.keys(Comp).sort(),
+          Object.hasOwn(Comp, "__proto__") && Comp.__proto__.uid,
+          Comp.other.uid,
+        ]));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(JSON.stringify([true, ["__proto__", "other"], "__proto__", "other"]));
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

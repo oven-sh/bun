@@ -616,3 +616,40 @@ describe("JsRef::Weak liveness", () => {
     expect(kept.keep).toBe(true);
   });
 });
+
+describe("conservative roots", () => {
+  // The storage of a Set or a Map is a JSCellButterfly. The conservative scan let a pointer to the start of one such
+  // cell also mark the cell on its left, as if it were a butterfly pointer past the end of that cell
+  // (oven-sh/WebKit#636). The storage on the left then kept its keys alive, and the table that replaced it, and so on.
+  it("a stack reference to a Set's storage does not keep the storage allocated before it alive", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    class Key {}
+    // A Set allocates its storage on the first add. Consecutive allocations are neighbors in a MarkedBlock. Every
+    // second Set is dropped at once, so that no array ever references a dropped Set.
+    const kept: Set<Key>[] = [];
+    const droppedKeys: bigint[] = [];
+    function allocate(keep: boolean) {
+      const key = new Key();
+      const set = new Set([key]);
+      if (keep) kept.push(set);
+      else droppedKeys.push(jscInternals.rawCellAddress(key));
+    }
+    for (let i = 0; i < 200; i++) allocate(i % 2 === 1);
+
+    // forEach keeps the storage of the Set it iterates in a stack slot. At the deepest call the stack references
+    // every kept storage. Nothing references a dropped storage.
+    let stillLive = -1;
+    (function iterateAll(i: number) {
+      if (i === kept.length) {
+        jscInternals.collectSyncWithoutSweep();
+        stillLive = droppedKeys.filter(address => jscInternals.isLiveCellAtRawAddress(address)).length;
+        return;
+      }
+      kept[i].forEach(() => iterateAll(i + 1));
+    })(0);
+
+    // A few may survive through an unrelated stack word. Every dropped key but one survived before.
+    expect(stillLive).toBeLessThan(droppedKeys.length / 5);
+    expect(kept.every(set => set.size === 1)).toBe(true);
+  });
+});

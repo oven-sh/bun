@@ -132,17 +132,22 @@ test("exceptions thrown from handlers do not leak protected Exception roots", as
 // `heapStats().protectedObjectTypeCounts` reports the exact count of
 // protect()'d objects by type, so unlike an RSS high-water mark this needs no
 // threshold and is stable on debug builds.
+//
+// One rewriter serves every round. `.on()` protects the listener and its
+// `element` method until the rewriter's wrapper is swept, while end-tag
+// handlers are dropped when the rewrite finishes. Sharing the rewriter keeps
+// the count independent of which wrappers the GC has swept.
 test("onEndTag callbacks are released after the rewrite", () => {
+  const rewriter = new HTMLRewriter().on("p", {
+    element(element) {
+      element.onEndTag(() => {});
+    },
+  });
+
   const rewriteWithEndTagHandlers = (count: number) => {
     let document = "";
     for (let i = 0; i < count; i++) document += "<p></p>";
-    new HTMLRewriter()
-      .on("p", {
-        element(element) {
-          element.onEndTag(() => {});
-        },
-      })
-      .transform(document);
+    rewriter.transform(document);
   };
 
   const protectedFunctions = () => {

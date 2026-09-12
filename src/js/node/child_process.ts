@@ -46,6 +46,27 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
 
+const setStdioBlocking = $newRustFunction("subprocess.rs", "setStdioBlocking", 2);
+
+// Stand-in for Node's `Pipe` handle on piped child stdio: consumers read
+// `stream._handle.fd` and call `setBlocking` for synchronous fd-based IPC
+// with readSync/writeSync. The native stream owns the fd.
+class StdioPipeHandle {
+  #getFd;
+  constructor(getFd) {
+    this.#getFd = getFd;
+  }
+  get fd() {
+    const fd = this.#getFd();
+    return typeof fd === "number" ? fd : -1;
+  }
+  setBlocking(blocking) {
+    const fd = this.fd;
+    if (fd < 0) return false;
+    return setStdioBlocking(fd, !!blocking);
+  }
+}
+
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
   $debug("child_process: debug mode on");
@@ -1217,6 +1238,26 @@ class ChildProcess extends EventEmitter {
             }
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
+            result._handle = new StdioPipeHandle(() => stdin._getFd());
+            // Node's child.stdin is a net.Socket: forward ref/unref to the
+            // FileSink, edge-triggered like a Socket. The sink starts ref'd
+            // and #spawn's eager-load loop calls ref() on every slot, so a
+            // bare counter would need two unref() calls to take effect.
+            let refed = true;
+            result.ref = function ref() {
+              if (!refed) {
+                refed = true;
+                stdin.ref();
+              }
+              return this;
+            };
+            result.unref = function unref() {
+              if (refed) {
+                refed = false;
+                stdin.unref();
+              }
+              return this;
+            };
             return result;
           }
           case "inherit":
@@ -1255,6 +1296,12 @@ class ChildProcess extends EventEmitter {
             }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            // A pipe that already drained to a buffer has a Blob source with
+            // no getFd; the handle getter maps the undefined to -1.
+            const ptr = pipe.$bunNativePtr;
+            if (ptr) {
+              pipe._handle = new StdioPipeHandle(() => ptr.getFd?.());
+            }
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1699,7 +1746,7 @@ function streamFdOf(item): number | undefined {
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number") return handleFd;
+  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
   if (item.destroyed) return undefined;
 

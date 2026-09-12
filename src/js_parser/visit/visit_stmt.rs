@@ -1339,7 +1339,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
-        match data.stmt.data {
+        // `a: b: for (...)`: every label in the chain belongs to the loop.
+        let mut labeled = &data.stmt;
+        while let StmtData::SLabel(inner) = &labeled.data {
+            labeled = &inner.stmt;
+        }
+        match labeled.data {
             StmtData::SFor(_)
             | StmtData::SForIn(_)
             | StmtData::SForOf(_)

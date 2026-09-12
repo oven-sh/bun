@@ -3805,6 +3805,23 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  it("continue to any label in a chain of labels on a loop", () => {
+    // Every label in `a: b: for (...)` belongs to the loop, so `continue a` is valid.
+    expectPrinted_("a: b: for (;;) { continue a }", "a:\n  b:\n    for (;; ) {\n      continue a;\n    }");
+    expectPrinted_("a: b: for (;;) { continue b }", "a:\n  b:\n    for (;; ) {\n      continue b;\n    }");
+    expectPrinted_(
+      "a: b: c: while (x) { continue a }",
+      "a:\n  b:\n    c:\n      while (x) {\n        continue a;\n      }",
+    );
+    expectPrinted_(
+      "a: b: for (;;) { for (;;) { continue a } }",
+      "a:\n  b:\n    for (;; ) {\n      for (;; ) {\n        continue a;\n      }\n    }",
+    );
+    expectParseError("a: b: { continue a }", 'Cannot "continue" to label a');
+    expectParseError("a: b: { for (;;) { continue a } }", 'Cannot "continue" to label a');
+    expectParseError("a: b: if (x) { continue b }", 'Cannot "continue" to label b');
+  });
+
   it("class bodies keep `this` and the class name as written", () => {
     expectPrinted_(
       "class Foo { static x = this; static { this.y = Foo } z = () => this }",

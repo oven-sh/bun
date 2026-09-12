@@ -1,19 +1,9 @@
-use crate::shell::builtin::{Builtin, BuiltinState};
+use crate::shell::builtin::Builtin;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Exit {
-    state: State,
-}
-
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    WaitingIo,
-    Done,
-}
+pub struct Exit {}
 
 impl Exit {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -39,7 +29,6 @@ impl Exit {
     }
 
     fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        Self::state_mut(interp, cmd).state = State::WaitingIo;
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
@@ -49,7 +38,6 @@ impl Exit {
         _: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }
 }

@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use bun_core::String as BunString;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
-    JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
+    JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
 use super::env_map::EnvMap;
@@ -29,10 +29,6 @@ pub struct ParsedShellScript {
     pub(crate) export_env: JsCell<Option<EnvMap>>,
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
-    /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
-    /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
-    /// Read-only after construction.
-    pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
     pub(crate) estimated_size_for_gc: usize,
 }
@@ -45,7 +41,6 @@ impl Default for ParsedShellScript {
             export_env: JsCell::new(None),
             quiet: Cell::new(false),
             cwd: JsCell::new(None),
-            this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
         }
     }
@@ -291,8 +286,6 @@ fn create_parsed_shell_script_impl(
         parsed_shell_script_ptr.cast::<core::ffi::c_void>(),
         marked_argument_buffer,
     );
-    // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.
-    unsafe { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
 
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_jsvalue)

@@ -1240,9 +1240,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*vm).on_after_event_loop() };
 }
 
-/// `printException` / `printErrorlikeObject` — formats `value` to stderr via
-/// `ConsoleObject::Formatter`. Dispatched here so the high tier owns the
-/// formatter.
+/// `printException` / `printErrorlikeObject`: formats `value` to stderr.
 fn print_exception(
     vm_ref: &mut VirtualMachine,
     value: JSValue,
@@ -1254,28 +1252,20 @@ fn print_exception(
     // no early returns below.
     let writer = bun_core::Output::error_writer_buffered();
 
-    let global = vm_ref.global();
-
-    if let Some(exception) = value.as_exception(vm_ref.jsc_vm) {
-        // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
-        // JSC heap; we only read through it for the duration of this call.
-        let exception = unsafe { &*exception };
-        vm_ref.print_exception(exception, exception_list, writer, true);
-    } else {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        // `Formatter::new` already
-        // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
-        let colors = bun_core::Output::enable_ansi_colors_stderr();
-        vm_ref.print_errorlike_object(
-            value,
-            None,
-            exception_list,
-            &mut formatter,
-            writer,
-            colors,
-            true,
-        );
-        // `defer formatter.deinit()` → Drop.
+    match value.as_exception(vm_ref.jsc_vm) {
+        Some(exception) => {
+            // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
+            // JSC heap; we only read through it for the duration of this call.
+            let exception = unsafe { &*exception };
+            vm_ref.print_exception(
+                exception.value(),
+                Some(exception),
+                exception_list,
+                writer,
+                true,
+            );
+        }
+        None => vm_ref.print_exception(value, None, exception_list, writer, true),
     }
 
     let _ = writer.flush();

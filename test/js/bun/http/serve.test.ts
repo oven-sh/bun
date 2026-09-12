@@ -2025,11 +2025,17 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
           if (pathname === "/throw") inner();
           if (pathname === "/syntax") await import("./broken.ts");
           if (pathname === "/resolve") await import("./bad-import.ts");
+          if (pathname === "/multi") await import("./broken-twice.ts");
+          if (pathname === "/aggregate") {
+            throw new AggregateError([new Error("member one"), new RangeError("member two")], "two members", {
+              cause: new TypeError("the cause"),
+            });
+          }
           return new Response("unreachable");
         },
       });
       const out = {};
-      for (const path of ["/throw", "/syntax", "/resolve"]) {
+      for (const path of ["/throw", "/syntax", "/resolve", "/multi", "/aggregate"]) {
         const res = await fetch(server.url + path.slice(1));
         const html = await res.text();
         const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
@@ -2049,6 +2055,8 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
     `,
     "broken.ts": `export const a = 1;\nexport const oops = ;\n`,
     "bad-import.ts": `import { nope } from "does-not-exist-pkg";\nexport const b = nope;\n`,
+    // Several recoverable parse errors: importing this rejects with an AggregateError of BuildMessages.
+    "broken-twice.ts": `export function f() {\n  const v = {b: {},),r,};\n}\n`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "server.ts"],
@@ -2060,7 +2068,7 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
 
-  for (const path of ["/throw", "/syntax", "/resolve"]) {
+  for (const path of ["/throw", "/syntax", "/resolve", "/multi", "/aggregate"]) {
     expect(out[path]).toMatchObject({
       status: 500,
       type: "text/html;charset=utf-8",
@@ -2108,6 +2116,23 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
   expect(resolution.build.errors).toBe(1);
   expect(resolution.build.msgs[0].on).toEqual({ build: false, resolve: "does-not-exist-pkg" });
   expect(resolution.build.msgs[0].data.text).toStartWith("Cannot find package 'does-not-exist-pkg'");
+
+  // A module with several build errors rejects with an AggregateError of BuildMessages:
+  // the aggregate is listed as the exception and every member still reaches the build log.
+  const multi = out["/multi"].payload.problems;
+  expect(multi.exceptions.map(e => e.name)).toEqual(["AggregateError"]);
+  expect(multi.exceptions[0].message).toStartWith("4 errors building ");
+  expect(multi.build.errors).toBe(4);
+
+  // A thrown AggregateError lists itself, then its cause, then each member.
+  const aggregate = out["/aggregate"].payload.problems;
+  expect(aggregate.exceptions.map(e => [e.name, e.message])).toEqual([
+    ["AggregateError", "two members"],
+    ["TypeError", "the cause"],
+    ["Error", "member one"],
+    ["RangeError", "member two"],
+  ]);
+  expect(aggregate.build.errors).toBe(0);
 
   expect(stderr).toContain("boom <b>&</b>");
   expect(exitCode).toBe(0);

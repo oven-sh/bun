@@ -1184,6 +1184,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Is `expr` an item read off a local that holds an `import()` / `require()` result (`ns.a`)?
+    pub(crate) fn is_namespace_local_read(&self, expr: &Expr) -> bool {
+        let js_ast::ExprData::EImportIdentifier(id) = expr.data else {
+            return false;
+        };
+        self.symbols[id.ref_.inner_index() as usize]
+            .namespace_alias
+            .as_ref()
+            .is_some_and(|alias| {
+                self.dynamic_import_namespace_locals
+                    .contains_key(&alias.namespace_ref)
+            })
+    }
+
+    /// Does `expr()` pass a `this`? A namespace-local item can: unbound, it prints `ns.a`.
+    pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
+        matches!(
+            expr.data,
+            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_)
+        ) || self.is_namespace_local_read(expr)
+    }
+
     /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
     /// import items. One already read (before its declaration, or from a
     /// function above it) stays a local, since that read must not see the
@@ -3118,14 +3140,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ECall(mut e) => {
                     // Don't substitute something into a call target that could change "this"
-                    match replacement.data {
-                        js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
-                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                            {
-                                break 'outer;
-                            }
-                        }
-                        _ => {}
+                    if self.has_value_for_this_in_call(&replacement)
+                        && matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                    {
+                        break 'outer;
                     }
 
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
@@ -6302,6 +6320,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     return true;
                 }
+            }
+            // Unless the linker binds it, this is a property read that can run a getter.
+            js_ast::ExprData::EImportIdentifier(_) if self.is_namespace_local_read(expr) => {
+                return false;
             }
             js_ast::ExprData::ECommonjsExportIdentifier(_)
             | js_ast::ExprData::EImportIdentifier(_) => {

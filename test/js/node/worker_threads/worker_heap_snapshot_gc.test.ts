@@ -1,39 +1,49 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isIntelMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isIntelMacOS, isWindows } from "harness";
 import { join } from "node:path";
 
-// The getHeapSnapshot() round-trip must never let the worker thread touch
-// the parent VM's HandleSet. Before the fix this crashed with a segfault at
-// 0x10 inside the "Sh" (Strong Handles) marking constraint — a parent-VM
-// Strong<JSPromise> was captured by value in a lambda that ran on the worker
-// thread, and Strong<T>'s copy/dtor mutated HandleSet::m_strongList without
-// the parent VM's lock while the collector was iterating it.
+// The getHeapSnapshot() round-trip must never let the worker thread touch the
+// parent VM's Strong handle set (JSC::StrongSet). Before the fix (#30185) a
+// parent-VM Strong<JSPromise> was captured by value in a lambda that ran on
+// the worker thread, so the worker allocated and freed a parent-VM handle
+// without the parent VM's lock. A parent-thread allocate or free that overlaps
+// tears the allocator: the parent then faults in
+// StrongSet::tryAllocateFromCurrent, trips a RELEASE_ASSERT on the used count
+// (StrongBlock::decrementUsedCount) or block bookkeeping
+// (StrongSet::didFreeSlot), or has two handles share one slot.
 //
-// The race window is a handful of instructions after each snapshot
-// completes, so no single run is guaranteed to hit it; we run the fixture
-// repeatedly in release and fail if any attempt crashes. Debug and ASAN
-// builds are several times slower per heap snapshot, so they get a reduced
-// workload as a functional check — plain release CI is where this guards
-// against regressions.
-// Skipped on Windows and Intel (x64) macOS: this branch's always-on per-worker
-// stdio path adds per-spawn overhead that a 15x300-snapshot stress exceeds on
-// those builders. The race it guards is platform-agnostic and still covered on
-// Linux and Apple-Silicon macOS.
+// The fixture makes that overlap likely instead of relying on volume: while
+// each snapshot is in flight, the parent allocates and frees Strong handles
+// as densely as JS can (see the fixture header). With the bug reintroduced on
+// a release build, one round-trip corrupts the parent VM about half of the
+// time and 100 of 100 processes crashed within 10 round-trips; the previous
+// 15x300 idle-parent workload detected nothing in 9000 round-trips. Each
+// attempt is an independent process, so the attempts run concurrently.
+//
+// This is the release-lane backstop for the getHeapSnapshot() site only. The
+// deterministic guard for every cross-VM site, a lock-held assert in
+// StrongSet::allocate/deallocate (#36958), is still to be ported.
+//
+// Skipped on Windows and Intel (x64) macOS, as before: the per-worker stdio
+// path on those builders adds spawn overhead the original stress exceeded,
+// and this workload has not been measured there. The race is platform
+// agnostic and still covered on Linux and Apple Silicon macOS.
 test.skipIf(isWindows || isIntelMacOS)(
-  "worker.getHeapSnapshot() does not race the parent VM's Strong Handles list under GC",
+  "worker.getHeapSnapshot() does not race the parent VM's Strong handle set",
   async () => {
-    const slow = isDebug || isASAN;
-    const attempts = slow ? 1 : 15;
-    const iters = isDebug ? "5" : slow ? "100" : "300";
+    // A debug heap snapshot takes about 3s and the debug churn is less dense
+    // (one debug+ASAN process caught the reintroduced bug in 7 of 16 runs of
+    // 5 round-trips), so the debug lane is a functional check with some teeth.
+    // Release and ASAN release run 5 processes of 10 round-trips each.
+    const attempts = isDebug ? 1 : 5;
+    const iters = isDebug ? 5 : 10;
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
 
-    // The attempts are independent processes with no shared state, so run them
-    // all concurrently; the race being guarded is intra-process.
     const results = await Promise.all(
       Array.from({ length: attempts }, async (_, i) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), fixture],
-          env: { ...bunEnv, ITERS: iters },
+          env: { ...bunEnv, ITERS: String(iters) },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -42,15 +52,20 @@ test.skipIf(isWindows || isIntelMacOS)(
       }),
     );
     for (const result of results) {
-      // One assertion per attempt so a crash shows stdout/stderr/signal together.
+      // One assertion per attempt so a failure shows stdout, stderr, exit code
+      // and signal together. The fixture prints the summary line only after
+      // every round-trip settled, the first payload parsed as a V8 heap
+      // snapshot with a non-zero node count, and the worker was terminated.
       expect(result).toEqual({
         attempt: result.attempt,
-        stdout: "ok\n",
+        stdout: `ok snapshots=${iters} workerExitCode=1\n`,
         stderr: "",
         exitCode: 0,
         signalCode: null,
       });
     }
   },
-  isDebug || isASAN ? 60_000 : 120_000,
+  // A regression can present as a hang on a torn free list, so the timeout is
+  // the time-to-red for that case. The debug lane needs about 25s of it.
+  60_000,
 );

@@ -46,7 +46,6 @@ test/cli/install/bunx.test.ts
 test/cli/install/isolated-install.test.ts
 test/cli/install/migration/complex-workspace.test.ts
 test/cli/install/npmrc.test.ts
-test/cli/install/overrides.test.ts
 test/cli/install/test-dev-peer-dependency-priority.test.ts
 test/cli/run/commonjs-invalid.test.ts
 test/cli/run/preload-test.test.js

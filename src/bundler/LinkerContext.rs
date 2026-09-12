@@ -4326,7 +4326,13 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Whether the export an item of such a record matched can stand in for it.
-    fn binds_call_item(&self, import_ref: Ref, result: &MatchImport) -> bool {
+    fn binds_call_item(
+        &self,
+        source_index: crate::IndexInt,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
         // A lifted CommonJS export changes through `exports.x = …`, which the
         // parser does not record as an assignment.
         if !matches!(result.kind, MatchImportKind::Normal)
@@ -4342,15 +4348,32 @@ impl<'a> LinkerContext<'a> {
             .symbols
             .get_const(import_ref)
             .is_some_and(|symbol| symbol.namespace_alias.is_none());
-        !is_pattern_local
-            || !self
-                .graph
-                .symbols
-                .get_const(result.r#ref)
-                .is_some_and(|symbol| {
-                    // A direct `eval` in the exporting file can assign it too.
-                    symbol.has_been_assigned_to() || symbol.must_not_be_renamed()
-                })
+        if !is_pattern_local {
+            return true;
+        }
+        let Some(export) = self.graph.symbols.get_const(result.r#ref) else {
+            return true;
+        };
+        // A direct `eval` in the exporting file can assign it too. An import
+        // that matching cannot follow is a binding of an external module,
+        // which changes out of sight.
+        if export.has_been_assigned_to()
+            || export.must_not_be_renamed()
+            || export.kind == bun_ast::symbol::Kind::Import
+        {
+            return false;
+        }
+        // The importee's own initializer changes the export too. A `require()`
+        // can run while the importee initializes (an import cycle, or a
+        // callback no import graph shows), and the pattern then copies the
+        // value from before the initializer. Only a function declaration and a
+        // namespace object (printed outside the wrapper) have their value from
+        // the start. An `import()` settles after the initializer.
+        let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
+            [named_import.import_record_index as usize];
+        record.kind != ImportKind::Require
+            || export.kind.is_function()
+            || self.is_esm_namespace_ref(result.source_index, result.r#ref)
     }
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
@@ -4579,7 +4602,9 @@ impl<'a> LinkerContext<'a> {
                 &mut re_exports,
             );
 
-            if is_call_item && !self.binds_call_item(import_ref, &result) {
+            if is_call_item
+                && !self.binds_call_item(source_index, import_ref, named_import, &result)
+            {
                 continue;
             }
 

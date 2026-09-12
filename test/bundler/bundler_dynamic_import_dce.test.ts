@@ -3665,6 +3665,7 @@ describe("bundler", () => {
   // A throwing importee rejects the `import()` (caught by the surrounding
   // `try`), and every later `import()` / `require()` throws the same error.
   itElides("InitThrows", {
+    keepsNamespace: true,
     files: {
       "/entry.js": /* js */ `
         async function load() {
@@ -3820,6 +3821,171 @@ describe("bundler", () => {
     stdout: "x init a\nx a a",
   });
 
+  // In an import cycle, `require()` can return an importee that is still
+  // initializing. None of these declarations is an assignment to the parser.
+  // The first `take()` runs before them and the second one after them.
+  itElides("RequireCycleSnapshotOfDeclarations", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": `import "./b.js";`,
+      "/a.js": /* js */ `
+        const reads = [];
+        export function take() {
+          const { init, redeclared, forOf, forIn, later, renamed, fn } = require("./b.js");
+          const ns = require("./b.js");
+          const { init: fromLocal } = ns;
+          reads.push(() => [init, redeclared, forOf, forIn, later, renamed, fn(), fromLocal].map(String).join());
+        }
+        export function read() {
+          return reads.map(r => r()).join("\\n");
+        }
+      `,
+      "/b.js": /* js */ `
+        import { take, read } from "./a.js";
+        export var redeclared = String(1), forOf = String(1), forIn = String(1), later;
+        export { hoisted as renamed };
+        export function fn() { return "fn"; }
+        take();
+        export var init = String("late");
+        var redeclared = String(2);
+        for (var forOf of ["of"]) {}
+        for (var forIn in { in: 1 }) {}
+        var later = String("late");
+        var hoisted = String("late");
+        take();
+        console.log(read());
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "undefined,1,1,1,undefined,undefined,fn,undefined\nlate,2,of,in,late,late,fn,late",
+  });
+
+  // A function declaration has its value before the importee initializes, so
+  // it is bound in a cycle too.
+  itElides("RequireCycleFunctionDeclaration", {
+    files: {
+      "/entry.js": `import "./b.js";`,
+      "/a.js": /* js */ `
+        export function early() {
+          const { fn, gen } = require("./b.js");
+          return fn() + typeof gen;
+        }
+      `,
+      "/b.js": /* js */ `
+        import { early } from "./a.js";
+        console.log(early());
+        export function fn() { return "fn "; }
+        export function* gen() {}
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "fn function",
+  });
+
+  // The importee is in a cycle without the importer. It has initialized when
+  // `require()` returns, so the copy reads the initialized value.
+  itElides("RequireOfAnotherCycle", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { read } from "./a.js";
+        console.log(read());
+      `,
+      "/a.js": /* js */ `
+        export function read() {
+          const { v } = require("./b.js");
+          return v;
+        }
+      `,
+      "/b.js": /* js */ `
+        import { w } from "./c.js";
+        export var v = String("V") + w();
+        export const d = "DROPPED";
+      `,
+      "/c.js": /* js */ `
+        import "./b.js";
+        export function w() { return "W"; }
+      `,
+    },
+    stdout: "VW",
+  });
+
+  // `b.js` imports `a.js`, whose top-level `require()` then returns `b.js`
+  // before its body has run.
+  itElides("RequireCycleAtTopLevel", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": `import "./b.js";`,
+      "/a.js": /* js */ `
+        const { v } = require("./b.js");
+        export function read() {
+          return v;
+        }
+      `,
+      "/b.js": /* js */ `
+        import { read } from "./a.js";
+        export var v = String("V");
+        console.log(read());
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "undefined",
+  });
+
+  // The cycle goes through a dependency of the importee. `d.js` runs before
+  // `c.js`, which holds the export that `b.js` re-exports.
+  itElides("RequireCycleThroughReExport", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        import "./b.js";
+        import { read } from "./a.js";
+        console.log(read());
+      `,
+      "/a.js": /* js */ `
+        let get;
+        export function take() {
+          const { v } = require("./b.js");
+          get = () => v;
+        }
+        export function read() {
+          return get();
+        }
+      `,
+      "/b.js": /* js */ `
+        import "./d.js";
+        export { v } from "./c.js";
+        export const d = "DROPPED";
+      `,
+      "/c.js": `export var v = String("C");`,
+      "/d.js": /* js */ `
+        import { take } from "./a.js";
+        take();
+      `,
+    },
+    stdout: "undefined",
+  });
+
+  // A file that requires itself is a cycle of one file.
+  itElides("RequireOfItself", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": `import "./a.js";`,
+      "/a.js": /* js */ `
+        let get;
+        function take() {
+          const { v } = require("./a.js");
+          get = () => v;
+        }
+        take();
+        export var v = String("V");
+        console.log(get());
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "undefined",
+  });
+
   // A default value reads the name off the real object.
   itElides("ThenAndPromiseAll", {
     keepsNamespace: true,
@@ -3903,6 +4069,7 @@ describe("bundler", () => {
   // A wrapped importer turns its top-level declarations into assignments;
   // the pattern's source is still the object literal.
   itElides("WrappedImporter", {
+    keepsNamespace: true,
     files: {
       "/entry.js": /* js */ `
         async function main() {
@@ -3918,6 +4085,27 @@ describe("bundler", () => {
         export function show() { console.log(b, one, two, ns.a); }
       `,
       "/x.js": `console.log("x init"); export const a = "a", b = "b"; export const d = "DROPPED";`,
+    },
+    stdout: "x init\nb a b a",
+  });
+
+  // The same with a function export, which a `require()` pattern still binds.
+  itElides("WrappedImporterBoundFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { show } = await import("./inner.js");
+          show();
+        }
+        main();
+      `,
+      "/inner.js": /* js */ `
+        const { b } = require("./x.js");
+        const ns = require("./x.js");
+        const one = ns.a, two = ns.b();
+        export function show() { console.log(b(), one, two, ns.a); }
+      `,
+      "/x.js": `console.log("x init"); export const a = "a"; export function b() { return "b"; } export const d = "DROPPED";`,
     },
     stdout: "x init\nb a b a",
   });
@@ -4147,14 +4335,177 @@ describe("bundler", () => {
   });
 
   // A wrapped importer hoists its top-level names out of the closure. A bound
-  // name is the export's own binding (here a class), so it is not redeclared.
-  itElides("WrappedImporterBoundClass", {
+  // name is the export's own binding (here a function), so it is not redeclared.
+  itElides("WrappedImporterDoesNotRedeclareBoundName", {
+    files: {
+      "/entry.js": `const { y } = require("./b.js"); console.log(y());`,
+      "/b.js": `const { z } = require("./a.js"); export function y() { return z.v; }`,
+      "/a.js": `export function z() {} z.v = "zv"; export const d = "DROPPED";`,
+    },
+    stdout: "zv",
+  });
+
+  // A class has no value before its declaration runs, so a `require()`
+  // pattern local of it is a copy. The wrapped importer hoists that local.
+  itElides("WrappedImporterClassIsCopy", {
+    keepsNamespace: true,
     files: {
       "/entry.js": `const { y } = require("./b.js"); console.log(y);`,
       "/b.js": `const { z } = require("./a.js"); export const y = z.v;`,
       "/a.js": `export class z { static v = "zv" } export const d = "DROPPED";`,
     },
     stdout: "zv",
+  });
+
+  // A `require()` can run while the importee initializes, so a pattern local
+  // of an export that is not a function declaration stays a copy. Here the
+  // importee reaches the pattern through a callback, not through an import.
+  itElides("RequireDuringInitThroughCallbackIsCopy", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { register } from "./registry.js";
+        import { early, late } from "./a.js";
+        register(early);
+        require("./b.js");
+        console.log(late());
+      `,
+      "/registry.js": /* js */ `
+        let callback;
+        export function register(fn) { callback = fn; }
+        export function fire() { callback(); }
+      `,
+      "/a.js": /* js */ `
+        let get;
+        export function early() { const { v } = require("./b.js"); get = () => v; }
+        export function late() { return get(); }
+      `,
+      "/b.js": /* js */ `
+        import { fire } from "./registry.js";
+        fire();
+        export var v = String("V");
+      `,
+    },
+    stdout: "undefined",
+  });
+
+  // The same through an import cycle: the importee imports the importer.
+  itElides("RequireDuringInitThroughCycleIsCopy", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": `import "./b.js";`,
+      "/a.js": /* js */ `
+        let get;
+        export function early() { const { v } = require("./b.js"); get = () => v; }
+        export function late() { return get(); }
+      `,
+      "/b.js": /* js */ `
+        import { early, late } from "./a.js";
+        early();
+        export let v = String("V");
+        console.log(late());
+      `,
+    },
+    stdout: "undefined",
+  });
+
+  // Each declaration form that has no value before its line runs.
+  itElides("RequireDuringInitCopiesEachForm", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { register } from "./registry.js";
+        import { early, late } from "./a.js";
+        register(early);
+        require("./b.js");
+        console.log(late());
+      `,
+      "/registry.js": /* js */ `
+        let callback;
+        export function register(fn) { callback = fn; }
+        export function fire() { callback(); }
+      `,
+      "/a.js": /* js */ `
+        let get;
+        export function early() {
+          const { a, b, c, d, f } = require("./b.js");
+          get = () => [a, b, c, d, typeof f].join();
+        }
+        export function late() { return get(); }
+      `,
+      "/b.js": /* js */ `
+        import { fire } from "./registry.js";
+        fire();
+        export var a = String("a");
+        export let b = String("b");
+        export const c = String("c");
+        export class d { static x = String("d") }
+        export function f() {}
+      `,
+    },
+    stdout: ",,,,function",
+  });
+
+  // A function declaration has its value from the start, so its local is
+  // still bound and the call still needs no namespace object.
+  itElides("RequireDuringInitBindsFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        import { register } from "./registry.js";
+        import { early, late } from "./a.js";
+        register(early);
+        require("./b.js");
+        console.log(late());
+      `,
+      "/registry.js": /* js */ `
+        let callback;
+        export function register(fn) { callback = fn; }
+        export function fire() { callback(); }
+      `,
+      "/a.js": /* js */ `
+        let get;
+        export function early() { const { f } = require("./b.js"); get = () => f(); }
+        export function late() { return get(); }
+      `,
+      "/b.js": /* js */ `
+        import { fire } from "./registry.js";
+        fire();
+        export function f() { return "F"; }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "F",
+  });
+
+  // An `import()` settles after the importee initialized, so its local is
+  // still bound, with the callback shape too.
+  itElides("ImportDuringInitThroughCallbackStaysBound", {
+    files: {
+      "/entry.js": /* js */ `
+        import { register } from "./registry.js";
+        import { early, late } from "./a.js";
+        register(early);
+        require("./b.js");
+        late().then(v => console.log(v));
+      `,
+      "/registry.js": /* js */ `
+        let callback;
+        export function register(fn) { callback = fn; }
+        export function fire() { callback(); }
+      `,
+      "/a.js": /* js */ `
+        let got;
+        export function early() { got = import("./b.js").then(({ v }) => v); }
+        export function late() { return got; }
+      `,
+      "/b.js": /* js */ `
+        import { fire } from "./registry.js";
+        fire();
+        export var v = String("V");
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "V",
   });
 
   // No single export to bind to: the name reads `undefined`, with no warning.
@@ -4301,6 +4652,33 @@ describe("bundler", () => {
     },
     run: { stdout: "0" },
   });
+
+  // A re-export of an external module's binding changes where the bundler
+  // cannot see, so a destructured copy of it stays a snapshot.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`dynamic_import_dce/ExternalReExportDestructureIsSnapshot_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          async function main() {
+            const { counter, inc } = await import("./b.js");
+            inc();
+            const { counter: second } = require("./b.js");
+            inc();
+            console.log(counter, second);
+          }
+          main();
+        `,
+        "/b.js": `export { counter, inc } from "ext";`,
+      },
+      runtimeFiles: {
+        "/node_modules/ext/index.js": `export let counter = 0; export function inc() { counter++; }`,
+        "/node_modules/ext/package.json": `{ "name": "ext", "type": "module", "main": "index.js" }`,
+      },
+      external: ["ext"],
+      format,
+      run: { stdout: "0 1" },
+    });
+  }
 
   // ── Cases that keep the namespace object ──────────────────────────────
 

@@ -126,12 +126,17 @@ const handlers = {
 
     ws.sendBuffered("she"); // IncomingMessageId.subscribe with hot_update and errors
     ws.sendBuffered("n" + location.pathname); // IncomingMessageId.set_url
+    // IncomingMessageId.init. After subscribe, so that the server's full_reload
+    // reply covers every rebuild this page could not have heard as a hot_update.
+    ws.sendBuffered("i" + config.generation);
 
     const fn = globalThis[Symbol.for("bun:loadData")];
     if (fn) {
       document.removeEventListener("visibilitychange", fn);
-      ws.send("i" + config.generation);
     }
+  },
+  [MessageId.full_reload]() {
+    fullReload();
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);

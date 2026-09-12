@@ -92,6 +92,12 @@ pub enum MessageId {
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
     TestingWatchSynchronization = b'r',
+    /// No payload. The client must hard-reload: the bundle it loaded cannot
+    /// be brought up to date with `hot_update` messages. Sent in reply to
+    /// `IncomingMessageId::Init` when the generation it carries belongs to no
+    /// live route bundle, i.e. the route was rebuilt after this client's
+    /// script was served but before its socket subscribed to `hot_update`.
+    FullReload = b'R',
 }
 impl MessageId {
     #[inline]
@@ -106,6 +112,10 @@ impl MessageId {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IncomingMessageId {
+    /// `[8]u8` hex: `config.generation` of the client bundle the page loaded
+    /// (a route bundle's `client_script_generation`). Sent once, after
+    /// `Subscribe`. Moves the bundle's source-map weak ref onto this socket,
+    /// and gets a `MessageId::FullReload` reply if that generation is gone.
     Init = b'i',
     Subscribe = b's',
     SetUrl = b'n',

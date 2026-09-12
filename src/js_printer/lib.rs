@@ -3667,18 +3667,20 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        // Inline cross-module TypeScript enum references here
-                        if let Some(inlined) =
-                            self.try_to_get_imported_enum_value(e.target, &e.name)
-                        {
-                            self.print_inlined_enum(inlined, &e.name, level);
-                            return;
-                        }
-                        if e.is_import_property_use
-                            && let Some(binding) = self.import_member_binding(e.target, &e.name)
-                        {
-                            self.print_expr(binding, level, flags);
-                            return;
+                        // A write or `delete` of `X.name` is not marked, so it
+                        // keeps the property access.
+                        if e.is_import_property_use {
+                            // Inline cross-module TypeScript enum references here
+                            if let Some(inlined) =
+                                self.try_to_get_imported_enum_value(e.target, &e.name)
+                            {
+                                self.print_inlined_enum(inlined, &e.name, level);
+                                return;
+                            }
+                            if let Some(binding) = self.import_member_binding(e.target, &e.name) {
+                                self.print_expr(binding, level, flags);
+                                return;
+                            }
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -3723,26 +3725,23 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(str) = e.index.data.as_e_string() {
-                            let str = str.flattened(self.bump);
-                            if str.is_utf8() {
-                                if let Some(value) =
-                                    self.try_to_get_imported_enum_value(e.target, str.slice8())
-                                {
-                                    self.print_inlined_enum(value, str.slice8(), level);
-                                    return;
-                                }
-                            }
-                        }
                         if e.is_import_property_use
                             && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
                             && let str = str.flattened(self.bump)
                             && str.is_utf8()
-                            && let Some(binding) =
-                                self.import_member_binding(e.target, str.slice8())
                         {
-                            self.print_expr(binding, level, flags);
-                            return;
+                            if let Some(value) =
+                                self.try_to_get_imported_enum_value(e.target, str.slice8())
+                            {
+                                self.print_inlined_enum(value, str.slice8(), level);
+                                return;
+                            }
+                            if let Some(binding) =
+                                self.import_member_binding(e.target, str.slice8())
+                            {
+                                self.print_expr(binding, level, flags);
+                                return;
+                            }
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {

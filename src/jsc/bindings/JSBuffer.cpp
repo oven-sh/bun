@@ -1872,11 +1872,11 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
 
     {
         // Matches Node's ERR_INVALID_ARG_TYPE('value', ['number', 'string', 'Buffer', 'Uint8Array'], val).
-        WTF::StringBuilder messageBuilder;
+        Bun::MessageBuilder messageBuilder;
         messageBuilder.append("The \"value\" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received "_s);
         Bun::determineSpecificType(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject, messageBuilder, valueValue);
         RETURN_IF_EXCEPTION(scope, -1);
-        scope.throwException(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, messageBuilder.toString()));
+        scope.throwException(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, messageBuilder));
         return -1;
     }
 }

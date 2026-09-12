@@ -165,7 +165,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         if (!iterable) {
             auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, portsValue).transferToWTFString();
             RETURN_IF_EXCEPTION(throwScope, {});
-            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
+            Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
             return {};
         }
         unsigned i = 0;
@@ -175,7 +175,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             if (!wrapped) {
                 auto inspected = Bun__inspect_singleline(&g, item).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, );
-                throwTypeError(&g, scope, makeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+                Bun::throwTypeErrorOrOutOfMemory(&g, scope, tryMakeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
                 return;
             }
             result.ports.append(wrapped);
@@ -196,7 +196,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, sourceValue).transferToWTFString();
             if (throwScope.exception()) [[unlikely]]
                 return;
-            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+            Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
         });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {

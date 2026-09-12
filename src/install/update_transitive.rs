@@ -800,7 +800,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
 /// Newest release the rows still resolving to `pkg_id` allow, when it is newer than the installed one.
 fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box<[u8]>> {
     let cache_ctx = manager.manifest_disk_cache_ctx();
-    let min_age = manager.options.minimum_release_age_ms;
+    let min_age = manager.options.minimum_release_age_gate_ms();
     let excludes = manager.options.minimum_release_age_excludes;
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1130,7 +1130,7 @@ fn plan_edges(
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
 
     let cache_ctx = manager.manifest_disk_cache_ctx();
-    let min_age = manager.options.minimum_release_age_ms;
+    let min_age = manager.options.minimum_release_age_gate_ms();
     let excludes = manager.options.minimum_release_age_excludes;
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
     let pkg_names = manager.lockfile.packages.items_name();

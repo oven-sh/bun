@@ -349,7 +349,7 @@ impl OutdatedCommand {
         // (`&mut manager.manifests` against `&manager.lockfile` /
         // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        let min_age_ms = manager.options.minimum_release_age_ms;
+        let min_age_ms = manager.options.minimum_release_age_gate_ms();
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
 

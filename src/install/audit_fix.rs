@@ -629,7 +629,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
     let log_msgs = &mut manager.log_mut().msgs;
 
     let cache_ctx = manager.manifest_disk_cache_ctx();
-    let min_age = manager.options.minimum_release_age_ms;
+    let min_age = manager.options.minimum_release_age_gate_ms();
     let excludes = manager.options.minimum_release_age_excludes;
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
 

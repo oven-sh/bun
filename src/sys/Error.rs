@@ -120,6 +120,16 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
+    /// No entry at `path`. A dangling symlink is an entry (`open` reports
+    /// ENOENT for it too).
+    pub fn is_missing_file(&self, path: &bun_core::ZStr) -> bool {
+        match self.get_errno() {
+            E::ENOENT => crate::lstat(path).is_err(),
+            E::ENOTDIR => true,
+            _ => false,
+        }
+    }
+
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`
     /// fields prevent a true `const` item.)
     #[inline]

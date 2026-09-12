@@ -46,6 +46,14 @@ fn load_bunfig(
             Ok(s) => s,
             Err(err) => {
                 if auto_loaded {
+                    if !err.is_missing_file(config_path) {
+                        bun_core::warn!(
+                            "{}\nThe settings in <b>{}<r> are not applied.\n",
+                            err,
+                            BStr::new(config_path.as_bytes()),
+                        );
+                        Output::flush();
+                    }
                     return Ok(());
                 }
                 bun_core::pretty_errorln!(

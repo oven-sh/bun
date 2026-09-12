@@ -1933,12 +1933,13 @@ pub fn init(
         let parts = [b"./.npmrc" as &[u8]];
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+        // `$XDG_CONFIG_HOME/.npmrc` only when that entry exists (a dangling
+        // symlink counts, `load_npmrc_config` reports it).
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
             let p =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
-            if bun_sys::exists_z(p) {
+            if bun_sys::lstat(p).is_ok() {
                 global_len = p.len();
             }
         }

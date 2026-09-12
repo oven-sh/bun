@@ -1779,9 +1779,7 @@ function Socket(options?) {
         }
         if (self.destroyed) return;
         let stop = ret === false || !self[kOnreadReading];
-        // Each read is its own MakeCallback in node, which ends with the tick queue and the microtasks drained. A nested
-        // scope skips that, and a socket that wraps a stream is called from inside that stream's 'data' emit.
-        // https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L207
+        // Node drains ticks and microtasks after each read, except in a nested scope (a wrapped stream's 'data' emit): https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L207
         if (!stop && offset < total && !self[kupgraded]) {
           const handle = self._handle;
           onreadCheckpoints++;
@@ -2370,8 +2368,7 @@ function drainOnreadTail(self) {
 }
 
 function drainOnreadTailNT(socket) {
-  // This tick came due inside the checkpoint between two slices of another socket. Its own slices and checkpoints
-  // would nest in there, one level per socket with a tail, so it runs from the event loop instead.
+  // Inside the checkpoint of another socket this drain would nest, one level per socket with a tail.
   if (onreadCheckpoints !== 0) {
     setImmediate(drainOnreadTailNT, socket);
     return;

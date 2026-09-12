@@ -481,9 +481,7 @@ impl Cmd {
             match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
-                    bun_core::self_exe_path()
-                        .ok()
-                        .map(|z| z.as_bytes().to_vec())
+                    crate::node::process::exec_path_bytes().map(<[u8]>::to_vec)
                 }
                 None => None,
             }

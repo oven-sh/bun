@@ -686,6 +686,117 @@ function setTraceSigInt(enable) {
   // is accepted as a no-op on the main thread.
 }
 
+// Port of Node's `util.diff` (lib/internal/util/diff.js + the JS Myers diff in
+// lib/internal/assert/myers_diff.js). Returns entries in input order:
+// [1, value] only in `actual`, [-1, value] only in `expected`, [0, value] in both.
+function validateDiffInput(value, name) {
+  if (typeof value === "string") return;
+  if ($isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (typeof value[i] !== "string") {
+        throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, "string", value[i]);
+      }
+    }
+    return;
+  }
+  throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+}
+
+function myersDiffBacktrack(trace, actual, expected) {
+  const max = actual.length + expected.length;
+  let x = actual.length;
+  let y = expected.length;
+  const reversed: [number, string][] = [];
+  let count = 0;
+
+  for (let diffLevel = trace.length - 1; diffLevel >= 0; diffLevel--) {
+    const v = trace[diffLevel];
+    const diagonalIndex = x - y;
+    const offset = diagonalIndex + max;
+
+    let previousDiagonalIndex;
+    if (diagonalIndex === -diffLevel || (diagonalIndex !== diffLevel && v[offset - 1] < v[offset + 1])) {
+      previousDiagonalIndex = diagonalIndex + 1;
+    } else {
+      previousDiagonalIndex = diagonalIndex - 1;
+    }
+
+    const previousX = v[previousDiagonalIndex + max];
+    const previousY = previousX - previousDiagonalIndex;
+
+    while (x > previousX && y > previousY) {
+      $putByValDirect(reversed, count++, [0, actual[x - 1]]);
+      x--;
+      y--;
+    }
+
+    if (diffLevel > 0) {
+      if (x > previousX) {
+        $putByValDirect(reversed, count++, [1, actual[x - 1]]);
+        x--;
+      } else {
+        $putByValDirect(reversed, count++, [-1, expected[y - 1]]);
+        y--;
+      }
+    }
+  }
+
+  // The backtrack walks from the end, so the entries are in reverse input order.
+  const result = $newArrayWithSize(count);
+  for (let i = 0; i < count; i++) {
+    $putByValDirect(result, i, reversed[count - 1 - i]);
+  }
+  return result;
+}
+
+function diff(actual, expected) {
+  if (actual === expected) {
+    return [];
+  }
+
+  validateDiffInput(actual, "actual");
+  validateDiffInput(expected, "expected");
+
+  const actualLength = actual.length;
+  const expectedLength = expected.length;
+  const max = actualLength + expectedLength;
+  if (max === 0) {
+    return [];
+  }
+  if (max > 2 ** 31 - 1) {
+    throw $ERR_OUT_OF_RANGE("myersDiff input size", "< 2^31", max);
+  }
+
+  const v = new Int32Array(2 * max + 1);
+  const trace: Int32Array[] = [];
+
+  for (let diffLevel = 0; diffLevel <= max; diffLevel++) {
+    $putByValDirect(trace, diffLevel, new Int32Array(v));
+
+    for (let diagonalIndex = -diffLevel; diagonalIndex <= diffLevel; diagonalIndex += 2) {
+      const offset = diagonalIndex + max;
+      let x;
+      if (diagonalIndex === -diffLevel || (diagonalIndex !== diffLevel && v[offset - 1] < v[offset + 1])) {
+        x = v[offset + 1];
+      } else {
+        x = v[offset - 1] + 1;
+      }
+      let y = x - diagonalIndex;
+
+      while (x < actualLength && y < expectedLength && actual[x] === expected[y]) {
+        x++;
+        y++;
+      }
+
+      v[offset] = x;
+
+      if (x >= actualLength && y >= expectedLength) {
+        return myersDiffBacktrack(trace, actual, expected);
+      }
+    }
+  }
+}
+
 cjs_exports = {
   // This is in order of `node --print 'Object.keys(util)'`
   _errnoException,
@@ -696,6 +807,7 @@ cjs_exports = {
   debug: debuglog,
   debuglog,
   deprecate,
+  diff,
   get format() {
     return lazyInspectModule().format;
   },

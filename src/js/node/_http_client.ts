@@ -846,8 +846,13 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   // domain.on('error') like in node.
   const reqDomain = req.domain;
   if (reqDomain != null && typeof reqDomain.add === "function" && res.domain == null) {
-    res.domain = reqDomain;
     reqDomain.add(res);
+    // Like node's implicit binding: keep res.domain and the error routing, but no members entry.
+    const members = reqDomain.members;
+    if ($isArray(members)) {
+      const index = members.indexOf(res);
+      if (index !== -1) members.splice(index, 1);
+    }
   }
 
   // Add our listener first, so that we guarantee socket cleanup

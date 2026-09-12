@@ -645,12 +645,9 @@ mod elf {
         );
     }
 
-    /// Whether `/proc/self/maps` shows `[lo, hi)` inside mappings that have a
-    /// backing file. The kernel maps the payload from the executable, but an
-    /// executable packer such as UPX unpacks the segments into anonymous
-    /// memory instead, and `MADV_DONTNEED` on an anonymous private page makes
-    /// the next read return zeros rather than the bytes the file holds
-    /// (#42509). A range that cannot be read or parsed counts as not backed.
+    /// Whether every mapping covering `[lo, hi)` in `/proc/self/maps` has a
+    /// backing file. A packer such as UPX unpacks the payload into anonymous
+    /// memory, where `MADV_DONTNEED` zero-fills the pages (#42509).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn is_file_backed(lo: usize, hi: usize) -> bool {
         let Ok(file) = bun_sys::File::open(
@@ -660,16 +657,12 @@ mod elf {
         ) else {
             return false;
         };
-        // `fstat` reports size 0 for procfs, so presize for the typical
-        // process instead and read sequentially: the kernel builds the
-        // listing incrementally across `read` calls.
+        // procfs reports size 0 to `fstat`, so presize instead.
         let mut maps = Vec::new();
         if maps.try_reserve(16 * 1024).is_err() || file.read_to_end_into(&mut maps).is_err() {
             return false;
         }
-        // One mapping per line, sorted by address:
-        // `start-end perms offset dev inode [path]`. Anonymous mappings have
-        // inode 0, whatever their path field says.
+        // `start-end perms offset dev inode [path]`, sorted by address; inode 0 is anonymous.
         let mut next = lo;
         for line in bun_core::strings::split(&maps, b"\n") {
             let mut fields = bun_core::strings::tokenize(line, b" ");
@@ -3028,13 +3021,8 @@ impl StandaloneModuleGraph {
     /// bytecode regions for the life of the process, and dropping those turns
     /// every first call into a page fault. Only applies when running as a
     /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
-    /// skips the hint.
-    ///
-    /// On Linux the hint is skipped when the pages are not file-backed: an
-    /// executable packer (UPX) unpacks the payload into anonymous memory,
-    /// where `MADV_DONTNEED` zero-fills on the next read. JSC parses function
-    /// bodies lazily out of these pages, so dropping them would turn the
-    /// first call after startup into `SyntaxError: Invalid character: '\0'`.
+    /// skips the hint, and so does a Linux payload that is not file-backed
+    /// (`elf::is_file_backed`).
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn hint_source_pages_dont_need() {
         let Some(graph) = Self::get_ref() else {

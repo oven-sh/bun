@@ -104,38 +104,34 @@ describe.skipIf(!isFuzzilliBuild)("bun fuzzilli auto-install", () => {
   }
 
   // The tests share /tmp/bun-fuzzilli-reprl.js, which every child writes again, so they run in turn.
-  test.each([
-    ["unset", {}],
-    // The package manager skips an empty value and a registry with no scheme.
-    ["values that the package manager ignores", { BUN_CONFIG_REGISTRY: "localhost:4873", BUN_INSTALL_CACHE_DIR: "" }],
-  ])("reaches no registry when the variables are %s", async (_, inherited) => {
-    const registry = startRegistry();
-    await using _server = registry.server;
+  // "ignored" is a value that the package manager skips: a registry with no scheme, an empty path.
+  describe.each([
+    ["unset", "unset"],
+    ["ignored", "ignored"],
+    ["set", "set"],
+    ["set", "unset"],
+    ["unset", "set"],
+  ])("BUN_CONFIG_REGISTRY %s, BUN_INSTALL_CACHE_DIR %s", (registry, cache) => {
+    test("only a registry that the campaign names gets requests", async () => {
+      const local = startRegistry();
+      await using _server = local.server;
+      using ownCache = tempDir("fuzzilli-reprl-cache", {});
 
-    // npm's variable ranks below BUN_CONFIG_REGISTRY. The child defaults that one
-    // to an address that nothing listens on, so the registry here sees nothing.
-    const result = await runReprl(programs, childEnv({ ...inherited, NPM_CONFIG_REGISTRY: registry.url }));
-    expect(registry.requests).toEqual([]);
-    expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find module 'a'");
-    expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find module 'b'");
-    expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find package 'c'");
-    expect(result.stdout).toContain("import: Cannot find package 'd'");
-    // Not the cache of the user that runs the fuzzer.
-    expect(result.stdout).toContain("cache: /tmp/bun-fuzzilli-install-cache\n");
-    expect(result).toMatchObject({ handshake: "HELO", statuses, stderr: [], exitCode: 0 });
-  });
+      // npm's variable ranks below BUN_CONFIG_REGISTRY. The child defaults that one to an
+      // address that nothing listens on, so the local registry sees nothing through npm's.
+      const inherited: Record<string, string> = { NPM_CONFIG_REGISTRY: local.url };
+      if (registry !== "unset") inherited.BUN_CONFIG_REGISTRY = registry === "set" ? local.url : "localhost:4873";
+      if (cache !== "unset") inherited.BUN_INSTALL_CACHE_DIR = cache === "set" ? String(ownCache) : "";
 
-  test("reaches the registry that BUN_CONFIG_REGISTRY names", async () => {
-    const registry = startRegistry();
-    await using _server = registry.server;
-    using cache = tempDir("fuzzilli-reprl-cache", {});
-
-    const result = await runReprl(
-      programs,
-      childEnv({ BUN_CONFIG_REGISTRY: registry.url, BUN_INSTALL_CACHE_DIR: String(cache) }),
-    );
-    expect(registry.requests).toEqual(["/a", "/b", "/c", "/d"]);
-    expect(result.stdout).toContain(`cache: ${cache}\n`);
-    expect(result).toMatchObject({ handshake: "HELO", statuses, stderr: [], exitCode: 0 });
+      const result = await runReprl(programs, childEnv(inherited));
+      expect(local.requests).toEqual(registry === "set" ? ["/a", "/b", "/c", "/d"] : []);
+      expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find module 'a'");
+      expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find module 'b'");
+      expect(result.stdout).toContain("uncaught:ResolveMessage: Cannot find package 'c'");
+      expect(result.stdout).toContain("import: Cannot find package 'd'");
+      // The default is not the cache of the user that runs the fuzzer.
+      expect(result.stdout).toContain(`cache: ${cache === "set" ? ownCache : "/tmp/bun-fuzzilli-install-cache"}\n`);
+      expect(result).toMatchObject({ handshake: "HELO", statuses, stderr: [], exitCode: 0 });
+    });
   });
 });

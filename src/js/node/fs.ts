@@ -40,14 +40,16 @@ function ensureCallback(callback) {
   return wrapFsCallback(callback);
 }
 
-// Micro-optimization: avoid creating a new function for every call
-// bind() is slightly more optimized in JSC
-// This code is equivalent to:
-//
-// function () { callback(null); }
-//
+// The fulfillment handler for an operation with no result. It is bound, not a
+// closure, because bind() is slightly more optimized in JSC.
 function nullcallback(callback) {
-  return FunctionPrototypeBind.$call(callback, undefined, null);
+  return FunctionPrototypeBind.$call(callbackWithResult, undefined, callback);
+}
+// Same rule as node's FSReqCallback::Resolve: `null` alone when the result is
+// undefined. Only a recursive mkdir that created a directory has a result.
+function callbackWithResult(callback, result) {
+  if (result === undefined) callback(null);
+  else callback(null, result);
 }
 const FunctionPrototypeBind = nullcallback.bind;
 
@@ -62,7 +64,7 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
-    fs.access(path, mode).then(FunctionPrototypeBind.$call(callOnceWithNull, undefined, callback), callback);
+    fs.access(path, mode).then(nullcallback(callback), callback);
   },
   appendFile = function appendFile(path, data, options, callback) {
     if (!$isCallable(callback)) {
@@ -425,10 +427,7 @@ var access = function access(path, mode, callback) {
       callback = wrapFsCallback(callback);
     }
 
-    fs.symlink(target, path, type).then(
-      $isCallable(callback) ? FunctionPrototypeBind.$call(callOnceWithNull, undefined, callback) : callback,
-      callback,
-    );
+    fs.symlink(target, path, type).then($isCallable(callback) ? nullcallback(callback) : callback, callback);
   },
   truncate = function truncate(path, len, callback) {
     if (typeof path === "number") {

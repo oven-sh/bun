@@ -123,7 +123,7 @@ it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
   expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
 });
 
-describe("fs.access and fs.symlink success values match node", () => {
+describe("fs.access success values match node", () => {
   it("accessSync returns undefined", () => {
     using dir = tempDir("fs-access-success", { "file.txt": "" });
     const file = join(String(dir), "file.txt");
@@ -139,49 +139,91 @@ describe("fs.access and fs.symlink success values match node", () => {
     expect(await promises.access(file, constants.R_OK)).toBeUndefined();
     expect(await promises.access(String(dir))).toBeUndefined();
   });
+});
 
-  it("access callback is called with exactly (null)", async () => {
-    using dir = tempDir("fs-access-success", { "file.txt": "" });
-    const file = join(String(dir), "file.txt");
+// On success node calls the callback of an operation with no result with exactly
+// one argument, `null`. Rest parameters and arguments.length see a trailing
+// `undefined`: async's waterfall passes it to the next task as its first argument.
+// toStrictEqual is what tells [null] apart from [null, undefined].
+describe("the callback of an operation with no result receives the same arguments as in node", () => {
+  type Callback = (...args: unknown[]) => void;
+  function argumentsPassedTo(run: (cb: Callback) => void): Promise<unknown[]> {
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    run((...args) => resolve(args));
+    return promise;
+  }
+  async function withFd(dir: string, run: (fd: number, cb: Callback) => void): Promise<unknown[]> {
+    const fd = openSync(join(dir, "file.txt"), "r+");
+    try {
+      return await argumentsPassedTo(cb => run(fd, cb));
+    } finally {
+      closeSync(fd);
+    }
+  }
 
-    const withoutMode = Promise.withResolvers<unknown[]>();
-    fs.access(file, (...args) => withoutMode.resolve(args));
-    expect(await withoutMode.promise).toStrictEqual([null]);
+  // Every case runs in a fresh directory holding file.txt and an empty subdir/.
+  const voidOps: Record<string, (dir: string) => Promise<unknown[]>> = {
+    access: dir => argumentsPassedTo(cb => fs.access(join(dir, "file.txt"), cb)),
+    "access (with mode)": dir => argumentsPassedTo(cb => fs.access(join(dir, "file.txt"), constants.R_OK, cb)),
+    "symlink (3 arguments)": dir => argumentsPassedTo(cb => fs.symlink(join(dir, "file.txt"), join(dir, "link-3"), cb)),
+    "symlink (4 arguments)": dir =>
+      argumentsPassedTo(cb => fs.symlink(join(dir, "file.txt"), join(dir, "link-4"), "file", cb)),
+    appendFile: dir => argumentsPassedTo(cb => fs.appendFile(join(dir, "file.txt"), "more", cb)),
+    writeFile: dir => argumentsPassedTo(cb => fs.writeFile(join(dir, "written.txt"), "data", cb)),
+    copyFile: dir => argumentsPassedTo(cb => fs.copyFile(join(dir, "file.txt"), join(dir, "copy.txt"), cb)),
+    rename: dir => argumentsPassedTo(cb => fs.rename(join(dir, "file.txt"), join(dir, "renamed.txt"), cb)),
+    link: dir => argumentsPassedTo(cb => fs.link(join(dir, "file.txt"), join(dir, "hardlink.txt"), cb)),
+    unlink: dir => argumentsPassedTo(cb => fs.unlink(join(dir, "file.txt"), cb)),
+    rm: dir => argumentsPassedTo(cb => fs.rm(join(dir, "file.txt"), cb)),
+    "rm (recursive)": dir => argumentsPassedTo(cb => fs.rm(join(dir, "subdir"), { recursive: true }, cb)),
+    rmdir: dir => argumentsPassedTo(cb => fs.rmdir(join(dir, "subdir"), cb)),
+    mkdir: dir => argumentsPassedTo(cb => fs.mkdir(join(dir, "created"), cb)),
+    "mkdir (recursive, directory already exists)": dir =>
+      argumentsPassedTo(cb => fs.mkdir(join(dir, "subdir"), { recursive: true }, cb)),
+    truncate: dir => argumentsPassedTo(cb => fs.truncate(join(dir, "file.txt"), cb)),
+    chmod: dir => argumentsPassedTo(cb => fs.chmod(join(dir, "file.txt"), 0o644, cb)),
+    // uid/gid -1 leaves ownership unchanged, so these succeed unprivileged.
+    chown: dir => argumentsPassedTo(cb => fs.chown(join(dir, "file.txt"), -1, -1, cb)),
+    lchown: dir => argumentsPassedTo(cb => fs.lchown(join(dir, "file.txt"), -1, -1, cb)),
+    utimes: dir => argumentsPassedTo(cb => fs.utimes(join(dir, "file.txt"), 1, 1, cb)),
+    lutimes: dir => argumentsPassedTo(cb => fs.lutimes(join(dir, "file.txt"), 1, 1, cb)),
+    fchmod: dir => withFd(dir, (fd, cb) => fs.fchmod(fd, 0o644, cb)),
+    fchown: dir => withFd(dir, (fd, cb) => fs.fchown(fd, -1, -1, cb)),
+    fsync: dir => withFd(dir, (fd, cb) => fs.fsync(fd, cb)),
+    fdatasync: dir => withFd(dir, (fd, cb) => fs.fdatasync(fd, cb)),
+    ftruncate: dir => withFd(dir, (fd, cb) => fs.ftruncate(fd, cb)),
+    futimes: dir => withFd(dir, (fd, cb) => fs.futimes(fd, 1, 1, cb)),
+    close: dir => argumentsPassedTo(cb => fs.close(openSync(join(dir, "file.txt"), "r"), cb)),
+  };
+  if (fs.lchmod) {
+    voidOps.lchmod = dir => argumentsPassedTo(cb => fs.lchmod(join(dir, "file.txt"), 0o644, cb));
+  }
 
-    const withMode = Promise.withResolvers<unknown[]>();
-    fs.access(file, constants.R_OK, (...args) => withMode.resolve(args));
-    expect(await withMode.promise).toStrictEqual([null]);
+  it.each(Object.entries(voidOps))("%s calls back with [null]", async (_name, run) => {
+    using dir = tempDir("fs-callback-arguments", { "file.txt": "data" });
+    mkdirSync(join(String(dir), "subdir"));
+    expect(await run(String(dir))).toStrictEqual([null]);
+  });
+
+  it("mkdir (recursive) still passes the first directory it created", async () => {
+    using dir = tempDir("fs-callback-arguments-mkdir", {});
+    const first = join(String(dir), "a");
+    const args = await argumentsPassedTo(cb => fs.mkdir(join(first, "b", "c"), { recursive: true }, cb));
+    expect(args).toStrictEqual([null, path.toNamespacedPath(first)]);
   });
 
   it("access callback receives the error on failure", async () => {
-    using dir = tempDir("fs-access-success", {});
-    const { promise, resolve } = Promise.withResolvers<unknown[]>();
-    fs.access(join(String(dir), "missing.txt"), (...args) => resolve(args));
-    const args = await promise;
+    using dir = tempDir("fs-access-failure", {});
+    const args = await argumentsPassedTo(cb => fs.access(join(String(dir), "missing.txt"), cb));
     expect(args).toHaveLength(1);
     expect(args[0]).toMatchObject({ code: "ENOENT", syscall: "access" });
   });
 
-  // symlink was the other wrapper that handed the native promise's resolution
-  // value straight to the callback.
-  it("symlink callback is called with exactly (null) in both overloads", async () => {
-    using dir = tempDir("fs-symlink-success", { "file.txt": "" });
-    const file = join(String(dir), "file.txt");
-
-    const threeArgs = Promise.withResolvers<unknown[]>();
-    fs.symlink(file, join(String(dir), "link-3"), (...args) => threeArgs.resolve(args));
-    expect(await threeArgs.promise).toStrictEqual([null]);
-
-    const fourArgs = Promise.withResolvers<unknown[]>();
-    fs.symlink(file, join(String(dir), "link-4"), "file", (...args) => fourArgs.resolve(args));
-    expect(await fourArgs.promise).toStrictEqual([null]);
-  });
-
   it("symlink callback receives the error on failure", async () => {
     using dir = tempDir("fs-symlink-failure", { "file.txt": "", "taken": "" });
-    const { promise, resolve } = Promise.withResolvers<unknown[]>();
-    fs.symlink(join(String(dir), "file.txt"), join(String(dir), "taken"), (...args) => resolve(args));
-    const args = await promise;
+    const args = await argumentsPassedTo(cb =>
+      fs.symlink(join(String(dir), "file.txt"), join(String(dir), "taken"), cb),
+    );
     expect(args).toHaveLength(1);
     expect(args[0]).toMatchObject({ code: "EEXIST", syscall: "symlink" });
   });
@@ -7121,6 +7163,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     ["fs.readdir", `require("fs").readdir(${dirLit}, () => { throw new Error("boom"); })`],
     ["fs.open", `require("fs").open("/definitely/not/here", "r", () => { throw new Error("boom"); })`],
     ["fs.access", `require("fs").access(${file}, () => { throw new Error("boom"); })`],
+    // Both arms of the handler that operations with no result share: no result, and mkdir's created path.
+    ["fs.chmod", `require("fs").chmod(${file}, 0o644, () => { throw new Error("boom"); })`],
+    [
+      "fs.mkdir (recursive)",
+      `require("fs").mkdir(${dirLit} + "/mk/a", { recursive: true }, () => { throw new Error("boom"); })`,
+    ],
     ["fs.realpath", `require("fs").realpath(${file}, () => { throw new Error("boom"); })`],
     [
       "fs.close",

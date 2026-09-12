@@ -655,15 +655,23 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        // The body keeps the request pending only while uws still owes it
+        // chunks. A fin that arrived while the request was paused leaves
+        // `body_read_state` at `Pending` so JS can still drain the buffered
+        // tail (`drainRequestBody`), but uws will not deliver anything further,
+        // so for this accounting that body is complete as well.
+        let body_pending = self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
         // until the body's fin chunk (the actual tunnel start).
         if flags.contains(Flags::TUNNELED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         true
@@ -723,8 +731,18 @@ impl NodeHTTPResponse {
             }
         });
 
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.clear_and_free());
+        // A body whose fin was buffered during a pause is still owed to the
+        // IncomingMessage, which drains it through `drainRequestBody` when it
+        // next reads (possibly only after the response has ended). Keep it while
+        // JS can still get at it; `set_on_data` frees it once the reader lets go.
+        let flags = self.flags.get();
+        let tail_still_readable = flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            && !flags.contains(Flags::SOCKET_CLOSED)
+            && !flags.contains(Flags::UPGRADED);
+        if !tail_still_readable {
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
+        }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
@@ -1233,9 +1251,8 @@ impl NodeHTTPResponse {
                 // The socket is gone — no further uws callback will arrive to
                 // balance the IS_REQUEST_PENDING ref. `on_request_complete()`
                 // can set REQUEST_HAS_COMPLETED while `body_read_state` is
-                // still `.pending` (e.g. the request body's last chunk was
-                // buffered during pause before `res.end()` — the
-                // `Expect: 100-continue` path), in which case
+                // still `.pending` (a custom `ondata` reader keeps the body
+                // pending across `res.end()`, see `write_or_end`), in which case
                 // `mark_request_as_done()` never ran there and both that ref
                 // and the server's pending-request counter are stranded. The
                 // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
@@ -2269,6 +2286,11 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
+            // The reader is letting go of the body (_dump / _destroy, or it has
+            // already drained what was buffered), so nothing will drain a tail
+            // that `mark_request_as_done` left in place for it.
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
             return;
         }
 

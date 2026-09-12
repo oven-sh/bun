@@ -378,6 +378,9 @@ pub struct TestIsolationState {
     /// The proxy env keys as the env map held them at startup, restored after
     /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
     pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
+    /// The synthetic allocation limit at startup, restored after every file.
+    /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
+    pub synthetic_allocation_limit: Option<usize>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -408,6 +411,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -495,6 +499,60 @@ pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len
     let name = unsafe { bun_core::ffi::slice(name, len) };
     bun_options_types::standalone_path::is_bun_standalone_file_path(name)
         && standalone_module_graph().is_some_and(|graph| graph.has_module_info(name))
+}
+
+/// The executable's pre-resolved module graph blob and module-info slot table (`JSVMClientData::prelinkedModuleGraph`);
+/// false when there is none. Both spans live as long as the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleGraph(
+    blob: *mut *const u8,
+    blob_len: *mut usize,
+    slot_table: *mut *const u8,
+    slot_table_len: *mut usize,
+) -> bool {
+    let Some((graph, slots)) =
+        standalone_module_graph().map(|graph| graph.prelinked_module_graph())
+    else {
+        return false;
+    };
+    if graph.is_empty() || slots.is_empty() {
+        return false;
+    }
+    // SAFETY: the caller's writable out-parameters.
+    unsafe {
+        *blob = graph.as_ptr();
+        *blob_len = graph.len();
+        *slot_table = slots.as_ptr();
+        *slot_table_len = slots.len();
+    }
+    true
+}
+
+/// The graph module index of an embedded module key, or `u32::MAX` when it is not a module of the pre-resolved graph.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, len: usize) -> u32 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return u32::MAX;
+    }
+    standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
+}
+
+/// The module key (canonical embedded name) of graph module `index`; null if out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleName(
+    index: u32,
+    out_len: *mut usize,
+) -> *const u8 {
+    match standalone_module_graph().and_then(|graph| graph.prelinked_module_name(index)) {
+        Some(name) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = name.len() };
+            name.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -877,6 +935,8 @@ impl VirtualMachine {
         VM.get()
     }
 
+    /// The signal handler path (unix only) reaches the main VM through this.
+    #[cfg(unix)]
     pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
@@ -1398,7 +1458,7 @@ impl VirtualMachine {
         if sync {
             return vm.run_gc(true);
         }
-        vm.collect_async();
+        vm.collect_async(false);
         vm.heap_size()
     }
 
@@ -2733,7 +2793,7 @@ impl VirtualMachine {
             opts.eval_mode,
             opts.worker_ptr,
         );
-        // JSC may mess with the stack size.
+        // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same
@@ -2772,6 +2832,13 @@ impl VirtualMachine {
         if opts.smol {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        // `Bun__standaloneInternalModuleBytecode` serves the executable's embedded bytecode to every VM in the
+        // process, so every VM needs the executable's string table (the debugger thread's VM included).
+        if let Some(graph) = standalone_module_graph() {
+            // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
+            unsafe { &*vm }.install_bytecode_string_table(graph);
         }
 
         Ok(vm)
@@ -4093,7 +4160,6 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
-        vm_ref.install_bytecode_string_table(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
@@ -4141,9 +4207,6 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        if let Some(graph) = opts.graph {
-            vm_ref.install_bytecode_string_table(graph);
-        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
@@ -4731,8 +4794,10 @@ impl VirtualMachine {
         // so the `Option` is purely a
         // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
+        let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.log;
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
+        jsc_vm.transpiler.log = &raw mut log;
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         jsc_vm.transpiler.linker.log = &raw mut log;
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
@@ -4749,6 +4814,7 @@ impl VirtualMachine {
         struct RestoreLog {
             vm: bun_ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
+            old_transpiler_log: *mut bun_ast::Log,
         }
         impl Drop for RestoreLog {
             fn drop(&mut self) {
@@ -4756,6 +4822,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
+                jsc_vm.transpiler.log = self.old_transpiler_log;
                 jsc_vm.transpiler.resolver.log = self.old_log;
                 jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
                 // `_resolve` may have lazily created the PM with
@@ -4773,6 +4840,7 @@ impl VirtualMachine {
         let _restore = RestoreLog {
             vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
+            old_transpiler_log,
         };
         // Note: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
@@ -5069,11 +5137,11 @@ impl VirtualMachine {
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
         bun_sys::chdir(to)?;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::PathBuffer::uninit();
+                let mut rollback = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
                 return bun_sys::Result::Err(err);
             }
@@ -5113,7 +5181,7 @@ impl VirtualMachine {
         Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let z = bun_paths::resolve_path::z(&cwd, &mut buf);
             let _ = self.set_process_cwd(z);
         }
@@ -5167,6 +5235,9 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
+        // The outgoing file's exit: work it left in flight (thread-pool jobs,
+        // the children just killed) lands later and must not resume its script.
+        Zig__GlobalObject__retireForTestIsolation(self.global());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // Generation-stale JS timers would otherwise release their pins only
@@ -5232,6 +5303,16 @@ impl VirtualMachine {
         }
 
         self.undo_process_env_side_effects();
+        self.undo_synthetic_allocation_limit();
+    }
+
+    /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.
+    /// Put the startup value back so a file's limit stays with that file.
+    fn undo_synthetic_allocation_limit(&mut self) {
+        if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
+            SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+            STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`
@@ -6425,6 +6506,7 @@ impl VirtualMachine {
                     own_properties_only: true,
                     observable: false,
                     only_non_index_properties: true,
+                    include_symbols: true,
                 },
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use crate::Error;
@@ -260,6 +261,8 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
+type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
 /// Resolve-task id (git checkout / tarball extract) -> the package that task
 /// appended during the resolve phase. A task's callback queue is drained
 /// exactly once, so a dependency enqueued after that drain must resolve
@@ -350,6 +353,11 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) git_commits: GitCommitMap,
+    /// Git tasks queued by `enqueue_git_task` and not yet started.
+    pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
+    /// Git tasks whose `git_runner::GitSubprocess` is alive.
+    pub(crate) running_git_tasks: AtomicU32,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -1027,8 +1035,7 @@ impl PackageManager {
     /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
     /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
+    /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
@@ -1114,7 +1121,7 @@ fn configure_env_for_scripts_run(
     }
 
     {
-        let mut node_path = PathBuffer::uninit();
+        let mut node_path = bun_paths::path_buffer_pool::get();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
             let _ = this
                 .env_mut()
@@ -1147,7 +1154,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     }
 
     let tempdir = get_temporary_directory(manager);
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
         fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
 
@@ -1576,7 +1583,7 @@ pub fn init(
             let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
 
             loop {
-                let mut package_json_path_buf = PathBuffer::uninit();
+                let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
                 package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
                 package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
                     .copy_from_slice(b"/package.json");
@@ -1674,7 +1681,7 @@ pub fn init(
             if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
-                    let mut parent_path_buf = PathBuffer::uninit();
+                    let mut parent_path_buf = bun_paths::path_buffer_pool::get();
                     parent_path_buf[..parent_without_trailing_slash.len()]
                         .copy_from_slice(parent_without_trailing_slash);
                     parent_path_buf[parent_without_trailing_slash.len()
@@ -1922,7 +1929,7 @@ pub fn init(
         let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts = [b"./.npmrc" as &[u8]];
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
@@ -2096,6 +2103,9 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2173,7 +2183,7 @@ pub fn init(
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
         let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
@@ -2292,7 +2302,7 @@ pub fn init(
             if bun_paths::is_absolute(options.ca_file_name) {
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 abs_ca_file_name =
                     ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
                         &original_cwd_clone,
@@ -2554,6 +2564,9 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());

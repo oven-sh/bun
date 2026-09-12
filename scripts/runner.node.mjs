@@ -36,6 +36,7 @@ import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
+  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -155,10 +156,6 @@ const { values: options, positionals: filters } = parseArgs({
     ["exclude"]: {
       type: "string",
       multiple: true,
-      default: undefined,
-    },
-    ["skip-slower-than"]: {
-      type: "string",
       default: undefined,
     },
     ["quiet"]: {
@@ -382,6 +379,19 @@ const skipsForLeaksan = (() => {
     .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
+
+// Informational: a file that passes only on a retry and is not listed here is annotated as a new flake.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) return new Set();
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+const isKnownFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
 
 const parallelAllowlist = (() => {
   try {
@@ -726,21 +736,17 @@ async function runTests() {
     }
 
     if (isBuildkite) {
-      // Group flaky tests together, regardless of the title
-      const context = flaky ? "flaky" : title;
+      // Group flaky tests together, regardless of the title; unlisted flakes get their own group above the known ones.
+      const newFlaky = flaky && !title.endsWith("package.json") && !isKnownFlakyTest(title);
+      const context = flaky ? (newFlaky ? "flaky-new" : "flaky") : title;
       const style = flaky ? "warning" : "error";
+      const priority = newFlaky ? 4 : 3;
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
-      if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
-      } else {
-        const content = formatTestToMarkdown(failure, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
+      const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
+      const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
+      if (content) {
+        reportAnnotationToBuildKite({ context, label: title, content, style, priority });
       }
     }
 
@@ -930,8 +936,8 @@ async function runTests() {
                 // calls from wiping each other when parallelSafeWidth > 1.
                 TEST_SERIAL_ID: String(index),
               },
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             });
             const mb = 1024 ** 3;
             let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
@@ -955,8 +961,8 @@ async function runTests() {
           async () =>
             spawnBunTest(execPath, join("test", testPath), {
               cwd,
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
         );
@@ -1013,8 +1019,8 @@ async function runTests() {
           idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
@@ -1094,7 +1100,7 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: retrying ${failed.size} failed and ${rerun.length - failed.size} unfinished file(s) one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
@@ -1109,11 +1115,13 @@ async function runTests() {
             const detail = cases.length
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
+            const unlisted = !isKnownFlakyTest(title);
             reportAnnotationToBuildKite({
-              context: "flaky",
+              context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              priority: unlisted ? 4 : 3,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }
@@ -1409,8 +1417,8 @@ async function runTests() {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {object} [env]
- * @property {function} [stdout]
- * @property {function} [stderr]
+ * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
+ * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
  */
 
 /**
@@ -1554,12 +1562,14 @@ async function spawnSafe(options) {
         stdout?.(text);
         buffer += text;
       });
+      subprocess.stdout.on("close", () => stdout?.end?.());
       subprocess.stderr.on("data", chunk => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
       });
+      subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
       spawnError = error;
       resolve();
@@ -1938,6 +1948,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
  * @param {object} [opts.env]
+ * @param {(chunk: string) => void} [opts.stdout]
+ * @param {(chunk: string) => void} [opts.stderr]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -2002,8 +2014,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
-    stdout: options.stdout,
-    stderr: options.stderr,
+    stdout: opts.stdout ?? pipeTestStdout(process.stdout),
+    stderr: opts.stderr ?? pipeTestStdout(process.stderr),
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
@@ -2044,17 +2056,24 @@ function getTestTimeout(testPath) {
 }
 
 /**
+ * Streams the output of one child process stream to `io`, without the workflow
+ * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ * spawnSafe calls `end()` when the stream closes.
+ *
  * @param {NodeJS.WritableStream} io
- * @param {string} chunk
+ * @returns {((chunk: string) => void) & { end: () => void }}
  */
-function pipeTestStdout(io, chunk) {
-  if (isGithubAction) {
-    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildkite) {
-    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else {
-    io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  }
+function pipeTestStdout(io) {
+  const filter = createLiveOutputFilter();
+  const write = chunk => {
+    const text = filter(chunk);
+    if (text) io.write(text);
+  };
+  write.end = () => {
+    const text = filter.end();
+    if (text) io.write(text);
+  };
+  return write;
 }
 
 /**
@@ -2482,16 +2501,20 @@ function loadExpectedDurations(cwd) {
   try {
     const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
     const step = options["step"] || "";
-    const lane = step.includes("asan")
-      ? "asan"
+    // Most specific column first, then the nearest lane, then anything.
+    const columns = step.includes("asan")
+      ? ["asan"]
       : step.includes("musl")
-        ? "musl"
-        : isWindows || step.includes("windows")
-          ? "windows"
-          : "default";
+        ? ["musl"]
+        : step.includes("windows-aarch64") || (isWindows && process.arch === "arm64")
+          ? ["windows-aarch64", "windows"]
+          : isWindows || step.includes("windows")
+            ? ["windows"]
+            : ["default"];
+    columns.push("default", "asan", "musl", "windows", "windows-aarch64");
     for (const [path, entry] of Object.entries(raw)) {
       if (path === "_meta") continue;
-      const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
+      const ms = columns.map(column => entry[column]).find(value => typeof value === "number");
       if (typeof ms === "number") durations[path] = ms;
     }
   } catch (e) {
@@ -2548,22 +2571,6 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
     }
-  }
-
-  // Drop the slowest files by expected duration. Used on lanes that trade a
-  // little coverage for throughput; the same files still run on other lanes.
-  const skipSlowerThan = parseInt(options["skip-slower-than"]);
-  if (skipSlowerThan > 0) {
-    const durations = loadExpectedDurations(cwd);
-    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
-    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
-    !isQuiet &&
-      console.log(
-        `Skipping tests slower than ${skipSlowerThan}ms:`,
-        slow.length,
-        "/",
-        availableTests.length + slow.length,
-      );
   }
 
   const skipExpectations = testExpectations
@@ -2826,9 +2833,10 @@ function getTestLabel() {
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @param  {number} retries
+ * @param  {boolean} [unlisted] passed on a retry but test/flaky-tests.txt does not list it
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise, retries) {
+function formatTestToMarkdown(result, concise, retries, unlisted = false) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2874,6 +2882,9 @@ function formatTestToMarkdown(result, concise, retries) {
     }
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
+    }
+    if (unlisted) {
+      markdown += ` <b>(not in test/flaky-tests.txt)</b>`;
     }
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
@@ -3354,6 +3365,39 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
+ * hashes every unsigned executable on its first launch and asks the cloud for
+ * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
+ * output. bundler_compile.test.ts launches about 85 of those, which puts the file
+ * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
+ * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
+ * same at image bake time; this covers images baked before that change.
+ *
+ * Only on Buildkite: the policy cannot be turned on again without a reinstall,
+ * so a developer's machine running with CI=true must not get this.
+ */
+async function disableSmartAppControl() {
+  if (!isBuildkite) return;
+  const script = [
+    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
+    "if (-not (Test-Path $p)) { exit 0 }",
+    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
+    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
+    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
+    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
+    'Write-Output "Smart App Control: state $state -> 0"',
+  ].join("; ");
+  const { ok, error } = await spawnSafe({
+    command: "pwsh",
+    args: ["-NoProfile", "-Command", script],
+    timeout: 60_000,
+  });
+  if (!ok) {
+    console.warn(`Failed to disable Smart App Control: ${error}`);
+  }
+}
+
 export async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
@@ -3371,6 +3415,7 @@ export async function main() {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
+    await disableSmartAppControl();
   }
 
   let doRunTests = true;

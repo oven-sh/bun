@@ -727,6 +727,11 @@ interface ReadableStreamDefaultController<R = any> {
 }
 
 interface ReadableStreamDirectController {
+  /**
+   * Finish the stream. With no argument this flushes buffered bytes and ends,
+   * like {@link end}. With an `error`, the stream fails: buffered bytes are
+   * dropped and the consumer rejects with `error`.
+   */
   close(error?: Error): void;
   /**
    * Write a chunk directly to the destination.
@@ -741,6 +746,9 @@ interface ReadableStreamDirectController {
    *
    * The promise resolves once the destination has drained.
    * `await controller.flush(true)` is equivalent.
+   *
+   * Returns `0` once the destination has gone away (for example, the HTTP
+   * client disconnected).
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;

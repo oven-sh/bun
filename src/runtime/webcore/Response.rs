@@ -179,6 +179,14 @@ pub fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(<*mut ()>::cast::<Response>)
 }
 
+/// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
+#[inline]
+pub fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
+    from_js(value)
+        .and_then(core::ptr::NonNull::new)
+        .map(bun_ptr::ParentRef::from)
+}
+
 // `JsClass` impl delegates to `bun_jsc::generated::JSResponse` — the
 // `js_class_module!` expansion already declares the
 // `Response__{fromJS,fromJSDirect,create,getConstructor}` externs with the
@@ -975,7 +983,7 @@ impl Response {
                     status_code: 302,
                     ..Default::default()
                 }),
-                body: JsCell::new(Body::new(BodyValue::Empty)),
+                body: JsCell::new(Body::new(BodyValue::Null)),
                 ..Default::default()
             };
 
@@ -1031,7 +1039,7 @@ impl Response {
                 status_code: 0,
                 ..Default::default()
             }),
-            body: JsCell::new(Body::new(BodyValue::Empty)),
+            body: JsCell::new(Body::new(BodyValue::Null)),
             ..Default::default()
         }));
 
@@ -1067,7 +1075,7 @@ impl Response {
                             status_code: 302,
                             ..Default::default()
                         }),
-                        body: JsCell::new(Body::new(BodyValue::Empty)),
+                        body: JsCell::new(Body::new(BodyValue::Null)),
                         js_ref: JsCell::new(JsRef::init_weak(js_this)),
                         ..Default::default()
                     };

@@ -157,6 +157,19 @@ describe("new net.Server()", () => {
 describe("server.address()", () => {
   let server: net.Server;
 
+  // Some tests check that address() reports the port given to listen(). A fixed
+  // port can already be in use on the machine, so ask the OS for a free one.
+  async function getFreePort(host?: string): Promise<number> {
+    const probe = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen({ port: 0, host }, resolve);
+    });
+    const { port } = probe.address() as net.AddressInfo;
+    await new Promise<void>(resolve => probe.close(() => resolve()));
+    return port;
+  }
+
   beforeEach(() => {
     server = net.createServer(() => {});
   });
@@ -191,29 +204,32 @@ describe("server.address()", () => {
   }); // </when the server listens to an unspecified port>
 
   it("when listening on a specified port, returns an AddressInfo object with the same port", async () => {
+    const port = await getFreePort();
     const { promise, resolve } = Promise.withResolvers<void>();
-    server.listen(6543, resolve);
+    server.listen(port, resolve);
     await promise;
-    expect(server.address()).toEqual({ address: "::", port: 6543, family: "IPv6" });
+    expect(server.address()).toEqual({ address: "::", port, family: "IPv6" });
   });
 
   // FIXME: hostname is not resolved
   it.skip("when server.listen(port, hostname), returns an AddressInfo object with the same port and hostname", async () => {
+    const port = await getFreePort("localhost");
     const { promise, resolve } = Promise.withResolvers<void>();
-    server.listen(1234, "localhost", resolve);
+    server.listen(port, "localhost", resolve);
     await promise;
     expect(server.address()).toEqual({
       address: "127.0.0.1",
-      port: 1234,
+      port,
       family: "IPv4",
     });
   });
 
   it("when listening on a specified host and port, returns an AddressInfo object with the same host and port", async () => {
+    const port = await getFreePort("127.0.0.1");
     const { promise, resolve } = Promise.withResolvers<void>();
-    server.listen({ port: 1234, host: "127.0.0.1" }, resolve);
+    server.listen({ port, host: "127.0.0.1" }, resolve);
     await promise;
-    expect(server.address()).toEqual({ address: "127.0.0.1", port: 1234, family: "IPv4" });
+    expect(server.address()).toEqual({ address: "127.0.0.1", port, family: "IPv4" });
   });
 }); // </server.address()>
 

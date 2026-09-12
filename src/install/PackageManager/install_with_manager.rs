@@ -1184,9 +1184,15 @@ fn print_install_summary(
         {
             // Hot no-op path (install/fastify bench): kept inline.
             let count = this.lockfile.packages.len() as PackageID;
+            // "(no changes)" would misreport an update that rewrote package.json.
+            let note = if this.subcommand == Subcommand::Update && this.wrote_package_json {
+                "up to date, package.json synced"
+            } else {
+                "no changes"
+            };
             if count != install_summary.skipped {
                 bun_core::pretty!(
-                    "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
+                    "Checked <green>{} install{}<r> across {} package{} <d>({})<r> ",
                     install_summary.skipped,
                     if install_summary.skipped == 1 {
                         ""
@@ -1195,19 +1201,21 @@ fn print_install_summary(
                     },
                     count,
                     if count == 1 { "" } else { "s" },
+                    note,
                 );
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
                 print_blocked_packages_info(install_summary, this.options.global);
             } else {
                 bun_core::pretty!(
-                    "<r><green>Done<r>! Checked {} package{}<r> <d>(no changes)<r> ",
+                    "<r><green>Done<r>! Checked {} package{}<r> <d>({})<r> ",
                     install_summary.skipped,
                     if install_summary.skipped == 1 {
                         ""
                     } else {
                         "s"
                     },
+                    note,
                 );
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;

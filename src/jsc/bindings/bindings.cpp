@@ -2420,10 +2420,11 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
-void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
+// `names` and `values` each hold `count` entries. `buf` holds `buf_len` bytes.
+void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, uint32_t count, unsigned char* buf, uint32_t buf_len)
 {
     auto iter = headers->createIterator(false);
-    unsigned int i = 0;
+    uint32_t i = 0;
 
     for (auto pair = iter.next(); pair; pair = iter.next()) {
         const auto name = pair->key;
@@ -2431,6 +2432,11 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
+
+        // Each pair writes one entry per column and one byte per code unit.
+        RELEASE_ASSERT(count > 0);
+        RELEASE_ASSERT(name.length() <= buf_len - i && value.length() <= buf_len - i - name.length());
+        count--;
 
         if (name.is8Bit()) {
             const auto nameSpan = name.span8();
@@ -2467,7 +2473,8 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
         values++;
     }
 }
-void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
+// Returns false when the names and values pass the uint32_t range of a StringPointer.
+bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();
     size_t i = 0;
@@ -2475,10 +2482,13 @@ void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
         // copyTo isomorphic-encodes: one byte per code unit.
         i += pair->key.length();
         i += pair->value.length();
+        if (i > std::numeric_limits<uint32_t>::max())
+            return false;
     }
 
     *count = headers->size();
-    *buf_len = i;
+    *buf_len = static_cast<uint32_t>(i);
+    return true;
 }
 
 typedef struct ZigSliceString {

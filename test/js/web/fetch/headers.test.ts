@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
@@ -598,6 +599,68 @@ describe("Headers", () => {
       expect(headers.count).toBe(2);
     });
   });
+
+  // fetch() and the static and file routes of Bun.serve() copy a Headers object into one
+  // buffer that they index with 32-bit offsets. The timeout is for debug builds: they need
+  // more than 10 seconds to validate the 4 GiB of values that the child appends.
+  test("fetch() and Bun.serve() refuse headers that total 4 GiB or more", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          // The 16 values share one 256 MiB string. Names and values total 2 ** 32 - 1 bytes,
+          // the most that fits.
+          const value = Buffer.alloc(2 ** 28, "a").toString("latin1");
+          const headers = new Headers();
+          for (let i = 0; i < 15; i++) headers.append("set-cookie", value);
+          headers.append("set-cookie", value.slice(0, 2 ** 28 - 161));
+
+          async function outcome(fn) {
+            try {
+              await fn();
+              return "no error";
+            } catch (e) {
+              return e.name + ": " + e.message;
+            }
+          }
+          function serve(response) {
+            Bun.serve({ port: 0, routes: { "/": response } }).stop(true);
+          }
+
+          await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          const url = server.url.href;
+          const file = Bun.file(process.execPath);
+
+          // The headers alone fit. The Content-Type that fetch() adds for the body does not.
+          const body = new Blob(["x"], { type: "text/plain" });
+          console.log("content-type:", await outcome(() => fetch(url, { method: "POST", body, headers })));
+
+          // Names and values now total 2 ** 32 + 10 bytes.
+          headers.append("set-cookie", "x");
+          console.log("fetch:", await outcome(() => fetch(url, { headers })));
+          console.log("proxy:", await outcome(() => fetch(url, { proxy: { url, headers } })));
+          console.log("static route:", await outcome(() => serve(new Response("body", { headers }))));
+          console.log("file route:", await outcome(() => serve(new Response(file, { headers }))));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const error = "RangeError: Headers exceed the maximum total size of 4294967295 bytes";
+    expect(stdout.split("\n")).toEqual([
+      `content-type: ${error}`,
+      `fetch: ${error}`,
+      `proxy: ${error}`,
+      `static route: ${error}`,
+      `file route: ${error}`,
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /
   // keys()) runs through a SIMD kernel on the 8-bit path. Sweep name lengths

@@ -17,58 +17,12 @@ pub struct Autolink {
 
 pub(crate) type AutolinkResult = Option<Autolink>;
 
-/// Check that emphasis chars at autolink boundaries are actually resolved delimiters.
-/// Called when the relaxed (allow_emph) pass found an autolink but the strict pass didn't.
-pub(crate) fn is_emph_boundary_resolved(
-    content: &[u8],
-    al: Autolink,
-    resolved: &[EmphDelim],
-) -> bool {
-    // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.beg > 0 {
-        let prev = content[al.beg - 1];
-        if prev == b'*' || prev == b'_' || prev == b'~' {
-            if !check_left_boundary(content, al.beg, false) {
-                // Left boundary failed strict check, emphasis char caused the relaxed match.
-                // Verify it's actually resolved.
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos < al.beg
-                        && al.beg - 1 < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
-            }
-        }
-    }
-    // Check right boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.end < content.len() {
-        let next = content[al.end];
-        if next == b'*' || next == b'_' || next == b'~' {
-            if !check_right_boundary(content, al.end, false) {
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos <= al.end
-                        && al.end < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
-            }
-        }
-    }
-    true
+/// True if `at` lies in a delimiter run of `resolved` (sorted by position) that was paired.
+fn is_paired_delimiter(resolved: &[EmphDelim], at: usize) -> bool {
+    let idx = resolved.partition_point(|d| d.pos + d.count <= at);
+    resolved
+        .get(idx)
+        .is_some_and(|d| d.pos <= at && d.open_count + d.close_count > 0)
 }
 
 #[derive(Copy, Clone)]
@@ -78,8 +32,10 @@ pub(crate) struct ScanResult {
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
+/// It ends at `limit` at the latest. Bytes from `limit` on still count as neighbors.
 fn scan_url_component(
     content: &[u8],
+    limit: usize,
     start: usize,
     start_char: u8,
     delim_char: u8,
@@ -91,7 +47,7 @@ fn scan_url_component(
     let mut n_components: u32 = 0;
     // Check start character
     if start_char != 0 {
-        if pos >= content.len() || content[pos] != start_char {
+        if pos >= limit || content[pos] != start_char {
             return ScanResult {
                 end: pos,
                 ok: min_components == 0,
@@ -108,7 +64,7 @@ fn scan_url_component(
         pos += 1;
     }
 
-    while pos < content.len() {
+    while pos < limit {
         if helpers::is_alpha_num(content[pos]) {
             if n_components == 0 {
                 n_components = 1;
@@ -135,7 +91,7 @@ fn scan_url_component(
         }
     }
 
-    if pos < content.len() && optional_end_char != 0 && content[pos] == optional_end_char {
+    if pos < limit && optional_end_char != 0 && content[pos] == optional_end_char {
         pos += 1;
     }
 
@@ -184,23 +140,25 @@ const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
 const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
 
 /// Check left boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `emph`, an emphasis delimiter (*_~) whose run in `emph` was paired is a boundary too.
+fn check_left_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos == 0 {
         return true;
     }
     let c = content[pos - 1];
-    LEFT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    LEFT_BOUNDARY.contains(c)
+        || (EMPH_DELIMS.contains(c) && emph.is_some_and(|runs| is_paired_delimiter(runs, pos - 1)))
 }
 
 /// Check right boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `emph`, an emphasis delimiter (*_~) whose run in `emph` was paired is a boundary too.
+fn check_right_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos >= content.len() {
         return true;
     }
     let c = content[pos];
-    RIGHT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    RIGHT_BOUNDARY.contains(c)
+        || (EMPH_DELIMS.contains(c) && emph.is_some_and(|runs| is_paired_delimiter(runs, pos)))
 }
 
 struct Scheme {
@@ -210,10 +168,59 @@ struct Scheme {
 
 /// Detect permissive autolinks at the given position in content.
 /// `pos` is the position of the trigger character ('@', ':', or '.').
+/// A candidate that covers one run of a pair of `resolved` is cut before that run; `cut_end` gets its uncut end.
 pub(crate) fn find_permissive_autolink(
     content: &[u8],
     pos: usize,
     allow_emph: bool,
+    resolved: &[EmphDelim],
+    cut_end: &mut usize,
+) -> AutolinkResult {
+    let emph = allow_emph.then_some(resolved);
+    let al = scan_permissive_autolink(content, pos, emph, content.len())?;
+    // No paired run lies between the start of a link and `pos`.
+    let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
+    let Some(limit) = split_pair_limit(runs, al.end) else {
+        return Some(al);
+    };
+    *cut_end = al.end;
+    let al = scan_permissive_autolink(content, pos, emph, limit)?;
+    debug_assert!(split_pair_limit(runs, al.end).is_none());
+    Some(al)
+}
+
+/// A permissive autolink whose boundaries do not depend on emphasis resolution.
+pub(crate) fn find_strict_permissive_autolink(content: &[u8], pos: usize) -> AutolinkResult {
+    scan_permissive_autolink(content, pos, None, content.len())
+}
+
+/// Where to cut a link that ends at `end` so that it covers only whole pairs of `runs`; `None` if it does.
+fn split_pair_limit(runs: &[EmphDelim], end: usize) -> Option<usize> {
+    // Delimiter chars opened inside the link and not closed yet.
+    let mut depth: usize = 0;
+    // The last run that `depth` was zero in front of.
+    let mut zero_at: usize = 0;
+    for d in runs {
+        if d.pos >= end {
+            break;
+        }
+        if depth == 0 {
+            zero_at = d.pos;
+        }
+        if d.close_count > depth {
+            // Closes a span opened before the link.
+            return Some(zero_at);
+        }
+        depth = depth - d.close_count + d.open_count;
+    }
+    (depth > 0).then_some(zero_at)
+}
+
+fn scan_permissive_autolink(
+    content: &[u8],
+    pos: usize,
+    emph: Option<&[EmphDelim]>,
+    limit: usize,
 ) -> AutolinkResult {
     if pos >= content.len() {
         return None;
@@ -245,30 +252,32 @@ pub(crate) fn find_permissive_autolink(
                     && &content[pos + 1..pos + 1 + suflen] == scheme.suffix
                 {
                     let beg = pos - slen;
-                    if !check_left_boundary(content, beg, allow_emph) {
+                    if !check_left_boundary(content, beg, emph) {
                         continue;
                     }
 
                     let mut end = pos + 1 + suflen;
                     // Scan URL components: host (mandatory), path, query, fragment
-                    let host = scan_url_component(content, end, 0, b'.', b".-_", 2, 0);
+                    let host = scan_url_component(content, limit, end, 0, b'.', b".-_", 2, 0);
                     if !host.ok {
                         continue;
                     }
                     end = host.end;
 
-                    let path = scan_url_component(content, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
+                    let path =
+                        scan_url_component(content, limit, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
                     end = path.end;
 
-                    let query = scan_url_component(content, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
+                    let query =
+                        scan_url_component(content, limit, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
                     end = query.end;
 
-                    let frag = scan_url_component(content, end, b'#', 0, b".-+_~*%", 1, 0);
+                    let frag = scan_url_component(content, limit, end, b'#', 0, b".-+_~*%", 1, 0);
                     end = frag.end;
 
                     end = post_process_autolink_end(content, beg, end);
 
-                    if !check_right_boundary(content, end, allow_emph) {
+                    if !check_right_boundary(content, end, emph) {
                         continue;
                     }
 
@@ -303,18 +312,18 @@ pub(crate) fn find_permissive_autolink(
             return None; // empty username
         }
 
-        if !check_left_boundary(content, beg, allow_emph) {
+        if !check_left_boundary(content, beg, emph) {
             return None;
         }
 
         // Scan forward for domain (host component only for email)
-        let host = scan_url_component(content, pos + 1, 0, b'.', b".-_", 2, 0);
+        let host = scan_url_component(content, limit, pos + 1, 0, b'.', b".-_", 2, 0);
         if !host.ok {
             return None;
         }
         let end = host.end;
 
-        if !check_right_boundary(content, end, allow_emph) {
+        if !check_right_boundary(content, end, emph) {
             return None;
         }
 
@@ -329,30 +338,30 @@ pub(crate) fn find_permissive_autolink(
         }
 
         let beg = pos - 3;
-        if !check_left_boundary(content, beg, allow_emph) {
+        if !check_left_boundary(content, beg, emph) {
             return None;
         }
 
         // Scan URL components starting from after the '.'
         let mut end = pos + 1;
-        let host = scan_url_component(content, end, 0, b'.', b".-_", 1, 0);
+        let host = scan_url_component(content, limit, end, 0, b'.', b".-_", 1, 0);
         if !host.ok {
             return None;
         }
         end = host.end;
 
-        let path = scan_url_component(content, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
+        let path = scan_url_component(content, limit, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
         end = path.end;
 
-        let query = scan_url_component(content, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
+        let query = scan_url_component(content, limit, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
         end = query.end;
 
-        let frag = scan_url_component(content, end, b'#', 0, b".-+_~*%", 1, 0);
+        let frag = scan_url_component(content, limit, end, b'#', 0, b".-+_~*%", 1, 0);
         end = frag.end;
 
         end = post_process_autolink_end(content, beg, end);
 
-        if !check_right_boundary(content, end, allow_emph) {
+        if !check_right_boundary(content, end, emph) {
             return None;
         }
 

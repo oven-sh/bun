@@ -56,6 +56,7 @@ const server = serve({
     "/file-hop": new Response(Bun.file(process.env.BIG_FILE), { headers: { connection: "close", upgrade: "x", "x-kept": "1" } }),
   },
   async fetch(req) {
+    if (req.headers.get("x-raw-url")) return new Response(req.url);
     const url = new URL(req.url);
     if (url.pathname === "/hop-headers") {
       return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", te: "gzip", "x-kept": "1" } });
@@ -225,6 +226,45 @@ describe("Bun.serve HTTP/3", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("x-proto")).toBe("h3");
       expect(await res.text()).toBe("hello over h3");
+    });
+  });
+
+  // request.url is synthesized from Host + target through the same code on
+  // both transports: a Host that can't be a URL authority is refused, a valid
+  // one is canonicalized (HTTP/3 used to paste it in verbatim), and one the URL
+  // parser still rejects falls back to the target.
+  test("request.url applies the same Host policy as HTTP/1", async () => {
+    await withServer(async port => {
+      const viaH1 = (path: string, headers: Record<string, string>) =>
+        fetch(`https://127.0.0.1:${port}${path}`, { headers, tls: { rejectUnauthorized: false } } as RequestInit).then(
+          r => r.text(),
+        );
+      const viaH3 = (path: string, headers: Record<string, string>) =>
+        fetchH3(port, path, { headers }).then(r => r.text());
+
+      const evil = { host: "evil.example/x#", "x-raw-url": "1" };
+      expect(await viaH3("/admin/secret", evil)).toBe("/admin/secret");
+      expect(await viaH1("/admin/secret", evil)).toBe("/admin/secret");
+
+      const odd = { host: "EXAMPLE.com:443", "x-raw-url": "1" };
+      expect(await viaH3("/p", odd)).toBe("https://example.com/p");
+      expect(await viaH1("/p", odd)).toBe("https://example.com/p");
+
+      // Inside the Host byte set but still not a URL authority: falls back to
+      // the path on both transports rather than an unparsable absolute URL.
+      for (const host of ["example.com:abc", "example.com:99999", "exa%zzmple.com"]) {
+        const hdrs = { host, "x-raw-url": "1" };
+        expect(await viaH3("/p", hdrs)).toBe("/p");
+        expect(await viaH1("/p", hdrs)).toBe("/p");
+      }
+
+      // fetch() percent-encodes before anything reaches the wire, so this only checks
+      // that an encoded path survives both transports unchanged; raw non-ASCII
+      // targets are covered in "request validation" below (HTTP/3) and in
+      // request-smuggling.test.ts (HTTP/1), which write the bytes themselves.
+      const plain = { host: "example.com", "x-raw-url": "1" };
+      expect(await viaH3("/caf%C3%A9?q=%E2%9C%93", plain)).toBe("https://example.com/caf%C3%A9?q=%E2%9C%93");
+      expect(await viaH1("/caf%C3%A9?q=%E2%9C%93", plain)).toBe("https://example.com/caf%C3%A9?q=%E2%9C%93");
     });
   });
 
@@ -1436,6 +1476,44 @@ describe("Bun.serve HTTP/3 request validation", () => {
       "example.com\\other:8080": "200 /index",
       "[::1]:3000?q": "200 /index",
       "example.com:8443": "200 https://example.com:8443/index",
+    });
+  });
+
+  // node:quic puts header values on the wire as latin1, so the \xC3\xA9 escapes
+  // below arrive as the UTF-8 bytes of "é", the same convention as the raw-socket
+  // HTTP/1 cases in request-smuggling.test.ts. Bytes >= 0x80 in the target take
+  // the UTF-8 join in Request::synthesize_url; the parser percent-encodes them
+  // and turns an invalid byte into U+FFFD. h3Exchange decodes the body as
+  // latin1, so it is re-decoded as UTF-8 for the bare-target case.
+  test("request.url with a non-ASCII :path", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const long = Buffer.alloc(200, "a").toString();
+    const exchange = async (path: string, authority = "localhost") =>
+      Buffer.from(
+        await h3Exchange(server.port, { ...requestHeaders(path), ":authority": authority }),
+        "latin1",
+      ).toString();
+
+    expect({
+      utf8: await exchange("/caf\xC3\xA9?q=\xE2\x9C\x93"),
+      invalidByte: await exchange("/\xFF"),
+      long: await exchange(`/${long}\xC3\xA9`),
+      // :authority inside the byte set but rejected by the URL parser: the bare
+      // target, decoded the same way.
+      unparseableAuthority: await exchange("/\xFF", "example.com:abc"),
+    }).toEqual({
+      utf8: "200 https://localhost/caf%C3%A9?q=%E2%9C%93",
+      invalidByte: "200 https://localhost/%EF%BF%BD",
+      long: `200 https://localhost/${long}%C3%A9`,
+      unparseableAuthority: "200 /\uFFFD",
     });
   });
 

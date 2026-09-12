@@ -30,7 +30,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -2533,6 +2533,98 @@ describe("net.Socket onread buffer factory", () => {
         ["aaaa", true],
         ["bbbb", true],
       ]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("net.Socket onread callback receiver", () => {
+  // Node calls the callback as a method of the stream, so `this` is the
+  // net.Socket or the TLSSocket: `stream[kBufferCb](nread, userBuf)`.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
+  it.each([
+    ["net.connect with a static buffer", false, () => Buffer.alloc(4)],
+    ["net.connect with a buffer factory", false, () => () => Buffer.alloc(4)],
+    ["net.connect with a factory that never yields a Uint8Array", false, () => () => null as any],
+    ["tls.connect with a static buffer", true, () => Buffer.alloc(4)],
+  ] as const)("`this` is the socket: %s", async (_label, secure, makeBuffer) => {
+    const receiverIsSocket: boolean[] = [];
+    let received = 0;
+    const done = Promise.withResolvers<void>();
+    const onConnection = (c: Socket) => {
+      c.on("error", () => {});
+      c.end("abcdefgh");
+    };
+    const server = secure ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      const options = {
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: makeBuffer(),
+          callback(this: unknown, n: number) {
+            receiverIsSocket.push(this === client);
+            received += n;
+            if (received === 8) done.resolve();
+            return true;
+          },
+        },
+      };
+      client = secure ? tlsConnect({ ...options, rejectUnauthorized: false }) : createConnection(options);
+      client.on("error", done.reject);
+      await done.promise;
+      expect(client).toBeInstanceOf(secure ? TLSSocket : Socket);
+      // At least one call, and every call had the socket as its receiver.
+      expect([...new Set(receiverIsSocket)]).toEqual([true]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("the callback can pause() and resume() the socket through `this`", async () => {
+    // 8 bytes through a 4-byte buffer: the second slice waits for resume().
+    const received: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const server = createServer(c => c.end("abcdefgh"));
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      client = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(this: Socket, n: number, buf: Buffer) {
+            received.push(buf.toString("latin1", 0, n));
+            if (received.length === 1) {
+              this.pause();
+              setImmediate(() => this.resume());
+            } else if (received.join("").length === 8) {
+              done.resolve();
+            }
+          },
+        },
+      });
+      client.on("error", done.reject);
+      await done.promise;
+      expect(received).toEqual(["abcd", "efgh"]);
     } finally {
       client?.destroy();
       server.close();

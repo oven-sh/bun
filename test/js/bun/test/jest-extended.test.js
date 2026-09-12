@@ -218,6 +218,31 @@ describe("jest-extended", () => {
     expect(new Array(2 ** 32 - 1)).toBeArrayOfSize(2 ** 32 - 1);
   });
 
+  test("toBeArray() and toBeArrayOfSize() see through a Proxy, like Array.isArray()", () => {
+    expect(new Proxy([], {})).toBeArray();
+    expect(new Proxy(new Proxy([1, 2], {}), {})).toBeArray();
+    expect(new Proxy({}, {})).not.toBeArray();
+    expect(new Proxy(function () {}, {})).not.toBeArray();
+
+    expect(new Proxy([], {})).toBeArrayOfSize(0);
+    expect(new Proxy([1, 2], {})).toBeArrayOfSize(2);
+    expect(new Proxy(new Proxy([1, 2], {}), {})).toBeArrayOfSize(2);
+    expect(new Proxy([1, 2], {})).not.toBeArrayOfSize(3);
+    expect(new Proxy({ length: 0 }, {})).not.toBeArrayOfSize(0);
+    expect(() => expect(new Proxy([1, 2], {})).toBeArrayOfSize(3)).toThrow("toBeArrayOfSize");
+    expect(() => expect(new Proxy([], {})).not.toBeArray()).toThrow("toBeArray");
+  });
+
+  // Array.isArray() throws a TypeError for a revoked Proxy, so jest-extended does too.
+  (isBun ? test : test.skip)("toBeArray() and toBeArrayOfSize() reject a revoked Proxy", () => {
+    const { proxy, revoke } = Proxy.revocable([], {});
+    revoke();
+    expect(proxy).not.toBeArray();
+    expect(proxy).not.toBeArrayOfSize(0);
+    expect(new Proxy(proxy, {})).not.toBeArray();
+    expect(() => expect(proxy).toBeArray()).toThrow("Received: <Revoked Proxy>");
+  });
+
   // test('toIncludeAllMembers()')
   // test('toIncludeAllPartialMembers()')
   // test('toIncludeAnyMembers()')
@@ -236,6 +261,19 @@ describe("jest-extended", () => {
     expect(1).not.toBeBoolean();
     expect("").not.toBeBoolean();
     expect({}).not.toBeBoolean();
+  });
+
+  test("toBeBoolean() accepts a Boolean object, toBeTrue() and toBeFalse() do not", () => {
+    expect(new Boolean(true)).toBeBoolean();
+    expect(new Boolean(false)).toBeBoolean();
+    expect(Object(false)).toBeBoolean();
+    expect(new (class extends Boolean {})(true)).toBeBoolean();
+    expect(new Number(1)).not.toBeBoolean();
+    expect(new String("true")).not.toBeBoolean();
+    expect(() => expect(new Boolean(true)).not.toBeBoolean()).toThrow("toBeBoolean");
+
+    expect(new Boolean(true)).not.toBeTrue();
+    expect(new Boolean(false)).not.toBeFalse();
   });
 
   test("toBeTrue()", () => {

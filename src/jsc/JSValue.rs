@@ -2849,14 +2849,42 @@ impl JSValue {
         JSC__JSValue__isConstructor(self)
     }
 
+    /// `Array.isArray(self)`: an array, or a `Proxy` whose target is one.
+    /// A revoked `Proxy` is `false` here. `Array.isArray` throws a TypeError for it.
+    pub fn is_array_or_proxied_array(self) -> bool {
+        let mut value = self;
+        while value.is_cell() {
+            let ty = value.js_type();
+            if ty.is_array() {
+                return true;
+            }
+            // `revoke()` clears the handler and keeps the target.
+            if ty != JSType::ProxyObject
+                || value
+                    .get_proxy_internal_field(ProxyField::Handler)
+                    .is_undefined_or_null()
+            {
+                return false;
+            }
+            value = value.get_proxy_internal_field(ProxyField::Target);
+        }
+        false
+    }
+
     // ── Jest "is empty object". ────────────────────────
     /// `JSValue.isObjectEmpty` — Jest-extended `toBeEmptyObject` semantics:
-    /// Map/Set/RegExp/Date are *not* empty objects; otherwise an object with
-    /// zero own-enumerable keys.
+    /// an object with zero own-enumerable keys for which `jest-get-type` says
+    /// "object". Arrays, functions, Map/Set/RegExp/Date are *not* empty objects.
     pub fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
         let ty = self.js_type();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
-        if ty.is_map() || ty.is_set() || ty == JSType::RegExpObject || self.is_date() {
+        if self.is_array_or_proxied_array()
+            || self.is_callable()
+            || ty.is_map()
+            || ty.is_set()
+            || ty == JSType::RegExpObject
+            || self.is_date()
+        {
             return Ok(false);
         }
         Ok(ty.is_object() && self.keys(global)?.get_length(global)? == 0)

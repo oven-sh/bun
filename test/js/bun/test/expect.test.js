@@ -2832,6 +2832,18 @@ describe("expect()", () => {
     expect(deepArray).not.toContainAllValues(["duck", [{ foo: "bar" }]]);
   });
 
+  test_skipIf(!hasJestExtended)("toContainAllValues with no values", () => {
+    expect({}).toContainAllValues([]);
+    expect(Object.create(null)).toContainAllValues([]);
+    expect(() => expect({}).not.toContainAllValues([])).toThrow("toContainAllValues");
+    expect({}).not.toContainAllValues([undefined]);
+    expect({ a: 1 }).not.toContainAllValues([]);
+    // The other empty cases already agree with jest-extended.
+    expect({}).toContainAllKeys([]);
+    expect({}).toContainValues([]);
+    expect({}).not.toContainAnyValues([]);
+  });
+
   test("toContainAnyValues", () => {
     let o = { a: "foo", b: "bar", c: "baz" };
     expect(o).toContainAnyValues(["qux", "foo"]);
@@ -3818,7 +3830,7 @@ describe("expect()", () => {
     expect(new Map()).not.toBeEmptyObject();
     expect(new Set()).not.toBeEmptyObject();
     expect(new Set().add("1")).not.toBeEmptyObject();
-    expect([]).toBeEmptyObject();
+    expect([]).not.toBeEmptyObject();
     expect({}).toBeEmptyObject();
     expect([1, 2]).not.toBeEmptyObject();
     expect({ a: "hello" }).not.toBeEmptyObject();
@@ -3844,6 +3856,28 @@ describe("expect()", () => {
 
     // jest-extended return false for RegExp
     expect(/(foo|bar)/g).not.toBeEmptyObject();
+  });
+
+  test_skipIf(!hasJestExtended)("toBeEmptyObject() rejects a function and an array", () => {
+    // jest-get-type reports "function" and "array" for these, not "object".
+    expect(function () {}).not.toBeEmptyObject();
+    expect(() => {}).not.toBeEmptyObject();
+    expect(async () => {}).not.toBeEmptyObject();
+    expect(class {}).not.toBeEmptyObject();
+    expect(Symbol).not.toBeEmptyObject();
+    expect(function () {}.bind(null)).not.toBeEmptyObject();
+    expect(new Proxy(function () {}, {})).not.toBeEmptyObject();
+    expect([]).not.toBeEmptyObject();
+    expect(new Array(3)).not.toBeEmptyObject();
+    expect(new Proxy([], {})).not.toBeEmptyObject();
+    expect(() => expect(function () {}).toBeEmptyObject()).toThrow("toBeEmptyObject");
+    expect(() => expect([]).toBeEmptyObject()).toThrow("toBeEmptyObject");
+
+    expect(Object.create(null)).toBeEmptyObject();
+    expect(new (class {})()).toBeEmptyObject();
+    expect(new Proxy({}, {})).toBeEmptyObject();
+    expect(new Proxy({ a: 1 }, {})).not.toBeEmptyObject();
+    expect(() => expect({}).not.toBeEmptyObject()).toThrow("toBeEmptyObject");
   });
 
   test("toBeNil()", () => {

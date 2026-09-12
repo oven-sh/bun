@@ -335,6 +335,10 @@ pub struct VirtualMachine {
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
+    /// fds to close at worker exit (`Some` on worker threads only).
+    pub exit_fds: Option<Vec<bun_sys::Fd>>,
+    /// node:worker_threads `trackUnmanagedFds`.
+    pub track_unmanaged_fds: bool,
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
@@ -2088,6 +2092,13 @@ impl VirtualMachine {
                 rare.release_js_handles();
             }
         }
+        // Off-thread fs work on these fds is back and script is forbidden.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        if let Some(fds) = unsafe { (*this).exit_fds.take() } {
+            for fd in fds {
+                let _ = bun_sys::FdExt::close_allowing_standard_io(fd, None);
+            }
+        }
         teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
@@ -2722,6 +2733,7 @@ impl VirtualMachine {
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
+            addr_of_mut!((*vm).exit_fds).write(None);
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -5105,6 +5117,34 @@ impl VirtualMachine {
         self.wakeup();
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())
+    }
+
+    /// A raw `fs.open` fd reached user code.
+    #[inline]
+    pub fn track_unmanaged_fd(&mut self, fd: bun_sys::Fd) {
+        if self.track_unmanaged_fds {
+            self.track_managed_fd(fd);
+        }
+    }
+
+    /// A FileHandle owns `fd`; Node closes those at worker exit regardless of the option.
+    #[inline]
+    pub fn track_managed_fd(&mut self, fd: bun_sys::Fd) {
+        if let Some(set) = self.exit_fds.as_mut() {
+            if !set.contains(&fd) {
+                set.push(fd);
+            }
+        }
+    }
+
+    /// `fd` was closed, or transferred to another thread.
+    #[inline]
+    pub fn untrack_fd(&mut self, fd: bun_sys::Fd) {
+        if let Some(set) = self.exit_fds.as_mut() {
+            if let Some(i) = set.iter().position(|&f| f == fd) {
+                set.swap_remove(i);
+            }
+        }
     }
 
     /// Tracks a listening socket so watch-mode reloads can close it.

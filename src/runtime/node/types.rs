@@ -1279,9 +1279,6 @@ impl Valid {
         Self::no_null_bytes(slice, "path", "a string, Uint8Array, or URL", global)
     }
 
-    /// Reject interior NUL bytes in a path-like string argument with Node's
-    /// `ERR_INVALID_ARG_VALUE`. C paths stop at the first NUL, so a value
-    /// that passed JS-level validation would reach the syscall truncated.
     pub(crate) fn no_null_bytes(
         slice: &[u8],
         name: &str,

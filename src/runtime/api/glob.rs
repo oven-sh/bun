@@ -468,8 +468,6 @@ impl Glob {
         fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<AnyGlobWalker>> {
-        // The pattern's literal prefix is opened as a C path; `match()` never
-        // touches the filesystem, so only scan/scanSync reject interior NULs.
         Valid::no_null_bytes(&self.pattern, "pattern", "a string", global_this)?;
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
             return Ok(None);

@@ -371,6 +371,78 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+test("inline snapshot does not call a $$typeof getter", () => {
+  // The React element check reads `$$typeof`. An accessor is printed like any other
+  // getter and never called, so it is not mistaken for a React element.
+  let called = 0;
+  const obj = {
+    get $$typeof() {
+      called++;
+      return Symbol.for("react.element");
+    },
+  };
+  expect(obj).toMatchInlineSnapshot(`
+{
+  "$$typeof": [native code],
+}
+`);
+  expect(called).toBe(0);
+
+  const throwing = {
+    get $$typeof() {
+      throw new Error("Test failed!");
+    },
+  };
+  expect([throwing, "after"]).toMatchInlineSnapshot(`
+[
+  {
+    "$$typeof": [native code],
+  },
+  "after",
+]
+`);
+
+  // A plain data property still marks a React element.
+  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
+  expect(element).toMatchInlineSnapshot(`<div id="x" />`);
+});
+
+test("inline snapshot of a React element does not call getters on its type, key, props or children", () => {
+  const $$typeof = Symbol.for("react.element");
+  let called = 0;
+  const getter = {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: true,
+  };
+  const withGetter = (target: object, name: string) => Object.defineProperty(target, name, getter);
+
+  expect(withGetter({ $$typeof, props: {} }, "type")).toMatchInlineSnapshot(`<unknown />`);
+  expect(withGetter({ $$typeof, type: "div", props: {} }, "key")).toMatchInlineSnapshot(`<div />`);
+  expect(withGetter({ $$typeof, type: "div" }, "props")).toMatchInlineSnapshot(`<div />`);
+  expect({ $$typeof, type: "div", props: withGetter({}, "children") }).toMatchInlineSnapshot(`<div />`);
+  // An accessor prop prints like every other accessor.
+  expect({ $$typeof, type: "div", props: withGetter({}, "hidden") }).toMatchInlineSnapshot(
+    `<div hidden=[native code] />`,
+  );
+  // A Proxy props object, nested or not, is read through its innermost target.
+  const trap = () => {
+    called++;
+    throw new Error("Test failed!");
+  };
+  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
+  expect({ $$typeof, type: "div", props: proxyProps }).toMatchInlineSnapshot(`<div id="x" />`);
+  expect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) }).toMatchInlineSnapshot(`<div id="x" />`);
+  expect(called).toBe(0);
+
+  // Data props, including a numeric key, still print.
+  expect({ $$typeof, type: "div", key: "k", props: { 0: "a", children: "hi" } }).toMatchInlineSnapshot(
+    `<div key="k" 0="a">hi</div>`,
+  );
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

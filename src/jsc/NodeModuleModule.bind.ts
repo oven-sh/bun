@@ -1,4 +1,4 @@
-import { fn, t } from "bindgen";
+import { fn, t } from "../codegen/bindgen-lib.ts";
 
 export const _stat = fn({
   args: {

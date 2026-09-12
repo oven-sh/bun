@@ -945,13 +945,13 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // reconfigure to be picked up (next glob gets them).
   n.build({
     outputs: [cppOut, ...headers],
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: ".bind.ts → GeneratedBindings.cpp",
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
+      args: shJoin(cfg, [script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 

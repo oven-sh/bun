@@ -189,6 +189,50 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A relative cache dir is joined onto cwd. A value that does not fit the
+  // path buffer after the join used to abort the process. A Windows
+  // environment variable holds at most 32767 characters, which fits the
+  // Windows path buffer, so the env var form cannot reach the overflow path
+  // there. The API test below covers Windows.
+  test.skipIf(isWindows)("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
+    using dir = tempDir("compile-cache-long-env", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log("user code ran")`],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: Buffer.alloc(8000, "A").toString() },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("user code ran");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module.enableCompileCache reports FAILED for an over-long relative path", async () => {
+    using dir = tempDir("compile-cache-long-api", {});
+    // 100000 bytes exceeds the path buffer on every platform (the Windows
+    // buffer holds 32767 * 3 + 1 bytes).
+    const code = `
+      const Module = require("module");
+      const dir = Buffer.alloc(100000, "A").toString();
+      const r = Module.enableCompileCache(dir);
+      console.log(JSON.stringify({ status: r.status, message: r.message }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      status: Module.constants.compileCacheStatus.FAILED,
+      message: "Cannot create cache directory: path too long",
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(process.platform === "win32")(
     "compile cache persists modules loaded after a non-fatal self-kill",
     async () => {

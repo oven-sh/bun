@@ -50,6 +50,101 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("listing require.cache does not create a namespace object for each ES module", async () => {
+    using dir = tempDir("require-cache-esm-namespaces", {
+      "a.mjs": `export const a = 1;`,
+      "b.mjs": `import { a } from "./a.mjs"; export const b = a + 1;`,
+      "index.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { b } from "./b.mjs";
+        import { join } from "node:path";
+        const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
+        const aPath = join(import.meta.dir, "a.mjs");
+        const before = namespaces();
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        const has = aPath in require.cache;
+        const descriptor = Object.getOwnPropertyDescriptor(require.cache, aPath);
+        const createdByListing = namespaces() - before;
+        const { a } = require.cache[aPath].exports;
+        const createdByGet = namespaces() - before - createdByListing;
+        // The key is now in both tables; it is still listed once.
+        const listedAfterGet = Object.keys(require.cache).filter(key => key === aPath).length;
+        console.log(JSON.stringify({ b, keys, has, descriptor, createdByListing, a, createdByGet, listedAfterGet }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        b: 2,
+        keys: ["a.mjs", "b.mjs"],
+        has: true,
+        descriptor: { writable: false, enumerable: true, configurable: true },
+        createdByListing: 0,
+        a: 1,
+        createdByGet: 1,
+        listedAfterGet: 1,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a specifier imported under two import attribute types is one key of require.cache", async () => {
+    using dir = tempDir("require-cache-esm-attribute-types", {
+      "a.mjs": `export const a = 1;`,
+      "data.json": `{"x":1}`,
+      // Never imported as JavaScript.
+      "only.json": `{"y":2}`,
+      "index.mjs": `
+        import { join } from "node:path";
+        import { a } from "./a.mjs";
+        import text from "./a.mjs" with { type: "text" };
+        import data from "./data.json";
+        import sameData from "./data.json" with { type: "json" };
+        import only from "./only.json" with { type: "json" };
+        import onlyText from "./only.json" with { type: "text" };
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        // Every key that is listed is there when asked for by name.
+        const present = keys.map(key => join(import.meta.dir, key)).every(key => key in require.cache && require.cache[key]);
+        console.log(JSON.stringify({ a, text: text.length > 0, x: data.x + sameData.x, y: only.y, onlyText, keys, present }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        a: 1,
+        text: true,
+        x: 2,
+        y: 2,
+        onlyText: `{"y":2}`,
+        keys: ["a.mjs", "data.json", "only.json"],
+        present: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
     test("via require() with a lot of long export names", async () => {
       let text = "";

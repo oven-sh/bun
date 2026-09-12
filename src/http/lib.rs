@@ -4735,6 +4735,8 @@ impl<'a> HTTPClient<'a> {
         response: &mut picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
         let mut location: &[u8] = b"";
+        let mut location_seen = false;
+        let mut location_conflict = false;
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
@@ -4830,6 +4832,11 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
+                    // `Location = URI-reference` is single-valued; byte-identical repeats count as one (as browsers do).
+                    if location_seen && location != header.value() {
+                        location_conflict = true;
+                    }
+                    location_seen = true;
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
@@ -4945,11 +4952,13 @@ impl<'a> HTTPClient<'a> {
         // https://fetch.spec.whatwg.org/#redirect-status
         let is_redirect = matches!(status_code, 301 | 302 | 303 | 307 | 308);
         if is_redirect {
-            if !is_proxy_connect_failure
-                && self.redirect_type == FetchRedirect::Follow
-                && !location.is_empty()
-                && self.remaining_redirect_count > 0
-            {
+            let may_follow =
+                !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Follow;
+            // https://fetch.spec.whatwg.org/#concept-response-location-url: >1 Location ⇒ failure ⇒ network error.
+            if may_follow && location_conflict {
+                return Err(crate::Error::MultipleLocationHeaders);
+            }
+            if may_follow && !location.is_empty() && self.remaining_redirect_count > 0 {
                 // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
                 // "If internalResponse's status is not 303, request's body
                 // is non-null, and request's body's source is null, then

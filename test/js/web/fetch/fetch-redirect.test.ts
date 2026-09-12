@@ -146,6 +146,79 @@ it("fetch() with redirect: 'manual' still exposes the 3xx response body", async 
   }
 });
 
+// `Location = URI-reference` is single-valued. Per the Fetch "location URL"
+// algorithm, more than one Location header makes the location a failure and
+// HTTP-redirect fetch returns a network error. Byte-identical repeats are
+// tolerated as one value, as Chromium and Firefox do.
+describe("fetch() with multiple Location header lines on a redirect", () => {
+  async function withServer(locations: string[], fn: (base: string, requests: string[]) => Promise<void>) {
+    const requests: string[] = [];
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", chunk => {
+        const path = /^GET (\S+)/.exec(chunk.toString("latin1"))?.[1] ?? "/";
+        requests.push(path);
+        if (path === "/r") {
+          const lines = locations.map(l => `Location: ${l}\r\n`).join("");
+          socket.end(`HTTP/1.1 302 Found\r\n${lines}Content-Length: 0\r\nConnection: close\r\n\r\n`);
+        } else {
+          const body = `hit ${path}`;
+          socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      await fn(`http://127.0.0.1:${port}`, requests);
+    } finally {
+      server.close();
+    }
+  }
+
+  it.each([
+    ["two relative", ["/first", "/second"]],
+    ["three relative", ["/first", "/second", "/third"]],
+    ["relative then absolute", ["/first", "http://127.0.0.1:1/"]],
+    ["value then empty", ["/first", ""]],
+  ] as const)("redirect: 'follow' rejects distinct values (%s) without re-requesting", async (_name, locations) => {
+    await withServer([...locations], async (base, requests) => {
+      const outcome = await fetch(`${base}/r`).then(
+        res => ({ rejected: false as const, url: res.url }),
+        e => ({ rejected: true as const, code: e.code }),
+      );
+      expect({ outcome, requests }).toEqual({
+        outcome: { rejected: true, code: "MultipleLocationHeaders" },
+        requests: ["/r"],
+      });
+    });
+  });
+
+  it("redirect: 'follow' treats byte-identical repeats as a single Location", async () => {
+    await withServer(["/same", "/same"], async (base, requests) => {
+      const res = await fetch(`${base}/r`);
+      expect({ url: res.url, redirected: res.redirected, body: await res.text(), requests }).toEqual({
+        url: `${base}/same`,
+        redirected: true,
+        body: "hit /same",
+        requests: ["/r", "/same"],
+      });
+    });
+  });
+
+  it("redirect: 'manual' still returns the 3xx with the combined header value", async () => {
+    await withServer(["/first", "/second"], async (base, requests) => {
+      const res = await fetch(`${base}/r`, { redirect: "manual" });
+      await res.arrayBuffer();
+      expect({ status: res.status, location: res.headers.get("location"), requests }).toEqual({
+        status: 302,
+        location: "/first, /second",
+        requests: ["/r"],
+      });
+    });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/12701
 it("fetch() preserves body on redirect", async () => {
   using server = Bun.serve({

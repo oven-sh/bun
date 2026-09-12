@@ -73,6 +73,8 @@ pub enum Error {
     InvalidRedirectURL,
     #[error("UnexpectedRedirect")]
     UnexpectedRedirect,
+    #[error("MultipleLocationHeaders")]
+    MultipleLocationHeaders,
     #[error("ShortRead")]
     ShortRead,
     #[error("WantRead")]
@@ -296,6 +298,7 @@ impl Error {
             Self::RedirectURLInvalid => "RedirectURLInvalid",
             Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
+            Self::MultipleLocationHeaders => "MultipleLocationHeaders",
             Self::ShortRead => "ShortRead",
             Self::WantRead => "WantRead",
             Self::WantWrite => "WantWrite",

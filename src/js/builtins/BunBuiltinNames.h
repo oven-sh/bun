@@ -170,6 +170,7 @@ using namespace JSC;
     macro(size) \
     macro(specifier) \
     macro(start) \
+    macro(state) \
     macro(status) \
     macro(statusCode) \
     macro(statusMessage) \

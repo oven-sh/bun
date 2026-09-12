@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -254,6 +254,173 @@ describe("bun:jsc", () => {
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
+});
+
+it("loadedModules lists every module the ES module and CommonJS loaders hold, once, with how far it has loaded", async () => {
+  using dir = tempDir("bun-jsc-loaded-modules", {
+    "a.mjs": `export const a = 1;`,
+    "b.mjs": `import { a } from "./a.mjs"; export const b = a + 1;`,
+    "c.cjs": `module.exports = { c: 3 };`,
+    "replaced.cjs": `module.exports = { r: 4 };`,
+    "data.json": `{"x":1}`,
+    "required.json": `{"y":2}`,
+    "note.txt": `hello`,
+    "throws.mjs": `throw new Error("boom");`,
+    "never-imported.mjs": `export {};`,
+    // What a CommonJS module sees of itself and of the module that require()d it, both still running.
+    "outer.cjs": `exports.inner = require("./inner.cjs").seen;`,
+    "inner.cjs": `
+      const { loadedModules } = require("bun:jsc");
+      exports.seen = loadedModules()
+        .filter(m => m.id === __filename || m.id === require("node:path").join(__dirname, "outer.cjs"))
+        .map(m => require("node:path").basename(m.id) + " " + m.state)
+        .sort();
+    `,
+    // A CommonJS entry point is imported by an internal ES module, and runs before that import has a record.
+    "entry.cjs": `
+      const { loadedModules } = require("bun:jsc");
+      console.log(JSON.stringify(loadedModules().filter(m => m.id === __filename || m.id === "bun:main").map(m => m.state)));
+    `,
+    "index.mjs": `
+      import { loadedModules, heapStats } from "bun:jsc";
+      import { join } from "node:path";
+      import { b } from "./b.mjs";
+      import source from "./a.mjs" with { type: "text" };
+      import data from "./data.json";
+      import sameData from "./data.json" with { type: "json" };
+      import note from "./note.txt";
+      const { c } = require("./c.cjs");
+      const { y } = require("./required.json");
+      const { r } = await import("./replaced.cjs");
+      const { inner } = require("./outer.cjs");
+      try { await import("./throws.mjs"); } catch {}
+      // A user-written require.cache entry does not hide the module the loader holds.
+      require.cache[join(import.meta.dir, "replaced.cjs")] = { exports: 1 };
+      const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
+      const before = namespaces();
+      const modules = loadedModules();
+      const createdByListing = namespaces() - before;
+      const local = list => list
+        .filter(m => m.id.startsWith(import.meta.dir))
+        .map(m => m.id.slice(import.meta.dir.length + 1) + " " + m.state)
+        .sort();
+      // Reading require.cache makes a namespace object and a module object for the ES module; it is listed once still.
+      require.cache[join(import.meta.dir, "a.mjs")];
+      const createdByRequireCache = namespaces() - before;
+      console.log(JSON.stringify({
+        used: [b, source.length > 0, data.x + sameData.x, note, c, y, r],
+        inner,
+        createdByListing,
+        createdByRequireCache,
+        local: local(modules),
+        builtin: modules.filter(m => m.id === "bun:jsc" || m.id === "bun:main"),
+        afterRequireCache: local(loadedModules()).filter(line => line.startsWith("a.mjs")),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      used: [2, true, 2, "hello", 3, 2, 4],
+      inner: ["inner.cjs evaluated", "outer.cjs evaluated"],
+      createdByListing: 0,
+      createdByRequireCache: 1,
+      local: [
+        "a.mjs evaluated",
+        "b.mjs evaluated",
+        "c.cjs evaluated",
+        "data.json evaluated",
+        "index.mjs evaluating-async",
+        "inner.cjs evaluated",
+        "note.txt evaluated",
+        "outer.cjs evaluated",
+        "replaced.cjs evaluated",
+        "required.json evaluated",
+        "throws.mjs errored",
+      ],
+      builtin: [{ id: "bun:jsc", state: "evaluated" }],
+      afterRequireCache: ["a.mjs evaluated"],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+
+  await using entry = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await Promise.all([entry.stdout.text(), entry.stderr.text(), entry.exited])).toEqual([
+    `["evaluated"]\n`,
+    "",
+    0,
+  ]);
+});
+
+it("loadedModules lists the loaders of the realm the function belongs to", async () => {
+  using dir = tempDir("bun-jsc-loaded-modules-realm", {
+    "in-realm.mjs": `
+      import { loadedModules } from "bun:jsc";
+      export const listed = loadedModules().map(m => m.id.split(/[\\\\/]/).pop() + " " + m.state).sort().join(",");
+    `,
+    "index.mjs": `
+      import { loadedModules } from "bun:jsc";
+      const realm = new ShadowRealm();
+      const inRealm = await realm.importValue(import.meta.dir + "/in-realm.mjs", "listed");
+      const main = loadedModules().filter(m => m.id.startsWith(import.meta.dir)).map(m => m.id.slice(import.meta.dir.length + 1)).sort();
+      console.log(JSON.stringify({ inRealm, main }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ inRealm: "bun:jsc evaluated,in-realm.mjs evaluating", main: ["index.mjs"] }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Unfixed, the state strings were only in a hash table the collector does not scan: entries came back with another
+// module's id as their state.
+it("loadedModules keeps its state strings alive while it allocates", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { loadedModules } from "bun:jsc";
+        import "node:fs";
+        import "node:path";
+        import "node:os";
+        const states = ["fetching", "unlinked", "linking", "linked", "evaluating", "evaluating-async", "evaluated", "errored"];
+        const bad = [];
+        for (let i = 0; i < 50; i++) {
+          for (const m of loadedModules()) if (!states.includes(m.state)) bad.push(m.id + " " + m.state);
+        }
+        console.log(JSON.stringify(bad));
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "[]", stderr: "", exitCode: 0 });
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {

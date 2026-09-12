@@ -192,6 +192,31 @@ declare module "bun:jsc" {
   function isRope(input: string): boolean;
 
   /**
+   * Returns the modules the ES module loader and the CommonJS loader of the
+   * current global know about, one entry per resolved specifier, in no
+   * particular order.
+   *
+   * Unlike enumerating `require.cache`, this includes modules that have not
+   * finished loading and the built-in modules an ES module imported, and it
+   * creates nothing per module other than the returned entries. Most built-in
+   * modules loaded with `require()` come from an internal table that neither
+   * loader tracks, and are not listed; neither is the internal module that
+   * imports the entry point.
+   *
+   * In a `bun build --compile` executable the ids of bundled chunks are their
+   * paths in the embedded filesystem.
+   *
+   * @example
+   * ```ts
+   * import { loadedModules } from "bun:jsc";
+   *
+   * const evaluated = loadedModules().filter(m => m.state === "evaluated");
+   * console.log(evaluated.length, "modules evaluated so far");
+   * ```
+   */
+  function loadedModules(): LoadedModule[];
+
+  /**
    * Returns the URL of the source file containing the code that called this
    * function, such as `"file:///home/me/app/index.ts"`. Code created with
    * `eval` or `new Function` reports the file that created it.
@@ -372,6 +397,38 @@ declare module "bun:jsc" {
    * @returns The normalized time zone string
    */
   function setTimeZone(timeZone: string): string;
+
+  /**
+   * One module known to the module loaders, returned by {@link loadedModules}.
+   */
+  interface LoadedModule {
+    /**
+     * The resolved specifier the loaders key the module by: an absolute path
+     * for a file, or a name like `node:fs` for a built-in module. For a file
+     * this is the module's key in `require.cache`.
+     */
+    id: string;
+    /**
+     * How far loading has come. ES modules go through `"fetching"` (the source
+     * is being loaded), `"unlinked"`, `"linking"`, `"linked"`, `"evaluating"`
+     * or `"evaluating-async"`, and `"evaluated"`; `"errored"` means loading,
+     * linking or evaluating the module threw.
+     *
+     * `"evaluating-async"` means the module, or a module it imports, has a
+     * top-level `await`. The module stays in this state, including while its
+     * own body runs, until that has finished.
+     *
+     * JSON, text and built-in modules are `"evaluated"` as soon as they are
+     * loaded, which can be before the module that imports them is linked.
+     *
+     * A CommonJS module is `"unlinked"` until its body starts running and
+     * `"evaluated"` from then on, including while it is still running (as seen
+     * from a module it `require()`s, or from itself). One that threw is
+     * `"errored"` if an `import` loaded it; `require()` forgets a module that
+     * threw, so it is not listed.
+     */
+    state: "fetching" | "unlinked" | "linking" | "linked" | "evaluating" | "evaluating-async" | "evaluated" | "errored";
+  }
 
   /**
    * Statistics about the JavaScript heap, returned by {@link heapStats}.

@@ -1319,6 +1319,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     socket.data.req = undefined;
     if (self[kupgraded]) {
       self.connecting = false;
+      // A socket over a wrapped handle starts its reads in the constructor in node. The
+      // constructor's read(0) is skipped while the wrapped socket still connects, so start them here.
+      if (!self.isPaused()) self.read(0);
       SocketHandlers2.drain!(socket);
     }
   },

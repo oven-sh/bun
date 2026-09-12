@@ -1143,9 +1143,12 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   });
 
   describe("inline suggestions", () => {
-    // Ghost text is rendered as: ESC[2m<remainder>ESC[0m after the typed text.
+    // Ghost text is rendered as: ESC[90m<remainder>ESC[0m after the typed text.
+    // SGR 90 (gray) rather than SGR 2 (dim): the legacy Windows console
+    // (conhost, winpty) does not implement SGR 2, so dim text renders in the
+    // default foreground there. Node uses SGR 90 for its preview too (#41287).
     // The feature requires colors, so override bunEnv's NO_COLOR for these.
-    const DIM = "\x1b[2m";
+    const GRAY = "\x1b[90m";
     const colorEnv = { NO_COLOR: undefined, FORCE_COLOR: "1" };
 
     test("suggests global completion while typing", async () => {
@@ -1155,7 +1158,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // like `constructor` on the prototype chain, but the REPL picks the
           // shortest match.
           send("cons");
-          await waitFor(`${DIM}ole`);
+          await waitFor(`${GRAY}ole`);
         },
         { env: colorEnv },
       );
@@ -1165,7 +1168,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("JSO");
-          await waitFor(`${DIM}N`);
+          await waitFor(`${GRAY}N`);
           send("\x1b[C"); // Right arrow accepts the ghost text
           // After acceptance the input is `JSON`; extend it and evaluate.
           // The result "81" never appears in the echoed input, so this only
@@ -1183,11 +1186,11 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           // Build up `console.` by accepting the global suggestion first.
           send("cons");
-          await waitFor(`${DIM}ole`);
+          await waitFor(`${GRAY}ole`);
           send("\x1b[C"); // accept -> "console"
           send(".l");
           // console.l -> "log" is the shortest property starting with "l"
-          await waitFor(`${DIM}og`);
+          await waitFor(`${GRAY}og`);
         },
         { env: colorEnv },
       );
@@ -1197,7 +1200,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("JSON.str");
-          await waitFor(`${DIM}ingify`, 10000);
+          await waitFor(`${GRAY}ingify`, 10000);
           send("\t"); // Tab accepts the ghost suggestion -> `JSON.stringify`
           // Result "81" cannot occur in the echoed input, so it only matches
           // if Tab really completed to `stringify` and the call succeeded.
@@ -1212,7 +1215,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("Mat");
-          await waitFor(`${DIM}h`);
+          await waitFor(`${GRAY}h`);
           send("\x1b[F"); // End accepts the suggestion -> "Math"
           // Result 63 cannot occur in the echoed input; if End didn't accept,
           // `Mat.max(...)` would throw instead of producing it.
@@ -1231,7 +1234,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           send("globalThis.__sgObj = Object.create(null); __sgObj.onlyProp = 1\n");
           await waitFor("1");
           send("__sgObj.");
-          await waitFor(`${DIM}onlyProp`);
+          await waitFor(`${GRAY}onlyProp`);
         },
         { env: colorEnv },
       );
@@ -1242,7 +1245,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           // No global starts with "instan", but the keyword `instanceof` does.
           send("x instan");
-          await waitFor(`${DIM}ceof`);
+          await waitFor(`${GRAY}ceof`);
         },
         { env: colorEnv },
       );
@@ -1274,14 +1277,14 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           );
           await waitFor("uReady");
           send("__u.caf");
-          await waitFor(`${DIM}és`);
+          await waitFor(`${GRAY}és`);
           // The typed prefix itself may contain non-ASCII characters.
           send("é");
-          await waitFor(`${DIM}s`);
+          await waitFor(`${GRAY}s`);
           // So may the object being completed: the chain segment is looked up as
           // UTF-8, not byte-per-character.
           send("\x15café.");
-          await waitFor(`${DIM}latte`);
+          await waitFor(`${GRAY}latte`);
         },
         { env: colorEnv },
       );
@@ -1295,7 +1298,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           send('globalThis.__plain = {}; "plain" + "Ready"\n');
           await waitFor("plainReady");
           send("__plain.constructor.getOwnPropertyNa");
-          await waitFor(`${DIM}mes`);
+          await waitFor(`${GRAY}mes`);
         },
         { env: colorEnv },
       );
@@ -1307,7 +1310,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // `process.version` is a string and `.length` a number; both get boxed
           // the way a real property access would, ending on Number.prototype.
           send("process.version.length.toF");
-          await waitFor(`${DIM}ixed`);
+          await waitFor(`${GRAY}ixed`);
         },
         { env: colorEnv },
       );
@@ -1317,10 +1320,10 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("[...cons");
-          await waitFor(`${DIM}ole`);
+          await waitFor(`${GRAY}ole`);
           // Nor do they swallow the chain that follows them.
           send("\x15[...console.l");
-          await waitFor(`${DIM}og`);
+          await waitFor(`${GRAY}og`);
         },
         { env: colorEnv },
       );
@@ -1330,7 +1333,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("this.cons");
-          await waitFor(`${DIM}ole`);
+          await waitFor(`${GRAY}ole`);
         },
         { env: colorEnv },
       );
@@ -1361,7 +1364,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {
           send("`${JSO");
-          await waitFor(`${DIM}N`);
+          await waitFor(`${GRAY}N`);
           // Back in template text after the `}`: "st" must get no ghost, or the
           // right arrow would accept it. `${JSON}` stringifies to the 13-char
           // "[object JSON]", plus " st", so the length is 16.
@@ -1428,7 +1431,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // Typing the `.` computes completions for `__big` with an empty
           // prefix; the named properties must still complete afterwards.
           send("__big.byteLen");
-          await waitFor(`${DIM}gth`);
+          await waitFor(`${GRAY}gth`);
           send("\t\n");
           await waitFor("67108864");
         },
@@ -1459,7 +1462,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           await waitFor("1");
           // Type a prefix that triggers a suggestion but don't accept it.
           send("zz");
-          await waitFor(`${DIM}GhostMarker`);
+          await waitFor(`${GRAY}GhostMarker`);
           // Hit Enter without accepting: the ghost text must not be part of
           // the evaluated input, so `zz` alone is a ReferenceError.
           send("\n");

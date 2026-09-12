@@ -96,6 +96,9 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
+    /// Standalone executable: `__dirname` / `__filename` resolve to the virtual path at runtime.
+    pub compile: bool,
+
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
@@ -142,6 +145,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            compile: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -228,6 +232,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            compile: self.compile,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -301,6 +306,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            compile: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -1142,6 +1148,11 @@ impl<'a> Parser<'a> {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
+        // except under `--compile`: ESM uses `import.meta`; CJS keeps the wrapper's own parameters.
+        if p.options.compile && p.options.output_format == options::Format::Cjs {
+            uses_dirname = false;
+            uses_filename = false;
+        }
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
@@ -1151,6 +1162,28 @@ impl<'a> Parser<'a> {
                     .arena
                     .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
                 if uses_dirname {
+                    let value = if p.options.compile {
+                        // var __dirname = import.meta.dir
+                        let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                        p.new_expr(
+                            E::Dot {
+                                name: b"dir".into(),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                target: import_meta,
+                                can_be_removed_if_unused: true,
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        )
+                    } else {
+                        p.new_expr(
+                            E::String {
+                                data: p.source.path.name().dir.into(),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        )
+                    };
                     decls[0] = G::Decl {
                         binding: p.b(
                             B::Identifier {
@@ -1158,13 +1191,7 @@ impl<'a> Parser<'a> {
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.name().dir.into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        )),
+                        value: Some(value),
                     };
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: p.dirname_ref,
@@ -1172,6 +1199,28 @@ impl<'a> Parser<'a> {
                     });
                 }
                 if uses_filename {
+                    let value = if p.options.compile {
+                        // var __filename = import.meta.path
+                        let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                        p.new_expr(
+                            E::Dot {
+                                name: b"path".into(),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                target: import_meta,
+                                can_be_removed_if_unused: true,
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        )
+                    } else {
+                        p.new_expr(
+                            E::String {
+                                data: p.source.path.text.into(),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        )
+                    };
                     decls[uses_dirname as usize] = G::Decl {
                         binding: p.b(
                             B::Identifier {
@@ -1179,13 +1228,7 @@ impl<'a> Parser<'a> {
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.text.into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        )),
+                        value: Some(value),
                     };
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: p.filename_ref,

@@ -2630,6 +2630,9 @@ pub mod parse_worker {
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
 
+        // HTML-import browser chunks inherit `compile_mode` but have no `import.meta.dir`.
+        opts.compile = topts.compile_mode.is_executable() && target.is_bun();
+
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.

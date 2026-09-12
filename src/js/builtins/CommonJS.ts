@@ -13,11 +13,7 @@ export function require(this: JSCommonJSModule, _: string) {
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
-//
-// It is also the value of `Module.prototype.require`, so user code can call it
-// with any `this`, including null. Like Node, `this` is only the parent of the
-// loaded module, so do not look up loader internals on it:
-// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/cjs/loader.js#L1611-L1623
+// As in Node, `this` is only the parent and can be any value, even null: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1611
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {

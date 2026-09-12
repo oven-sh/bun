@@ -1285,9 +1285,6 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     return finishRequireWithError(globalObject, throwScope, specifierValue)
 
 // $requireCommonJS(resolvedId, newModule, parentFilename, userArgumentCount, userOptions)
-//
-// The parent is the `this` of `Module.prototype.require`, which can be any value, so this
-// function takes the filename and not the parent.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);

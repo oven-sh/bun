@@ -221,6 +221,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // Native heap SSLConfig. RAII — freed on any early return, moved into
     // WebSocket::create() on success.
     WebSocketSSLConfigPtr sslConfig;
+    // Set on the wrapper below; the options argument keeps it alive until then.
+    JSValue checkServerIdentity;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
@@ -274,6 +276,12 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             // Parse full TLS options using the native SSLConfig parser
             sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue)) };
             RETURN_IF_EXCEPTION(throwScope, {});
+
+            auto checkServerIdentityValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "checkServerIdentity"_s)));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (checkServerIdentityValue && checkServerIdentityValue.isCallable()) {
+                checkServerIdentity = checkServerIdentityValue;
+            }
         }
 
         // Parse perMessageDeflate option (ws-compatible). Mirrors npm ws's
@@ -344,6 +352,10 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+    if (checkServerIdentity) {
+        auto* wrapper = uncheckedDowncast<JSWebSocket>(asObject(jsValue));
+        wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity);
+    }
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
@@ -991,6 +1003,36 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket));
 }
+
+template<typename Visitor>
+void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSWebSocket);
+
+template<typename Visitor>
+void JSWebSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSWebSocket);
+
+template<typename Visitor>
+void JSWebSocket::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    wrapped().checkServerIdentity().visit(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSWebSocket);
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
 {

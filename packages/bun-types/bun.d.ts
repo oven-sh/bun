@@ -4915,7 +4915,17 @@ declare module "bun" {
      * });
      * ```
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions & {
+      /**
+       * Custom function to check the server identity. When set, it replaces
+       * the built-in hostname check, as in `fetch()` and `tls.connect()`.
+       * Through an HTTPS proxy it runs for the target's certificate only.
+       * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
+       * @param cert - The leaf certificate of the server
+       * @returns An error if the server is unauthorized, otherwise undefined
+       */
+      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+    };
   };
 
   type WebSocketOptionsHeaders = {

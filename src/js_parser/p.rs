@@ -9459,9 +9459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
         map.ensure_total_capacity(self.top_level_enums.len())?;
         for r#ref in self.top_level_enums.iter() {
-            // Each block of a merged `enum E {} enum E {}` has its own symbol. An older
-            // symbol links to the newest one and all of them share one member map. The
-            // linker and the printer look up the newest symbol only.
+            // Only the newest symbol of a merged `enum E {} enum E {}` is looked up. It has no link.
             if self.symbols[r#ref.inner_index() as usize].has_link() {
                 continue;
             }

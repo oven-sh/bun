@@ -90,6 +90,10 @@ pub mod JSH2FrameParser {
 // ──────────────────────────────────────────────────────────────────────────
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
+/// nghttp2 caps a GOAWAY payload (last stream id + error code + opaque data) at
+/// NGHTTP2_MAX_PAYLOADLEN whatever MAX_FRAME_SIZE the peer advertises:
+/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L7227-L7229
+const MAX_GOAWAY_OPAQUE_DATA_SIZE: usize = 16384 - 8;
 
 /// `Copy` view of [`NativeSocket`] for call sites to snapshot across
 /// re-entrant writes. BACKREF — the socket strictly outlives the attachment:
@@ -399,6 +403,7 @@ impl FrameHeader {
     #[inline]
     fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bool {
         frames_sent.set(frames_sent.get() + 1);
+        debug_assert!(self.length <= MAX_FRAME_SIZE, "the length field is 24 bits");
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
         buf[1] = ((self.length >> 8) & 0xFF) as u8;
@@ -4716,8 +4721,14 @@ impl H2FrameParser {
             if callframe.arguments_count() >= 3 {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
+                        let opaque_data = array_buffer.byte_slice();
+                        // node sends nothing: nghttp2 refuses the frame and node ignores the result.
+                        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2979-L2980
+                        if opaque_data.len() > MAX_GOAWAY_OPAQUE_DATA_SIZE {
+                            return Ok(JSValue::UNDEFINED);
+                        }
                         // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
-                        let copied = array_buffer.byte_slice().to_vec();
+                        let copied = opaque_data.to_vec();
                         this.send_go_away(
                             0,
                             ErrorCode(error_code as u32),

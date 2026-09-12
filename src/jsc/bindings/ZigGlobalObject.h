@@ -678,7 +678,9 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcTagAdvancedBuffersFunction)                       \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)                   \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_bunTestMergeFixturesFunction)                        \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_bunTestWrapFixtureCallbackFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

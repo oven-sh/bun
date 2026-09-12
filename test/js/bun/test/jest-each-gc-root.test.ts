@@ -1,10 +1,12 @@
-// test.each(arr) / describe.each(arr) create a ScopeFunctions whose Zig struct
-// stores `arr` as a raw jsc.JSValue. The codegen for `values: ["each"]` in
-// jest.classes.ts emits a C++ `m_each` WriteBarrier that visitChildren walks,
-// but the Zig side never called `eachSetCached` to populate it — so the only
-// reference to `arr` lived in unmanaged memory the GC never scans. If GC ran
-// between `.each(arr)` and the trailing `("name", cb)` call, the array could
-// be collected and `callAsFunction` would iterate a freed cell.
+// test.each(arr) / describe.each(arr) create a ScopeFunctions whose native struct
+// stores `arr` as a raw JSValue, and test.extend(fixtures) stores the merged
+// fixture registry the same way. The codegen for `values: ["each", "fixtures"]`
+// in jest.classes.ts emits C++ `m_each` / `m_fixtures` WriteBarriers that
+// visitChildren walks, but they only protect the values if the native side
+// actually populates them (`eachSetCached` / `fixturesSetCached`); otherwise the
+// only reference lives in unmanaged memory the GC never scans, and a GC between
+// `.each(arr)` / `.extend(fixtures)` and the trailing `("name", cb)` call frees
+// the value that `callAsFunction` is about to read.
 //
 // useZombieMode scribbles 0xbadbeef0 over swept cells so the dangling access
 // manifests as a hard crash / wrong-type error instead of a heisenbug.
@@ -45,6 +47,18 @@ const chainedEach = (() => (() =>
   test.each([["zeta", 10], ["eta", 20]]).skipIf(false)
 )())();
 
+// test.extend() keeps the merged fixture registry in m_fixtures; it is only
+// reachable from the ScopeFunctions until the trailing ("name", cb) call.
+const extended = (() => (() =>
+  test.extend({ theta: "theta", iota: 30 })
+)())();
+
+// .extend() -> .skipIf(false) -> .each() propagates the registry through
+// genericIf/createBound and fnEach; each row is wrapped separately.
+const chainedExtend = (() => (() =>
+  test.extend({ suffix: "!" }).skipIf(false).each([["kappa"], ["lambda"]])
+)())();
+
 gcHard();
 
 testEach("test.each %s", (name, num) => {
@@ -70,7 +84,22 @@ chainedEach("chained.each %s", (name, num) => {
   seen.push([name, num]);
 });
 
-test("all .each() table rows survived GC", () => {
+gcHard();
+
+extended("test.extend fixtures", ({ theta, iota }) => {
+  expect(theta).toBe("theta");
+  expect(iota).toBe(30);
+  seen.push([theta, iota]);
+});
+
+gcHard();
+
+chainedExtend("chained.extend %s", (name, { suffix }) => {
+  expect(typeof name).toBe("string");
+  seen.push([name + suffix]);
+});
+
+test("all .each() table rows and .extend() fixtures survived GC", () => {
   expect(seen).toEqual([
     ["alpha", 1],
     ["beta", 2],
@@ -79,11 +108,14 @@ test("all .each() table rows survived GC", () => {
     ["epsilon"],
     ["zeta", 10],
     ["eta", 20],
+    ["theta", 30],
+    ["kappa!"],
+    ["lambda!"],
   ]);
 });
 `;
 
-test("test.each/describe.each table array is a GC root", async () => {
+test("test.each/describe.each tables and test.extend fixtures are GC roots", async () => {
   using dir = tempDir("jest-each-gc-root", {
     "each-gc.test.ts": fixture,
   });
@@ -108,7 +140,7 @@ test("test.each/describe.each table array is a GC root", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("8 pass");
+  expect(stderr).toContain("11 pass");
   expect(stderr).toContain("0 fail");
   expect(stdout + stderr).not.toContain("Expected array");
   expect(exitCode).toBe(0);

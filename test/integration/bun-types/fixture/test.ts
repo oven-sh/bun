@@ -421,3 +421,131 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+// test.extend() fixtures (#8257)
+{
+  // plain test callbacks still accept a done callback
+  test("done still works", done => {
+    expectType<(err?: unknown) => void>(done);
+    done();
+  });
+
+  const withValue = test.extend({ port: 3000 });
+  withValue("value fixture", ({ port }) => {
+    expectType<number>(port);
+  });
+  withValue("renamed in the pattern", ({ port: p }) => {
+    expectType<number>(p);
+  });
+  // extended tests receive the context where plain tests receive `done`
+  type WithValueCallbackArgs = Parameters<Parameters<typeof withValue>[1]>;
+  expectType<[context: { port: number }]>(null! as WithValueCallbackArgs);
+
+  interface DB {
+    query(sql: string): Promise<unknown[]>;
+  }
+  const withDb = withValue.extend<{ db: DB; user: string }>({
+    db: async ({ port }, use) => {
+      expectType<number>(port);
+      expectType<(value: DB) => Promise<void>>(use);
+      await use({ query: async () => [] });
+    },
+    user: async ({ db }, use) => {
+      expectType<DB>(db);
+      await use("alice");
+    },
+  });
+  withDb("chained fixtures merge contexts", ({ port, db, user }) => {
+    expectType<number>(port);
+    expectType<DB>(db);
+    expectType<string>(user);
+  });
+
+  // an interface works as the fixture map (no index signature required)
+  interface MyFixtures {
+    db: DB;
+    retries: number;
+  }
+  const withInterface = test.extend<MyFixtures>({
+    db: async ({}, use) => {
+      await use({ query: async () => [] });
+    },
+    retries: 3,
+  });
+  withInterface("interface fixture map", ({ db, retries }) => {
+    expectType<DB>(db);
+    expectType<number>(retries);
+  });
+
+  // an override may destructure its own name to receive the definition it replaces
+  const withLoggedDb = withDb.extend<{ db: DB }>({
+    db: async ({ db, port }, use) => {
+      expectType<DB>(db);
+      expectType<number>(port);
+      await use(db);
+    },
+  });
+  withLoggedDb("override keeps the context type", ({ db, user }) => {
+    expectType<DB>(db);
+    expectType<string>(user);
+  });
+
+  // a fixture defined for the first time has no earlier definition to destructure
+  test.extend<{ fresh: number }>({
+    // @ts-expect-error `fresh` does not exist on the context of its own definition
+    fresh: async ({ fresh }, use) => {
+      await use(fresh);
+    },
+  });
+
+  // modifiers preserve the context type
+  withDb.skip("skip", ({ db }) => {
+    expectType<DB>(db);
+  });
+  withDb.todoIf(false)("todoIf", ({ user }) => {
+    expectType<string>(user);
+  });
+  withDb.each([1, 2])("each %d", (n, { db }) => {
+    expectType<number>(n);
+    expectType<DB>(db);
+  });
+  test.each([1, 2]).extend<{ db: DB }>({
+    db: async ({}, use) => {
+      await use({ query: async () => [] });
+    },
+  })("each().extend() %d", (n, { db }) => {
+    expectType<number>(n);
+    expectType<DB>(db);
+  });
+
+  // [value, options] tuple form
+  test.extend<{ log: string[] }>({
+    log: [
+      async ({}, use) => {
+        await use([]);
+      },
+      { auto: true },
+    ],
+  });
+
+  // function-typed fixtures are declared with the setup-function form
+  test.extend<{ fn: () => void }>({
+    fn: async ({}, use) => {
+      await use(() => {});
+    },
+  });
+
+  // `any`-typed fixtures accept plain values
+  test.extend<{ anything: any }>({ anything: 1 });
+
+  // invalid fixture value types are rejected
+  const typed = test.extend<{ port: number }>({ port: 3000 });
+  // @ts-expect-error string is not assignable to number
+  typed.extend<{ port: number }>({ port: "nope" });
+
+  // re-extending the same fixture name with a different type: the later type wins
+  const retyped = test.extend<{ v: number }>({ v: 1 }).extend<{ v: string }>({ v: "s" });
+  retyped("override replaces the fixture type", ({ v }) => {
+    expectType<string>(v);
+  });
+}

@@ -1179,7 +1179,7 @@ impl CommandLineReporter {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                        "  <d>^<r> <red>a beforeEach/afterEach hook or fixture teardown timed out for this test.<r>\n"
                     );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {

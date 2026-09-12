@@ -59,7 +59,8 @@ test("should be able to upgrade a paused socket and also have backpressure on it
   }
 
   expect().pass();
-});
+  // 100 round trips of 128 KiB over TLS take 3.5 to 5 s under a debug ASAN build.
+}, 30_000);
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
 test.each([

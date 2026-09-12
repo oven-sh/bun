@@ -877,6 +877,38 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// `cwd ++ '\' ++ path` for a plain relative path, so it can take the `\\?\`
+/// branch like Node's `toNamespacedPath()`: without the prefix Win32 strips
+/// trailing dots and spaces (#8836). `None` keeps the caller's existing handling.
+#[cfg(windows)]
+fn join_cwd_windows<'a>(path: &[u8], scratch: &'a mut PathBuffer) -> Option<&'a [u8]> {
+    if path.is_empty() || bun_paths::is_absolute(path) {
+        return None;
+    }
+    // `C:foo` is relative to drive `C`'s own cwd, which only Win32 tracks.
+    if path.len() >= 2 && path[1] == b':' && bun_paths::is_drive_letter(path[0]) {
+        return None;
+    }
+    let cwd_len = match bun_core::getcwd(scratch) {
+        Ok(cwd) => cwd.len(),
+        Err(_) => return None,
+    };
+    if !(cwd_len > 2
+        && bun_paths::is_drive_letter(scratch[0])
+        && scratch[1] == b':'
+        && bun_paths::is_sep_any(scratch[2]))
+    {
+        return None;
+    }
+    let total = cwd_len + 1 + path.len();
+    if total > scratch.len() {
+        return None;
+    }
+    scratch[cwd_len] = b'\\';
+    scratch[cwd_len + 1..total].copy_from_slice(path);
+    Some(&scratch[..total])
+}
+
 impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -889,6 +921,16 @@ impl PathLikeExt for PathLike<'_> {
 
         #[cfg(windows)]
         {
+            // Relative paths take the drive-absolute `\\?\` branch below via
+            // their cwd-joined spelling; the fallthrough copy at the bottom
+            // still sees the original bytes when the join declines.
+            let mut cwd_join_scratch;
+            let sliced = if !bun_paths::is_absolute(sliced) {
+                cwd_join_scratch = bun_paths::path_buffer_pool::get();
+                join_cwd_windows(sliced, &mut cwd_join_scratch).unwrap_or(sliced)
+            } else {
+                sliced
+            };
             // Only take the fast path for paths that can exist on NT at
             // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
             // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
@@ -1068,6 +1110,20 @@ impl PathLikeExt for PathLike<'_> {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
+            }
+            // Relative paths join onto the cwd so `to_kernel32_path` adds the
+            // `\\?\` prefix, as `slice_z_with_force_copy` does; `buf` is the
+            // join scratch and then receives the final wide path.
+            if let Some(joined) = join_cwd_windows(s, buf) {
+                if strings::fits_in_wide_path_buffer(joined) {
+                    let normal = bun_paths::resolve_path::normalize_buf::<
+                        bun_paths::platform::Windows,
+                    >(joined, &mut b[..]);
+                    // `joined`'s borrow of `buf` ended at the line above (NLL).
+                    // SAFETY: same alignment note as above.
+                    let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                    return Ok(strings::to_kernel32_path(buf_u16, normal));
+                }
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,

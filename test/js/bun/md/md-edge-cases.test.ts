@@ -693,7 +693,11 @@ describe("pathological bracket inputs", () => {
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
           ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
-          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          // Only the innermost "[![](u)](u)" is a link. It is in the alt text of
+          // the next image, so no enclosing '[' can open a link (CommonMark 6.7).
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out === "<p>" + fill(18000, "[![") + '[<img src="u" alt="' + fill(17998, "[") + fill(17998, "](u)") + '" />](u)</p>\\n'],
+          ["nested brackets in a link label", "[" + fill(60000, "[") + fill(60000, "]") + "](u)", out => out === '<p><a href="u">' + fill(60000, "[") + fill(60000, "]") + "</a></p>\\n"],
+          ["nested bracketed image alts in a link label", "[" + fill(30000, "![[") + fill(30000, "]](u)") + "](u)", out => out === '<p><a href="u"><img src="u" alt="' + fill(30000, "[") + fill(30000, "]") + '" /></a></p>\\n'],
           ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
           ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
@@ -745,6 +749,48 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html("[ref]: /u\n\n[foo](bar [ref])\n")).toBe('<p>[foo](bar <a href="/u">ref</a>)</p>\n');
     expect(Markdown.html("[ref]: /u\n\n[foo][ref]\n")).toBe('<p><a href="/u">foo</a></p>\n');
     expect(Markdown.html("[ref]: /u\n\n[foo](/x)[ref]\n")).toBe('<p><a href="/x">foo</a><a href="/u">ref</a></p>\n');
+  });
+
+  test("a link at any depth inside a link label rejects the outer link", () => {
+    // CommonMark 6.7: links may not contain other links, at any level of
+    // nesting. Every expected string is the output of commonmark.js 0.31.2.
+    const expected: Record<string, string> = {
+      // The inner link is inside a bracket pair that is not a link.
+      "[[x [a](/i) y] z](/u)\n": '<p>[[x <a href="/i">a</a> y] z](/u)</p>\n',
+      "[x [y [a](/i)] z](/u)\n": '<p>[x [y <a href="/i">a</a>] z](/u)</p>\n',
+      "[a]: /url\n\n[[x [a] y] z](/u)\n": '<p>[[x <a href="/url">a</a> y] z](/u)</p>\n',
+      "[r]: /r\n\n[[x [a](/i) y] z][r]\n": '<p>[[x <a href="/i">a</a> y] z]<a href="/r">r</a></p>\n',
+      // The inner link is inside image alt text.
+      "[![x [a](/i) y](/img) z](/u)\n": '<p>[<img src="/img" alt="x a y" /> z](/u)</p>\n',
+      "[![a ![b [c](/i) d](/u2) e](/u1) f](/u)\n": '<p>[<img src="/u1" alt="a b c d e" /> f](/u)</p>\n',
+      "[![a [b ![c [d](/i)](/u2)] e](/u1) f](/u)\n": '<p>[<img src="/u1" alt="a [b c d] e" /> f](/u)</p>\n',
+      "[r]: /r\n\n[![x [r] y][r] z](/u)\n": '<p>[<img src="/r" alt="x r y" /> z](/u)</p>\n',
+      // An escaped "!" does not turn the inner link into an image.
+      "[x \\![a](/i) y](/u)\n": '<p>[x !<a href="/i">a</a> y](/u)</p>\n',
+      // The emphasis collector makes the same decision as the link parser.
+      "[*x [y [a](/i)] z*](/u)\n": '<p>[<em>x [y <a href="/i">a</a>] z</em>](/u)</p>\n',
+      "*[x [y [a](/i)*] z](/u)\n": '<p><em>[x [y <a href="/i">a</a></em>] z](/u)</p>\n',
+      // Controls: brackets that are not links leave the outer link alone.
+      "[x [y [z]] w](/u)\n": '<p><a href="/u">x [y [z]] w</a></p>\n',
+      "[![x [y] z](/img) w](/u)\n": '<p><a href="/u"><img src="/img" alt="x [y] z" /> w</a></p>\n',
+      "[[x `[a](/i)` y] z](/u)\n": '<p><a href="/u">[x <code>[a](/i)</code> y] z</a></p>\n',
+      // Controls: a '[' in an image destination or reference is not a link.
+      "[a]: /url\n\n[x ![img](/url[a]) y](/v)\n": '<p><a href="/v">x <img src="/url%5Ba%5D" alt="img" /> y</a></p>\n',
+      "[a]: /url\n\n[![x ![y](/u2[a]) z](/u1) f](/u)\n": '<p><a href="/u"><img src="/u1" alt="x y z" /> f</a></p>\n',
+      "[a]: /url\n\n[![x ![y][a] z](/u1) f](/u)\n": '<p><a href="/u"><img src="/u1" alt="x y z" /> f</a></p>\n',
+    };
+    const actual = Object.fromEntries(Object.keys(expected).map(markdown => [markdown, Markdown.html(markdown)]));
+    expect(actual).toEqual(expected);
+
+    // render() calls `link` for the inner link only, not for a link around it.
+    const hrefs: string[] = [];
+    Markdown.render("[[x [a](/i) y] z](/u)\n", {
+      link: (children, { href }) => {
+        hrefs.push(href);
+        return children;
+      },
+    });
+    expect(hrefs).toEqual(["/i"]);
   });
 });
 

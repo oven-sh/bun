@@ -788,7 +788,9 @@ impl Parser<'_> {
         }
     }
 
-    /// Check if a link label contains an inner link construct.
+    /// Check if a link label contains an inner link construct, at any level
+    /// of nesting: directly, inside a bracket pair that is not a link, or
+    /// inside image alt text.
     /// Used to enforce the "links cannot contain other links" rule (CommonMark §6.7).
     /// `base` is the offset of `label` within the slice `brackets` was built for.
     pub(crate) fn label_contains_link(
@@ -797,16 +799,33 @@ impl Parser<'_> {
         brackets: &BracketMatches,
         base: usize,
     ) -> bool {
+        // One entry per image whose alt text is being scanned, innermost
+        // last: where the scan resumes after the image's "(url)" / "[ref]"
+        // tail, and the end of the region that encloses the image.
+        let mut enclosing: Vec<(usize, usize)> = Vec::new();
+        // The region being scanned is `label[..end]`: the whole label, or the
+        // alt text of the innermost image. Like a label frame of the parser,
+        // no construct found inside it may extend past its end.
+        let mut end = label.len();
         let mut pos: usize = 0;
-        while pos < label.len() {
-            if label[pos] == b'\\' && pos + 1 < label.len() {
+        loop {
+            if pos >= end {
+                let Some((resume, enclosing_end)) = enclosing.pop() else {
+                    return false;
+                };
+                pos = resume;
+                end = enclosing_end;
+                continue;
+            }
+            let region = &label[..end];
+            if region[pos] == b'\\' && pos + 1 < end {
                 pos += 2;
                 continue;
             }
             // Skip code spans
-            if label[pos] == b'`' {
-                let count = inlines::count_backticks(label, pos);
-                if let Some(end_pos) = self.find_code_span_end(label, pos + count, count) {
+            if region[pos] == b'`' {
+                let count = inlines::count_backticks(region, pos);
+                if let Some(end_pos) = self.find_code_span_end(region, pos + count, count) {
                     pos = end_pos + count;
                 } else {
                     // No closer: skip the whole run so it isn't re-counted per
@@ -816,33 +835,42 @@ impl Parser<'_> {
                 continue;
             }
             // Skip HTML tags and autolinks
-            if label[pos] == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(label, pos) {
+            if region[pos] == b'<' && !self.flags.no_html_spans {
+                if let Some(tag_end) = self.find_html_tag(region, pos) {
                     pos = tag_end;
                     continue;
                 }
-                if let Some(al) = self.find_autolink(label, pos) {
+                if let Some(al) = self.find_autolink(region, pos) {
                     pos = al.end_pos;
                     continue;
                 }
             }
-            if label[pos] == b'[' {
-                // Skip images (![...]) — images are allowed inside links
-                let is_inner_image = pos > 0 && label[pos - 1] == b'!';
-                // Try to find matching ] and check for link syntax
-                let inner = self.try_match_bracket_link(label, pos, brackets, base);
-                if inner.is_link && !is_inner_image {
-                    return true;
+            // "![" opens an image. The '[' of an escaped "\![" does not: the
+            // escape branch above has already consumed its '!'.
+            let is_inner_image = region[pos] == b'!' && pos + 1 < end && region[pos + 1] == b'[';
+            if is_inner_image || region[pos] == b'[' {
+                let open = if is_inner_image { pos + 1 } else { pos };
+                let inner = self.try_match_bracket_link(region, open, brackets, base);
+                if inner.is_link {
+                    if !is_inner_image {
+                        return true;
+                    }
+                    // An image is allowed inside a link, but a link in its alt
+                    // text is not. The "(url)" / "[ref]" tail is never scanned:
+                    // a '[' in it is part of the destination or the reference.
+                    if !brackets.has_opener_between(base + open, base + inner.label_end) {
+                        pos = inner.link_end;
+                        continue;
+                    }
+                    enclosing.push((inner.link_end, end));
+                    end = inner.label_end;
                 }
-                if inner.link_end > pos {
-                    // Skip past entire construct (including (url) or [ref] for images)
-                    pos = inner.link_end;
-                    continue;
-                }
+                // Not a link, or image alt text: a link inside still counts.
+                pos = open + 1;
+                continue;
             }
             pos += 1;
         }
-        false
     }
 
     /// Process wiki link: [[destination]] or [[destination|label]]

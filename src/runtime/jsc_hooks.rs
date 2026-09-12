@@ -1343,6 +1343,11 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+fn dupe_blob_url(blob_id: &[u8]) -> Option<crate::webcore::Blob> {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+        .dupe_thread_shareable(blob_id)
+}
+
 /// `Response::get_blob_without_call_frame` /
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
@@ -1450,9 +1455,9 @@ mod vm_loader_ctx {
     // simple field reads. This matters because `read_dir_info_package_json`
     // holds a live `&mut transpiler.resolver` across a re-entrant `read_dir_info`
     // that can call back into these hooks; a `&VirtualMachine` formed here would
-    // alias that `&mut` (SB/TB UB). The two accessors that call `&self` methods
-    // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
-    // single call, which never spans the re-entrant path.
+    // alias that `&mut` (SB/TB UB). The accessors that call `&self` methods
+    // (`main`, `resolve_blob`, `blob_loader`) form a transient `&VirtualMachine`
+    // scoped to the single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
         Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
@@ -1478,11 +1483,9 @@ mod vm_loader_ctx {
                 }
             },
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
-            resolve_blob(spec) => {
-                crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                    .resolve_and_dupe(spec, &*(*this).global)
-                    .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
-            },
+            resolve_blob(spec) => (*this)
+                .resolve_blob_url(spec)
+                .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>()),
             blob_loader(b) => blob(b).get_loader(&*this),
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
@@ -1520,6 +1523,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
+    dupe_blob_url,
     body_mixin_get_blob,
     process_exit,
     console_on_before_print,
@@ -3989,10 +3993,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
-        match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
-        {
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        match unsafe { &*jsc_vm }.resolve_blob_url(&specifier[b"blob:".len()..]) {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);
                 // SAFETY: `blob_to_deinit` is `Some` (just written); we hold

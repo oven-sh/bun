@@ -81,6 +81,15 @@ impl ObjectURLRegistry {
         Some(blob)
     }
 
+    /// A dupe of the entry with no VM-affine state (null `global_this`,
+    /// thread-shareable `name`), for a holder on another thread.
+    pub(crate) fn dupe_thread_shareable(&self, pathname: &[u8]) -> Option<Blob> {
+        let uuid = uuid_from_pathname(pathname)?;
+        let map = self.map.lock();
+        let entry = map.get(&uuid.bytes)?;
+        Some(entry.blob.dupe_with_content_type(true))
+    }
+
     pub(crate) fn resolve_and_dupe_to_js(
         &self,
         pathname: &[u8],

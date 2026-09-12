@@ -130,6 +130,9 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The entry point's Blob for a `blob:` specifier, captured at construction
+    /// as the URL spec requires (a parsed blob URL carries its blob).
+    entry_blob: Option<jsc::module_loader::WorkerEntryBlob>,
 }
 
 enum EntryOutcome {
@@ -391,6 +394,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            entry_blob: capture_blob_url_entry(spec_slice.slice()),
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -456,9 +460,11 @@ impl WebWorker {
         }
         // SAFETY: `WebWorker` is shared across threads by design (atomics,
         // `Guarded`, thread-confined cells — see the struct doc) and holds no
-        // parent-VM state; `init` is an owned copy — byte buffers, scalars and
-        // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
-        // itself is kept by `_parent_ticket`.
+        // parent-VM state; `init` is an owned copy — byte buffers, scalars,
+        // `Arc<RefCountedEnvValue>`s, and `entry_blob`, a registry dupe with a
+        // null `global_this`, a `make_thread_shareable()`d `name` and
+        // atomically refcounted `store`/`content_type` (no JSC or atom
+        // strings); the parent VM itself is kept by `_parent_ticket`.
         unsafe impl Send for ThreadStart {}
         let start = ThreadStart {
             worker: thread_ref,
@@ -667,6 +673,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            entry_blob,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -711,6 +718,7 @@ impl WebWorker {
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
             *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
+            vm_ref.module_loader.worker_entry_blob = entry_blob;
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
@@ -1262,6 +1270,28 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
+/// The `<uuid>` of a `blob:<uuid>` specifier (`ObjectURLRegistry::is_blob_url`).
+/// A short `"blob:foo"` is `None` and falls through to the resolver.
+fn blob_url_id(specifier: &[u8]) -> Option<&[u8]> {
+    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
+    (specifier.len() >= BLOB_SPECIFIER_LEN)
+        .then(|| specifier.strip_prefix(b"blob:".as_slice()))
+        .flatten()
+}
+
+/// Dupe the registry entry behind a `blob:` specifier on the parent thread.
+/// `None` for a non-blob specifier or an already revoked URL.
+fn capture_blob_url_entry(specifier: &[u8]) -> Option<jsc::module_loader::WorkerEntryBlob> {
+    let blob_id = blob_url_id(specifier)?;
+    let uuid = crate::uuid::UUID::parse(blob_id).ok()?;
+    let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+    let blob = (hooks.dupe_blob_url)(blob_id)?;
+    Some(jsc::module_loader::WorkerEntryBlob {
+        uuid: uuid.bytes,
+        blob,
+    })
+}
+
 /// Resolve a worker entry-point specifier to a path the module loader can
 /// consume. The returned slice is BORROWED — it aliases `str`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
@@ -1295,14 +1325,10 @@ unsafe fn resolve_entry_point_specifier<'s>(
         return Some(str);
     }
 
-    // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
-    // AND `len >= specifier_len` (`"blob:".len + UUID.stringLength = 41`).
-    // A short `"blob:foo"` must fall through to the resolver below, not enter
-    // this arm and report "Blob URL is missing".
-    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
-    if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
+    if let Some(blob_id) = blob_url_id(str) {
+        // SAFETY: per fn contract; `module_loader` is only mutated on `parent`'s
+        // owning thread, the caller's thread.
+        if unsafe { (*parent).has_blob_url(blob_id) } {
             return Some(str);
         } else {
             *error_message = BunString::static_("Blob URL is missing");

@@ -561,32 +561,55 @@ impl JSGlobalObject {
     /// "The {argname} argument must be of type {typename}. Received {value}"
     ///
     /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    #[inline]
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
         value: JSValue,
     ) -> JsError {
-        let actual_string_value = match Self::determine_specific_type(self, value) {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
-        self.err(
-            JscError::INVALID_ARG_TYPE,
-            format_args!(
-                "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
-                actual_string_value
-            ),
+        self.throw_invalid_argument_type_value_impl(
+            argname.as_ref(),
+            "of type ",
+            typename.as_ref(),
+            value,
         )
-        .throw()
     }
 
+    /// "The {argname} argument must be {typename}. Received {value}"
+    #[inline]
     pub fn throw_invalid_argument_type_value2(
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsError {
+        self.throw_invalid_argument_type_value_impl(argname.as_ref(), "", typename.as_ref(), value)
+    }
+
+    /// "The <argname> argument must be one of type <typename>. Received <value>"
+    #[inline]
+    pub fn throw_invalid_argument_type_value_one_of(
+        &self,
+        argname: impl AsRef<[u8]>,
+        typename: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsError {
+        self.throw_invalid_argument_type_value_impl(
+            argname.as_ref(),
+            "one of type ",
+            typename.as_ref(),
+            value,
+        )
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn throw_invalid_argument_type_value_impl(
+        &self,
+        argname: &[u8],
+        of_type: &str,
+        typename: &[u8],
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -596,9 +619,10 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
+                "The \"{}\" argument must be {}{}. Received {}",
+                bstr::BStr::new(argname),
+                of_type,
+                bstr::BStr::new(typename),
                 actual_string_value
             ),
         )
@@ -608,9 +632,11 @@ impl JSGlobalObject {
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
+    #[cold]
+    #[inline(never)]
     pub(crate) fn throw_invalid_property_type(
         &self,
-        name: impl AsRef<[u8]>,
+        name: &[u8],
         expected_type: &str,
         value: JSValue,
     ) -> JsError {
@@ -619,32 +645,9 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" property must be of type {}, got {}",
-                bstr::BStr::new(name.as_ref()),
+                bstr::BStr::new(name),
                 expected_type,
                 actual_type,
-            ),
-        )
-        .throw()
-    }
-
-    /// "The <argname> argument must be one of type <typename>. Received <value>"
-    pub fn throw_invalid_argument_type_value_one_of(
-        &self,
-        argname: impl AsRef<[u8]>,
-        typename: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsError {
-        let actual_string_value = match Self::determine_specific_type(self, value) {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
-        self.err(
-            JscError::INVALID_ARG_TYPE,
-            format_args!(
-                "The \"{}\" argument must be one of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
-                bstr::BStr::new(typename.as_ref()),
-                actual_string_value
             ),
         )
         .throw()

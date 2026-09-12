@@ -1305,9 +1305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.conditional_namespace_records(e.yes, out)?;
                 self.conditional_namespace_records(e.no, out)
             }
-            js_ast::ExprData::ERequireString(req)
-                if self.options.bundle && req.unwrapped_id.get().is_none() =>
-            {
+            js_ast::ExprData::ERequireString(req) if self.options.bundle => {
                 out.push(req.import_record_index);
                 Some(())
             }

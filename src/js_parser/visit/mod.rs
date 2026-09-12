@@ -559,7 +559,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let local = id.r#ref;
                             if self.import_items_for_namespace.contains_key(&local)
                                 || !self.options.bundle
-                                || req.unwrapped_id.get().is_some()
                             {
                                 break 'split_require;
                             }

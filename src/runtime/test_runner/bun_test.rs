@@ -11,7 +11,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::{CommandLineReporter, is_node_test_child};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -560,6 +560,9 @@ impl BunTestRoot {
     }
 
     pub(crate) fn on_before_print(&self) {
+        if is_node_test_child() {
+            return;
+        }
         if let Some(active_file) = &self.active_file {
             // Do NOT go through `<BunTestCell as Deref>` here. Two of the three
             // callers (`on_uncaught_exception`, test_command.rs report-status)
@@ -813,9 +816,15 @@ impl BunTest {
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
         } else {
-            // error is only reported for the first done() call
+            // Error is only reported for the first done() call. Routed through
+            // bun:test's collector, not `uncaught_exception`: in a node:test
+            // child the latter dispatches genuine uncaughts to process listeners.
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                let vm = global_this.bun_vm().as_mut();
+                if !vm.is_shutting_down() {
+                    vm.unhandled_error_counter += 1;
+                    (vm.on_unhandled_rejection)(vm, global_this, value);
+                }
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
@@ -1289,6 +1298,15 @@ impl BunTest {
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
             return; // do not print error, it was already consumed
+        }
+        if is_node_test_child()
+            && !matches!(
+                handle_status,
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+                    | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
+            )
+        {
+            return;
         }
         let Some(exception) = exception else {
             return; // the exception should not be visible (eg m_terminationException)

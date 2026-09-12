@@ -95,6 +95,8 @@ pub enum HardcodedModule {
     NodeStringDecoder,
     #[strum(serialize = "node:test")]
     NodeTest,
+    #[strum(serialize = "node:test/reporters")]
+    NodeTestReporters,
     #[strum(serialize = "node:timers")]
     NodeTimers,
     #[strum(serialize = "node:timers/promises")]
@@ -249,6 +251,7 @@ bun_core::comptime_string_map! {
         b"node:net" => HardcodedModule::NodeNet,
         b"node:readline" => HardcodedModule::NodeReadline,
         b"node:test" => HardcodedModule::NodeTest,
+        b"node:test/reporters" => HardcodedModule::NodeTestReporters,
         b"node:os" => HardcodedModule::NodeOs,
         b"node:path" => HardcodedModule::NodePath,
         b"node:path/posix" => HardcodedModule::NodePathPosix,
@@ -460,6 +463,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
     node_entry_only_prefix!("node:quic"),
+    node_entry_only_prefix!("node:test/reporters"),
     //
     node_entry!("assert"),
     node_entry!("assert/strict"),

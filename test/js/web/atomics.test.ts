@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -306,4 +307,59 @@ describe("Atomics", () => {
       expect(Atomics.load(view, 0)).toBe(-50);
     });
   });
+});
+
+describe("Atomics.waitAsync worker teardown", () => {
+  // A worker exiting with N pending Atomics.waitAsync waiters used to tear down in
+  // O(N^2): ~VM cancels each waiter's ticket, and each cancellation scanned the whole
+  // pending-ticket set. The scan also ran while JSC held the process-global
+  // waiter-lists lock, stalling Atomics.notify/waitAsync on every other thread.
+  // With N = 50000 the quadratic teardown took 38s+ in release; linear teardown is
+  // well under a second. The 15s bound leaves wide margin for slow debug/ASAN CI.
+  test("worker with many pending waiters exits quickly", async () => {
+    using dir = tempDir("atomics-waiter-teardown", {
+      "waiter-teardown-fixture.mjs": `
+        import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+        if (!isMainThread) {
+          const i32 = new Int32Array(workerData.sab);
+          for (let k = 0; k < 50000; k++) Atomics.waitAsync(i32, k % 1024, 0);
+          parentPort.postMessage("armed");
+          setInterval(() => {}, 1e6);
+        } else {
+          const sab = new SharedArrayBuffer(4096);
+          const w = new Worker(new URL(import.meta.url), { workerData: { sab } });
+          w.on("message", () => {
+            const start = Date.now();
+            w.terminate();
+            w.on("exit", () => {
+              console.log(JSON.stringify({ exitAfterMs: Date.now() - start }));
+              process.exit(0);
+            });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "waiter-teardown-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Fail fast instead of waiting out a quadratic teardown (minutes in debug).
+    let timer: Timer | undefined;
+    const deadline = new Promise<"deadline">(resolve => {
+      timer = setTimeout(() => resolve("deadline"), 60_000);
+    });
+    const first = await Promise.race([proc.exited, deadline]);
+    clearTimeout(timer);
+    if (first === "deadline") proc.kill("SIGKILL");
+    expect(first).not.toBe("deadline");
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const { exitAfterMs } = JSON.parse(stdout);
+    expect(exitAfterMs).toBeLessThan(15_000);
+  }, 90_000);
 });

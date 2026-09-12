@@ -831,8 +831,9 @@ describe("getHeapSnapshot", () => {
 });
 
 // Node services these from Environment::RequestInterrupt: they settle while the worker runs
-// synchronous JavaScript and never returns to its event loop. The worker spins on a shared flag
-// that only the parent sets, so each call can settle only if it runs without the loop's help.
+// synchronous JavaScript and never returns to its event loop. The worker spins until the parent
+// sets flag[0], so each call can settle only if it runs without the loop's help, and sets flag[1]
+// once it has left the loop.
 // (cpuUsage() and getHeapStatistics() need nothing from the worker thread and are covered apart.)
 describe("introspection while the worker runs synchronous JavaScript", () => {
   async function expectToSettleWhileBusy(worker: Worker, flag: Int32Array, calledBeforeOnline?: Promise<unknown>) {
@@ -856,8 +857,8 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
       );
       expect(json.nodes.length).toBeGreaterThan(0);
 
-      // Everything above settled while the worker still spun: it leaves the loop only now.
-      expect(Atomics.load(flag, 0)).toBe(0);
+      // Everything above settled while the worker still spun.
+      expect(Atomics.load(flag, 1)).toBe(0);
     } finally {
       Atomics.store(flag, 0, 1);
     }
@@ -866,11 +867,12 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
   }
 
   test("while the entry module runs", async () => {
-    const flag = new Int32Array(new SharedArrayBuffer(4));
+    const flag = new Int32Array(new SharedArrayBuffer(8));
     const worker = new Worker(
       /* js */ `
         const flag = new Int32Array(require("node:worker_threads").workerData);
         while (Atomics.load(flag, 0) === 0) {}
+        Atomics.store(flag, 1, 1);
       `,
       { eval: true, workerData: flag.buffer },
     );
@@ -881,7 +883,7 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
   });
 
   test("while a message handler runs", async () => {
-    const flag = new Int32Array(new SharedArrayBuffer(4));
+    const flag = new Int32Array(new SharedArrayBuffer(8));
     const worker = new Worker(
       /* js */ `
         const { parentPort, workerData } = require("node:worker_threads");
@@ -889,6 +891,7 @@ describe("introspection while the worker runs synchronous JavaScript", () => {
         parentPort.once("message", () => {
           parentPort.postMessage("spinning");
           while (Atomics.load(flag, 0) === 0) {}
+          Atomics.store(flag, 1, 1);
           process.exit(0);
         });
       `,

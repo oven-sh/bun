@@ -229,16 +229,22 @@ pub mod js_fns {
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
-                        return Err(if tag == GenericHookTag::OnTestFinished {
-                            global_this.throw(format_args!(
-                                "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
+                        // Reached when the hook is called after the first `await` in a
+                        // concurrent test: the callback stack has been popped, so the
+                        // owning sequence can no longer be identified.
+                        return Err(match tag {
+                            GenericHookTag::OnTestFinished => global_this.throw(format_args!(
+                                "Cannot call {}() here. In a concurrent test, call it synchronously before the first `await`.",
                                 tag_name
-                            ))
-                        } else {
-                            global_this.throw(format_args!(
-                                "Cannot call {}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.",
+                            )),
+                            GenericHookTag::AfterAll | GenericHookTag::AfterEach => global_this.throw(format_args!(
+                                "Cannot call {}() here. In a concurrent test, call it synchronously before the first `await`, or move it into a describe() block.",
                                 tag_name
-                            ))
+                            )),
+                            _ => global_this.throw(format_args!(
+                                "Cannot call {}() here. Call it inside describe() instead.",
+                                tag_name
+                            )),
                         });
                     };
 
@@ -686,6 +692,16 @@ impl BunTest {
                 active_scope: self.collection.active_scope,
             },
             Phase::Execution => 'blk: {
+                // A callback is synchronously on the stack (including the
+                // microtask drain inside `run_test_callback`): its entry names
+                // the sequence even in a multi-sequence concurrent group.
+                if let Some(entry_data) = self.execution.on_stack_entry_data.get() {
+                    break 'blk RefDataValue::Execution {
+                        group_index: self.execution.group_index,
+                        entry_data: Some(entry_data),
+                    };
+                }
+
                 let Some(active_group) = self.execution.active_group_ref() else {
                     debug_assert!(false); // should have switched phase if we're calling getCurrentStateData, but it could happen with re-entry maybe
                     break 'blk RefDataValue::Done;

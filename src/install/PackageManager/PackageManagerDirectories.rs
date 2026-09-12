@@ -488,6 +488,12 @@ impl<'a> ByteCursor<'a> {
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
+    /// Two lower-hex digits per byte.
+    #[inline(always)]
+    fn put_hex_lower(&mut self, bytes: &[u8]) {
+        self.at += bun_fmt::bytes_to_hex_lower(bytes, &mut self.buf[self.at..]);
+    }
+
     /// `@@@{d}` when set.
     #[inline(always)]
     fn put_cache_version(&mut self, v: Option<usize>) {
@@ -726,14 +732,18 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
+/// `@T@<first 16 bytes of sha256(url), hex>@@@<cache version>`; collision-resistant on purpose.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
+    use bun_sha_hmac::sha::hashers::SHA256;
+    let mut digest = [0u8; SHA256::DIGEST];
+    SHA256::hash(url, &mut digest);
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+    w.put_hex_lower(&digest[..16]);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()

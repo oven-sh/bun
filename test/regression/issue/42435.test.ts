@@ -16,6 +16,7 @@ test.skipIf(!isWindows)("FileSink: awaiting write() and flush() makes the bytes 
       const flushResult = writer.flush();
       expect(writeResult).toBeInstanceOf(Promise);
       expect(await writeResult).toBe(6);
+      expect(flushResult).toBeInstanceOf(Promise);
       await flushResult;
       expect(readFileSync(path, "utf8")).toBe("first\n");
     } finally {

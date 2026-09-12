@@ -2801,7 +2801,165 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
+/// The manifest-derived sections of bun.lock, mirrored from `bun_lock::Stringifier::save_from_binary`.
+/// Overrides, catalogs and workspace versions are not part of it.
+pub(crate) struct ManifestSections {
+    /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
+    workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
+    /// Sorted names that apply to the tree. `None` when the lockfile has no list.
+    trusted_dependencies: Option<Vec<Box<[u8]>>>,
+    /// Sorted (`name@version`, patch path) that apply to the tree. `None` when there are none.
+    patched_dependencies: Option<Vec<(Box<[u8]>, Box<[u8]>)>>,
+}
+
+impl ManifestSections {
+    /// The first section where `self` differs from `loaded`, with its package.json's directory.
+    /// Trusted and patched lists are only compared when `loaded` recorded one.
+    pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
+        if self.workspaces.len() != loaded.workspaces.len() {
+            return Some(("workspaces", b""));
+        }
+        for (now, recorded) in self.workspaces.iter().zip(&loaded.workspaces) {
+            if now != recorded {
+                return Some(("dependencies", &now.0));
+            }
+        }
+
+        if let Some(recorded) = loaded.trusted_dependencies.as_deref() {
+            let declared = self.trusted_dependencies.as_deref().unwrap_or_default();
+            let added = declared
+                .iter()
+                .any(|name| recorded.binary_search(name).is_err());
+            // With workspaces the recorded list is a union a partial checkout cannot reproduce.
+            let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
+            if added || removed {
+                return Some(("trustedDependencies", b""));
+            }
+        }
+
+        if let Some(recorded) = loaded.patched_dependencies.as_deref() {
+            if self.patched_dependencies.as_deref().unwrap_or_default() != recorded {
+                return Some(("patchedDependencies", b""));
+            }
+        }
+        None
+    }
+}
+
 impl Lockfile {
+    pub(crate) fn manifest_sections(&self) -> ManifestSections {
+        let buf = self.buffers.string_bytes.as_slice();
+        let deps_buf = self.buffers.dependencies.as_slice();
+        let hoisted_deps = self.buffers.hoisted_dependencies.as_slice();
+        let pkgs = self.packages.slice();
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_deps = pkgs.items_dependencies();
+
+        let groups = dependency::Behavior::PROD
+            | dependency::Behavior::DEV
+            | dependency::Behavior::OPTIONAL
+            | dependency::Behavior::PEER;
+        let mut workspaces = Vec::new();
+        for pkg_id in 0..pkgs.len() {
+            let res = &pkg_resolutions[pkg_id];
+            let path: &[u8] = match res.tag {
+                ResolutionTag::Root => b"",
+                ResolutionTag::Workspace => res.workspace().slice(buf),
+                _ => continue,
+            };
+            let mut deps: Vec<(Box<[u8]>, u8, Box<[u8]>)> = pkg_deps[pkg_id]
+                .get(deps_buf)
+                .iter()
+                .filter(|dep| dep.behavior.intersects(groups))
+                .map(|dep| {
+                    (
+                        Box::from(dep.name.slice(buf)),
+                        dep.behavior.intersection(groups).bits(),
+                        Box::from(dep.version.literal.slice(buf)),
+                    )
+                })
+                .collect();
+            deps.sort_unstable();
+            workspaces.push((Box::<[u8]>::from(path), deps));
+        }
+        workspaces.sort_unstable_by(|l, r| l.0.cmp(&r.0));
+
+        let mut trusted_dependencies: Option<Vec<Box<[u8]>>> =
+            self.trusted_dependencies.as_ref().map(|_| Vec::new());
+        let mut patched_dependencies: Option<Vec<(Box<[u8]>, Box<[u8]>)>> =
+            (self.patched_dependencies.count() > 0).then(Vec::new);
+        let mut name_and_version: Vec<u8> = Vec::new();
+        for tree in self.buffers.trees.iter() {
+            for &dep_id in tree.dependencies.get(hoisted_deps) {
+                if dep_id == invalid_dependency_id {
+                    continue;
+                }
+                let pkg_id = self.buffers.resolutions[dep_id as usize];
+                if pkg_id == invalid_package_id {
+                    continue;
+                }
+                let dep = &deps_buf[dep_id as usize];
+
+                if let (Some(trusted), Some(found)) =
+                    (&self.trusted_dependencies, &mut trusted_dependencies)
+                {
+                    let name = dep.name.slice(buf);
+                    if trusted
+                        .get(&(dep.name_hash as TruncatedPackageNameHash))
+                        .is_some_and(|trusted_name| **trusted_name == *name)
+                    {
+                        found.push(Box::from(name));
+                    }
+                }
+
+                if let Some(found) = &mut patched_dependencies {
+                    let res = &pkg_resolutions[pkg_id as usize];
+                    name_and_version.clear();
+                    let _ = write!(
+                        &mut name_and_version,
+                        "{}@",
+                        bstr::BStr::new(pkg_names[pkg_id as usize].slice(buf))
+                    );
+                    if res.tag == ResolutionTag::Workspace {
+                        if let Some(version) = self
+                            .workspace_versions
+                            .get(&pkg_name_hashes[pkg_id as usize])
+                        {
+                            let _ = write!(&mut name_and_version, "{}", version.fmt(buf));
+                        }
+                    } else {
+                        let _ = write!(&mut name_and_version, "{}", res.fmt(buf, PathSep::Posix));
+                    }
+                    if let Some(patch) = self
+                        .patched_dependencies
+                        .get(&SemverStringBuilder::string_hash(&name_and_version))
+                    {
+                        found.push((
+                            Box::from(name_and_version.as_slice()),
+                            Box::from(patch.path.slice(buf)),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(found) = &mut trusted_dependencies {
+            found.sort_unstable();
+            found.dedup();
+        }
+        if let Some(found) = &mut patched_dependencies {
+            found.sort_unstable();
+            found.dedup();
+        }
+
+        ManifestSections {
+            workspaces,
+            trusted_dependencies,
+            patched_dependencies,
+        }
+    }
+
     /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
     pub(crate) fn eql(
         &self,

@@ -1933,6 +1933,16 @@ interface BuildConfig {
     sideEffects?: boolean;
     development?: boolean;
   };
+  /**
+   * Run the React Compiler over `.jsx`/`.tsx` source files. Experimental.
+   * @default false
+   */
+  reactCompiler?: boolean;
+  /**
+   * Output mode for the React Compiler. Only applies when `reactCompiler` is `true`.
+   * @default "client" when target is "browser"; "ssr" when target is "bun" or "node"
+   */
+  reactCompilerOutputMode?: "client" | "ssr";
   naming?:
     | string
     | {

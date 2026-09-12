@@ -884,6 +884,14 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
+    /// Is there a root `overrides`/`resolutions` rule (plain or scoped) for this dependency?
+    /// Rules are written in the root package.json, so a `file:` path applied through one is
+    /// relative to the top-level dir whichever package declares the dependency.
+    pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
+        let dependency = &self.buffers.dependencies[id as usize];
+        self.overrides.get(self, id, dependency.name_hash).is_some()
+    }
+
     /// Returns the package id of the workspace the install is taking place in.
     pub(crate) fn get_workspace_package_id(
         &self,

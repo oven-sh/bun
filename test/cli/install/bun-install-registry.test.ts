@@ -5350,6 +5350,55 @@ describe("transitive file dependencies", () => {
       version: "1.1.1",
     });
   });
+
+  // `file-dep@1.0.0` declares `"files": "file:./the-files"` and ships `the-files/`
+  // (index.js + package.json) in its tarball.
+  test("a root override redirects a registry package's own file: dependency to a folder in the project", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "file-dep": "1.0.0" },
+          overrides: { files: "file:./vendor/files" },
+        }),
+      ),
+      write(join(packageDir, "vendor", "files", "package.json"), JSON.stringify({ name: "files", version: "9.9.9" })),
+      write(join(packageDir, "vendor", "files", "vendored.js"), ""),
+    ]);
+
+    for (const frozenLockfile of [false, true]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+      const { out } = await runBunInstall(env, packageDir, { frozenLockfile });
+
+      expect(out).toContain("2 packages installed");
+      expect(await readdirSorted(join(packageDir, "node_modules", "file-dep", "node_modules", "files"))).toEqual([
+        "package.json",
+        "vendored.js",
+      ]);
+    }
+  });
+
+  test("a scoped override for another dependent leaves a registry package's own file: dependency alone", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "file-dep": "1.0.0" },
+        // Names `files`, but only as a dependency of `other`, which file-dep is not.
+        overrides: { other: { files: "file:./vendor/files" } },
+      }),
+    );
+
+    const { out } = await runBunInstall(env, packageDir);
+
+    expect(out).toContain("2 packages installed");
+    expect(await readdirSorted(join(packageDir, "node_modules", "file-dep", "node_modules", "files"))).toEqual([
+      "index.js",
+      "package.json",
+    ]);
+  });
 });
 
 test("name from manifest is scoped and url encoded", async () => {

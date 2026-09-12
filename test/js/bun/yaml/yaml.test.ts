@@ -2853,6 +2853,109 @@ config:
       expect(YAML.stringify(obj, null, 2)).toBe(expected);
     });
 
+    // `- ` is two columns wide whatever `space` is. A collection that starts on the dash line has its
+    // first entry two columns after the dash, so its later entries go there too. Only a mapping value
+    // is indented by `space`.
+    describe("collections nested in a sequence item, at every indent width", () => {
+      // These tests are about indentation, so each line is compared without its trailing whitespace.
+      const lines = (value: unknown, space: number | string) =>
+        YAML.stringify(value, null, space)
+          .split("\n")
+          .map(line => line.trimEnd());
+
+      test("a nested sequence lines up with its first item", () => {
+        for (const space of [1, 2, 3, 4, 8]) {
+          expect(lines([[1, 2], 3], space)).toEqual(["- - 1", "  - 2", "- 3"]);
+          expect(lines([[[1, 2], 3], 4], space)).toEqual(["- - - 1", "    - 2", "  - 3", "- 4"]);
+        }
+        expect(lines({ k: [[1, 2], 3] }, 4)).toEqual(["k:", "    - - 1", "      - 2", "    - 3"]);
+      });
+
+      test("a nested mapping lines up with its first key", () => {
+        for (const space of [1, 2, 3, 4, 8]) {
+          expect(lines([{ a: 1, b: 2 }], space)).toEqual(["- a: 1", "  b: 2"]);
+        }
+        expect(lines({ k: [{ a: 1, b: 2 }] }, 1)).toEqual(["k:", " - a: 1", "   b: 2"]);
+        expect(lines({ k: [{ a: 1, b: 2 }] }, 3)).toEqual(["k:", "   - a: 1", "     b: 2"]);
+        expect(lines({ k: [{ a: 1, b: 2 }] }, 4)).toEqual(["k:", "    - a: 1", "      b: 2"]);
+        expect(lines({ k: [{ a: 1, b: 2 }] }, "    ")).toEqual(["k:", "    - a: 1", "      b: 2"]);
+      });
+
+      test("a mapping value inside the item is indented by `space` from its key", () => {
+        expect(lines([{ a: [1, 2], b: { c: 1, d: 2 } }], 4)).toEqual([
+          "- a:",
+          "      - 1",
+          "      - 2",
+          "  b:",
+          "      c: 1",
+          "      d: 2",
+        ]);
+        expect(lines([{ a: [1, 2], b: { c: 1, d: 2 } }], 1)).toEqual([
+          "- a:",
+          "   - 1",
+          "   - 2",
+          "  b:",
+          "   c: 1",
+          "   d: 2",
+        ]);
+      });
+
+      test("an anchored collection starts on the line after the dash, two columns in", () => {
+        const shared = { a: 1, b: [1, 2] };
+        expect(lines([shared, shared], 4)).toEqual([
+          "- &item0",
+          "  a: 1",
+          "  b:",
+          "      - 1",
+          "      - 2",
+          "- *item0",
+        ]);
+      });
+
+      test("the dash indent is spaces even when `space` is another string", () => {
+        expect(lines([[1, 2], { a: 1, b: 2 }], "\t")).toEqual(["- - 1", "  - 2", "- a: 1", "  b: 2"]);
+      });
+
+      const shared = { x: 1, y: [1, 2] };
+      const values: unknown[] = [
+        [[1, 2], 3],
+        [{ a: 1, b: 2 }],
+        { k: [{ a: 1, b: 2 }] },
+        { k: { j: [[1, 2], [3]] } },
+        [[[[1, 2], { a: 1, b: 2 }], 3], 4],
+        [{ a: [1, 2], b: { c: [{ d: 1, e: 2 }], f: [[]] } }, {}],
+        [shared, { again: shared }, [shared, 1]],
+        {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          spec: {
+            template: {
+              spec: {
+                containers: [
+                  {
+                    name: "web",
+                    image: "nginx:1.27",
+                    ports: [{ containerPort: 80, protocol: "TCP" }],
+                    env: [
+                      { name: "A", value: "1" },
+                      { name: "B", value: "2" },
+                    ],
+                  },
+                  { name: "sidecar", args: ["--port", "9000"] },
+                ],
+              },
+            },
+          },
+        },
+      ];
+
+      test.each([1, 2, 3, 4, 5, 8, 10, " ", "   ", "    "])("round-trips with space %j", space => {
+        for (const value of values) {
+          expect(YAML.parse(YAML.stringify(value, null, space))).toEqual(value);
+        }
+      });
+    });
+
     test("stringifies objects with special keys", () => {
       expect(YAML.stringify({ "special-key": "value" }, null, 2)).toBe("special-key: value");
       expect(YAML.stringify({ "123": "numeric" }, null, 2)).toBe('"123": numeric');

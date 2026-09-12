@@ -53,7 +53,8 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
 struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
-    indent: usize,
+    /// One entry per open block collection, outermost first.
+    indent: Vec<IndentStep>,
 
     known_collections: HashMap<JSValue, AnchorAlias>,
     array_item_counter: usize,
@@ -67,6 +68,19 @@ enum Space {
     Number(u32),
     Str(bun_core::String),
 }
+
+/// How far a block collection indents the lines inside one of its entries.
+#[derive(Clone, Copy)]
+enum IndentStep {
+    /// One unit of the `space` argument.
+    MappingValue,
+    /// `SEQUENCE_ITEM_INDENT`, whatever `space` is. A collection that starts on the dash
+    /// line has its first entry there, and the rest must line up with it.
+    SequenceItem,
+}
+
+/// As wide as the `- ` that starts a sequence item.
+const SEQUENCE_ITEM_INDENT: &[u8] = b"  ";
 
 impl Space {
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
@@ -193,7 +207,7 @@ impl Stringifier {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
-            indent: 0,
+            indent: Vec::new(),
             known_collections: HashMap::default(),
             array_item_counter: 0,
             prop_names,
@@ -478,9 +492,9 @@ impl Stringifier {
 
                         // don't need to print a newline here for any value
 
-                        self.indent += 1;
+                        self.indent.push(IndentStep::SequenceItem);
                         self.stringify(global, item)?;
-                        self.indent -= 1;
+                        self.indent.pop();
                     }
                 }
             }
@@ -542,7 +556,7 @@ impl Stringifier {
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.indent += 1;
+                    self.indent.push(IndentStep::MappingValue);
 
                     let prop_value = value.unwrap_boxed_primitive(global)?;
                     if prop_value_needs_newline(prop_value) {
@@ -550,7 +564,7 @@ impl Stringifier {
                     }
 
                     self.stringify_unwrapped(global, prop_value)?;
-                    self.indent -= 1;
+                    self.indent.pop();
                 }
                 if first {
                     self.builder.append_latin1(b"{}");
@@ -561,17 +575,25 @@ impl Stringifier {
         Ok(())
     }
 
-    fn newline(&mut self) {
-        let indent_count = self.indent;
+    /// Length of the indentation `newline()` writes when one `space` unit is `unit_len` long.
+    fn indent_len(&self, unit_len: usize) -> usize {
+        self.indent
+            .iter()
+            .map(|step| match step {
+                IndentStep::MappingValue => unit_len,
+                IndentStep::SequenceItem => SEQUENCE_ITEM_INDENT.len(),
+            })
+            .sum()
+    }
 
+    fn newline(&mut self) {
         match &self.space {
             Space::Minified => {}
             Space::Number(space_num) => {
-                let space_num = *space_num as usize;
+                let columns = self.indent_len(*space_num as usize);
                 self.builder.append_lchar(b'\n');
-                self.builder
-                    .ensure_unused_capacity(indent_count * space_num);
-                for _ in 0..indent_count * space_num {
+                self.builder.ensure_unused_capacity(columns);
+                for _ in 0..columns {
                     self.builder.append_lchar(b' ');
                 }
             }
@@ -581,9 +603,14 @@ impl Stringifier {
                 let clamped = space_str.trunc(10);
 
                 self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
-                for _ in 0..indent_count {
-                    self.builder.append_string(&clamped);
+                    .ensure_unused_capacity(self.indent_len(clamped.length()));
+                for step in &self.indent {
+                    match step {
+                        IndentStep::MappingValue => self.builder.append_string(&clamped),
+                        IndentStep::SequenceItem => {
+                            self.builder.append_latin1(SEQUENCE_ITEM_INDENT)
+                        }
+                    }
                 }
             }
         }

@@ -22,7 +22,13 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const {
+  kArmHandshakeTimeout,
+  kPreHandshakeWrite,
+  kSecureConnectDone,
+  kUpgradePending,
+  kVerifyError,
+} = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -897,8 +903,11 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  // net.Socket's _final waits for a handle that is still on its way, and finishes at once when none is.
-  if (!this._handle) return NetSocket.prototype._final.$call(this, callback);
+  if (!this._handle) {
+    // The handle is still on its way: net.Socket's _final waits for it.
+    if (this[kUpgradePending]) return NetSocket.prototype._final.$call(this, callback);
+    return callback();
+  }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));

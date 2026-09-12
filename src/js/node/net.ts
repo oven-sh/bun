@@ -47,6 +47,7 @@ const {
   kDestroyOnRead,
   kPreHandshakeWrite,
   kSecureConnectDone,
+  kUpgradePending,
   kVerifyError,
 } = require("internal/net/symbols");
 
@@ -187,8 +188,6 @@ function onUpgradeWriteClose(callback) {
   callback($ERR_SOCKET_CLOSED());
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
-// Set while a TLS socket waits to adopt its transport's handle; kUpgradeAttached is emitted when it has it.
-const kUpgradePending = Symbol("kUpgradePending");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");

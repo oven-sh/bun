@@ -45,7 +45,7 @@
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 
-extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSC::JSValue value);
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -163,7 +163,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             iterable = iterFn.isCallable();
         }
         if (!iterable) {
-            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, portsValue).transferToWTFString();
+            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), portsValue).transferToWTFString();
             RETURN_IF_EXCEPTION(throwScope, {});
             throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
             return {};
@@ -173,7 +173,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             auto scope = DECLARE_THROW_SCOPE(vm);
             auto* wrapped = item.isCell() ? JSMessagePort::toWrapped(vm, item) : nullptr;
             if (!wrapped) {
-                auto inspected = Bun__inspect_singleline(&g, item).transferToWTFString();
+                auto inspected = Bun__inspect_singleline(defaultGlobalObject(&g), item).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, );
                 throwTypeError(&g, scope, makeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
                 return;
@@ -193,7 +193,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
     }
     if (!sourceValue.isUndefinedOrNull()) {
         result.source = convert<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, sourceValue, [&sourceValue](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, sourceValue).transferToWTFString();
+            auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), sourceValue).transferToWTFString();
             if (throwScope.exception()) [[unlikely]]
                 return;
             throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));

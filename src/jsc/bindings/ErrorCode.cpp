@@ -275,7 +275,7 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // `Bun.inspect` with `single_line` + `quote_strings` — the same renderer
 // JSBuffer uses to inline a value into an error message; it renders objects
 // on one line ("Received { abc: 123 }") the way Node does.
-extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
+extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSValue value);
 
 // util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 // strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
@@ -382,7 +382,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
 
     // Node renders objects inline in error messages ("Received { abc: 123 }").
-    builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
+    builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)

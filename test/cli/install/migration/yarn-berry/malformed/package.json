@@ -1,0 +1,6 @@
+{
+  "name": "berry-malformed",
+  "dependencies": {
+    "no-deps": "^1.0.0"
+  }
+}

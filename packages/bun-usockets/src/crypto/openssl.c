@@ -1367,11 +1367,6 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
-
   } else if (options.ca && options.ca_count > 0) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
@@ -1392,23 +1387,25 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       return NULL;
     }
     ERR_clear_error();
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
   } else {
     /* No user CA: seed the shared default root store, like Node's
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
      * (for requestCert) client verification both read it. The getter up-refs,
      * so set_cert_store owns exactly one reference per context. */
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
-    if (options.request_cert) {
-      SSL_CTX_set_verify(ssl_context,
-          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                      : SSL_VERIFY_PEER,
-          us_verify_callback);
-    }
   }
+
+  /* Node's tls_wrap.cc SetVerifyMode: only requestCert makes a server send
+   * CertificateRequest; a `ca` on its own only scopes verification. Clients
+   * get SSL_VERIFY_PEER per-SSL in us_internal_ssl_client_verify_defaults.
+   * The callback is installed even at SSL_VERIFY_NONE: lsquic's SNI switch
+   * raises the per-SSL mode with SSL_set_verify(ssl, mode, NULL), which keeps
+   * whatever callback the SSL inherited from this context. */
+  SSL_CTX_set_verify(ssl_context,
+      !options.request_cert        ? SSL_VERIFY_NONE
+      : options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                    : SSL_VERIFY_PEER,
+      us_verify_callback);
 
   if (options.dh_params_file_name) {
     DH *dh_2048 = NULL;
@@ -1669,7 +1666,7 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
 
   /* SecureContext is mode-neutral (Node lets one back both tls.connect and
    * tls.createServer), so we can't bake client-vs-server into the CTX. CTX
-   * verify_mode comes purely from options (ca/request_cert/reject_unauthorized)
+   * verify_mode comes purely from options (request_cert/reject_unauthorized)
    * in build_raw — for a server that decides whether CertificateRequest is
    * sent, so we MUST NOT force VERIFY_PEER here. The per-SSL client override
    * (verify mode + trust store) lives in us_internal_ssl_attach. */
@@ -1742,6 +1739,24 @@ int us_socket_alpn_is_h2(struct us_socket_t *s) {
 
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
+void us_internal_ssl_client_verify_defaults(SSL *ssl, SSL_CTX *ctx) {
+  /* The CTX is mode-neutral: without requestCert its verify_mode is NONE.
+   * A client must still verify so verify_error is populated for the JS
+   * rejectUnauthorized check, but raising the mode on the CTX would make a
+   * server sharing it send CertificateRequest, so the mode is set per-SSL.
+   * us_verify_callback returns 1 so the handshake never aborts here. */
+  if (SSL_CTX_get_verify_mode(ctx) != SSL_VERIFY_NONE) {
+    return;
+  }
+  SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
+  /* A store holding user CAs (ca/caFile/addCACert) stays in place; only a
+   * default context gets the process-shared root bundle. */
+  if (!us_ssl_ctx_has_user_ca(ctx)) {
+    X509_STORE *roots = us_get_shared_default_ca_store();
+    if (roots) SSL_set0_verify_cert_store(ssl, roots);
+  }
+}
+
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
                             int is_client, const char *sni,
                             struct us_listen_socket_t *listener) {
@@ -1775,27 +1790,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
-    /* The CTX is mode-neutral and may have verify_mode == NONE (no
-     * ca/requestCert in options). Clients must always run verification so
-     * verify_error is populated for the JS rejectUnauthorized check — but
-     * setting VERIFY_PEER on the CTX would make a server using the same
-     * SecureContext send CertificateRequest. SSL_set_verify scopes the mode to
-     * this socket; SSL_set0_verify_cert_store gives it the process-shared root
-     * bundle without touching the CTX (servers using the same CTX never pay
-     * the ~150-root build). us_verify_callback returns 1 so the handshake
-     * never aborts here — JS reads verify_error and decides. */
-    if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
-      SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      us_ex_idx_ensure();
-      if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
-        /* Default context: give this socket the process-shared root bundle.
-         * A context whose store holds user-provided CAs (ca/caFile options or
-         * addCACert) keeps using its own store - overriding it here would
-         * hide those CAs from chain verification. */
-        X509_STORE *roots = us_get_shared_default_ca_store();
-        if (roots) SSL_set0_verify_cert_store(ssl, roots);
-      }
-    }
+    us_internal_ssl_client_verify_defaults(ssl, ctx);
   } else {
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
@@ -2996,8 +2991,9 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
   us_internal_ssl_attach(new_s, ssl_ctx, is_client, sni, NULL);
   if (!is_client && new_s->ssl) {
     /* Node's TLSWrap::SetVerifyMode runs unconditionally on server sockets:
-     * !requestCert must force SSL_VERIFY_NONE, or a shared SSL_CTX built with
-     * `ca` leaks its FAIL_IF_NO_PEER_CERT mode and rejects cert-less clients. */
+     * the policy belongs to this TLSSocket's own options, not to whatever
+     * requestCert the shared SSL_CTX (a SecureContext that may also back a
+     * listener) was built with. */
     SSL_set_verify(new_s->ssl,
                    request_cert
                        ? SSL_VERIFY_PEER | (reject_unauthorized

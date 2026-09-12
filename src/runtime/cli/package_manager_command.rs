@@ -217,6 +217,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
   <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder\n\
   <b><green>bun pm<r> <blue>cache rm<r>             clear the cache\n\
+  <b><green>bun pm<r> <blue>cache pack<r> <d>file<r>      write the cache entries this lockfile needs into one file (for CI caches)\n\
+  <b><green>bun pm<r> <blue>cache unpack<r> <d>file<r>    restore cache entries from a pack\n\
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
@@ -433,6 +435,89 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1
+                && (strings::eql_comptime(pm.options.positionals[1], b"pack")
+                    || strings::eql_comptime(pm.options.positionals[1], b"unpack"))
+            {
+                let is_pack = strings::eql_comptime(pm.options.positionals[1], b"pack");
+                // exactly one non-empty <file>
+                let file = match pm.options.positionals.get(2..).unwrap_or(&[]) {
+                    [file] if !file.is_empty() => *file,
+                    rest => {
+                        if matches!(rest, [_]) {
+                            Output::err_generic(
+                                "the \\<file\\> argument must not be empty\n  usage: bun pm cache {} \\<file\\>",
+                                (if is_pack { "pack" } else { "unpack" },),
+                            );
+                        } else {
+                            Output::err_generic(
+                                "expected exactly one \\<file\\> argument, got {}\n  usage: bun pm cache {} \\<file\\>",
+                                (rest.len(), if is_pack { "pack" } else { "unpack" }),
+                            );
+                        }
+                        Global::exit(1);
+                    }
+                };
+                let mut process_env = bun_dotenv::Loader::init();
+                process_env.load_process()?;
+                let cache_dir = fetch_cache_directory_path(&mut process_env, Some(&pm.options));
+                let start = std::time::Instant::now();
+                if is_pack {
+                    let log_level = pm.options.log_level;
+                    let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+                    Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "cache pack");
+                    // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
+                    let pm = unsafe { &mut *pm_ptr };
+                    match bun_install::cache_pack::pack(pm, &cache_dir.path, file) {
+                        Ok(s) => {
+                            bun_core::prettyln!(
+                                "<green>Packed<r> {} package{} ({} files, {}) into <b>{}<r> <d>[{} ms]<r>",
+                                s.packages,
+                                if s.packages == 1 { "" } else { "s" },
+                                s.files,
+                                bun_core::fmt::size(s.bytes as usize, Default::default()),
+                                bstr::BStr::new(file),
+                                start.elapsed().as_millis(),
+                            );
+                            if s.skipped_missing > 0 {
+                                bun_core::pretty_errorln!(
+                                    "<yellow>warn<r>: {} package{} not in the local cache and {} left out (run bun install first)",
+                                    s.skipped_missing,
+                                    if s.skipped_missing == 1 { "" } else { "s" },
+                                    if s.skipped_missing == 1 {
+                                        "was"
+                                    } else {
+                                        "were"
+                                    },
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            Output::err_generic("cache pack failed: {}", (e,));
+                            Global::exit(1);
+                        }
+                    }
+                } else {
+                    match bun_install::cache_pack::unpack(&cache_dir.path, file) {
+                        Ok(s) => {
+                            bun_core::prettyln!(
+                                "<green>Unpacked<r> {} package{} ({} new, {} already cached, {}) <d>[{} ms]<r>",
+                                s.packages,
+                                if s.packages == 1 { "" } else { "s" },
+                                s.created,
+                                s.already_present,
+                                bun_core::fmt::size(s.bytes as usize, Default::default()),
+                                start.elapsed().as_millis(),
+                            );
+                        }
+                        Err(e) => {
+                            Output::err_generic("cache unpack failed: {}", (e,));
+                            Global::exit(1);
+                        }
+                    }
+                }
+                Output::flush();
+                Global::exit(0);
+            } else if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
                 let mut had_err = false;

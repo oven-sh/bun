@@ -6176,10 +6176,7 @@ pub mod bv2_impl {
         }
     }
 
-    /// The `?query` or `#hash` at the end of an import specifier that does not resolve as
-    /// written (`import text from "./a.txt?raw"`). The bundler resolves the specifier again
-    /// without it, like esbuild. Imports of one file with different suffixes are different
-    /// modules, like in the runtime. Empty for every other import.
+    /// The `?query` or `#hash` cut from an import specifier that resolves only without it.
     #[derive(Clone, Copy, Default)]
     struct IgnoredSuffix<'s>(&'s [u8]);
 
@@ -6203,8 +6200,7 @@ pub mod bv2_impl {
             (self.0 == b"?raw").then_some(Loader::Text)
         }
 
-        /// `path_text` with the suffix back on it. For the path of the resolved file, this is
-        /// the key of the module in `PathToSourceIndexMap` and `ResolveQueue`.
+        /// For the path of the resolved file: the key of the module in `PathToSourceIndexMap`.
         fn append_to(self, arena: &ThreadLocalArena, path_text: &'static [u8]) -> &'static [u8] {
             if self.0.is_empty() {
                 return path_text;
@@ -6217,7 +6213,6 @@ pub mod bv2_impl {
         }
 
         /// An import record finds its module in `PathToSourceIndexMap` through `path.text`.
-        /// `module_key` is that text when the import has a suffix.
         fn set_module_key(self, record: &mut ImportRecord, module_key: &'static [u8]) {
             if !self.0.is_empty() {
                 record.path.text = module_key;
@@ -6594,9 +6589,7 @@ pub mod bv2_impl {
                                 }
                             }
 
-                            // After the dir cache bust above, so that a file name with `?` or
-                            // `#` in it still wins. Not for the dev server: its graph has one
-                            // module for each file path.
+                            // Not for the dev server: its graph has one module for each file path.
                             if err == _resolver::Error::ModuleNotFound
                                 && ignored_suffix.is_empty()
                                 && self.dev_server.is_none()
@@ -6878,8 +6871,7 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                // The HTML file is an entry point of the browser build: one module and one
-                // output for the file. The linker finds it through the path of the file.
+                // The linker finds this entry point through the path of the file.
                 if is_html_entrypoint {
                     ignored_suffix = IgnoredSuffix::default();
                 }

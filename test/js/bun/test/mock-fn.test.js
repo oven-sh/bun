@@ -1223,3 +1223,40 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+describe("constructing a mock", () => {
+  test("returns the created instance when the implementation returns a primitive", () => {
+    const fn = jest.fn(() => 42);
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(fn.mock.calls).toEqual([[]]);
+    expect(fn()).toBe(42);
+  });
+
+  test("with no implementation returns an object", () => {
+    const fn = jest.fn();
+    expect(typeof Reflect.construct(fn, [])).toBe("object");
+  });
+
+  test("returns the implementation's return value when it is an object", () => {
+    const result = { ok: true };
+    const fn = jest.fn(() => result);
+    expect(new fn()).toBe(result);
+  });
+
+  test("calls the implementation with the created instance as this", () => {
+    const fn = jest.fn(function (value) {
+      this.value = value;
+    });
+    const instance = new fn(42);
+    expect(instance.value).toBe(42);
+  });
+
+  test("spy on a function returning a symbol returns the instance", () => {
+    const obj = { sym: Symbol };
+    const spy = spyOn(obj, "sym");
+    const instance = Reflect.construct(spy, []);
+    expect(typeof instance).toBe("object");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});

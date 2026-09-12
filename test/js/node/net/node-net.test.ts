@@ -3088,7 +3088,7 @@ describe("net.Socket onread: the callbacks of one native read are separate callb
     const first = await startServer("tcp");
     const second = createServer(c => {
       c.on("error", () => {});
-      c.end("XXXXYYYY");
+      c.end("mnopqrst");
     });
     const listening = Promise.withResolvers<void>();
     second.once("error", listening.reject);
@@ -3110,7 +3110,7 @@ describe("net.Socket onread: the callbacks of one native read are separate callb
               socket.connect((second.address() as import("node:net").AddressInfo).port, "127.0.0.1");
             });
           }
-          if (slice === "YYYY") done.resolve();
+          if (slice === "qrst") done.resolve();
         },
       },
     });
@@ -3120,8 +3120,8 @@ describe("net.Socket onread: the callbacks of one native read are separate callb
       await done.promise;
       expect(received).toEqual([
         [1, "abcd"],
-        [2, "XXXX"],
-        [2, "YYYY"],
+        [2, "mnop"],
+        [2, "qrst"],
       ]);
     } finally {
       socket.destroy();

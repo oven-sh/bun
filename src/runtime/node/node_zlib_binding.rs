@@ -136,7 +136,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
     let value: u32 = 'blk: {
         let value: JSValue = arguments[1];
-        if callframe.arguments_count() < 2 {
+        if callframe.arguments_count() < 2 || value.is_undefined() {
             break 'blk 0;
         }
         if !value.is_number() {

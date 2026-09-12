@@ -815,5 +815,13 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+    // Explicit undefined second arg takes the default too (node: `crc32(data, value = 0)`).
+    expect(zlib.crc32("hello", undefined)).toBe(zlib.crc32("hello", 0));
+    const forward = (data, value) => zlib.crc32(data, value);
+    expect(forward("abc")).toBe(891568578);
+    // null is not a number.
+    expect(() => zlib.crc32("hello", null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => zlib.crc32("hello", -1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    expect(() => zlib.crc32("hello", 2 ** 32)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
   });
 });

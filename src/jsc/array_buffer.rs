@@ -645,9 +645,8 @@ impl ArrayBuffer {
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
-/// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
-/// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
-/// held by a `Blob` store drops wherever the store's last ref goes.
+/// GC-roots the cell. `Drop` releases what was taken. Constructed and
+/// dropped on the JS thread.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -742,8 +741,7 @@ impl Drop for PinnedArrayBuffer {
     }
 }
 
-// SAFETY: a pin and GC protection on a heap cell; constructed on the JS thread,
-// and a rooted value is dropped there (a pin-only one may drop with its `Blob` store).
+// SAFETY: a pin and GC protection on a heap cell; constructed and dropped on the JS thread.
 unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 // ──────────────────────────────────────────────────────────────────────────

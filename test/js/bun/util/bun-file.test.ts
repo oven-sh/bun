@@ -155,3 +155,45 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+test("Bun.file(Uint8Array) does not keep the Uint8Array alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { heapStats } = require("bun:jsc");
+        const path = new TextEncoder().encode(process.execPath);
+        const files = [];
+        for (let i = 0; i < 200; i++) files.push(Bun.file(new Uint8Array(path)));
+        Bun.gc(true);
+        // The Blobs are still alive; only the path buffers they were created from should be collectable.
+        console.log(heapStats().objectTypeCounts.Uint8Array ?? 0, files.length, await files[199].exists());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const [count, files, exists] = stdout.trim().split(" ");
+  expect({ files, exists }).toEqual({ files: "200", exists: "true" });
+  expect(Number(count)).toBeLessThan(100);
+  expect(exitCode).toBe(0);
+});
+
+test("a file created from a buffer path owns a copy of the path", async () => {
+  // Writing to the buffer after the call must not change which file the Blob refers to.
+  const path = new TextEncoder().encode(process.execPath);
+  const file = Bun.file(path);
+  path.fill(0);
+  expect(file.name).toBe(process.execPath);
+  expect(await file.exists()).toBe(true);
+
+  const s3Path = Buffer.from("s3://bucket/key.txt");
+  const s3File = Bun.s3.file(s3Path);
+  s3Path.fill(0x41);
+  expect(s3File.name).toBe("bucket/key.txt");
+});

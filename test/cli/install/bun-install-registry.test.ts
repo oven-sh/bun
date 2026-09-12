@@ -7,6 +7,7 @@ import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  isDebug,
   isFlaky,
   isLinux,
   isMacOS,
@@ -10104,16 +10105,26 @@ describe("manifest conditional requests", () => {
   const etag = '"no-deps-manifest-v1"';
   const lastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
 
-  function startRegistry(validators: { etag?: string; lastModified?: string }) {
+  function startRegistry(validators: {
+    etag?: string;
+    lastModified?: string;
+    cacheControl?: string;
+    /** Cache-Control on a 304. `undefined` sends `cacheControl` again, `null` sends none. */
+    cacheControl304?: string | null;
+    versions?: string[];
+  }) {
     const requests: ManifestRequest[] = [];
     let tarballRequests = 0;
     const server = Bun.serve({
       port: 0,
       fetch(req) {
         const { pathname } = new URL(req.url);
-        if (pathname === "/no-deps/-/no-deps-1.0.0.tgz") {
+        const tarball = pathname.match(/^\/no-deps\/-\/no-deps-(\d+\.\d+\.\d+)\.tgz$/);
+        if (tarball) {
           tarballRequests++;
-          return new Response(file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")));
+          return new Response(
+            file(join(import.meta.dir, "registry", "packages", "no-deps", `no-deps-${tarball[1]}.tgz`)),
+          );
         }
         if (pathname !== "/no-deps") {
           return new Response("unexpected", { status: 404 });
@@ -10126,6 +10137,8 @@ describe("manifest conditional requests", () => {
           status: 200,
         };
         requests.push(entry);
+        const headers: Record<string, string> = {};
+        if (validators.cacheControl !== undefined) headers["Cache-Control"] = validators.cacheControl;
         const notModified =
           (validators.etag !== undefined && entry.ifNoneMatch === validators.etag) ||
           (validators.etag === undefined &&
@@ -10133,22 +10146,30 @@ describe("manifest conditional requests", () => {
             entry.ifModifiedSince === validators.lastModified);
         if (notModified) {
           entry.status = 304;
-          return new Response(null, { status: 304 });
+          const cacheControl =
+            validators.cacheControl304 === undefined ? validators.cacheControl : validators.cacheControl304;
+          return new Response(null, {
+            status: 304,
+            headers: cacheControl == null ? {} : { "Cache-Control": cacheControl },
+          });
         }
-        const headers: Record<string, string> = {};
         if (validators.etag !== undefined) headers["ETag"] = validators.etag;
         if (validators.lastModified !== undefined) headers["Last-Modified"] = validators.lastModified;
+        const versions = validators.versions ?? ["1.0.0"];
         return Response.json(
           {
             name: "no-deps",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "no-deps",
-                version: "1.0.0",
-                dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz` },
-              },
-            },
+            "dist-tags": { latest: versions.at(-1) },
+            versions: Object.fromEntries(
+              versions.map(version => [
+                version,
+                {
+                  name: "no-deps",
+                  version,
+                  dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-${version}.tgz` },
+                },
+              ]),
+            ),
           },
           { headers },
         );
@@ -10174,7 +10195,7 @@ describe("manifest conditional requests", () => {
     ]);
   }
 
-  async function install(...args: string[]) {
+  async function install(args: string[] = [], extraEnv: Record<string, string> = {}) {
     await Promise.all([
       rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
       rm(join(packageDir, "bun.lock"), { force: true }),
@@ -10185,7 +10206,7 @@ describe("manifest conditional requests", () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: { ...env, ...extraEnv },
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
@@ -10206,13 +10227,19 @@ describe("manifest conditional requests", () => {
   const accept = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
   const authorization = `Bearer ${token}`;
 
+  const npmjsCacheControl = "public, max-age=300";
+
   test("If-None-Match is sent from the cached etag and a 304 reuses the cached manifest", async () => {
-    const { server, requests, tarballRequests } = startRegistry({ etag, lastModified });
+    const { server, requests, tarballRequests } = startRegistry({
+      etag,
+      lastModified,
+      cacheControl: npmjsCacheControl,
+    });
     using _ = server;
     await setup(server.port);
 
     await install();
-    await install("--force");
+    await install(["--force"]);
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
@@ -10232,8 +10259,8 @@ describe("manifest conditional requests", () => {
 
     await install();
     validators.etag = '"no-deps-manifest-v2"';
-    await install("--force");
-    await install("--force");
+    await install(["--force"]);
+    await install(["--force"]);
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 200 },
@@ -10247,7 +10274,7 @@ describe("manifest conditional requests", () => {
     await setup(server.port);
 
     await install();
-    await install("--force");
+    await install(["--force"]);
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: lastModified, status: 304 },
@@ -10261,10 +10288,123 @@ describe("manifest conditional requests", () => {
     await setup(server.port);
 
     await install();
-    await install("--force");
+    await install(["--force"]);
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
     ]);
+  });
+
+  // The cached manifest is trusted for as long as the registry's Cache-Control
+  // says, up to 300 seconds (registry.npmjs.org sends `public, max-age=300`).
+  // A registry that sends `no-cache`, or no Cache-Control at all (Verdaccio
+  // sends only an ETag), wants every install to revalidate. The 304 is cheap
+  // and keeps a version published a moment ago from being invisible.
+  describe.each([
+    ["no-cache", "no-cache"],
+    ["no-store", "no-store"],
+    ["max-age=0", "max-age=0"],
+    ["private, no-cache, max-age=600", "private, no-cache, max-age=600"],
+    ["max-age=600, max-age=600", "max-age=600, max-age=600"],
+    ["(absent)", undefined],
+  ])("Cache-Control %s", (_label, cacheControl) => {
+    test("every install revalidates the cached manifest", async () => {
+      const { server, requests, tarballRequests } = startRegistry({ etag, cacheControl });
+      using _ = server;
+      await setup(server.port);
+
+      await install();
+      await install();
+      await install();
+      expect(requests).toStrictEqual([
+        { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
+        { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
+        { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
+      ]);
+      expect(tarballRequests()).toBe(1);
+    });
+  });
+
+  test("a version published to a no-cache registry is installable right away", async () => {
+    const validators = { etag, cacheControl: "no-cache", versions: ["1.0.0"] };
+    const { server, requests } = startRegistry(validators);
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    validators.versions = ["1.0.0", "1.0.1"];
+    validators.etag = '"no-deps-manifest-v2"';
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "no-deps@1.0.1"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("No version matching");
+    expect(out).toContain("installed no-deps@1.0.1");
+    expect(exitCode).toBe(0);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 200]);
+  });
+
+  // Debug builds read the "current time" of the freshness check from
+  // BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, so a test can move the clock
+  // without waiting.
+  const installAt = (secondsFromNow: number) =>
+    install([], {
+      BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: String(Math.floor(Date.now() / 1000) + secondsFromNow),
+    });
+
+  test.skipIf(!isDebug)("Cache-Control max-age sets how long the cached manifest is trusted", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "max-age=60" });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(5);
+    expect(requests).toHaveLength(1);
+    await installAt(120);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
+    // The 304 carried `max-age=60` too, so the manifest is fresh again.
+    await installAt(5);
+    expect(requests).toHaveLength(2);
+  });
+
+  test.skipIf(!isDebug)("a 304 without Cache-Control keeps the max-age of the stored 200", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "max-age=60", cacheControl304: null });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(120);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
+    await installAt(5);
+    expect(requests).toHaveLength(2);
+  });
+
+  test.skipIf(!isDebug)("a 304 with its own Cache-Control replaces the max-age of the stored 200", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "max-age=60", cacheControl304: "no-cache" });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(120);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
+    await installAt(5);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304, 304]);
+  });
+
+  test.skipIf(!isDebug)("Cache-Control max-age is capped at 300 seconds", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "public, max-age=31536000, immutable" });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(5);
+    expect(requests).toHaveLength(1);
+    await installAt(3600);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
   });
 });

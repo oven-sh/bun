@@ -931,10 +931,14 @@ describe("minimum-release-age", () => {
       const exitCode = await proc.exited;
       const stderr = await proc.stderr.text();
 
-      // Should fail because 3.0.0 is too recent
+      // Should fail because 3.0.0 is too recent. The mock registry sends no
+      // Cache-Control, so the manifest cached by the earlier tests is stale and
+      // the exact version is answered from it without a request ("published
+      // within minimum release age"). A fresh manifest reports the same block
+      // as "blocked by minimum-release-age".
       expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toMatch(
-        /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
+        /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|within.*minimum.*release.*age|too.*recent/,
       );
     });
   });

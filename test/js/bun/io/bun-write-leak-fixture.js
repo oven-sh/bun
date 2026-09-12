@@ -5,10 +5,7 @@
 const isASAN = process.execPath.includes("bun-asan");
 const MAX_ALLOWED_MEMORY_USAGE = isASAN ? 768 : 256;
 const dest = process.argv.at(-1);
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 async function run(inputType) {
   for (let i = 0; i < 100; i++) {

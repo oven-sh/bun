@@ -310,7 +310,7 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
+    use css::{Parser, ParserError, ParserState, Result};
 
     impl<'a> DeclarationParser for PageRuleParser<'a> {
         type Declaration = ();
@@ -377,31 +377,10 @@ const _: () = {
             });
             Ok(())
         }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl<'a> QualifiedRuleParser for PageRuleParser<'a> {
         type Prelude = ();
         type QualifiedRule = ();
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 };

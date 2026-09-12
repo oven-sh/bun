@@ -116,7 +116,9 @@ describe.each([
       ? {
           protocol: "unix:",
           pathname: unix.substring(unix.indexOf(":") + 1),
-          hostname: unix.substring(0, unix.indexOf(":")),
+          // "C:" has no leading "/" so it lands in the host slot, where ":" is
+          // percent-encoded so that it does not read as a port separator.
+          hostname: unix.substring(0, unix.indexOf(":")) + "%3A",
           port: "",
         }
       : {

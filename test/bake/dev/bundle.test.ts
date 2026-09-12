@@ -919,3 +919,82 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// Every rebuild runs `Path::dupe_alloc` on every import it re-resolves. A path
+// that a plugin resolved is not interned by the resolver, and `dupe_alloc` used
+// to append it to the process-lifetime FilenameStore on every call, so a dev
+// server grew by one copy of every such path per rebuild for as long as it ran.
+// Those paths now live in the bundle's arena and the file watcher copies them.
+// MIMALLOC_PURGE_DELAY=0 makes mimalloc return the arena's pages to the OS as
+// soon as the bundle ends, so a watcher left with a stale pointer would miss
+// the final edit instead of reading the old bytes.
+const PATH_STORE_MODULES = 20;
+const PATH_STORE_EDITS = 5;
+function pathStoreEntry(edit: number) {
+  return (
+    Array.from({ length: PATH_STORE_MODULES }, (_, i) => `import { v${i} } from "from-plugin:m${i}";`).join("\n") +
+    `\nimport.meta.hot.accept();\nconsole.log("edit ${edit}: " + (${Array.from({ length: PATH_STORE_MODULES }, (_, i) => `v${i}`).join(" + ")}));\n`
+  );
+}
+devTest("rebuilding after an edit does not intern plugin-resolved paths again", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "from-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^from-plugin:/ }, args => ({
+            path: join(import.meta.dir, "lib", args.path.slice("from-plugin:".length) + ".ts"),
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["src/entry.ts"] }),
+    "src/entry.ts": pathStoreEntry(0),
+    ...Object.fromEntries(
+      Array.from({ length: PATH_STORE_MODULES }, (_, i) => [`lib/m${i}.ts`, `export const v${i} = ${i};\n`]),
+    ),
+    // The harness-generated config only serves the HTML; the counts have to be
+    // read inside the dev server's process, so serve them from a route.
+    "bun.app.ts": `
+      import { bundlerInternals } from "bun:internal-for-testing";
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/path-store-counts") {
+            return Response.json(bundlerInternals.pathStoreCounts());
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  env: { MIMALLOC_PURGE_DELAY: "0", MIMALLOC_ABANDONED_PAGE_PURGE: "1" },
+  async test(dev) {
+    const counts = () => dev.fetch("/path-store-counts").json();
+    const sum = (PATH_STORE_MODULES * (PATH_STORE_MODULES - 1)) / 2;
+    await using c = await dev.client("/");
+    await c.expectMessage(`edit 0: ${sum}`);
+    const before = await counts();
+    for (let edit = 1; edit <= PATH_STORE_EDITS; edit++) {
+      await dev.write("src/entry.ts", pathStoreEntry(edit));
+      await c.expectMessage(`edit ${edit}: ${sum}`);
+    }
+    const after = await counts();
+    // Unfixed: PATH_STORE_MODULES more filenames per edit.
+    expect({
+      filenames: after.filenames - before.filenames,
+      dirnames: after.dirnames - before.dirnames,
+    }).toEqual({ filenames: 0, dirnames: 0 });
+
+    // The watcher still knows the plugin-resolved files by their copied paths.
+    await dev.write("lib/m0.ts", `export const v0 = 1000;\n`);
+    await c.expectMessage(`edit ${PATH_STORE_EDITS}: ${sum + 1000}`);
+  },
+});

@@ -558,6 +558,13 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const bundlerInternals = {
+  /** Sizes of the resolver's append-only, process-lifetime path stores. */
+  pathStoreCounts: $newRustFunction("JSBundler.rs", "TestingAPIs.pathStoreCounts", 0) as () => {
+    filenames: number;
+    dirnames: number;
+  },
+};
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",

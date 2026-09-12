@@ -1363,6 +1363,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 }
 #undef REQUIRE_CJS_RETURN_IF_EXCEPTION
 
+// JSCommonJSModule.$requireNativeModule(resolvedId): require()'s builtin fast path.
+// Returns undefined when a virtual module (mock.module(), build.module()) registered under
+// the "node:" id wins over the builtin, with the same priority rule fetchCommonJSModule uses.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1376,6 +1379,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    const bool isVirtualModule = globalObject->onLoadPlugins.hasVirtualModule(specifier);
+    if (isVirtualModule && isBunTest)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
     ErrorableResolvedSource res;
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
@@ -1383,6 +1391,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     if (result.kind == BuiltinModule::Kind::Exports) {
         return JSC::JSValue::encode(result.exports);
     }
+    if (isVirtualModule)
+        return JSC::JSValue::encode(JSC::jsUndefined());
     throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
 }

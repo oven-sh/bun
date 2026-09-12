@@ -68,6 +68,7 @@ declare interface Error {
 
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
+  /** Loads the builtin a resolved `node:` id names, or `undefined` for a virtual module. */
   $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;

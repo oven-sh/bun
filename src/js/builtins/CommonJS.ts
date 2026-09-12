@@ -31,33 +31,37 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
-  } else {
-    const existing = $requireMap.$get(id);
-    if (existing) {
-      // Scenario where this is necessary:
-      //
-      // In an ES Module, we have:
-      //
-      //    import "react-dom/server"
-      //    import "react"
-      //
-      // Synchronously, the "react" import is created first, and then the
-      // "react-dom/server" import is created. Then, at ES Module link time, they
-      // are evaluated. The "react-dom/server" import is evaluated first, and
-      // require("react") was previously created as an ESM module, so we wait
-      // for the ESM module to load
-      //
-      // ...and then when this code is reached, unless
-      // we evaluate it "early", we'll get an empty object instead of the module
-      // exports.
-      //
-      const c = $evaluateCommonJSModule(existing, this);
-      if (c && c.indexOf(existing) === -1) {
-        c.push(existing);
-      }
-      return existing.exports;
+    const builtin = this.$requireNativeModule(id);
+    if (builtin !== undefined) {
+      return builtin;
     }
+    // undefined: a virtual module is registered under this id. Load it below.
+  }
+
+  const existing = $requireMap.$get(id);
+  if (existing) {
+    // Scenario where this is necessary:
+    //
+    // In an ES Module, we have:
+    //
+    //    import "react-dom/server"
+    //    import "react"
+    //
+    // Synchronously, the "react" import is created first, and then the
+    // "react-dom/server" import is created. Then, at ES Module link time, they
+    // are evaluated. The "react-dom/server" import is evaluated first, and
+    // require("react") was previously created as an ESM module, so we wait
+    // for the ESM module to load
+    //
+    // ...and then when this code is reached, unless
+    // we evaluate it "early", we'll get an empty object instead of the module
+    // exports.
+    //
+    const c = $evaluateCommonJSModule(existing, this);
+    if (c && c.indexOf(existing) === -1) {
+      c.push(existing);
+    }
+    return existing.exports;
   }
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);

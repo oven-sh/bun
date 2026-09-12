@@ -25,6 +25,9 @@ pub struct Cmd {
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
+    /// Result of the work-pool open of `redirection_file`, taken by
+    /// `open_redirect_target`.
+    pub(crate) opened_redirect: Option<bun_sys::Result<bun_sys::Fd>>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
 }
@@ -40,6 +43,9 @@ pub enum CmdState {
     ExpandingRedirect {
         idx: u32,
     },
+    /// The redirect target is a FIFO: its `open(2)` runs on the work pool
+    /// (`ShellRedirectOpenTask`) and resumes at `Exec`.
+    OpeningRedirect,
     Exec,
     WaitingWriteErr,
     Done,
@@ -214,6 +220,7 @@ impl Cmd {
             args: Vec::new(),
             redirection_file: Vec::new(),
             redirection_fd: None,
+            opened_redirect: None,
             exec: Exec::None,
             exit_code: None,
         }))
@@ -277,9 +284,14 @@ impl Cmd {
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
+                    if let Some(y) = Self::open_redirect_on_pool(interp, this) {
+                        return y;
+                    }
                     return Self::transition_to_exec(interp, this);
                 }
-                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::OpeningRedirect | CmdState::WaitingWriteErr => {
+                    return Yield::suspended();
+                }
                 CmdState::Done => {
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
@@ -407,6 +419,76 @@ impl Cmd {
         }
         interp.deinit_node(child);
         Yield::Next(this)
+    }
+
+    /// `open(2)` on a FIFO blocks until the other end is opened, so a FIFO
+    /// redirect target is opened on the work pool. `None`: the target opens
+    /// inline in `transition_to_exec`.
+    fn open_redirect_on_pool(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+        // Windows has no FIFO that `open` waits on.
+        if cfg!(windows) {
+            return None;
+        }
+        let (cwd_fd, path, flags) = {
+            let me = interp.as_cmd(this);
+            if me.opened_redirect.is_some()
+                || !matches!(me.ast_node().redirect_file, Some(ast::Redirect::Atom(_)))
+            {
+                return None;
+            }
+            // Empty after expansion: `init_*_redirections` reports the
+            // ambiguous redirect.
+            let path_len = me.redirection_file.len().checked_sub(1)?;
+            let path = bun_core::ZStr::from_buf(&me.redirection_file, path_len);
+            let cwd_fd = me.base.shell().cwd_fd;
+            match bun_sys::fstatat(cwd_fd, path) {
+                Ok(st) if bun_sys::S::ISFIFO(st.st_mode as bun_sys::Mode) => {}
+                _ => return None,
+            }
+            (
+                cwd_fd,
+                me.redirection_file.clone(),
+                me.ast_node().redirect.to_flags(),
+            )
+        };
+        interp.as_cmd_mut(this).state = CmdState::OpeningRedirect;
+        crate::shell::dispatch_tasks::ShellRedirectOpenTask::create_and_schedule(
+            interp, this, cwd_fd, path, flags, 0o666,
+        );
+        Some(Yield::suspended())
+    }
+
+    /// Main-thread re-entry for [`Self::open_redirect_on_pool`]: stash the
+    /// result for `open_redirect_target` and continue to `Exec`.
+    pub(crate) fn on_redirect_open_done(
+        interp: &Interpreter,
+        this: NodeId,
+        result: bun_sys::Result<bun_sys::Fd>,
+    ) {
+        debug_assert!(matches!(
+            interp.as_cmd(this).state,
+            CmdState::OpeningRedirect
+        ));
+        let me = interp.as_cmd_mut(this);
+        me.opened_redirect = Some(result);
+        me.state = CmdState::Exec;
+        Yield::Next(this).run(interp);
+    }
+
+    /// Open the expanded file redirect target, or take the fd the work pool
+    /// already opened for it.
+    pub(crate) fn open_redirect_target(
+        interp: &Interpreter,
+        this: NodeId,
+        dir: bun_sys::Fd,
+        path: &bun_core::ZStr,
+        flags: i32,
+        perm: bun_sys::Mode,
+    ) -> bun_sys::Result<bun_sys::Fd> {
+        match interp.as_cmd_mut(this).opened_redirect.take() {
+            Some(result) => result,
+            None => crate::shell::interpreter::shell_openat(dir, path, flags, perm),
+        }
     }
 
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
@@ -821,7 +903,9 @@ impl Cmd {
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
+                let redirfd = match Self::open_redirect_target(
+                    interp,
+                    this,
                     cwd_fd,
                     path,
                     flags.to_flags(),
@@ -888,6 +972,10 @@ impl Cmd {
             if let Some(fd) = me.redirection_fd.take() {
                 // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
                 CowFd::deref(fd);
+            }
+            // `$(true) > fifo` expands to no argv, so nothing took the fd.
+            if let Some(Ok(fd)) = me.opened_redirect.take() {
+                crate::shell::interpreter::closefd(fd);
             }
             core::mem::take(&mut me.exec)
         };

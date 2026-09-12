@@ -74,7 +74,9 @@ use crate::shell::builtins::{
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
-use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
+use crate::shell::dispatch_tasks::{
+    ShellCondExprStatTask, ShellGlobTask, ShellRedirectOpenTask, ShellRmDirTask,
+};
 use crate::shell::interpreter::ShellTask;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
@@ -327,6 +329,7 @@ pub(crate) fn run_task(
         | task_tag::ShellLsTask
         | task_tag::ShellMvBatchedTask
         | task_tag::ShellMvCheckTargetTask
+        | task_tag::ShellRedirectOpenTask
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
         | task_tag::ShellGlobTask
@@ -556,6 +559,7 @@ fn run_task_cold(task: Task) {
         task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
         task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellRedirectOpenTask => shell_dispatch!(ShellRedirectOpenTask),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
@@ -589,7 +593,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1279,6 +1283,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellMkdirTask => release!(ShellMkdirTask),
         task_tag::ShellMvBatchedTask => release!(ShellMvBatchedTask),
         task_tag::ShellMvCheckTargetTask => release!(ShellMvCheckTargetTask),
+        task_tag::ShellRedirectOpenTask => release!(ShellRedirectOpenTask),
         task_tag::ShellRmDirTask => release!(ShellRmDirTask),
         task_tag::ShellRmTask => release!(ShellRmTask),
         task_tag::ShellTouchTask => release!(ShellTouchTask),

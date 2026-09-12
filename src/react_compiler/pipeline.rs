@@ -358,7 +358,7 @@ fn run_hir_passes(
     timed!(
         "InlineImmediatelyInvokedFunctionExpressions",
         crate::optimization::inline_immediately_invoked_function_expressions(hir, env)
-    );
+    )?;
 
     timed!(
         "MergeConsecutiveBlocks",
@@ -366,7 +366,7 @@ fn run_hir_passes(
             hir,
             &mut env.functions,
         )
-    );
+    )?;
 
     timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 
@@ -378,7 +378,7 @@ fn run_hir_passes(
     timed!(
         "ConstantPropagation",
         crate::optimization::constant_propagation(hir, env)
-    );
+    )?;
 
     timed!("InferTypes", crate::typeinference::infer_types(hir, env))?;
 

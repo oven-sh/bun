@@ -16,6 +16,7 @@
 use std::collections::HashSet;
 
 use crate::collections::IdMap;
+use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::visitors;
 use crate::hir::{
@@ -26,7 +27,10 @@ use crate::hir_vec;
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
-pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunction]) {
+pub(crate) fn merge_consecutive_blocks(
+    func: &mut HirFunction,
+    functions: &mut [HirFunction],
+) -> Result<(), CompilerDiagnostic> {
     // Collect inner function IDs for recursive processing
     let inner_func_ids: Vec<usize> = func
         .body
@@ -50,7 +54,7 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
         // Use std::mem::replace to temporarily take the inner function out,
         // process it, then put it back (standard borrow checker workaround)
         let mut inner_func = std::mem::replace(&mut functions[func_id], placeholder_function());
-        merge_consecutive_blocks(&mut inner_func, functions);
+        merge_consecutive_blocks(&mut inner_func, functions)?;
         functions[func_id] = inner_func;
     }
 
@@ -99,20 +103,17 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
         let eval_order = func.body.blocks[&pred_id].terminal.evaluation_order();
 
         // Collect phi data from the block being merged
-        let phis: Vec<_> = block
+        let phis = block
             .phis
             .iter()
             .map(|phi| {
-                assert_eq!(
-                    phi.operands.len(),
-                    1,
-                    "Found a block with a single predecessor but where a phi has multiple ({}) operands",
-                    phi.operands.len()
-                );
-                let operand = phi.operands.values().next().unwrap().clone();
-                (phi.place.identifier, operand)
+                let mut operands = phi.operands.values();
+                match (operands.next(), operands.next()) {
+                    (Some(operand), None) => Ok((phi.place.identifier, operand.clone())),
+                    _ => Err(multiple_phi_operands(phi.operands.len())),
+                }
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let block_instr_ids = block.instructions.clone();
         let block_terminal = block.terminal.clone();
 
@@ -184,6 +185,20 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
             merged.get(block_id)
         });
     }
+
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn multiple_phi_operands(count: usize) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        format!(
+            "Found a block with a single predecessor but where a phi has multiple ({count}) operands"
+        ),
+        None,
+    )
 }
 
 /// Tracks which blocks have been merged and into which target.

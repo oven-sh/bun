@@ -43,6 +43,7 @@
 use std::collections::HashSet;
 
 use crate::collections::IdMap;
+use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::cfg_utils::{
     create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
 };
@@ -61,7 +62,7 @@ use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 pub(crate) fn inline_immediately_invoked_function_expressions(
     func: &mut HirFunction,
     env: &mut Environment,
-) {
+) -> Result<(), CompilerDiagnostic> {
     // Track all function expressions that are assigned to a temporary
     let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new();
     // Functions that are inlined (by identifier id of the callee)
@@ -305,8 +306,10 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
         func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);
-        merge_consecutive_blocks(func, &mut env.functions);
+        merge_consecutive_blocks(func, &mut env.functions)?;
     }
+
+    Ok(())
 }
 
 /// Returns true for "block" and "catch" block kinds which correspond to statements

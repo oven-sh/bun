@@ -25,7 +25,7 @@
 //! Analogous to TS `Optimization/ConstantPropagation.ts`.
 
 use crate::collections::IdMap;
-use crate::diagnostics::JsString;
+use crate::diagnostics::{CompilerDiagnostic, JsString};
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
     remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -75,18 +75,21 @@ type Constants = IdMap<IdentifierId, Constant>;
 // Public entry point
 // =============================================================================
 
-pub(crate) fn constant_propagation(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn constant_propagation(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
     let mut constants: Constants = IdMap::new();
-    constant_propagation_impl(func, env, &mut constants);
+    constant_propagation_impl(func, env, &mut constants)
 }
 
 fn constant_propagation_impl(
     func: &mut HirFunction,
     env: &mut Environment,
     constants: &mut Constants,
-) {
+) -> Result<(), CompilerDiagnostic> {
     loop {
-        let have_terminals_changed = apply_constant_propagation(func, env, constants);
+        let have_terminals_changed = apply_constant_propagation(func, env, constants)?;
         if !have_terminals_changed {
             break;
         }
@@ -119,19 +122,20 @@ fn constant_propagation_impl(
          * Finally, merge together any blocks that are now guaranteed to execute
          * consecutively
          */
-        merge_consecutive_blocks(func, &mut env.functions);
+        merge_consecutive_blocks(func, &mut env.functions)?;
 
         // TODO: port assertConsistentIdentifiers(fn) and assertTerminalSuccessorsExist(fn)
         // from TS HIR validation. These are debug assertions that verify structural
         // invariants after the CFG cleanup helpers run.
     }
+    Ok(())
 }
 
 fn apply_constant_propagation(
     func: &mut HirFunction,
     env: &mut Environment,
     constants: &mut Constants,
-) -> bool {
+) -> Result<bool, CompilerDiagnostic> {
     let mut has_changes = false;
 
     let block_ids: Vec<_> = func.body.blocks.keys().copied().collect();
@@ -164,7 +168,7 @@ fn apply_constant_propagation(
                  */
                 continue;
             }
-            let result = evaluate_instruction(constants, func, env, *instr_id);
+            let result = evaluate_instruction(constants, func, env, *instr_id)?;
             if let Some(value) = result {
                 let lvalue_id = func.instructions[instr_id.0 as usize].lvalue.identifier;
                 constants.insert(lvalue_id, value);
@@ -227,7 +231,7 @@ fn apply_constant_propagation(
         }
     }
 
-    has_changes
+    Ok(has_changes)
 }
 
 // =============================================================================
@@ -281,9 +285,9 @@ fn evaluate_instruction(
     func: &mut HirFunction,
     env: &mut Environment,
     instr_id: crate::hir::InstructionId,
-) -> Option<Constant> {
+) -> Result<Option<Constant>, CompilerDiagnostic> {
     let instr = &func.instructions[instr_id.0 as usize];
-    match &instr.value {
+    let value = match &instr.value {
         InstructionValue::Primitive { value, loc } => Some(Constant::Primitive {
             value: value.clone(),
             loc: *loc,
@@ -406,10 +410,10 @@ fn evaluate_instruction(
                     },
                 );
                 // But return the value prior to the update (preserving its original loc)
-                return Some(Constant::Primitive {
+                return Ok(Some(Constant::Primitive {
                     value: PrimitiveValue::Number(n),
                     loc: prev_loc,
-                });
+                }));
             }
             None
         }
@@ -433,7 +437,7 @@ fn evaluate_instruction(
                 // Store and return the updated value
                 let lvalue_id = lvalue.identifier;
                 constants.insert(lvalue_id, result.clone());
-                return Some(result);
+                return Ok(Some(result));
             }
             None
         }
@@ -459,7 +463,7 @@ fn evaluate_instruction(
                         value: PrimitiveValue::Boolean(negated),
                         loc,
                     };
-                    return Some(result);
+                    return Ok(Some(result));
                 }
                 None
             }
@@ -480,7 +484,7 @@ fn evaluate_instruction(
                         value: PrimitiveValue::Number(FloatValue::new(negated)),
                         loc,
                     };
-                    return Some(result);
+                    return Ok(Some(result));
                 }
                 None
             }
@@ -509,10 +513,10 @@ fn evaluate_instruction(
                         value: prim.clone(),
                         loc,
                     };
-                    return Some(Constant::Primitive {
+                    return Ok(Some(Constant::Primitive {
                         value: prim.clone(),
                         loc,
-                    });
+                    }));
                 }
             }
             None
@@ -542,7 +546,7 @@ fn evaluate_instruction(
                                 value: PrimitiveValue::Number(FloatValue::new(len)),
                                 loc,
                             };
-                        return Some(result);
+                        return Ok(Some(result));
                     }
                 }
             }
@@ -559,7 +563,7 @@ fn evaluate_instruction(
                 for q in quasis {
                     match q.cooked {
                         Some(cooked) => result.extend_from_slice(cooked.slice()),
-                        None => return None,
+                        None => return Ok(None),
                     }
                 }
                 let loc = *loc;
@@ -568,15 +572,15 @@ fn evaluate_instruction(
                     value: value.clone(),
                     loc,
                 };
-                return Some(Constant::Primitive { value, loc });
+                return Ok(Some(Constant::Primitive { value, loc }));
             }
 
             if subexprs.len() != quasis.len() - 1 {
-                return None;
+                return Ok(None);
             }
 
             if quasis.iter().any(|q| q.cooked.is_none()) {
-                return None;
+                return Ok(None);
             }
 
             let mut quasi_index = 0usize;
@@ -587,7 +591,7 @@ fn evaluate_instruction(
                 let sub_expr_value = read(constants, sub_expr);
                 let sub_prim = match sub_expr_value {
                     Some(Constant::Primitive { ref value, .. }) => value,
-                    _ => return None,
+                    _ => return Ok(None),
                 };
 
                 match sub_prim {
@@ -600,10 +604,10 @@ fn evaluate_instruction(
                     }
                     PrimitiveValue::String(s) => match s.as_bytes() {
                         Some(b) => result.extend_from_slice(b),
-                        None => return None,
+                        None => return Ok(None),
                     },
                     // TS rejects undefined subexpression values
-                    PrimitiveValue::Undefined => return None,
+                    PrimitiveValue::Undefined => return Ok(None),
                 };
 
                 result.extend_from_slice(quasis[quasi_index].cooked.unwrap().slice());
@@ -637,12 +641,12 @@ fn evaluate_instruction(
         }
         InstructionValue::FunctionExpression { lowered_func, .. } => {
             let func_id = lowered_func.func;
-            process_inner_function(func_id, env, constants);
+            process_inner_function(func_id, env, constants)?;
             None
         }
         InstructionValue::ObjectMethod { lowered_func, .. } => {
             let func_id = lowered_func.func;
-            process_inner_function(func_id, env, constants);
+            process_inner_function(func_id, env, constants)?;
             None
         }
         InstructionValue::StartMemoize { deps, .. } => {
@@ -709,20 +713,26 @@ fn evaluate_instruction(
         | InstructionValue::Debugger { .. }
         | InstructionValue::FinishMemoize { .. }
         | InstructionValue::UnsupportedNode { .. } => None,
-    }
+    };
+    Ok(value)
 }
 
 // =============================================================================
 // Inner function processing
 // =============================================================================
 
-fn process_inner_function(func_id: FunctionId, env: &mut Environment, constants: &mut Constants) {
+fn process_inner_function(
+    func_id: FunctionId,
+    env: &mut Environment,
+    constants: &mut Constants,
+) -> Result<(), CompilerDiagnostic> {
     let mut inner = std::mem::replace(
         &mut env.functions[func_id.0 as usize],
         placeholder_function(),
     );
-    constant_propagation_impl(&mut inner, env, constants);
+    constant_propagation_impl(&mut inner, env, constants)?;
     env.functions[func_id.0 as usize] = inner;
+    Ok(())
 }
 
 // =============================================================================

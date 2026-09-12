@@ -1312,6 +1312,10 @@ pub struct FnOnlyDataVisit {
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// "this" is the `constructor` of a class with an `extends` clause, so it
+    /// is in its temporal dead zone until `super()` returns.
+    pub(crate) is_derived_class_ctor: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

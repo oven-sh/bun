@@ -557,6 +557,54 @@ it("Bun.inspect array with non-indexed properties", () => {
 ]`);
 });
 
+// After 100 elements the rest of the array is one "... N more items" summary. A run of holes right
+// before the 101st element is part of that rest, not a second "N x empty items" entry.
+it("Bun.inspect array counts a hole run before the 101st element once", () => {
+  const hundred = () => Array.from({ length: 100 }, (_, i) => i);
+  const afterThe100th = value => {
+    const out = Bun.inspect(value);
+    return out.slice(out.lastIndexOf("99,"));
+  };
+
+  const holesThenElement = hundred();
+  holesThenElement[105] = "x";
+
+  const holesOnBothSides = hundred();
+  holesOnBothSides[105] = "x";
+  holesOnBothSides.length = 200;
+
+  const withNamedProperty = hundred();
+  withNamedProperty[105] = "x";
+  withNamedProperty.potato = "hello";
+
+  const args = (function () {
+    arguments[105] = "x";
+    arguments.length = 106;
+    return arguments;
+  })(...hundred());
+
+  // Controls: no hole run is pending when the cap is reached. This records their current output.
+  const dense = Array.from({ length: 106 }, (_, i) => i);
+  const trailingHolesOnly = hundred();
+  trailingHolesOnly.length = 106;
+
+  expect({
+    holesThenElement: afterThe100th(holesThenElement),
+    holesOnBothSides: afterThe100th(holesOnBothSides),
+    withNamedProperty: afterThe100th(withNamedProperty),
+    args: afterThe100th(args),
+    dense: afterThe100th(dense),
+    trailingHolesOnly: afterThe100th(trailingHolesOnly),
+  }).toEqual({
+    holesThenElement: "99,\n  ... 6 more items\n]",
+    holesOnBothSides: "99,\n  ... 100 more items\n]",
+    withNamedProperty: '99,\n  ... 6 more items, potato: "hello"\n]',
+    args: "99,\n  ... 6 more items\n]",
+    dense: "99,\n  ... 6 more items\n]",
+    trailingHolesOnly: "99, 6 x empty items\n]",
+  });
+});
+
 // Printing a sparse array must never iterate index-by-index over the holes:
 // `length` can be up to 2^32 - 1 with no elements in the array at all.
 // Run it in a child so a regression times this test out instead of hanging the runner.

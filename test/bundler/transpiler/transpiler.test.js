@@ -2450,6 +2450,60 @@ export default <>hi</>
     ).toThrow();
   });
 
+  describe("a parser warning does not throw", () => {
+    // `-->` at the start of a line is a legacy HTML comment. The parser logs a
+    // warning for it and keeps going.
+    const warnSrc = "x = 1\n--> legacy html comment\ny = 2\n";
+    const warnJsx = 'import { a } from "a";\nexport default <div {...obj} key="k" />;\n';
+
+    it("transformSync", () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      expect(t.transformSync(warnSrc)).toBe("x = 1;\ny = 2;\n");
+    });
+
+    it("transform", async () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      expect(await t.transform(warnSrc)).toBe("x = 1;\ny = 2;\n");
+    });
+
+    it("scan", () => {
+      const t = new Bun.Transpiler({ loader: "jsx" });
+      expect(t.scan(warnJsx)).toEqual({
+        imports: [{ kind: "import-statement", path: "a" }],
+        exports: ["default"],
+      });
+    });
+
+    it("scanImports", () => {
+      const t = new Bun.Transpiler({ loader: "jsx" });
+      // The key-after-spread warning makes the JSX fall back to the classic
+      // runtime, so the scan also lists the runtime requires.
+      expect(t.scanImports(warnJsx)).toEqual([
+        { kind: "import-statement", path: "a" },
+        { kind: "require-call", path: "react/jsx-dev-runtime" },
+        { kind: "require-call", path: "react" },
+      ]);
+    });
+
+    it("a parse error next to a warning still throws", () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      const src = warnSrc + "bad??!?!?!";
+      for (const fn of ["transformSync", "scan", "scanImports"]) {
+        let thrown;
+        try {
+          t[fn](src);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(AggregateError);
+        expect(thrown.errors.map(m => [m.level, m.message])).toEqual([
+          ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
+          ["error", "Unexpected ?"],
+        ]);
+      }
+    });
+  });
+
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
     // indexed by the property position instead of a dense counter, leaving garbage in the
@@ -3794,15 +3848,31 @@ class Foo {
     expectParseError("class Foo { static { continue } }", 'Cannot use "continue" here');
     expectParseError("x: { class Foo { static { break x } } }", 'There is no containing label named "x"');
     expectParseError("x: { class Foo { static { continue x } } }", 'There is no containing label named "x"');
+  });
 
-    expectParseError("class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x += 1 } }", 'Reading from setter-only property "#x" will throw');
+  it("private accessor and method misuse is a warning", async () => {
+    const cases = [
+      ["class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw'],
+      ["class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw'],
+      ["class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw'],
+      ["class Foo { set #x(x) { this.#x += 1 } }", 'Reading from setter-only property "#x" will throw'],
+      ["class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw'],
+      ["class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw'],
+    ];
 
-    // Writing to method warnings
-    expectParseError("class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw');
-    expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
+    // The transpiler keeps going after a warning, so the code is still printed.
+    for (const [code] of cases) {
+      expect(transpiler.transformSync(code)).toContain("class Foo");
+    }
+
+    using dir = tempDir("private-warnings", {
+      "in.js": cases.map(([code]) => `{ ${code} }`).join("\n") + "\n",
+    });
+    const result = await Bun.build({ entrypoints: [join(String(dir), "in.js")], write: false });
+    expect(result.success).toBe(true);
+    expect(result.logs.map(log => [log.level, log.position.line, log.message])).toEqual(
+      cases.map(([, message], i) => ["warn", i + 1, message]),
+    );
   });
 
   it("class bodies keep `this` and the class name as written", () => {

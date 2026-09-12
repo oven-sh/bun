@@ -125,10 +125,10 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Namespace import only gets the CJS exports as-is, no default wrapper.
-      // The lifted module keeps the order of its `exports.x = ...` assignments,
-      // like `module.exports` would.
-      stdout: '{"foo":"foo","bar":"bar"}',
+      // The namespace of the lifted module has `default` set to its
+      // `module.exports` object, then the named exports in the order of the
+      // `exports.x = ...` assignments, as `bun run` and esbuild print it.
+      stdout: '{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}',
     },
   });
 
@@ -373,10 +373,11 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // The default import is `module.exports`, which for a lifted CommonJS
-      // module is the namespace object itself, so the namespace has no
-      // separate `default` key (the same as a lone `import *`, Test 6).
-      stdout: '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"foo":"foo","bar":"bar"}}',
+      // The default import is `module.exports`. The namespace is a second
+      // object whose `default` is that `module.exports` (the same as a lone
+      // `import *`, Test 6).
+      stdout:
+        '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}}',
     },
   });
 

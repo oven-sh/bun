@@ -175,7 +175,7 @@ describe("bundler", () => {
       `,
       "/foo.ts": `exports.foo = 123`,
     },
-    run: { stdout: '{"foo":123} 123 234' },
+    run: { stdout: '{"default":{"foo":123},"foo":123} 123 234' },
   });
   itBundled("importstar_ts/CommonJSNoCapture", {
     files: {

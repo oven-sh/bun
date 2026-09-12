@@ -1266,12 +1266,10 @@ pub mod parse_worker {
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
 
-                // `path.text` is the file path; `path.pretty` is a display name that
-                // can carry an import-attribute suffix.
                 const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-                let file_name = bun_paths::basename(source.path.text);
-                let enable_css_modules = file_name.len() > CSS_MODULE_SUFFIX.len()
-                    && file_name.ends_with(CSS_MODULE_SUFFIX);
+                let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
+                    && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
+                        == CSS_MODULE_SUFFIX;
                 // `parse_bundler` takes `ParserOptions<'static>` (the
                 // `'a` on `ParserOptions` is PhantomData-only; storage is a raw
                 // `NonNull<Log>`). Construct via `default(None)` to get `'static`,
@@ -1281,7 +1279,7 @@ pub mod parse_worker {
                     let mut parseropts = bun_css::ParserOptions::default(None);
                     parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = file_name;
+                        parseropts.filename = bun_paths::basename(source.path.pretty);
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts

@@ -6,7 +6,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::ArrayHashMap;
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -32,7 +32,7 @@ pub use bv2_impl::{
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
-use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+use crate::PathToSourceIndexMap::{ModuleMap, PathToSourceIndexMap};
 use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
@@ -147,42 +147,22 @@ bun_core::declare_scope!(scan_counter, visible);
 
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by module key during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
+pub(crate) type ResolveQueue = ModuleMap<*mut ParseTask>;
 
-/// A resolved record's module is keyed in `PathToSourceIndexMap` / `ResolveQueue`
-/// by the bare path for the loader the path gets by default, else by path +
-/// loader (one file under two `with { type }` loaders is two modules, as at
-/// runtime). Returns whether `key_buf` now holds such a key.
-fn key_import_record_by_loader(
-    key_buf: &mut Vec<u8>,
+/// The key loader of a record's module (see `ModuleMap`). `bare_path_only` keeps the bare path key.
+fn import_record_key_loader(
     import_record: &mut bun_ast::ImportRecord,
-    path_text: &[u8],
     path_loader: bun_ast::Loader,
     bare_path_only: bool,
-) -> bool {
+) -> Option<bun_ast::Loader> {
     let loader = import_record.loader.unwrap_or(path_loader);
     if bare_path_only || loader == path_loader {
-        return false;
+        return None;
     }
     import_record
         .flags
         .insert(bun_ast::ImportRecordFlags::KEYED_BY_LOADER);
-    write_loader_module_key(key_buf, path_text, loader);
-    true
-}
-
-/// `path NUL loader`. NUL cannot appear in a file path, so this never equals one.
-pub(crate) fn write_loader_module_key(
-    buf: &mut Vec<u8>,
-    path_text: &[u8],
-    loader: bun_ast::Loader,
-) {
-    let loader_name: &'static str = loader.into();
-    buf.clear();
-    buf.reserve(path_text.len() + 1 + loader_name.len());
-    buf.extend_from_slice(path_text);
-    buf.push(0);
-    buf.extend_from_slice(loader_name.as_bytes());
+    Some(loader)
 }
 
 pub struct BakeOptions<'a> {
@@ -2370,6 +2350,43 @@ pub mod bv2_impl {
             }
         }
 
+        /// Like esbuild: when modules share a pretty path, the ones with a key loader become `d.json with { type: 'text' }`.
+        pub(crate) fn disambiguate_pretty_paths(&mut self) {
+            if !self.graph.has_any_key_loaders {
+                return;
+            }
+            let mut input_files = self.graph.input_files.slice();
+            let columns = input_files.split_mut();
+            let (sources, key_loaders) = (columns.source, &*columns.key_loader);
+
+            let mut uses: bun_collections::StringHashMap<u32> = Default::default();
+            for (source, key_loader) in sources.iter().zip(key_loaders) {
+                if key_loader.is_some() {
+                    uses.put(source.path.pretty, 0).expect("oom");
+                }
+            }
+            for source in sources.iter() {
+                if let Some(count) = uses.get_mut(source.path.pretty) {
+                    *count += 1;
+                }
+            }
+
+            for (source, key_loader) in sources.iter_mut().zip(key_loaders) {
+                let Some(loader) = *key_loader else { continue };
+                if uses.get(source.path.pretty).is_none_or(|count| *count < 2) {
+                    continue;
+                }
+                let loader_name: &'static str = loader.into();
+                let mut pretty: Vec<u8> = source.path.pretty.to_vec();
+                pretty.extend_from_slice(b" with { type: '");
+                pretty.extend_from_slice(loader_name.as_bytes());
+                pretty.extend_from_slice(b"' }");
+                // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
+                source.path.pretty =
+                    unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&pretty)) };
+            }
+        }
+
         /// This runs on the Bundle Thread.
         pub(crate) fn run_resolver(
             &mut self,
@@ -2394,33 +2411,22 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let mut file_map_result = _file_map_result;
+                    let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // SAFETY: see `transpiler` note above.
                     let path_loader = Fs::Path::init(path_primary.text)
                         .loader(unsafe { &(*transpiler).options.loaders })
                         .unwrap_or(Loader::File);
                     let for_dev_server = self.dev_server.is_some();
-                    let mut module_key_buf: Vec<u8> = Vec::new();
-                    let (loader, keyed_by_loader): (Loader, bool) = {
+                    let (loader, key_loader): (Loader, Option<Loader>) = {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        let keyed = super::key_import_record_by_loader(
-                            &mut module_key_buf,
-                            record,
-                            path_primary.text,
-                            path_loader,
-                            for_dev_server,
-                        );
-                        (record.loader.unwrap_or(path_loader), keyed)
-                    };
-                    let key: &[u8] = if keyed_by_loader {
-                        &module_key_buf
-                    } else {
-                        path_primary.text
+                        let key_loader =
+                            super::import_record_key_loader(record, path_loader, for_dev_server);
+                        (record.loader.unwrap_or(path_loader), key_loader)
                     };
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -2429,7 +2435,7 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(key)
+                            .get_or_put_keyed(path_primary.text, key_loader)
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2438,17 +2444,7 @@ pub mod bv2_impl {
                     };
                     if !found_existing {
                         // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
-                        if keyed_by_loader {
-                            self.append_loader_to_pretty_path(&mut path_primary, loader);
-                        }
-                        // `ParseTask::init` takes its path from the resolve result.
-                        file_map_result.path_pair.primary = path_primary;
+                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -2462,6 +2458,7 @@ pub mod bv2_impl {
                                 import_record.original_target,
                             )
                             .expect("oom");
+                        self.graph.set_key_loader(idx, key_loader);
                         // SAFETY: see `value_ptr` note above.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
@@ -2671,37 +2668,26 @@ pub mod bv2_impl {
                 .loader(unsafe { &(*transpiler).options.loaders })
                 .unwrap_or(Loader::File);
             let for_dev_server = self.dev_server.is_some();
-            let mut module_key_buf: Vec<u8> = Vec::new();
-            let (loader, keyed_by_loader): (Loader, bool) = {
+            let (loader, key_loader): (Loader, Option<Loader>) = {
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
-                let keyed = super::key_import_record_by_loader(
-                    &mut module_key_buf,
-                    record,
-                    path.text,
-                    path_loader,
-                    for_dev_server,
-                );
-                (record.loader.unwrap_or(path_loader), keyed)
-            };
-            let key: &[u8] = if keyed_by_loader {
-                &module_key_buf
-            } else {
-                path.text
+                let key_loader =
+                    super::import_record_key_loader(record, path_loader, for_dev_server);
+                (record.loader.unwrap_or(path_loader), key_loader)
             };
 
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(key) {
+            if let Some(existing) = self
+                .path_to_source_index_map(target)
+                .get_keyed(path.text, key_loader)
+            {
                 out_source_index = Some(Index::init(existing));
             } else {
                 path = self
                     .path_with_pretty_initialized(&path, target)
                     .expect("oom");
-                if keyed_by_loader {
-                    self.append_loader_to_pretty_path(&mut path, loader);
-                }
                 // The borrowck-reshape above cloned
                 // `path` out, so write the prettified path back so
                 // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
@@ -2722,8 +2708,9 @@ pub mod bv2_impl {
                         import_record.original_target,
                     )
                     .expect("oom");
+                self.graph.set_key_loader(idx, key_loader);
                 self.path_to_source_index_map(target)
-                    .put(key, idx)
+                    .put_keyed(path.text, key_loader, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
@@ -2743,7 +2730,7 @@ pub mod bv2_impl {
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = key.to_vec().into_boxed_slice();
+                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -2759,11 +2746,11 @@ pub mod bv2_impl {
                         _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
-                        .put(&key_text, idx)
+                        .put_keyed(&key_text, key_loader, idx)
                         .expect("oom");
                     if separate_ssr {
                         self.path_to_source_index_map(tb)
-                            .put(&key_text, idx)
+                            .put_keyed(&key_text, key_loader, idx)
                             .expect("oom");
                     }
                 }
@@ -4138,6 +4125,7 @@ pub mod bv2_impl {
                 this.fail_if_no_entry_points()?;
 
                 this.scan_for_secondary_paths();
+                this.disambiguate_pretty_paths();
 
                 this.process_server_component_manifest_files()?;
 
@@ -4303,6 +4291,7 @@ pub mod bv2_impl {
                 }
 
                 this.scan_for_secondary_paths();
+                this.disambiguate_pretty_paths();
 
                 this.process_server_component_manifest_files()?;
 
@@ -5016,39 +5005,6 @@ pub mod bv2_impl {
                         path.namespace = result_ns_static;
                     }
                     if !result.external {
-                        let mut module_key_buf: Vec<u8> = Vec::new();
-                        let (loader, keyed_by_loader): (Loader, bool) =
-                            if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                                // A file that a plugin resolved the entry point to instead keeps its own loader.
-                                let requested = resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier);
-                                (this.requested_file_loader(&path, requested), false)
-                            } else {
-                                // A `with { type }` loader belongs to the import, whichever path the plugin returned.
-                                let path_loader = this.requested_file_loader(&path, None);
-                                let for_dev_server = this.dev_server.is_some();
-                                // Answers run as posted tasks, after the importer's records are on the graph.
-                                let record: &mut ImportRecord =
-                                    &mut this.graph.ast.items_import_records_mut()
-                                        [resolve.import_record.importer_source_index as usize]
-                                        .as_mut_slice()
-                                        [resolve.import_record.import_record_index as usize];
-                                let keyed = super::key_import_record_by_loader(
-                                    &mut module_key_buf,
-                                    record,
-                                    path.text,
-                                    path_loader,
-                                    for_dev_server,
-                                );
-                                (record.loader.unwrap_or(path_loader), keyed)
-                            };
-                        let key: &[u8] = if keyed_by_loader {
-                            &module_key_buf
-                        } else {
-                            path.text
-                        };
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -5057,7 +5013,7 @@ pub mod bv2_impl {
                         let (value_ptr, found_existing) = {
                             let existing = this
                                 .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(key)
+                                .get_or_put(path.text)
                                 .expect("oom");
                             (
                                 std::ptr::from_mut(existing.value_ptr),
@@ -5076,9 +5032,6 @@ pub mod bv2_impl {
                                     resolve.import_record.original_target,
                                 )
                                 .expect("oom");
-                            if keyed_by_loader {
-                                this.append_loader_to_pretty_path(&mut path, loader);
-                            }
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
@@ -5089,6 +5042,14 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
+                            // A file that a plugin resolved the record to instead keeps its own loader.
+                            let loader = this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                            );
 
                             this.graph
                                 .input_files
@@ -5388,6 +5349,7 @@ pub mod bv2_impl {
             self.fail_if_no_entry_points()?;
 
             self.scan_for_secondary_paths();
+            self.disambiguate_pretty_paths();
 
             self.process_server_component_manifest_files()?;
 
@@ -6111,21 +6073,6 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        /// `d.json with { type: "text" }`, so a `KEYED_BY_LOADER` module has its
-        /// own name in output comments, errors and the metafile.
-        fn append_loader_to_pretty_path(&self, path: &mut Fs::Path<'_>, loader: Loader) {
-            let loader_name: &'static str = loader.into();
-            let mut pretty: Vec<u8> =
-                Vec::with_capacity(path.pretty.len() + loader_name.len() + 20);
-            pretty.extend_from_slice(path.pretty);
-            pretty.extend_from_slice(b" with { type: \"");
-            pretty.extend_from_slice(loader_name.as_bytes());
-            pretty.extend_from_slice(b"\" }");
-            // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
-            path.pretty =
-                unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&pretty)) };
-        }
-
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6353,7 +6300,6 @@ pub mod bv2_impl {
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
-            let mut module_key_buf: Vec<u8> = Vec::new();
             // The dev server's incremental graph is keyed by path alone.
             let for_dev_server = self.dev_server.is_some();
 
@@ -6544,25 +6490,23 @@ pub mod bv2_impl {
                             .unwrap_or(Loader::File);
                         let import_record_loader = import_record.loader.unwrap_or(path_loader);
                         import_record.loader = Some(import_record_loader);
-                        let keyed_by_loader = super::key_import_record_by_loader(
-                            &mut module_key_buf,
+                        let key_loader = super::import_record_key_loader(
                             import_record,
-                            path_primary.text,
                             path_loader,
                             for_dev_server,
                         );
-                        let key: &[u8] = if keyed_by_loader {
-                            &module_key_buf
-                        } else {
-                            path_primary.text
-                        };
 
-                        if let Some(id) = self.path_to_source_index_map(target).get(key) {
+                        if let Some(id) = self
+                            .path_to_source_index_map(target)
+                            .get_keyed(path_primary.text, key_loader)
+                        {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
-                        let resolve_entry = resolve_queue.get_or_put(key).expect("oom");
+                        let resolve_entry = resolve_queue
+                            .get_or_put_keyed(path_primary.text, key_loader)
+                            .expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
@@ -6580,12 +6524,6 @@ pub mod bv2_impl {
                                 self.arena().alloc_slice_copy(path_primary.text),
                             )
                         };
-                        if keyed_by_loader {
-                            self.append_loader_to_pretty_path(
-                                &mut path_primary,
-                                import_record_loader,
-                            );
-                        }
                         import_record.path = path_as_static(&path_primary);
                         let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
@@ -6923,26 +6861,22 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                // An HTML import from a server build becomes a manifest module plus
-                // a browser entry point, both found again by bare path at link time.
-                let keyed_by_loader = super::key_import_record_by_loader(
-                    &mut module_key_buf,
+                // A server-side HTML import's manifest and browser entry point are found by bare path.
+                let key_loader = super::import_record_key_loader(
                     import_record,
-                    path.text,
                     path_loader,
                     for_dev_server || is_html_entrypoint,
                 );
-                let key: &[u8] = if keyed_by_loader {
-                    &module_key_buf
-                } else {
-                    path.text
-                };
 
-                if let Some(id) = self.path_to_source_index_map(target).get(key) {
+                if let Some(id) = self
+                    .path_to_source_index_map(target)
+                    .get_keyed(path.text, key_loader)
+                {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -6956,7 +6890,9 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(key).expect("oom");
+                let resolve_entry = resolve_queue
+                    .get_or_put_keyed(path.text, key_loader)
+                    .expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -6967,9 +6903,6 @@ pub mod bv2_impl {
                 *path = self
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
-                if keyed_by_loader {
-                    self.append_loader_to_pretty_path(path, import_record_loader);
-                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
@@ -7033,8 +6966,7 @@ pub mod bv2_impl {
                     )
                 });
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
-                let value: *mut ParseTask = *value;
+            for (key, key_loader, value) in resolve_queue.iter() {
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
                 let value = unsafe { &mut *value };
@@ -7054,7 +6986,7 @@ pub mod bv2_impl {
                     } else {
                         self.graph.path_to_source_index_map(target)
                     };
-                    let existing = map.get_or_put(key).expect("oom");
+                    let existing = map.get_or_put_keyed(key, key_loader).expect("oom");
                     (
                         existing.found_existing,
                         std::ptr::from_mut::<IndexInt>(existing.value_ptr),
@@ -7073,11 +7005,14 @@ pub mod bv2_impl {
                         } else {
                             bun_alloc::AstAlloc::vec()
                         },
+                        key_loader,
                         ..Default::default()
                     };
 
                     self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths
                         || !new_input_file.secondary_path.is_empty();
+                    self.graph.has_any_key_loaders =
+                        self.graph.has_any_key_loaders || key_loader.is_some();
 
                     new_input_file.source.index =
                         bun_ast::Index(self.graph.input_files.len() as u32);
@@ -7215,27 +7150,20 @@ pub mod bv2_impl {
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
-            let mut module_key_buf: Vec<u8> = Vec::new();
+            let source_key_loader =
+                self.graph.input_files.items_key_loader()[ctx.source_index.get() as usize];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                let key: &[u8] = match record.loader {
-                    Some(loader)
-                        if record
-                            .flags
-                            .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER) =>
-                    {
-                        super::write_loader_module_key(
-                            &mut module_key_buf,
-                            record.path.text,
-                            loader,
-                        );
-                        &module_key_buf
-                    }
-                    _ => record.path.text,
-                };
-                if let Some(source_index) = path_to_source_index_map.get(key) {
+                let key_loader = record.loader.filter(|_| {
+                    record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER)
+                });
+                if let Some(source_index) =
+                    path_to_source_index_map.get_keyed(record.path.text, key_loader)
+                {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7244,7 +7172,11 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
+                            let _ = path_to_source_index_map.put_keyed(
+                                ctx.source_path,
+                                source_key_loader,
+                                source_index,
+                            ); // OOM-only Result
                         }
                     }
                 }
@@ -7720,9 +7652,11 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
+                        let source_key_loader =
+                            this.graph.input_files.items_key_loader()[result_source_index];
                         this.graph
                             .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
+                            .put_keyed(source_path_text, source_key_loader, reference_source_index)
                             .expect("oom");
 
                         this.graph

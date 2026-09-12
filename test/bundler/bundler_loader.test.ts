@@ -149,8 +149,8 @@ describe("bundler", async () => {
         },
       });
       // One file imported under two `with { type }` loaders is two modules
-      // with two values, as it is at runtime. The bundler used to key modules
-      // by path alone, so the first loader won for every import of the file.
+      // with two values. The bundler used to key modules by path alone, so the
+      // first loader won for every import of the file.
       // The plugin variant resolves every import through the onResolve
       // fallback path (a plugin that matches but defers to the default resolver).
       for (const withPlugin of [false, true]) {
@@ -209,7 +209,8 @@ describe("bundler", async () => {
   });
 
   // The two imports sit in one module, so they meet in one resolve queue, and
-  // the import with the attribute comes first.
+  // the import with the attribute comes first. The second run entry runs the
+  // source file: `bun run` gives the same two values.
   itBundled("bun/loader-same-file-under-two-import-attributes-in-one-module", {
     target: "bun",
     files: {
@@ -220,7 +221,10 @@ describe("bundler", async () => {
       `,
       "/data.json": `{"a":1}`,
     },
-    run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    run: [
+      { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+      { file: "/entry.ts", stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    ],
   });
 
   // The text request used to be folded into the entry point's own JS module:
@@ -233,30 +237,51 @@ describe("bundler", async () => {
         console.log(typeof source, source.includes('with { type: "text" }'));
       `,
     },
+    run: [{ stdout: "string true" }, { file: "/entry.ts", stdout: "string true" }],
+  });
+
+  // A stylesheet's url() takes the file as an asset, and a script imports the
+  // same file as text. The url() used to get the text module:
+  // `data:text/plain;base64,...`, which no browser renders as an image.
+  itBundled("bun/loader-css-url-and-text-import-of-one-file", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import svg from "./icon.svg" with { type: "text" };
+        import "./style.css";
+        console.log(typeof svg, svg.startsWith("<svg"));
+      `,
+      "/style.css": `.a { background: url("./icon.svg"); }`,
+      "/icon.svg": `<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toContain("data:image/svg+xml;base64,");
+    },
     run: { stdout: "string true" },
   });
 
-  // A `type` that names the loader the extension already selects is still the
-  // same module as a plain import.
-  itBundled("bun/loader-same-file-same-loader-is-one-module", {
+  // shim.txt loaded as js is a `module.exports = require()` redirect to
+  // target.js. The redirect belongs to that module alone: a later plain import
+  // of shim.txt still gets the text module.
+  itBundled("bun/loader-commonjs-redirect-under-a-type-attribute", {
     target: "bun",
     files: {
-      "/entry.ts": /* js */ `
-        import { a } from "./a";
-        import { b } from "./b";
-        console.log(a === b);
+      "/entry.js": /* js */ `
+        import viaShim from "./shim.txt" with { type: "js" };
+        import later from "./later1.js";
+        console.log(viaShim.value, later);
       `,
-      "/a.ts": /* js */ `
-        import data from "./data.json" with { type: "json" };
-        export const a = data;
+      "/shim.txt": `module.exports = require("./target.js");`,
+      "/target.js": `module.exports = { value: "from target" };`,
+      "/later1.js": `export { default } from "./later2.js";`,
+      "/later2.js": `export { default } from "./later3.js";`,
+      "/later3.js": /* js */ `
+        import text from "./shim.txt";
+        export default typeof text;
       `,
-      "/b.ts": /* js */ `
-        import data from "./data.json";
-        export const b = data;
-      `,
-      "/data.json": `{"a":1}`,
     },
-    run: { stdout: "true" },
+    run: { stdout: "from target string" },
   });
 
   itBundled("bun/loader-text-file", {

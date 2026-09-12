@@ -383,6 +383,43 @@ describe("bundler metafile", () => {
     expect(jsonImport!.with!.type).toBe("json");
   });
 
+  // Like esbuild: only a file that is in the build under two loaders gets the
+  // attribute in its name. A lone `with { type }` import keeps the plain name.
+  test("metafile names one file under two import attributes apart", async () => {
+    using dir = tempDir("metafile-two-import-attributes", {
+      "entry.js": `
+        import obj from "./data.json";
+        import text from "./data.json" with { type: "text" };
+        import readme from "./README.md" with { type: "text" };
+        console.log(obj, text, readme);
+      `,
+      "data.json": `{"key": "value"}`,
+      "README.md": `# hi`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const inputs = (result.metafile as Metafile).inputs;
+    const name = (key: string) => key.split(/[\\/]/).pop()!;
+    expect(Object.keys(inputs).map(name).sort()).toEqual([
+      "README.md",
+      "data.json",
+      "data.json with { type: 'text' }",
+      "entry.js",
+    ]);
+
+    const entry = Object.entries(inputs).find(([key]) => name(key) === "entry.js")![1];
+    expect(entry.imports.map(imp => [name(imp.path), imp.with?.type, imp.path in inputs])).toEqual([
+      ["data.json", "json", true],
+      ["data.json with { type: 'text' }", "text", true],
+      ["README.md", "text", true],
+    ]);
+  });
+
   test("metafile tracks require-call imports", async () => {
     using dir = tempDir("metafile-require-test", {
       "entry.js": `const foo = require("./foo.js"); console.log(foo);`,

@@ -3,8 +3,6 @@ FROM debian:trixie-slim AS build
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
 
-# Node.js includes python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
-# Though, not on slim and alpine images.
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
       ca-certificates \
@@ -13,7 +11,6 @@ RUN apt-get update -qq \
       gpg \
       gpg-agent \
       unzip \
-      python3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && arch="$(dpkg --print-architecture)" \
@@ -58,10 +55,15 @@ RUN apt-get update -qq \
 
 FROM debian:trixie
 
-# Install CA certificates so tools that verify TLS (e.g. apt over HTTPS on
-# Debian 13) have a trust store. The base image ships none.
+# The full Debian image matches Node's official full image (buildpack-deps
+# based) for out-of-the-box `bun install`: ca-certificates for TLS, git for
+# git/github dependencies (#4687), python3 for node-gyp (#9807). The slim,
+# alpine and distroless variants stay minimal, same as Node.
 RUN apt-get update -qq \
-    && apt-get install -qq --no-install-recommends ca-certificates \
+    && apt-get install -qq --no-install-recommends \
+      ca-certificates \
+      git \
+      python3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

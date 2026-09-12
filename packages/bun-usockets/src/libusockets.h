@@ -485,12 +485,10 @@ const char *us_socket_sni_servername(struct us_socket_t *s);
  * from sockets entirely. Build once per SecureContext / config, share across
  * every connect/listen/upgrade. */
 
+/* TLS material arrives as PEM bytes; callers that take file paths read them
+ * before building the options. */
 struct us_bun_socket_context_options_t {
-    const char *key_file_name;
-    const char *cert_file_name;
     const char *passphrase;
-    const char *dh_params_file_name;
-    const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage;
     const char * const *key;
@@ -519,6 +517,8 @@ struct us_bun_socket_context_options_t {
     const char *sigalgs;
     /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
     const char *ecdh_curve;
+    /* PEM-encoded DH parameters. */
+    const char *dh_params;
 };
 
 enum create_bun_socket_error_t {
@@ -529,6 +529,11 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
     CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
     CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE,
+    /* Set by the Rust caller when it cannot read a *_file_name option before
+     * handing the bytes over; us_ssl_ctx_from_options never produces these. */
+    CREATE_BUN_SOCKET_ERROR_LOAD_KEY_FILE,
+    CREATE_BUN_SOCKET_ERROR_LOAD_CERT_FILE,
+    CREATE_BUN_SOCKET_ERROR_LOAD_DH_PARAMS_FILE,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns

@@ -7,7 +7,7 @@ use core::ptr;
 
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
-use crate::socket_context::BunSocketContextOptions;
+use crate::socket_context::{LoadedOptions, RawSocketContextOptions};
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
 use bun_ptr::ThisPtr;
@@ -392,18 +392,20 @@ macro_rules! h3_route_methods {
 }
 
 impl App {
-    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
-        // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
-        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
+    pub fn create(opts: &LoadedOptions, idle_timeout_s: u32) -> Option<*mut App> {
+        // SAFETY: opts is `#[repr(C)]` passed by value and keeps the buffers it
+        // points at alive for the call; uws owns the returned handle
+        let p = unsafe { c::uws_h3_create_app(**opts, idle_timeout_s) };
         if p.is_null() { None } else { Some(p) }
     }
     pub fn add_server_name_with_options(
         &mut self,
         hostname: &bun_core::ZStr,
-        opts: &BunSocketContextOptions,
+        opts: &LoadedOptions,
     ) -> Result<(), AddServerNameError> {
-        // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed by value
-        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), *opts) } {
+        // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed
+        // by value and keeps the buffers it points at alive for the call
+        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), **opts) } {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
@@ -590,7 +592,7 @@ mod c {
     // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
         pub(super) fn uws_h3_create_app(
-            opts: BunSocketContextOptions,
+            opts: RawSocketContextOptions,
             idle_timeout_s: u32,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
@@ -599,7 +601,7 @@ mod c {
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
-            opts: BunSocketContextOptions,
+            opts: RawSocketContextOptions,
         ) -> bool;
         pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
         pub(super) fn uws_h3_app_get(

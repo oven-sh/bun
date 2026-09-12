@@ -1302,8 +1302,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * KEY_TYPE_MISMATCH on a mixed configuration. With pair-wise loading the
    * later identity replaces the earlier one in the legacy slot, which is the
    * documented BoringSSL behaviour the adapted tests expect. */
-  int interleave_identities = !options.cert_file_name && !options.key_file_name &&
-                              options.cert && options.key &&
+  int interleave_identities = options.cert && options.key &&
                               options.cert_count == options.key_count &&
                               options.cert_count > 1;
   if (interleave_identities) {
@@ -1315,12 +1314,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       }
     }
   } else {
-    if (options.cert_file_name) {
-      if (SSL_CTX_use_certificate_chain_file(ssl_context, options.cert_file_name) != 1) {
-        ssl_ctx_build_fail(ssl_context);
-        return NULL;
-      }
-    } else if (options.cert && options.cert_count > 0) {
+    if (options.cert && options.cert_count > 0) {
       for (unsigned int i = 0; i < options.cert_count; i++) {
         if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
           ssl_ctx_build_fail(ssl_context);
@@ -1329,12 +1323,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       }
     }
 
-    if (options.key_file_name) {
-      if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name, SSL_FILETYPE_PEM) != 1) {
-        ssl_ctx_build_fail(ssl_context);
-        return NULL;
-      }
-    } else if (options.key && options.key_count > 0) {
+    if (options.key && options.key_count > 0) {
       for (unsigned int i = 0; i < options.key_count; i++) {
         if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
           ssl_ctx_build_fail(ssl_context);
@@ -1348,36 +1337,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * everywhere downstream — no special "owner" path. */
   ssl_ctx_drop_passphrase(ssl_context);
 
-  if (options.ca_file_name) {
+  if (options.ca && options.ca_count > 0) {
+    us_ex_idx_ensure();
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* An explicit CA replaces the default trust store (Node.js semantics):
-     * chains must validate exclusively against the supplied CAs. The SSL_CTX
-     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
-     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
-    STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
-    if (ca_list == NULL) {
-      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
-    }
-    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
-    us_ex_idx_ensure();
-    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
-    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
-      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
-    }
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
-
-  } else if (options.ca && options.ca_count > 0) {
-    us_ex_idx_ensure();
-    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
-    /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
-     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * user CAs only, into the SSL_CTX's own initially-empty store — otherwise
+     * a server doing mTLS with `ca: [internalCA]` would also accept any client
+     * certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
@@ -1410,15 +1376,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   }
 
-  if (options.dh_params_file_name) {
+  if (options.dh_params) {
     DH *dh_2048 = NULL;
-    FILE *paramfile = fopen(options.dh_params_file_name, "r");
-    if (paramfile) {
-      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
-      fclose(paramfile);
-    } else {
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
+    BIO *params = BIO_new_mem_buf(options.dh_params, -1);
+    if (params) {
+      dh_2048 = PEM_read_bio_DHparams(params, NULL, NULL, NULL);
+      BIO_free(params);
     }
     if (dh_2048 == NULL) {
       ssl_ctx_build_fail(ssl_context);

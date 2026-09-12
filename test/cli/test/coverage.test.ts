@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
@@ -696,4 +696,178 @@ test("calls second", () => {
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("--bail", () => {
+  const files = {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
+    "mod.ts": `
+export function run(flag: boolean) {
+  if (flag) {
+    console.log("only reached by code");
+    console.log("that runs after the bail");
+  }
+  return 1;
+}
+`,
+  };
+
+  const failingTest = `
+import { test, expect } from "bun:test";
+import { run } from "./mod";
+
+test("runs", () => {
+  expect(run(false)).toBe(1);
+});
+test("fails", () => {
+  throw new Error("stop here");
+});
+test("never runs", () => {
+  expect(run(true)).toBe(1);
+});
+`;
+
+  async function runWithBail(dir: string, ...extraArgs: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--bail",
+        "--coverage",
+        "--coverage-reporter=text",
+        "--coverage-reporter=lcov",
+        "--coverage-dir=cov",
+        ...extraArgs,
+      ],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        // detect_leaks=0: a mid-file bail exits without tearing the VM down,
+        // so LSAN appends a leak report to stderr and aborts (#32183). This
+        // test covers what bail writes before exiting, not that exit path.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+  }
+
+  test("a failing test still reports coverage for what ran", async () => {
+    using dir = tempDir("cov-bail", { ...files, "bail.test.ts": failingTest });
+
+    const { stderr, exitCode } = await runWithBail(String(dir));
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "bail.test.ts:
+      (pass) runs
+      4 | 
+      5 | test("runs", () => {
+      6 |   expect(run(false)).toBe(1);
+      7 | });
+      8 | test("fails", () => {
+      9 |   throw new Error("stop here");
+                                       ^
+      error: stop here
+          at <anonymous> (file:NN:NN)
+      (fail) fails
+      -----------|---------|---------|-------------------
+      File       | % Funcs | % Lines | Uncovered Line #s
+      -----------|---------|---------|-------------------
+      All files  |  100.00 |   66.67 |
+       mod.ts    |  100.00 |   66.67 | 4-5
+      -----------|---------|---------|-------------------
+      Ran 2 tests across 1 file.
+      Bailed out after 1 failure"
+    `);
+    expect(readFileSync(path.join(String(dir), "cov", "lcov.info"), "utf-8")).toMatchInlineSnapshot(`
+      "TN:
+      SF:mod.ts
+      FNF:1
+      FNH:1
+      DA:2,15
+      DA:3,9
+      DA:4,0
+      DA:5,0
+      DA:6,2
+      DA:7,8
+      LF:6
+      LH:4
+      end_of_record
+      "
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a test file that throws while loading still reports coverage for what ran", async () => {
+    using dir = tempDir("cov-bail", {
+      ...files,
+      "throws.test.ts": `
+import { run } from "./mod";
+
+run(false);
+throw new Error("stop here");
+`,
+    });
+
+    const { stderr, exitCode } = await runWithBail(String(dir));
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "throws.test.ts:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | 
+      2 | import { run } from "./mod";
+      3 | 
+      4 | run(false);
+      5 | throw new Error("stop here");
+                ^
+      error: stop here
+            at <dir>/throws.test.ts:5:7
+      -------------------------------
+
+      -----------|---------|---------|-------------------
+      File       | % Funcs | % Lines | Uncovered Line #s
+      -----------|---------|---------|-------------------
+      All files  |  100.00 |   66.67 |
+       mod.ts    |  100.00 |   66.67 | 4-5
+      -----------|---------|---------|-------------------
+      Ran 1 test across 1 file.
+      Bailed out after 1 failure"
+    `);
+    expect(readFileSync(path.join(String(dir), "cov", "lcov.info"), "utf-8")).toMatchInlineSnapshot(`
+      "TN:
+      SF:mod.ts
+      FNF:1
+      FNH:1
+      DA:2,15
+      DA:3,9
+      DA:4,0
+      DA:5,0
+      DA:6,2
+      DA:7,8
+      LF:6
+      LH:4
+      end_of_record
+      "
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an lcov write failure does not stop the other reports", async () => {
+    // A plain file where --coverage-dir points makes the lcov write fail.
+    using dir = tempDir("cov-bail", { ...files, "bail.test.ts": failingTest, cov: "not a directory" });
+
+    const { stderr, exitCode } = await runWithBail(String(dir), "--reporter=junit", "--reporter-outfile=junit.xml");
+
+    expect(stderr).toContain("Failed to write lcov.info");
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(readFileSync(path.join(String(dir), "junit.xml"), "utf-8")).toContain('<testcase name="fails"');
+    expect(exitCode).toBe(1);
+  });
 });

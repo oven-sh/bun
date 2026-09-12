@@ -110,6 +110,12 @@ test.each([
   },
 );
 
+// server.close() leaves live connections open, and a failed assertion must not leave one behind.
+function closeAll(server: net.Server, sockets: net.Socket[]) {
+  for (const socket of sockets) socket.destroy();
+  server.close();
+}
+
 // The wrap takes the fd of the wrapped socket over one tick after the constructor, the same tick
 // the wrapped socket's end() shuts the fd down in. Node v26.3.0 reports the same client events.
 test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
@@ -125,10 +131,12 @@ test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
 ])(
   "the wrapped socket's %s in the tick of new tls.TLSSocket(socket, { isServer: true }) sends the FIN",
   async (_, endWrapped) => {
+    const sockets: net.Socket[] = [];
     const server = net.createServer(raw => {
       raw.on("error", () => {});
       const tlsSocket = new tls.TLSSocket(raw, { isServer: true, ...certs });
       tlsSocket.on("error", () => {});
+      sockets.push(raw, tlsSocket);
       endWrapped(raw, tlsSocket);
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -138,6 +146,7 @@ test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
         host: "127.0.0.1",
         rejectUnauthorized: false,
       });
+      sockets.push(client);
       const events: string[] = [];
       const { promise, resolve } = Promise.withResolvers<string[]>();
       // Reached only when the FIN never arrives: the handshake completes and the connection stays open.
@@ -150,7 +159,7 @@ test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
       client.on("close", () => resolve(events));
       expect(await promise).toEqual(["end", "error ECONNRESET"]);
     } finally {
-      server.close();
+      closeAll(server, sockets);
     }
   },
 );
@@ -160,28 +169,28 @@ test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
 test.each(["connected", "connecting"])(
   "end() on a %s socket before tls.connect({ socket }) in the same tick sends the FIN",
   async state => {
+    const sockets: net.Socket[] = [];
     const { promise, resolve } = Promise.withResolvers<string>();
-    const server = tls.createServer(certs, socket => {
-      // Reached only when the FIN never arrives.
+    // Reached only when the FIN never arrives.
+    const server = tls.createServer(certs, () => resolve("secureConnection"));
+    server.on("connection", socket => {
       socket.on("error", () => {});
-      socket.destroy();
-      resolve("secureConnection");
+      sockets.push(socket);
     });
     server.on("tlsClientError", err => resolve(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
       raw.on("error", () => {});
+      sockets.push(raw);
       if (state === "connected") await once(raw, "connect");
       raw.end();
       const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
       tlsSocket.on("error", () => {});
-      const closed = new Promise(resolve => tlsSocket.on("close", resolve));
+      sockets.push(tlsSocket);
       expect(await promise).toBe("tlsClientError ECONNRESET");
-      tlsSocket.destroy();
-      await closed;
     } finally {
-      server.close();
+      closeAll(server, sockets);
     }
   },
 );
@@ -193,10 +202,12 @@ test.skipIf(isWindows)(
   async () => {
     using dir = tempDir("net-reconnect", {});
     const path = join(String(dir), "s.sock");
+    const sockets: net.Socket[] = [];
     const { promise, resolve } = Promise.withResolvers<string>();
     let connections = 0;
     const server = net.createServer({ allowHalfOpen: true }, socket => {
       const id = ++connections;
+      sockets.push(socket);
       socket.on("error", () => {});
       socket.on("end", () => {
         if (id === 2) resolve("the new connection received a FIN");
@@ -207,14 +218,14 @@ test.skipIf(isWindows)(
     try {
       const client = net.connect(path);
       client.on("error", () => {});
+      sockets.push(client);
       await once(client, "connect");
       client.end();
       client.destroy();
       client.connect(path, () => resolve("connect"));
       expect(await promise).toBe("connect");
-      client.destroy();
     } finally {
-      server.close();
+      closeAll(server, sockets);
     }
   },
 );

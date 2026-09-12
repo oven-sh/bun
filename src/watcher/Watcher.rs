@@ -833,7 +833,7 @@ impl Watcher {
             path_z[..file_path.len()].copy_from_slice(file_path);
             path_z[file_path.len()] = 0;
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
-            // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
+            // `path_z[..len]` as a `&ZStr` and asserts the NUL is in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
             match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
                 Ok(opened) => opened,

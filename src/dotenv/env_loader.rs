@@ -566,6 +566,7 @@ impl Loader {
         self.map.get(_key)
     }
 
+    /// Substitutes a leading `$VAR` reference when the variable is set; otherwise returns the input unchanged.
     pub fn get_auto<'b>(&'b self, key: &'b [u8]) -> &'b [u8] {
         // If it's "" or "$", it's not a variable
         if key.len() < 2 || key[0] != b'$' {

@@ -26,8 +26,12 @@ describe("SQL adapter environment variable precedence", () => {
     'TLS_MARIADB_DATABASE_URL',
     'SQLITE_URL', 'SQLITEURL',
     'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'PG_HOST', 'PG_USER', 'PG_PASSWORD', 'PG_DATABASE', 'PG_PORT',
     'PGSSLMODE', 'PG_SSLMODE',
-    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
+    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT',
+    'MYSQLHOST', 'MYSQLUSER', 'MYSQLPASSWORD', 'MYSQLDATABASE', 'MYSQLPORT',
+    'MARIADB_HOST', 'MARIADB_USER', 'MARIADB_PASSWORD', 'MARIADB_DATABASE', 'MARIADB_PORT',
+    'MARIADBHOST', 'MARIADBUSER', 'MARIADBPASSWORD', 'MARIADBDATABASE', 'MARIADBPORT',
   ];
 
   beforeEach(() => {
@@ -766,6 +770,243 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.username).toBe("explicituser");
         expect(options.options.password).toBe("urlpass"); // URL password (not env)
         expect(options.options.database).toBe("urldb"); // URL database should remain
+      });
+    });
+
+    describe("database name precedence", () => {
+      // prettier-ignore
+      const databaseEnvVars = [
+        ["postgres", "PGDATABASE",       "postgres://urluser:urlpass@urlhost:5432"],
+        ["postgres", "PG_DATABASE",      "postgres://urluser:urlpass@urlhost:5432"],
+        ["mysql",    "MYSQL_DATABASE",   "mysql://urluser:urlpass@urlhost:3306"],
+        ["mysql",    "MYSQLDATABASE",    "mysql://urluser:urlpass@urlhost:3306"],
+        ["mariadb",  "MARIADB_DATABASE", "mariadb://urluser:urlpass@urlhost:3306"],
+        ["mariadb",  "MARIADBDATABASE",  "mariadb://urluser:urlpass@urlhost:3306"],
+      ] as const;
+
+      test.each(databaseEnvVars)("%s: the database named in the URL wins over $%s", (adapter, envVar, base) => {
+        process.env[envVar] = "envdb";
+
+        const expected = { adapter, hostname: "urlhost", username: "urluser", password: "urlpass", database: "urldb" };
+        expect(new SQL(`${base}/urldb`).options).toMatchObject(expected);
+        expect(new SQL(`${base}/urldb`, { adapter }).options).toMatchObject(expected);
+        expect(new SQL({ url: `${base}/urldb` }).options).toMatchObject(expected);
+        expect(new SQL({ adapter, url: `${base}/urldb` }).options).toMatchObject(expected);
+      });
+
+      test.each(databaseEnvVars)(
+        "%s: the database in the URL is percent-decoded before $%s is consulted",
+        (_, envVar, base) => {
+          process.env[envVar] = "envdb";
+
+          expect(new SQL(`${base}/url%20db`).options.database).toBe("url db");
+        },
+      );
+
+      test.each(databaseEnvVars)(
+        "%s: an explicit database option wins over both the URL and $%s",
+        (_, envVar, base) => {
+          process.env[envVar] = "envdb";
+
+          expect(new SQL(`${base}/urldb`, { database: "optiondb" }).options.database).toBe("optiondb");
+          expect(new SQL(`${base}/urldb`, { db: "optiondb" }).options.database).toBe("optiondb");
+          expect(new SQL({ url: `${base}/urldb`, database: "optiondb" }).options.database).toBe("optiondb");
+        },
+      );
+
+      test("an explicit database skips the decode of a malformed URL pathname", () => {
+        expect(new SQL("postgres://urluser@urlhost/db%", { database: "real" }).options.database).toBe("real");
+        expect(() => new SQL("postgres://urluser@urlhost/db%")).toThrow(URIError);
+      });
+
+      test.each(databaseEnvVars)(
+        "%s: $%s fills in the database when the URL does not name one",
+        (adapter, envVar, base) => {
+          process.env[envVar] = "envdb";
+
+          expect(new SQL(base).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+          expect(new SQL(`${base}/`).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+          expect(new SQL({ url: base }).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+        },
+      );
+
+      test.each([
+        ["postgres://urluser@urlhost:5432", "urluser"],
+        ["mysql://urluser@urlhost:3306", "mysql"],
+        ["mariadb://urluser@urlhost:3306", "mariadb"],
+      ])(
+        "%s falls back to the adapter default database when neither the URL nor the environment names one",
+        (url, database) => {
+          expect(new SQL(url).options.database).toBe(database);
+          expect(new SQL(`${url}/`).options.database).toBe(database);
+        },
+      );
+
+      // prettier-ignore
+      const urlEnvVars = [
+        ["postgres", "DATABASE_URL", "postgres://urluser@urlhost:5432/urldb", "PG"],       // $PGHOST, $PGUSER, $PGDATABASE
+        ["postgres", "POSTGRES_URL", "postgres://urluser@urlhost:5432/urldb", "PG"],
+        ["mysql",    "DATABASE_URL", "mysql://urluser@urlhost:3306/urldb",    "MYSQL_"],   // $MYSQL_HOST, ...
+        ["mysql",    "MYSQL_URL",    "mysql://urluser@urlhost:3306/urldb",    "MYSQL_"],
+        ["mariadb",  "MARIADB_URL",  "mariadb://urluser@urlhost:3306/urldb",  "MARIADB_"], // $MARIADB_HOST, ...
+      ] as const;
+
+      test.each(urlEnvVars)(
+        "%s: every field of a connection URL taken from $%s wins over the per-field variables, the database included",
+        (adapter, urlVar, url, prefix) => {
+          process.env[urlVar] = url;
+          process.env[`${prefix}HOST`] = "envhost";
+          process.env[`${prefix}USER`] = "envuser";
+          process.env[`${prefix}DATABASE`] = "envdb";
+
+          const expected = { adapter, hostname: "urlhost", username: "urluser", database: "urldb" };
+          expect(new SQL().options).toMatchObject(expected);
+          expect(new SQL({ adapter }).options).toMatchObject(expected);
+        },
+      );
+
+      describe("host-less URLs", () => {
+        const socket = "/tmp/bun-sql-database-precedence.sock";
+
+        // prettier-ignore
+        const hostlessUrls = [
+          ["postgres", "PGDATABASE",       "postgres:///urldb"],
+          ["mysql",    "MYSQL_DATABASE",   "mysql:///urldb"],
+          ["mariadb",  "MARIADB_DATABASE", "mariadb:///urldb"],
+        ] as const;
+
+        test.each(hostlessUrls)(
+          "%s: the pathname names the database on the default host and wins over $%s, like libpq",
+          (adapter, envVar, url) => {
+            process.env[envVar] = "envdb";
+
+            const options = new SQL(url).options;
+            expect(options).toMatchObject({ adapter, hostname: "localhost", database: "urldb" });
+            expect(options.path).toBeUndefined();
+            expect(new SQL(url.replace("urldb", "url%20db")).options.database).toBe("url db");
+          },
+        );
+
+        test.each(hostlessUrls)(
+          "%s: a unix:// URL pathname is the socket path, so $%s names the database",
+          (adapter, envVar) => {
+            process.env[envVar] = "envdb";
+
+            expect(new SQL(`unix://${socket}`, { adapter }).options).toMatchObject({
+              adapter,
+              database: "envdb",
+              path: socket,
+            });
+          },
+        );
+
+        test.each(hostlessUrls)(
+          "%s: with the socket from ?path= or options.path the pathname names the database and wins over $%s",
+          (_adapter, envVar, url) => {
+            process.env[envVar] = "envdb";
+
+            // "/urldb" is an explicit socket path that happens to spell the same as the pathname.
+            for (const path of [socket, "/urldb"]) {
+              expect(new SQL(`${url}?path=${path}`).options).toMatchObject({ database: "urldb", path });
+              expect(new SQL(url, { path }).options).toMatchObject({ database: "urldb", path });
+              expect(new SQL({ url, path }).options).toMatchObject({ database: "urldb", path });
+            }
+          },
+        );
+      });
+
+      test("every connection field resolves as option > URL > env > default", () => {
+        process.env.PGHOST = "envhost";
+        process.env.PGPORT = "9999";
+        process.env.PGUSER = "envuser";
+        process.env.PGPASSWORD = "envpass";
+        process.env.PGDATABASE = "envdb";
+
+        const fromUrl = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb").options;
+        expect([fromUrl.hostname, fromUrl.port, fromUrl.username, fromUrl.password, fromUrl.database]).toEqual([
+          "urlhost",
+          1234,
+          "urluser",
+          "urlpass",
+          "urldb",
+        ]);
+
+        const fromEnv = new SQL({ adapter: "postgres" }).options;
+        expect([fromEnv.hostname, fromEnv.port, fromEnv.username, fromEnv.password, fromEnv.database]).toEqual([
+          "envhost",
+          9999,
+          "envuser",
+          "envpass",
+          "envdb",
+        ]);
+      });
+    });
+
+    describe.skipIf(isWindows)("unix socket path resolution", () => {
+      test("a path that does not exist is kept, not dropped in favour of TCP", () => {
+        const options = new SQL({ adapter: "postgres", path: "/nonexistent/dir/socket.sock", hostname: "dbhost" });
+        expect(options.options.path).toBe("/nonexistent/dir/socket.sock");
+        expect(options.options.hostname).toBe("dbhost");
+
+        const mysql = new SQL({ adapter: "mysql", path: "/nonexistent/dir/mysqld.sock" });
+        expect(mysql.options.path).toBe("/nonexistent/dir/mysqld.sock");
+      });
+
+      test("explicit path option beats the URL ?path= query parameter", () => {
+        const options = new SQL("postgres://dbhost/db?path=/from/url.sock", { path: "/from/option.sock" });
+        expect(options.options.path).toBe("/from/option.sock");
+      });
+
+      test("URL ?path= is used when no path option is given", () => {
+        const options = new SQL("postgres://dbhost/db?path=/from/url.sock");
+        expect(options.options.path).toBe("/from/url.sock");
+        expect(options.options.database).toBe("db");
+      });
+
+      test("postgres: a directory path gets /.s.PGSQL.<port> appended even when the socket is not there yet", () => {
+        using dir = tempDir("sql-pg-socket-dir", { placeholder: "" });
+        const options = new SQL({ adapter: "postgres", path: String(dir), port: 5433 });
+        expect(options.options.path).toBe(`${dir}/.s.PGSQL.5433`);
+
+        const fromUrl = new SQL(`postgres://dbhost:5434/db?path=${dir}`);
+        expect(fromUrl.options.path).toBe(`${dir}/.s.PGSQL.5434`);
+      });
+
+      test("postgres: a socket file path is used as is", () => {
+        using dir = tempDir("sql-pg-socket-file", { "custom.sock": "" });
+        const options = new SQL({ adapter: "postgres", path: `${dir}/custom.sock` });
+        expect(options.options.path).toBe(`${dir}/custom.sock`);
+      });
+
+      test.each([
+        ["hostname option", () => new SQL({ adapter: "postgres", hostname: "/run/pg", port: 5433 })],
+        ["PGHOST", () => ((process.env.PGHOST = "/run/pg"), new SQL({ adapter: "postgres", port: 5433 }))],
+      ])("a host that starts with / is the socket directory (%s)", (_, make) => {
+        const options = make().options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5433");
+        expect(options.hostname).toBe("localhost");
+      });
+
+      test("a / host that already names the socket file is used as is", () => {
+        const options = new SQL({ adapter: "postgres", hostname: "/run/pg/.s.PGSQL.5433", port: 5433 }).options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5433");
+        expect(options.hostname).toBe("localhost");
+      });
+
+      test("a / host with a verify mode does not use the directory as the TLS server name", () => {
+        const options = new SQL({ adapter: "postgres", hostname: "/run/pg", ssl: "verify-full" as any }).options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5432");
+        expect(options.tls).toMatchObject({ serverName: "localhost" });
+      });
+
+      test("mysql: a host that starts with / is the socket path", () => {
+        const options = new SQL({ adapter: "mysql", hostname: "/run/mysqld/mysqld.sock" });
+        expect(options.options.path).toBe("/run/mysqld/mysqld.sock");
+      });
+
+      test("a host with null bytes is rejected before it becomes a socket path", () => {
+        expect(() => new SQL({ adapter: "mysql", hostname: "/tmp\0injected" })).toThrow("null bytes");
+        expect(() => new SQL({ adapter: "postgres", hostname: "/tmp\0injected" })).toThrow("null bytes");
       });
     });
   });

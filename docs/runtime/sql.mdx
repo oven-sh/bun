@@ -690,6 +690,10 @@ const sql = new SQL({
   username: "dbuser",
   password: "secretpass",
 
+  // Unix socket connection (alternative to hostname/port). A directory gets
+  // /.s.PGSQL.<port> appended. A path that does not exist is an error.
+  // path: "/var/run/postgresql",
+
   // Connection pool settings
   max: 20, // Maximum connections in pool
   idleTimeout: 30, // Close idle connections after 30s

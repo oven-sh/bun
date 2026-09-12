@@ -1045,6 +1045,71 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+// An array has none of the TLSOptions fields. Without the check it parses as
+// an empty config and the listener comes up as plain TCP.
+describe.each([
+  ["one entry", () => [tls]],
+  ["SNI-style entries", () => [tls, { serverName: "a.test", ...tls }]],
+  ["empty", () => []],
+  ["Proxy around an array", () => new Proxy([tls], {})],
+  ["Array subclass", () => new (class extends Array {})(tls)],
+])("tls option is an array (%s)", (_label, makeTls) => {
+  const socket = { data() {}, open() {}, close() {} };
+  const message = "TLSOptions must be an object";
+
+  it("Bun.listen throws instead of starting a plaintext listener", () => {
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: makeTls() as any, socket })).toThrow(message);
+  });
+
+  it("Bun.connect throws instead of opening a plaintext connection", () => {
+    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
+  });
+});
+
+it("the same tls entry as a plain object still produces a TLS listener", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      data(s) {
+        s.write("hello");
+        s.end();
+      },
+      open() {},
+      close() {},
+      error(_s, err) {
+        reject(err);
+      },
+    },
+  });
+  let received = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open(s) {
+        s.write("ping");
+      },
+      data(_s, chunk) {
+        received += chunk.toString();
+      },
+      close() {
+        resolve(received);
+      },
+      error(_s, err) {
+        reject(err);
+      },
+      connectError(_s, err) {
+        reject(err);
+      },
+    },
+  });
+  expect(await promise).toBe("hello");
+});
+
 it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read

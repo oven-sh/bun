@@ -160,6 +160,64 @@ describe("node:test", () => {
     });
   });
 
+  for (const flag of ["--only", "--test-only"]) {
+    test.concurrent(
+      `should run exactly the only-marked node:test tests under ${flag}`,
+      async () => {
+        // CI=false: the shim maps Node's `only` onto bun:test's test.only, which
+        // bun:test guards against in CI independently of node:test.
+        const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" }, [flag]);
+        // The five only-marked tests (test.only, {only:true}, describe.only,
+        // describe {only:true}, and a test.only nested in a plain describe) run,
+        // and nothing else does.
+        expect(stdout.match(/^RAN .*/gm)?.sort()).toEqual([
+          "RAN plain-suite-only-child",
+          "RAN suite-modifier-child",
+          "RAN suite-option-child",
+          "RAN top-only-modifier",
+          "RAN top-only-option",
+        ]);
+        // only+skip and only+todo are included in the filter (reported as their
+        // directive), not dropped: Node under --test-only reports 5/1/1 here.
+        expect(stderr).toContain("5 pass");
+        expect(stderr).toContain("1 skip");
+        expect(stderr).toContain("1 todo");
+        expect({ exitCode, stderr }).toMatchObject({
+          exitCode: 0,
+          stderr: expect.stringContaining("0 fail"),
+        });
+      },
+      30_000,
+    );
+  }
+
+  test.concurrent(
+    "should run every node:test test when no --only/--test-only flag is passed",
+    async () => {
+      // Without the flag, `only` is a no-op like in Node — every marker form in
+      // the fixture runs alongside its unmarked siblings.
+      const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" });
+      expect(stdout.match(/^RAN .*/gm)?.sort()).toEqual([
+        "RAN plain-suite-only-child",
+        "RAN plain-suite-plain-child",
+        "RAN suite-modifier-child",
+        "RAN suite-option-child",
+        "RAN top-only-modifier",
+        "RAN top-only-option",
+        "RAN top-plain",
+        "RAN unmarked-child",
+      ]);
+      expect(stderr).toContain("8 pass");
+      expect(stderr).toContain("1 skip");
+      expect(stderr).toContain("1 todo");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
   test("should serialize inline suites and await async describe callbacks like node", async () => {
     const { exitCode, stderr } = await runTests(["09-inline-suites.js"]);
     expect(stderr).toContain("3 pass");

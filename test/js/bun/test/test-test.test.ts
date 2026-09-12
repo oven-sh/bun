@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -748,4 +748,308 @@ test("my-test", () => {
       expect(output).toContain("Ran 1 test across 1 file");
     });
   }
+
+  // An error that lands while a file is still collecting (its top level or a
+  // describe() callback is running) must not stop that file's tests from being
+  // collected and run, and must not move them into another file.
+  test.concurrent("from a finished file's timer, while the next file is in a top-level await", async () => {
+    using test_dir = tempDir("unhandled-cross-file-collection", {
+      "a.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("a leaks a throwing timer", () => {
+          setTimeout(() => {
+            globalThis.__aTimerFired = true;
+            throw new Error("## late throw from a ##");
+          }, 10);
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        // stands for a top-level \`await startServer()\` or fixture import
+        for (let waited = 0; !globalThis.__aTimerFired; waited += 5) {
+          if (waited > 2000) throw new Error("a.test.js's timer did not fire within 2s");
+          await Bun.sleep(5);
+        }
+        test("b1 failing", () => { expect(1).toBe(2); });
+        test("b2", () => { expect(2).toBe(2); });
+      `,
+      "package.json": "{}",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      cwd: String(test_dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [output, exitCode] = await Promise.all([
+      proc.stderr.text().then(s => s.replaceAll("\r\n", "\n")),
+      proc.exited,
+    ]);
+
+    expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
+    expect(output).toContain("Unhandled error between tests");
+    expect(output).not.toContain("Cannot call test()");
+    expect(output).toMatch(/\(fail\) b1 failing/);
+    expect(output).toMatch(/\(pass\) b2/);
+    expect(output).toContain("\n 2 pass\n");
+    expect(output).toContain("\n 1 fail\n");
+    expect(output).toContain("\n 1 error\n");
+    expect(output).toContain("Ran 3 tests across 2 files");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("from a finished file's timer, while the next file awaits in a describe() callback", async () => {
+    using test_dir = tempDir("unhandled-cross-file-describe", {
+      "a.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("a leaks a throwing timer", () => {
+          setTimeout(() => {
+            globalThis.__aTimerFired = true;
+            throw new Error("## late throw from a ##");
+          }, 10);
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.js": /*js*/ `
+        import { test, expect, describe } from "bun:test";
+        describe("waits", async () => {
+          for (let waited = 0; !globalThis.__aTimerFired; waited += 5) {
+            if (waited > 2000) throw new Error("a.test.js's timer did not fire within 2s");
+            await Bun.sleep(5);
+          }
+          test("b1 failing", () => { expect(1).toBe(2); });
+          test("b2", () => { expect(2).toBe(2); });
+        });
+        test("b3", () => { expect(3).toBe(3); });
+      `,
+      "c.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        await Bun.sleep(20);
+        test("c1", () => { expect(1).toBe(1); });
+      `,
+      "package.json": "{}",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js", "./c.test.js"],
+      cwd: String(test_dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [output, exitCode] = await Promise.all([
+      proc.stderr.text().then(s => s.replaceAll("\r\n", "\n")),
+      proc.exited,
+    ]);
+
+    expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
+    expect(output).not.toContain("Cannot call test()");
+    // b1 and b2 stay in b.test.js, inside their describe, and nothing leaks into c.test.js
+    const perFile = output.split(/\n(?=\S+\.test\.js:\n)/g).map(s => s.trim());
+    expect(perFile.find(s => s.startsWith("b.test.js:"))).toMatch(
+      /Unhandled error between tests[\s\S]+\(fail\) waits > b1 failing[\s\S]+\(pass\) waits > b2[\s\S]+\(pass\) b3/,
+    );
+    expect(perFile.find(s => s.startsWith("c.test.js:"))).toMatch(/^c\.test\.js:\n\(pass\) c1 [^\n]+\n\n 4 pass\n/);
+    expect(output).toContain("\n 1 fail\n");
+    expect(output).toContain("\n 1 error\n");
+    expect(output).toContain("Ran 5 tests across 3 files");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// An unhandled rejection or uncaught exception that lands while a file is still
+// registering its tests does not belong to any describe() callback. It is reported
+// as an unhandled error and the file's tests still run.
+describe.concurrent("unhandled error during collection does not drop the file's tests", () => {
+  test("from module top level, a .each table, and a describe body", async () => {
+    using dir = tempDir("unhandled-collection", {
+      "package.json": "{}",
+      // Flush left, no blank lines: the code frames below are part of the snapshot.
+      "stray.test.ts": [
+        `import { describe, expect, test } from "bun:test";`,
+        `Promise.reject(new Error("stray-top-level"));`,
+        `test.each([[Promise.reject(new Error("stray-each-row"))], [Promise.resolve(1)]])("row %#", value => {`,
+        `  expect(value).toBeInstanceOf(Promise);`,
+        `});`,
+        `describe("d", () => {`,
+        `  Promise.reject(new Error("stray-in-describe"));`,
+        `  test("t1", () => {});`,
+        `  describe("inner", () => {`,
+        `    test("t2", () => {});`,
+        `  });`,
+        `});`,
+        `test("failing", () => {`,
+        `  expect(1).toBe(2);`,
+        `});`,
+      ].join("\n"),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./stray.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n`);
+    expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+      "stray.test.ts:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | import { describe, expect, test } from "bun:test";
+      2 | Promise.reject(new Error("stray-top-level"));
+                             ^
+      error: stray-top-level
+            at <dir>/stray.test.ts:2:20
+      -------------------------------
+
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | import { describe, expect, test } from "bun:test";
+      2 | Promise.reject(new Error("stray-top-level"));
+      3 | test.each([[Promise.reject(new Error("stray-each-row"))], [Promise.resolve(1)]])("row %#", value => {
+                                         ^
+      error: stray-each-row
+            at <dir>/stray.test.ts:3:32
+      -------------------------------
+
+
+      # Unhandled error between tests
+      -------------------------------
+      2 | Promise.reject(new Error("stray-top-level"));
+      3 | test.each([[Promise.reject(new Error("stray-each-row"))], [Promise.resolve(1)]])("row %#", value => {
+      4 |   expect(value).toBeInstanceOf(Promise);
+      5 | });
+      6 | describe("d", () => {
+      7 |   Promise.reject(new Error("stray-in-describe"));
+                               ^
+      error: stray-in-describe
+          at <anonymous> (file:NN:NN)
+      -------------------------------
+
+      (pass) row 0
+      (pass) row 1
+      (pass) d > t1
+      (pass) d > inner > t2
+       9 |   describe("inner", () => {
+      10 |     test("t2", () => {});
+      11 |   });
+      12 | });
+      13 | test("failing", () => {
+      14 |   expect(1).toBe(2);
+                       ^
+      error: expect(received).toBe(expected)
+
+      Expected: 2
+      Received: 1
+          at <anonymous> (file:NN:NN)
+      (fail) failing
+
+       4 pass
+       1 fail
+       3 errors
+       3 expect() calls
+      Ran 5 tests across 1 file."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("from a --preload module", async () => {
+    using dir = tempDir("unhandled-collection-preload", {
+      "package.json": "{}",
+      // Flush left, no blank lines: the code frames below are part of the snapshot.
+      "preload.ts": [
+        `Promise.reject(new Error("stray-preload-rejection"));`,
+        `queueMicrotask(() => {`,
+        `  throw new Error("stray-preload-exception");`,
+        `});`,
+      ].join("\n"),
+      "a.test.ts": [
+        `import { expect, test } from "bun:test";`,
+        `test("a1", () => {`,
+        `  expect(1).toBe(2);`,
+        `});`,
+        `test("a2", async () => {`,
+        `  await 0;`,
+        `});`,
+      ].join("\n"),
+      "b.test.ts": [
+        `import { describe, test } from "bun:test";`,
+        `describe("d", () => {`,
+        `  test("b1", () => {});`,
+        `});`,
+      ].join("\n"),
+    });
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--preload",
+        "./preload.ts",
+        "--reporter=junit",
+        "--reporter-outfile=junit.xml",
+        "./a.test.ts",
+        "./b.test.ts",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n`);
+    expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+      "a.test.ts:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | Promise.reject(new Error("stray-preload-rejection"));
+      2 | queueMicrotask(() => {
+      3 |   throw new Error("stray-preload-exception");
+                                                     ^
+      error: stray-preload-exception
+          at <anonymous> (file:NN:NN)
+      -------------------------------
+
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | Promise.reject(new Error("stray-preload-rejection"));
+                             ^
+      error: stray-preload-rejection
+            at <dir>/preload.ts:1:20
+      -------------------------------
+
+      1 | import { expect, test } from "bun:test";
+      2 | test("a1", () => {
+      3 |   expect(1).toBe(2);
+                      ^
+      error: expect(received).toBe(expected)
+
+      Expected: 2
+      Received: 1
+          at <anonymous> (file:NN:NN)
+      (fail) a1
+      (pass) a2
+
+      b.test.ts:
+      (pass) d > b1
+
+       2 pass
+       1 fail
+       2 errors
+       1 expect() calls
+      Ran 3 tests across 2 files."
+    `);
+    const junit = await Bun.file(join(String(dir), "junit.xml")).text();
+    expect([...junit.matchAll(/<testcase name="([^"]+)"/g)].map(m => m[1]).sort()).toEqual(["a1", "a2", "b1"]);
+    expect(exitCode).toBe(1);
+  });
 });

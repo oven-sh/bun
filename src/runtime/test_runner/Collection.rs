@@ -254,9 +254,14 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
+
+        let RefDataValue::Collection { .. } = data else {
+            // Not a describe() callback's own throw or rejection (see jest::on_unhandled_rejection).
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        };
 
         self.active_scope_mut().failed = true;
 

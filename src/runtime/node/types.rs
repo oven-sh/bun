@@ -413,20 +413,7 @@ impl StringOrBuffer<'static> {
                 Ok(true)
             }
 
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float32Array
-            | JSType::Float16Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => {
+            t if t.is_array_buffer_like() => {
                 *out = Self::buffer_from_js(global, value, flavor)?;
                 Ok(true)
             }

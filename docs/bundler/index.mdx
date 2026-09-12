@@ -514,10 +514,17 @@ export function Counter() {
 }
 ```
 
-The compiled function keeps the click handler and the element in a cache (`$`), and creates them again only when `count` changes. This is the output with `NODE_ENV=production`:
+Build it with React marked as external, so that the output holds only the component:
+
+```bash terminal icon="terminal"
+NODE_ENV=production bun build ./Counter.tsx --outdir ./out --react-compiler --external react --external 'react/*'
+```
+
+The compiled function keeps the click handler and the element in a cache (`$`), and creates them again only when `count` changes:
 
 {/* prettier-ignore */}
-```js out/index.js icon="/icons/javascript.svg"
+```js out/Counter.js icon="/icons/javascript.svg"
+// Counter.tsx
 import { useState } from "react";
 import { jsx } from "react/jsx-runtime";
 import { c as _c } from "react/compiler-runtime";
@@ -539,6 +546,9 @@ function Counter() {
     t1 = $[4];
   return t1;
 }
+export {
+  Counter
+};
 ```
 
 This is the `"client"` [output mode](#reactcompileroutputmode). It imports `c` from `react/compiler-runtime`. That module is part of React 19. With React 17 or 18 the import does not resolve, and the build fails with `Could not resolve: "react/compiler-runtime"`. The `"ssr"` output mode has no such import, so it does not need React 19.
@@ -570,10 +580,10 @@ The compiler has two output modes. The default depends on [`target`](#target).
 | `"client"` | `target: "browser"`       | Memoized components and hooks, as in the example   |
 | `"ssr"`    | `target: "bun"`, `"node"` | Components reduced to what one server render needs |
 
-`"ssr"` output has no memo cache and no `react/compiler-runtime` import. The compiler replaces `useState` and `useReducer` with their initial values, removes effects, and removes event handler props and `ref` props from built-in elements such as `<button>`. With `--target=bun`, the `Counter` component above becomes:
+`"ssr"` output has no memo cache and no `react/compiler-runtime` import. The compiler replaces `useState` and `useReducer` with their initial values, removes effects, and removes event handler props and `ref` props from built-in elements such as `<button>`. With `--target=bun` added to the command above, the `Counter` function in `out/Counter.js` becomes:
 
 {/* prettier-ignore */}
-```js out/index.js icon="/icons/javascript.svg"
+```js out/Counter.js icon="/icons/javascript.svg"
 function Counter() {
   let count = 0;
   return /* @__PURE__ */ jsx("button", {
@@ -586,9 +596,10 @@ Do not send `"ssr"` output to a browser. The components never update and never h
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 await Bun.build({
-  entrypoints: ["./index.tsx"],
+  entrypoints: ["./Counter.tsx"],
   outdir: "./out",
   target: "bun",
+  external: ["react", "react/*"],
   reactCompiler: true,
   reactCompilerOutputMode: "client",
 });

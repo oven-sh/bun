@@ -270,8 +270,7 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Scanner ──
 
-    /// Returns the byte at the current position, or `None` at the end of the
-    /// source. A NUL byte in the source is `Some(0)`, not the end.
+    /// The byte at the current position, or `None` at the end of the source.
     fn peek(&self) -> Option<u8> {
         self.source.get(self.pos).copied()
     }

@@ -251,6 +251,21 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
+    /// Consumes the +1 the dev server held.
+    pub(crate) fn on_html_bundle_built(self, html: bun_ptr::ThisPtr<crate::server::StaticRoute>) {
+        dispatch!(self, (), ptr | T, ptr | T::on_html_bundle_built(ptr, html))
+    }
+
+    /// `None` once the connection closed or the context already answered.
+    pub(crate) fn take_response(self) -> Option<uws::AnyResponse> {
+        dispatch!(self, None, |_T, ctx| ctx.take_response())
+    }
+
+    /// After the last write to the response `take_response` handed out.
+    pub(crate) fn release_taken_response(self) {
+        dispatch!(self, (), |_T, ctx| ctx.release_taken_response())
+    }
+
     pub fn on_request_body_stream_drained(self) {
         dispatch!(
             self,

@@ -141,6 +141,22 @@ impl StaticRoute {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
+    /// A copy of the body for a response this route does not send itself.
+    pub(crate) fn dupe_blob(&self) -> AnyBlob {
+        match &self.blob {
+            AnyBlob::Blob(blob) => AnyBlob::Blob(blob.dupe()),
+            AnyBlob::InternalBlob(blob) => AnyBlob::InternalBlob(InternalBlob {
+                bytes: blob.bytes.clone(),
+                was_string: blob.was_string,
+            }),
+            AnyBlob::WTFStringImpl(s) => {
+                // SAFETY: the route holds a +1 on the impl while this variant is active.
+                unsafe { (**s).r#ref() };
+                AnyBlob::WTFStringImpl(*s)
+            }
+        }
+    }
+
     pub fn from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,

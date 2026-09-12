@@ -18,7 +18,8 @@ declare module "bun" {
     | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
     | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>)
-    | import("bun").Image;
+    | import("bun").Image
+    | import("bun").HTMLBundle;
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;

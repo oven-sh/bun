@@ -4,8 +4,6 @@
 //! §4.2/§6 validation. Connection-level framing lives here; stream-level (HEADERS/DATA/RST) and the
 //! outbound request/respond paths build on top of this.
 
-#![allow(dead_code)]
-
 use super::flow_control::{RecvWindow, SendWindow};
 use super::hpack;
 use super::settings::{self, Settings};

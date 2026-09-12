@@ -4,8 +4,6 @@
 //! as the stream `state`): IDLE=1, OPEN=2, RESERVED_LOCAL=3, RESERVED_REMOTE=4,
 //! HALF_CLOSED_LOCAL=5, HALF_CLOSED_REMOTE=6, CLOSED=7.
 
-#![allow(dead_code)]
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum State {

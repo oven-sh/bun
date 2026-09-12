@@ -987,10 +987,15 @@ describe.concurrent("inbound ALTSVC (RFC 7838 §4) and ORIGIN (RFC 8336 §2) fra
         const req = client.request({ ":path": "/" });
         req.on("error", () => {});
         req.resume();
-        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1, Infinity);
-      } else {
-        await raw.waitFor(f => f.type === FrameType.SETTINGS, Infinity);
       }
+      const firstFrame = raw.waitFor(
+        request ? f => f.type === FrameType.HEADERS && f.streamId === 1 : f => f.type === FrameType.SETTINGS,
+        Infinity,
+      );
+      const closedEarly = closed.promise.then(() => {
+        throw new Error(`the session closed before its first frame: ${JSON.stringify(events)}`);
+      });
+      await Promise.race([firstFrame, closedEarly]);
       raw.socket!.write(
         Buffer.concat([
           encodeFrame(FrameType.SETTINGS, 0, 0),

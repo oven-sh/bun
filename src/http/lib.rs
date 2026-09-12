@@ -1249,7 +1249,7 @@ struct InitialRequestPayloadResult {
 ///
 /// NOTE: this precedence is the *opposite* of the WebSocket upgrade client's
 /// CONNECT builder, which is intentional — do not unify.
-fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
+fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) -> crate::Result<()> {
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
         .proxy_headers
@@ -1272,17 +1272,33 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
         let names = slice.items_name();
         let values = slice.items_value();
         for (idx, name_ptr) in names.iter().enumerate() {
-            writer.extend_from_slice(hdrs.as_str(*name_ptr));
-            writer.extend_from_slice(b": ");
-            writer.extend_from_slice(hdrs.as_str(values[idx]));
-            writer.extend_from_slice(b"\r\n");
+            write_header_line(writer, hdrs.as_str(*name_ptr), hdrs.as_str(values[idx]))?;
         }
     }
+    Ok(())
 }
 
 fn validate_request_target(target: &[u8]) -> crate::Result<()> {
     if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
         return Err(crate::Error::InvalidURL);
+    }
+    Ok(())
+}
+
+fn write_header_line(writer: &mut Vec<u8>, name: &[u8], value: &[u8]) -> crate::Result<()> {
+    if strings::contains_any(name, b"\r\n\0") || strings::contains_any(value, b"\r\n\0") {
+        return Err(crate::Error::InvalidRequestHeader);
+    }
+    writer.extend_from_slice(name);
+    writer.extend_from_slice(b": ");
+    writer.extend_from_slice(value);
+    writer.extend_from_slice(b"\r\n");
+    Ok(())
+}
+
+fn write_header_lines(writer: &mut Vec<u8>, headers: &[picohttp::Header]) -> crate::Result<()> {
+    for header in headers {
+        write_header_line(writer, header.name(), header.value())?;
     }
     Ok(())
 }
@@ -1309,7 +1325,7 @@ fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> crate::Resu
 
     writer.extend_from_slice(b"\r\nProxy-Connection: Keep-Alive\r\n");
 
-    write_proxy_auth_and_headers(writer, client);
+    write_proxy_auth_and_headers(writer, client)?;
 
     writer.extend_from_slice(b"\r\n");
     Ok(())
@@ -1337,14 +1353,9 @@ fn write_proxy_request(
     writer.extend_from_slice(request.path);
     writer.extend_from_slice(b" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n");
 
-    write_proxy_auth_and_headers(writer, client);
+    write_proxy_auth_and_headers(writer, client)?;
 
-    for header in request.headers {
-        writer.extend_from_slice(header.name());
-        writer.extend_from_slice(b": ");
-        writer.extend_from_slice(header.value());
-        writer.extend_from_slice(b"\r\n");
-    }
+    write_header_lines(writer, request.headers)?;
 
     writer.extend_from_slice(b"\r\n");
     Ok(())
@@ -1357,12 +1368,7 @@ fn write_request(writer: &mut Vec<u8>, request: &picohttp::Request<'_>) -> crate
     writer.extend_from_slice(request.path);
     writer.extend_from_slice(b" HTTP/1.1\r\n");
 
-    for header in request.headers {
-        writer.extend_from_slice(header.name());
-        writer.extend_from_slice(b": ");
-        writer.extend_from_slice(header.value());
-        writer.extend_from_slice(b"\r\n");
-    }
+    write_header_lines(writer, request.headers)?;
 
     writer.extend_from_slice(b"\r\n");
     Ok(())

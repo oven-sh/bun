@@ -32,6 +32,24 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
+/* Which message a header block is, decided when lsquic starts decoding it.
+ * Determines which pseudo-headers it may carry (RFC 9114 §4.3). Blocks a
+ * client engine receives are stored as-is: the H3 client validates response
+ * fields itself (h3_client/callbacks.rs) and can fail just that stream,
+ * whereas a rejection here takes the whole connection down. */
+enum us_quic_hset_kind {
+    US_QUIC_HSET_REQUEST,
+    US_QUIC_HSET_TRAILERS,
+    US_QUIC_HSET_RESPONSE,
+};
+
+enum {
+    US_QUIC_PSEUDO_METHOD    = 1 << 0,
+    US_QUIC_PSEUDO_SCHEME    = 1 << 1,
+    US_QUIC_PSEUDO_AUTHORITY = 1 << 2,
+    US_QUIC_PSEUDO_PATH      = 1 << 3,
+};
+
 /* Incoming header set: contiguous storage + index. Created before the
  * stream object exists (lsquic decodes headers ahead of on_new_stream),
  * so it lives standalone until on_read claims it via lsquic_stream_get_hset. */
@@ -41,7 +59,11 @@ struct us_quic_hset {
     struct lsxpack_header scratch;
     struct us_quic_header_t *headers;
     unsigned int count, hcap;
-    int is_server;
+    /* One byte each: this struct is allocated once per header block. */
+    unsigned char kind;        /* enum us_quic_hset_kind */
+    unsigned char pseudo_seen; /* US_QUIC_PSEUDO_* bits */
+    unsigned char seen_regular;
+    unsigned char is_connect;
 };
 
 struct us_quic_sni {
@@ -424,33 +446,22 @@ static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned cha
 
 /* ───── header-set interface ───── */
 
-static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
-    (void) s; (void) is_push;
-    struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
-    if (h) h->is_server = !((us_quic_socket_context_t *) hsi_ctx)->is_client;
-    return h;
-}
+/* From lsquic_stream.h (not in the public header): true once an earlier
+ * header block completed on the stream, i.e. this block is trailers. */
+int lsquic_stream_header_is_trailer(const lsquic_stream_t *);
 
-static int us_quic_field_is_malformed(const struct lsxpack_header *hdr) {
-    const unsigned char *name = (const unsigned char *) lsxpack_header_get_name(hdr);
-    const unsigned char *val = (const unsigned char *) lsxpack_header_get_value(hdr);
-    if (hdr->name_len == 0) return 1;
-    if (name[0] == ':' && hdr->name_len == 1) return 1;
-    for (unsigned int i = name[0] == ':'; i < hdr->name_len; i++) {
-        unsigned char c = name[i];
-        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
-        switch (c) {
-        case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
-        case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
-            continue;
-        }
-        return 1;
+static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
+    us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) hsi_ctx;
+    struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
+    if (!h) return NULL;
+    if (ctx->is_client && !is_push) {
+        h->kind = US_QUIC_HSET_RESPONSE;
+    } else if (s && lsquic_stream_header_is_trailer(s)) {
+        h->kind = US_QUIC_HSET_TRAILERS;
+    } else {
+        h->kind = US_QUIC_HSET_REQUEST;
     }
-    for (unsigned int i = 0; i < hdr->val_len; i++) {
-        unsigned char c = val[i];
-        if (c == 0 || c == '\r' || c == '\n') return 1;
-    }
-    return 0;
+    return h;
 }
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
@@ -478,10 +489,108 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     return hdr;
 }
 
+/* US_QUIC_NAME_BYTE: RFC 9110 tchar minus uppercase (RFC 9114 §4.2 makes an
+ * uppercase field name malformed rather than something to fold).
+ * US_QUIC_VALUE_BYTE: everything except DEL and the C0 controls other than HTAB. */
+#define US_QUIC_NAME_BYTE 1
+#define US_QUIC_VALUE_BYTE 2
+static const unsigned char us_quic_field_byte[256] = {
+    /* 0x00 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+    /* 0x10 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* 0x20 */ 2, 3, 2, 3, 3, 3, 3, 3, 2, 2, 3, 3, 2, 3, 3, 2,
+    /* 0x30 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2,
+    /* 0x40 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0x50 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3,
+    /* 0x60 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    /* 0x70 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 0,
+    /* 0x80 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0x90 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xa0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xb0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xc0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xd0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xe0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xf0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+};
+
+static int us_quic_bytes_lack(const unsigned char *p, unsigned int len, unsigned char kind) {
+    for (unsigned int i = 0; i < len; i++) {
+        if (!(us_quic_field_byte[p[i]] & kind)) return 1;
+    }
+    return 0;
+}
+
+/* Values are most of a header block, so they are tested eight bytes at a
+ * time (the hasLess trick HttpParser.h uses). HTAB is the one allowed byte
+ * below 0x20, so a hit only sends that word to the exact per-byte test. */
+static int us_quic_field_value_is_malformed(const unsigned char *value, unsigned int len) {
+    const uint64_t ones = ~0ULL / 255, high = ones * 128;
+    unsigned int i = 0;
+    for (; i + 8 <= len; i += 8) {
+        uint64_t word;
+        memcpy(&word, value + i, 8);
+        uint64_t below_space = (word - ones * 0x20) & ~word & high;
+        uint64_t del = word ^ (ones * 0x7f);
+        del = (del - ones) & ~del & high;
+        if ((below_space | del) && us_quic_bytes_lack(value + i, 8, US_QUIC_VALUE_BYTE)) return 1;
+    }
+    return us_quic_bytes_lack(value + i, len - i, US_QUIC_VALUE_BYTE);
+}
+
+static unsigned int us_quic_request_pseudo_header_bit(const char *name, unsigned int len) {
+    if (len == 7 && memcmp(name, ":method", 7) == 0) return US_QUIC_PSEUDO_METHOD;
+    if (len == 7 && memcmp(name, ":scheme", 7) == 0) return US_QUIC_PSEUDO_SCHEME;
+    if (len == 10 && memcmp(name, ":authority", 10) == 0) return US_QUIC_PSEUDO_AUTHORITY;
+    if (len == 5 && memcmp(name, ":path", 5) == 0) return US_QUIC_PSEUDO_PATH;
+    return 0;
+}
+
+/* RFC 9114 §4.1.2 / §4.3 field validity for a block the server receives.
+ * QPACK is length-prefixed, so unlike the HTTP/1 parser nothing upstream of
+ * here stops CR, LF or NUL from landing in a field; everything downstream
+ * (Request.headers, and any fetch() that forwards it over HTTP/1) trusts
+ * that these bytes are absent. Trailers may not carry pseudo-headers at all.
+ * Returns 1 for a malformed field, which lsquic maps to H3_MESSAGE_ERROR. */
+static int us_quic_hset_check_field(struct us_quic_hset *h, const char *name,
+                                    unsigned int name_len, const char *value,
+                                    unsigned int value_len) {
+    if (name_len == 0) return 1;
+    if (us_quic_field_value_is_malformed((const unsigned char *) value, value_len)) return 1;
+    if (name[0] == ':') {
+        if (h->seen_regular || h->kind != US_QUIC_HSET_REQUEST) return 1;
+        unsigned int bit = us_quic_request_pseudo_header_bit(name, name_len);
+        if (bit == 0 || (h->pseudo_seen & bit)) return 1;
+        h->pseudo_seen |= bit;
+        if (bit == US_QUIC_PSEUDO_METHOD && value_len == 7 && memcmp(value, "CONNECT", 7) == 0)
+            h->is_connect = 1;
+        return 0;
+    }
+    h->seen_regular = 1;
+    return us_quic_bytes_lack((const unsigned char *) name, name_len, US_QUIC_NAME_BYTE);
+}
+
+/* RFC 9114 §4.3.1: a request carries exactly one :method, :scheme and :path,
+ * except CONNECT (§4.4), which carries :authority and neither of the other
+ * two. Only the shape of the block is checked here; what the values say
+ * (:path being origin-form, :authority being a host) is left to the HTTP
+ * layer, which can answer with a 400 on just that stream. */
+static int us_quic_hset_check_complete(const struct us_quic_hset *h) {
+    if (h->kind != US_QUIC_HSET_REQUEST) return 0;
+    if (h->is_connect) {
+        return h->pseudo_seen != (US_QUIC_PSEUDO_METHOD | US_QUIC_PSEUDO_AUTHORITY);
+    }
+    const unsigned int required = US_QUIC_PSEUDO_METHOD | US_QUIC_PSEUDO_SCHEME | US_QUIC_PSEUDO_PATH;
+    return (h->pseudo_seen & required) != required;
+}
+
 static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
-    if (hdr == NULL) return 0; /* end of headers */
-    if (h->is_server && us_quic_field_is_malformed(hdr)) return 1;
+    if (hdr == NULL) return us_quic_hset_check_complete(h); /* end of headers */
+    if (h->kind != US_QUIC_HSET_RESPONSE &&
+        us_quic_hset_check_field(h, lsxpack_header_get_name(hdr), hdr->name_len,
+                                 lsxpack_header_get_value(hdr), hdr->val_len)) {
+        return 1;
+    }
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
         struct us_quic_header_t *nh = (struct us_quic_header_t *)

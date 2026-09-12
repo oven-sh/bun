@@ -12,6 +12,8 @@ pub use error::{Error, Result};
 
 #[path = "Chunk.rs"]
 pub mod chunk;
+#[path = "InputSourceMap.rs"]
+pub mod input_source_map;
 #[path = "InternalSourceMap.rs"]
 pub mod internal_source_map;
 #[path = "LineOffsetTable.rs"]
@@ -46,6 +48,7 @@ unsafe impl Sync for ParsedSourceMap {}
 pub use bun_core::Ordinal;
 
 pub use chunk::Chunk;
+pub use input_source_map::InputSourceMap;
 pub use internal_source_map::InternalSourceMap;
 
 // ── leaf types that compile cleanly today ─────────────────────────────────

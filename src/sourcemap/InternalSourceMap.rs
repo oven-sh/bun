@@ -68,7 +68,7 @@
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
-//!     [total_len-stream_tail_pad..total_len]      zero bytes (read-past pad)
+//!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
 //! SyncEntry: absolute state of this window's first mapping plus stream offset
@@ -108,10 +108,9 @@ pub(crate) const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
-/// `read_varint`'s 1-byte fast path reads `bytes[pos]` unconditionally; the
-/// exception cursors in `WindowReader` advance to one byte past their last
-/// varint, so a 1-byte tail pad keeps that read in-bounds for a window at the
-/// very end of the stream.
+/// One zero byte that `Builder::finalize` writes after the last window and
+/// `is_valid_blob` requires. It is part of the blob layout, so it stays. The
+/// reader does not rely on it: every read of the stream is bounds-checked.
 const STREAM_TAIL_PAD: usize = 1;
 
 /// The blob is stored in the SavedSourceMap table as a tagged pointer to its

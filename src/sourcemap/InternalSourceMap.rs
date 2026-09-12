@@ -68,7 +68,7 @@
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
-//!     [total_len-stream_tail_pad..total_len]      zero bytes (read-past pad)
+//!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
 //! SyncEntry: absolute state of this window's first mapping plus stream offset
@@ -108,10 +108,7 @@ pub(crate) const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
-/// `read_varint`'s 1-byte fast path reads `bytes[pos]` unconditionally; the
-/// exception cursors in `WindowReader` advance to one byte past their last
-/// varint, so a 1-byte tail pad keeps that read in-bounds for a window at the
-/// very end of the stream.
+/// Trailing zero byte of the blob layout. The bounds-checked reader does not need it.
 const STREAM_TAIL_PAD: usize = 1;
 
 /// The blob is stored in the SavedSourceMap table as a tagged pointer to its
@@ -249,9 +246,7 @@ impl InternalSourceMap {
 
 /// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)
 /// against its actual length so a *truncated* embedded section in a `--compile`
-/// binary degrades to "no sourcemap". This does not walk per-window
-/// `SyncEntry.byte_offset`/section lengths; the blob is self-produced at build
-/// time, and a tampered executable already implies arbitrary execution.
+/// binary degrades to "no sourcemap". `WindowReader` bounds-checks the rest.
 pub fn is_valid_blob(blob: &[u8]) -> bool {
     if blob.len() < HEADER_SIZE {
         return false;
@@ -294,14 +289,15 @@ impl State {
     }
 
     fn to_mapping(self) -> Mapping {
+        // Not `from_zero_based`: a damaged blob can decode to a negative coordinate.
         Mapping {
             generated: LineColumnOffset {
-                lines: Ordinal::from_zero_based(self.generated_line),
-                columns: Ordinal::from_zero_based(self.generated_column),
+                lines: Ordinal(self.generated_line),
+                columns: Ordinal(self.generated_column),
             },
             original: LineColumnOffset {
-                lines: Ordinal::from_zero_based(self.original_line),
-                columns: Ordinal::from_zero_based(self.original_column),
+                lines: Ordinal(self.original_line),
+                columns: Ordinal(self.original_column),
             },
             source_index: self.source_index,
             name_index: -1,
@@ -344,21 +340,22 @@ fn write_varint(buf: *mut u8, signed: i32) -> usize {
     }
 }
 
-fn read_varint(bytes: &[u8], pos: &mut usize) -> i32 {
+/// `None` when the varint runs past the end of `bytes`.
+fn read_varint(bytes: &[u8], pos: &mut usize) -> Option<i32> {
     let mut i = *pos;
-    let first = bytes[i];
+    let first = *bytes.get(i)?;
     i += 1;
     if first < 0x80 {
         *pos = i;
-        return zigzag_decode(first as u32);
+        return Some(zigzag_decode(first as u32));
     }
     let mut result: u32 = (first & 0x7f) as u32;
     let mut shift: u32 = 7;
     loop {
-        if i >= bytes.len() || shift > 28 {
+        if shift > 28 {
             break;
         }
-        let byte = bytes[i];
+        let byte = *bytes.get(i)?;
         i += 1;
         result |= ((byte & 0x7f) as u32) << shift;
         if byte & 0x80 == 0 {
@@ -367,13 +364,19 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> i32 {
         shift += 7;
     }
     *pos = i;
-    zigzag_decode(result)
+    Some(zigzag_decode(result))
 }
 
+/// Mask bit `i` of the result is bit `i & 7` of byte `pos + (i >> 3)`.
 #[inline]
-fn test_bit(base: *const u8, idx: usize) -> bool {
-    // SAFETY: caller guarantees base[idx >> 3] is within the window header / mask region.
-    unsafe { (*base.add(idx >> 3) >> (idx & 7)) & 1 != 0 }
+fn read_u64_le(bytes: &[u8], pos: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(*bytes.get(pos..)?.first_chunk()?))
+}
+
+/// `idx` is a delta index, so it is below `SYNC_INTERVAL - 1`.
+#[inline]
+fn test_bit(mask: u64, idx: u8) -> bool {
+    (mask >> idx) & 1 != 0
 }
 
 const FLAG_HAS_GEN_LINE_EXCEPTIONS: u8 = 1 << 2;
@@ -396,20 +399,19 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-// Invariant: `bytes`/`base`/`src_idx_mask` point into the blob and are only
-// valid while the blob is live. They are raw pointers (not lifetimes) because
-// readers are stored in lifetime-less caches (`FindCacheSlot`, `Cursor`) that
-// follow `InternalSourceMap`'s Copy-view design.
+// `bytes` is a raw pointer into the blob because `Cursor` stores readers without a lifetime.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
-    base: *const u8,
     gen_col_pos: usize,
     orig_line_exc_pos: usize,
     orig_col_exc_pos: usize,
     gen_line_exc_pos: usize,
-    src_idx_mask: *const u8,
     src_idx_exc_pos: usize,
+    gen_line_mask: u64,
+    orig_line_eq_mask: u64,
+    orig_col_eq_mask: u64,
+    src_idx_eq_mask: u64,
     count: u8,
     flags: u8,
     gen_line_exc_next_idx: u8,
@@ -417,15 +419,18 @@ struct WindowReader {
 }
 
 impl WindowReader {
+    /// An empty window: `done()` holds and nothing reads `bytes`.
     const DANGLING: WindowReader = WindowReader {
         bytes: ptr::slice_from_raw_parts(ptr::null(), 0),
-        base: ptr::null(),
         gen_col_pos: 0,
         orig_line_exc_pos: 0,
         orig_col_exc_pos: 0,
         gen_line_exc_pos: 0,
-        src_idx_mask: ptr::null(),
         src_idx_exc_pos: 0,
+        gen_line_mask: 0,
+        orig_line_eq_mask: 0,
+        orig_col_eq_mask: 0,
+        src_idx_eq_mask: 0,
         count: 0,
         flags: 0,
         gen_line_exc_next_idx: 0,
@@ -443,58 +448,57 @@ impl WindowReader {
         unsafe { &*self.bytes }
     }
 
-    fn parse(&mut self, bytes: &[u8], start: usize) {
-        // SAFETY: `start` is a valid window header offset within `bytes` (came
-        // from a SyncEntry.byte_offset produced by Builder).
-        let b = unsafe { bytes.as_ptr().add(start) };
-        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
-        self.base = b;
-        // Clamp `count` so a corrupted header byte cannot drive `next()` past
-        // `FindCacheSlot.decoded[SYNC_INTERVAL]`. Well-formed blobs never
-        // exceed K; this is defense-in-depth for the standalone-graph path.
-        // SAFETY: window header is 32 bytes within the stream; COUNT_OFF/FLAGS_OFF
-        // are fixed offsets within that 32-byte header at `b`.
-        self.count = unsafe { *b.add(win_hdr::COUNT_OFF) }.min(SYNC_INTERVAL as u8);
-        // SAFETY: same — FLAGS_OFF is within the 32-byte header at `b`.
-        let flags = unsafe { *b.add(win_hdr::FLAGS_OFF) };
-        self.flags = flags;
+    /// `None`, with the reader left `done()`, when the window at `start` does not fit in `bytes`.
+    fn parse(&mut self, bytes: &[u8], start: usize) -> Option<()> {
+        // Empty until the whole window is accepted.
+        self.count = 0;
         self.delta_idx = 0;
+        let header: &[u8; win_hdr::GEN_COL_LANE_OFF] = bytes.get(start..)?.first_chunk()?;
+        // One load covers count, flags and the three u16 LE section lengths.
+        let fixed = read_u64_le(header, 0)?;
+        let len_at = |off: usize| ((fixed >> (8 * off)) & 0xffff) as usize;
+        let flags = (fixed >> (8 * win_hdr::FLAGS_OFF)) as u8;
 
-        // SAFETY: u16 LE fields at fixed header offsets within the 32-byte header.
-        let gen_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
-                as usize;
-        // SAFETY: ORIG_LINE_LEN_OFF is a fixed offset within the 32-byte header at `b`.
-        let orig_line_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
-                as usize;
-        // SAFETY: ORIG_COL_LEN_OFF is a fixed offset within the 32-byte header at `b`.
-        let orig_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
-                as usize;
-
+        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
-        self.orig_line_exc_pos = self.gen_col_pos + gen_col_len;
-        self.orig_col_exc_pos = self.orig_line_exc_pos + orig_line_len;
-        let mut pos = self.orig_col_exc_pos + orig_col_len;
+        self.orig_line_exc_pos = self.gen_col_pos + len_at(win_hdr::GEN_COL_LEN_OFF);
+        self.orig_col_exc_pos = self.orig_line_exc_pos + len_at(win_hdr::ORIG_LINE_LEN_OFF);
+        self.gen_line_mask = read_u64_le(header, win_hdr::GEN_LINE_MASK_OFF)?;
+        self.orig_line_eq_mask = read_u64_le(header, win_hdr::ORIG_LINE_EQ_MASK_OFF)?;
+        self.orig_col_eq_mask = read_u64_le(header, win_hdr::ORIG_COL_EQ_MASK_OFF)?;
+        self.flags = flags;
         self.gen_line_exc_next_idx = 0xFF;
         if flags != 0 {
-            if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 && pos < bytes.len() {
-                self.gen_line_exc_pos = pos;
-                self.gen_line_exc_next_idx = bytes[pos];
-                while pos < bytes.len() && bytes[pos] != 0xFF {
-                    pos += 1;
-                    let _ = read_varint(bytes, &mut pos);
-                }
-                pos += 1;
-            }
-            if flags & FLAG_HAS_SRC_IDX != 0 {
-                // SAFETY: pos is within bytes (mask region is 8 bytes).
-                self.src_idx_mask = unsafe { bytes.as_ptr().add(pos) };
-                pos += 8;
-                self.src_idx_exc_pos = pos;
-            }
+            let pos = self.orig_col_exc_pos + len_at(win_hdr::ORIG_COL_LEN_OFF);
+            self.parse_flagged_sections(bytes, pos)?;
         }
+        // Clamped so every delta index stays below 64, the width of the masks.
+        self.count = ((fixed >> (8 * win_hdr::COUNT_OFF)) as u8).min(SYNC_INTERVAL as u8);
+        Some(())
+    }
+
+    #[cold]
+    fn parse_flagged_sections(&mut self, bytes: &[u8], mut pos: usize) -> Option<()> {
+        if self.flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
+            self.gen_line_exc_pos = pos;
+            self.gen_line_exc_next_idx = *bytes.get(pos)?;
+            // A window holds at most one pair per delta.
+            let mut pairs = 0;
+            while *bytes.get(pos)? != 0xFF {
+                if pairs == SYNC_INTERVAL - 1 {
+                    return None;
+                }
+                pairs += 1;
+                pos += 1;
+                read_varint(bytes, &mut pos)?;
+            }
+            pos += 1;
+        }
+        if self.flags & FLAG_HAS_SRC_IDX != 0 {
+            self.src_idx_eq_mask = read_u64_le(bytes, pos)?;
+            self.src_idx_exc_pos = pos + 8;
+        }
+        Some(())
     }
 
     #[inline]
@@ -502,53 +506,45 @@ impl WindowReader {
         self.delta_idx + 1 >= self.count
     }
 
+    /// A lane that runs past the end of the stream leaves `state` as it is and `count` 0.
     fn next(&mut self, state: &mut State) {
+        if self.apply_next(state).is_none() {
+            self.count = 0;
+        }
+    }
+
+    fn apply_next(&mut self, state: &mut State) -> Option<()> {
         let delta_idx = self.delta_idx;
         self.delta_idx = delta_idx + 1;
-        let b = self.base;
         let bytes = self.bytes();
 
-        let mut d_gen_line: i32 = if test_bit(
-            // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::GEN_LINE_MASK_OFF) },
-            delta_idx as usize,
-        ) {
-            1
-        } else {
-            0
-        };
-        let d_gen_col = read_varint(bytes, &mut self.gen_col_pos);
-        let mut d_orig_line: i32 = if test_bit(
-            // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
-            delta_idx as usize,
-        ) {
+        let mut d_gen_line: i32 = test_bit(self.gen_line_mask, delta_idx) as i32;
+        let d_gen_col = read_varint(bytes, &mut self.gen_col_pos)?;
+        let mut d_orig_line: i32 = if test_bit(self.orig_line_eq_mask, delta_idx) {
             d_gen_line
         } else {
-            read_varint(bytes, &mut self.orig_line_exc_pos)
+            read_varint(bytes, &mut self.orig_line_exc_pos)?
         };
-        let d_orig_col: i32 = if test_bit(
-            // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::ORIG_COL_EQ_MASK_OFF) },
-            delta_idx as usize,
-        ) {
+        let d_orig_col: i32 = if test_bit(self.orig_col_eq_mask, delta_idx) {
             d_gen_col
         } else {
-            read_varint(bytes, &mut self.orig_col_exc_pos)
+            read_varint(bytes, &mut self.orig_col_exc_pos)?
         };
 
         if self.flags != 0 {
-            self.next_rare(delta_idx, &mut d_gen_line, &mut d_orig_line, state);
+            self.next_rare(delta_idx, &mut d_gen_line, &mut d_orig_line, state)?;
         }
 
+        // Wrapping: a damaged delta must not trip the overflow check.
         if d_gen_line != 0 {
-            state.generated_line += d_gen_line;
+            state.generated_line = state.generated_line.wrapping_add(d_gen_line);
             state.generated_column = d_gen_col;
         } else {
-            state.generated_column += d_gen_col;
+            state.generated_column = state.generated_column.wrapping_add(d_gen_col);
         }
-        state.original_line += d_orig_line;
-        state.original_column += d_orig_col;
+        state.original_line = state.original_line.wrapping_add(d_orig_line);
+        state.original_column = state.original_column.wrapping_add(d_orig_col);
+        Some(())
     }
 
     #[cold]
@@ -558,24 +554,22 @@ impl WindowReader {
         d_gen_line: &mut i32,
         d_orig_line: &mut i32,
         state: &mut State,
-    ) {
+    ) -> Option<()> {
         let bytes = self.bytes();
         if self.gen_line_exc_next_idx == delta_idx {
             let mut p = self.gen_line_exc_pos + 1;
-            *d_gen_line = read_varint(bytes, &mut p);
-            if test_bit(
-                // SAFETY: header mask at fixed offset within `base`.
-                unsafe { self.base.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
-                delta_idx as usize,
-            ) {
+            *d_gen_line = read_varint(bytes, &mut p)?;
+            if test_bit(self.orig_line_eq_mask, delta_idx) {
                 *d_orig_line = *d_gen_line;
             }
             self.gen_line_exc_pos = p;
-            self.gen_line_exc_next_idx = bytes[p];
+            self.gen_line_exc_next_idx = *bytes.get(p)?;
         }
-        if self.flags & FLAG_HAS_SRC_IDX != 0 && !test_bit(self.src_idx_mask, delta_idx as usize) {
-            state.source_index += read_varint(bytes, &mut self.src_idx_exc_pos);
+        if self.flags & FLAG_HAS_SRC_IDX != 0 && !test_bit(self.src_idx_eq_mask, delta_idx) {
+            let d_src_idx = read_varint(bytes, &mut self.src_idx_exc_pos)?;
+            state.source_index = state.source_index.wrapping_add(d_src_idx);
         }
+        Some(())
     }
 }
 
@@ -601,10 +595,16 @@ impl InternalSourceMap {
         Some(u32::try_from(lo - 1).expect("int cast"))
     }
 
-    fn seed_window(self, sync_idx: u32, state: &mut State, reader: &mut WindowReader) {
+    /// `None` when the window does not fit inside the stream.
+    fn seed_window(
+        self,
+        sync_idx: u32,
+        state: &mut State,
+        reader: &mut WindowReader,
+    ) -> Option<()> {
         let se = self.sync_entry(sync_idx as usize);
         *state = se.to_state();
-        reader.parse(self.stream(), se.byte_offset as usize);
+        reader.parse(self.stream(), se.byte_offset as usize)
     }
 
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
@@ -617,7 +617,7 @@ impl InternalSourceMap {
 
         let mut state = State::default();
         let mut reader = WindowReader::DANGLING;
-        self.seed_window(sync_idx, &mut state, &mut reader);
+        self.seed_window(sync_idx, &mut state, &mut reader)?;
 
         let mut best = state;
         while !reader.done() {
@@ -630,7 +630,8 @@ impl InternalSourceMap {
             state = nxt;
         }
 
-        if best.generated_line != target_line {
+        // `count` 0: the header said so or a lane overran. The window is damaged.
+        if reader.count == 0 || best.generated_line != target_line {
             return None;
         }
         Some(best.to_mapping())
@@ -706,10 +707,11 @@ impl Cursor {
             self.sync_idx += 1;
             let mut seed = State::default();
             self.map
-                .seed_window(self.sync_idx, &mut seed, &mut self.reader);
+                .seed_window(self.sync_idx, &mut seed, &mut self.reader)?;
             return Some(seed);
         }
         let mut nxt = self.peek.unwrap_or(self.state);
+        // On a lane overrun `nxt` stays a copy of the current state and the next call leaves the window.
         self.reader.next(&mut nxt);
         Some(nxt)
     }
@@ -720,10 +722,12 @@ impl Cursor {
             return false;
         };
         self.sync_idx = idx;
-        self.map.seed_window(idx, &mut self.state, &mut self.reader);
         self.peek = None;
-        self.has_state = true;
-        true
+        self.has_state = self
+            .map
+            .seed_window(idx, &mut self.state, &mut self.reader)
+            .is_some();
+        self.has_state
     }
 }
 
@@ -749,10 +753,15 @@ impl InternalSourceMap {
         while idx < n_sync {
             let mut state = State::default();
             let mut reader = WindowReader::DANGLING;
-            self.seed_window(idx, &mut state, &mut reader);
+            if self.seed_window(idx, &mut state, &mut reader).is_none() {
+                return;
+            }
             emit_vlq(&state, &mut prev, &mut generated_line, out);
             while !reader.done() {
                 reader.next(&mut state);
+                if reader.count == 0 {
+                    return;
+                }
                 emit_vlq(&state, &mut prev, &mut generated_line, out);
             }
             idx += 1;

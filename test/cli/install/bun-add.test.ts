@@ -755,6 +755,99 @@ it("should add to peerDependencies with --peer", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+describe("should move existing dependency when an explicit group flag is given", () => {
+  const root = { name: "foo", version: "0.0.1" };
+  const pkgJson = (pkg: Record<string, unknown>) => JSON.stringify(pkg, null, 2);
+
+  async function add(
+    initial: Record<string, unknown>,
+    args: string[],
+    registry: Record<string, unknown> = { "0.0.2": {} },
+  ) {
+    setHandler(dummyRegistry([], registry));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(initial));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", ...args],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, , exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+    return await file(join(package_dir, "package.json")).text();
+  }
+
+  it.each([
+    ["dependencies", "devDependencies", "--dev"],
+    ["dependencies", "optionalDependencies", "--optional"],
+    ["dependencies", "peerDependencies", "--peer"],
+    ["devDependencies", "optionalDependencies", "--optional"],
+    ["optionalDependencies", "devDependencies", "--dev"],
+    ["optionalDependencies", "peerDependencies", "--peer"],
+  ])("%s -> %s with %s", async (from, to, flag) => {
+    expect(await add({ ...root, [from]: { BaR: "^0.0.2" } }, [flag, "BaR"])).toBe(
+      pkgJson({ ...root, [to]: { BaR: "^0.0.2" } }),
+    );
+  });
+
+  it("keeps the remaining entries of the source group in their original order", async () => {
+    const dependencies = { monkey: "^0.0.2", BaR: "^0.0.2", boba: "^0.0.2", "depends-on-monkey": "^0.0.2" };
+    expect(await add({ ...root, dependencies }, ["--dev", "BaR"])).toBe(
+      pkgJson({
+        ...root,
+        dependencies: { monkey: "^0.0.2", boba: "^0.0.2", "depends-on-monkey": "^0.0.2" },
+        devDependencies: { BaR: "^0.0.2" },
+      }),
+    );
+  });
+
+  it("keeps the other root keys in their original order when the source group becomes empty", async () => {
+    const rest = { type: "module", scripts: { test: "true" }, license: "MIT" };
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2" }, ...rest }, ["--dev", "BaR"])).toBe(
+      pkgJson({ ...root, ...rest, devDependencies: { BaR: "^0.0.2" } }),
+    );
+  });
+
+  it("moves several packages out of the same group", async () => {
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2", monkey: "^0.0.2" } }, ["--dev", "BaR", "monkey"])).toBe(
+      pkgJson({ ...root, devDependencies: { BaR: "^0.0.2", monkey: "^0.0.2" } }),
+    );
+  });
+
+  it("removes the other group when the package is already in the target group", async () => {
+    const initial = { ...root, devDependencies: { BaR: "^0.0.2" }, optionalDependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["--dev", "BaR"])).toBe(pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } }));
+  });
+
+  it("leaves a peerDependencies entry untouched when adding to devDependencies", async () => {
+    const initial = { ...root, peerDependencies: { baz: ">=0.0.3" } };
+    expect(await add(initial, ["--dev", "baz"], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...root, peerDependencies: { baz: ">=0.0.3" }, devDependencies: { baz: "^0.0.5" } }),
+    );
+  });
+
+  it("updates the devDependencies range when adding to peerDependencies", async () => {
+    const initial = { ...root, devDependencies: { baz: ">=0.0.3" } };
+    expect(await add(initial, ["--peer", "baz"], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...root, devDependencies: { baz: "^0.0.5" }, peerDependencies: { baz: "^0.0.5" } }),
+    );
+  });
+
+  it("does not move when no group flag is given", async () => {
+    const initial = { ...root, devDependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["BaR"])).toBe(pkgJson(initial));
+  });
+
+  it("does not move with --only-missing", async () => {
+    const initial = { ...root, dependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["--dev", "--only-missing", "BaR"])).toBe(pkgJson(initial));
+  });
+});
+
 it("should add exact version with install.exact", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -1681,7 +1774,7 @@ it("should let you add the same package twice", async () => {
       {
         name: "Foo",
         version: "0.0.1",
-        dependencies: {
+        devDependencies: {
           baz: "^0.0.3",
         },
       },

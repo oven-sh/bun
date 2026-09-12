@@ -42,7 +42,7 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{ReachedPackages, is_filtered_dependency_or_workspace};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -230,6 +230,7 @@ pub(crate) fn build_store(
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
+    let mut reached = ReachedPackages::default();
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -313,6 +314,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
+                    &mut reached,
                 ) {
                     provides.set(pkg_id as usize, bit);
                 }
@@ -383,6 +385,7 @@ pub(crate) fn build_store(
             manager,
             lockfile,
             resolutions,
+            &mut reached,
         ) {
             continue;
         }
@@ -694,6 +697,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
+                    &mut reached,
                 ) {
                     continue;
                 }

@@ -709,7 +709,7 @@ fn jsx_pragma_from_resolver(
 }
 
 /// D042: types unified — delegate to the resolver's own
-/// `TSConfigJSON::merge_jsx` (5-field conditional copy keyed on `jsx_flags`).
+/// `TSConfigJSON::merge_jsx` (conditional copy keyed on `jsx_flags`).
 #[inline]
 fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_impl::jsx::Pragma) {
     *out = tsconfig.merge_jsx(core::mem::take(out));
@@ -733,9 +733,9 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                    // Merge, not replace: `jsx.development` may already carry NODE_ENV.
                     if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                        merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;

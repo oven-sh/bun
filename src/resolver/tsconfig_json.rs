@@ -238,7 +238,9 @@ impl TSConfigJSON {
         }
 
         if self.jsx_flags.contains(JsxField::ImportSource) {
+            // "jsxImportSource" sets both; `package_name` feeds the `createElement` fallback import.
             out.import_source = self.jsx.import_source.clone();
+            out.package_name.clone_from(&self.jsx.package_name);
         }
 
         if self.jsx_flags.contains(JsxField::Runtime) {

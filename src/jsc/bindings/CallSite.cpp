@@ -79,6 +79,14 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     } else {
         m_function.set(vm, this, callee);
     }
+    // isToplevel() judges a frame by its callee. m_function cannot tell it what
+    // the callee was: a frame that hides its callee stores undefined there.
+    if (!isStrictFrame) {
+        auto* function = calleeFunction(callee);
+        if (function && !function->isHostFunction()) {
+            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
+        }
+    }
 
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());

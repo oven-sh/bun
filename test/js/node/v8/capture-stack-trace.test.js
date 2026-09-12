@@ -561,6 +561,9 @@ test("CallFrame.p.isNative", () => {
 // caller's function when it is really strict, which is the Flags::IsStrict
 // cascade. The `...Caller=self` rows pin that half.
 //
+// isToplevel() used to read the same stored function. The `...IsToplevel=false`
+// rows pin that its answer does not change for a frame that now hides it.
+//
 // The fixture is CommonJS because a strict frame already returns undefined.
 test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
   using dir = tempDir("callsite-internal-callee", {
@@ -590,6 +593,7 @@ test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code
           const host = named(sites, "map");
           out.push("hostFound=" + !!host);
           out.push("host=" + show(host && host.getFunction()));
+          out.push("hostIsToplevel=" + (host && host.isToplevel()));
           const caller = named(sites, "hostCaller");
           out.push("hostCaller=" + (caller && caller.getFunction() === hostCaller ? "self" : show(caller && caller.getFunction())));
         });
@@ -626,18 +630,23 @@ test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code
         return (async function af() {
           const sites = new Error().stack;
           out.push("asyncPrefix=" + show(sites[0].getFunction()));
+          out.push("asyncPrefixIsToplevel=" + sites[0].isToplevel());
           const caller = named(sites, "asyncPrefixCaller");
           out.push("asyncPrefixCaller=" + (caller && caller.getFunction() === asyncPrefixCaller ? "self" : show(caller && caller.getFunction())));
           await 1;
 
-          const asyncBody = new Error().stack[0].getFunction();
+          const asyncBodySite = new Error().stack[0];
+          const asyncBody = asyncBodySite.getFunction();
           out.push("asyncBody=" + show(asyncBody));
+          out.push("asyncBodyIsToplevel=" + asyncBodySite.isToplevel());
           if (typeof asyncBody === "function") asyncBody();
 
           function* gen() {
             yield 1;
-            const generatorBody = new Error().stack[0].getFunction();
+            const generatorBodySite = new Error().stack[0];
+            const generatorBody = generatorBodySite.getFunction();
             out.push("generatorBody=" + show(generatorBody));
+            out.push("generatorBodyIsToplevel=" + generatorBodySite.isToplevel());
             if (typeof generatorBody === "function") generatorBody();
           }
           const it = gen();
@@ -666,15 +675,19 @@ test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code
     "native=undefined",
     "hostFound=true",
     "host=undefined",
+    "hostIsToplevel=false",
     "hostCaller=self",
     "evalProgram=undefined",
     "wasmFrames=true",
     "wasm=undefined",
     "wasmCaller=self",
     "asyncPrefix=undefined",
+    "asyncPrefixIsToplevel=false",
     "asyncPrefixCaller=self",
     "asyncBody=undefined",
+    "asyncBodyIsToplevel=false",
     "generatorBody=undefined",
+    "generatorBodyIsToplevel=false",
   ]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

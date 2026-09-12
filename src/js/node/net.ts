@@ -2123,6 +2123,8 @@ Socket.prototype.connect = function connect(...args) {
               }
               // destroyWhenUpgradedCloses took over above. An upgrade that threw keeps onClose.
               connection.removeListener("close", onClose);
+              // The transport is connected. The stream-level engine opens on a later task and emits no 'connect' for _final to wait for.
+              this.connecting = false;
               this[kUpgradePending] = false;
               this.emit(kUpgradeAttached);
             };

@@ -1972,6 +1972,35 @@ it("tls.connect({ socket }) closes when a 'connect' listener destroys the transp
   }
 });
 
+it("tls.connect({ socket }).end() finishes after a transport with queued plaintext connects", async () => {
+  const accepted: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    accepted.push(socket);
+    socket.on("error", () => {});
+    socket.resume();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  raw.on("error", () => {});
+  const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    const events: string[] = [];
+    raw.on("connect", () => events.push("transport connect"));
+    client.on("finish", () => events.push("finish"));
+    // Still queued when the transport connects, so the upgrade takes the stream-level engine.
+    raw.write("plain");
+    client.end();
+    await new Promise<void>(resolve => client.once("finish", () => resolve()));
+    expect(events).toEqual(["transport connect", "finish"]);
+  } finally {
+    client.destroy();
+    raw.destroy();
+    for (const socket of accepted) socket.destroy();
+    server.close();
+  }
+});
+
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must
 // still finish its writable side and send the FIN, as node does:

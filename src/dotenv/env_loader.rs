@@ -1162,6 +1162,10 @@ impl<'a> Parser<'a> {
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
         }
+        #[inline]
+        fn is_ident_start(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'_')
+        }
 
         let mut pos = 0;
         let mut changed = false;
@@ -1236,7 +1240,7 @@ impl<'a> Parser<'a> {
                 pos = close + 1;
                 continue;
             }
-            if is_ident(next) {
+            if is_ident_start(next) {
                 changed = true;
                 let key_start = pos + 1;
                 let mut k = key_start;

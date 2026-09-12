@@ -102,8 +102,7 @@ bun_core::comptime_string_map! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-variant string table — single source of truth for the four exhaustive
-// matches that previously lived in typename_label / param_typename_label /
+// Per-variant string table — single source of truth for typename_label /
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -156,14 +155,14 @@ impl ABIType {
 }
 
 impl ABIType {
-    pub const MAX: i32 = ABIType::NapiValue as i32;
+    pub(crate) const MAX: i32 = ABIType::NapiValue as i32;
 
     /// See [`ABI_TYPE_LABEL`].
-    pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
+    pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
     /// Returns `None` for out-of-range discriminants.
     #[inline]
-    pub const fn from_int(n: i32) -> Option<Self> {
+    pub(crate) const fn from_int(n: i32) -> Option<Self> {
         Some(match n {
             0 => Self::Char,
             1 => Self::Int8T,
@@ -192,7 +191,7 @@ impl ABIType {
     }
 
     /// Types that we can directly pass through as an `int64_t`
-    pub fn needs_a_cast_in_c(self) -> bool {
+    pub(crate) fn needs_a_cast_in_c(self) -> bool {
         !matches!(
             self,
             ABIType::Char
@@ -205,36 +204,31 @@ impl ABIType {
         )
     }
 
-    pub fn is_floating_point(self) -> bool {
+    pub(crate) fn is_floating_point(self) -> bool {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    pub fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
+    pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
         ToCFormatter { tag: self, symbol }
     }
 
-    pub fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
+    pub(crate) fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
         ToJSFormatter { tag: self, symbol }
     }
 
-    pub fn typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
+    pub(crate) fn typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
         writer.write_all(self.typename_label())?;
         Ok(())
     }
 
-    pub fn typename_label(self) -> &'static [u8] {
+    pub(crate) fn typename_label(self) -> &'static [u8] {
         self.row().c_type
-    }
-
-    pub fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
-        writer.write_all(self.typename_label())?;
-        Ok(())
     }
 }
 
-pub struct ToCFormatter<'a> {
-    pub symbol: &'a [u8],
-    pub tag: ABIType,
+pub(crate) struct ToCFormatter<'a> {
+    pub(crate) symbol: &'a [u8],
+    pub(crate) tag: ABIType,
 }
 
 impl fmt::Display for ToCFormatter<'_> {
@@ -254,9 +248,9 @@ impl fmt::Display for ToCFormatter<'_> {
     }
 }
 
-pub struct ToJSFormatter<'a> {
-    pub symbol: &'a [u8],
-    pub tag: ABIType,
+pub(crate) struct ToJSFormatter<'a> {
+    pub(crate) symbol: &'a [u8],
+    pub(crate) tag: ABIType,
 }
 
 impl fmt::Display for ToJSFormatter<'_> {

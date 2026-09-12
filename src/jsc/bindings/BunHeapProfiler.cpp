@@ -1,5 +1,4 @@
 #include "root.h"
-#include "BunHeapProfiler.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
@@ -111,7 +110,7 @@ static WTF::String formatBytes(size_t bytes)
     return sb.toString();
 }
 
-WTF::String generateHeapProfile(JSC::VM& vm)
+static WTF::String generateHeapProfile(JSC::VM& vm)
 {
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
@@ -936,7 +935,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     return output.toString();
 }
 
-WTF::String generateHeapSnapshotV8(JSC::VM& vm)
+static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
 {
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();

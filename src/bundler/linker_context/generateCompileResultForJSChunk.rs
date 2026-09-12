@@ -5,6 +5,7 @@ use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
@@ -26,35 +27,11 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 /// `task` must be the intrusive `task` field of a live `PendingPartRange`
 /// scheduled by `generate_chunks_in_parallel`. Matches the
 /// `Task::callback: unsafe fn(*mut Task)` contract.
-pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
+pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
-
-    // Wired as a cargo feature through bun_runtime → bun_bundler →
-    // bun_crash_handler. No build profile enables the feature by
-    // default — it must be opted into explicitly.
-    #[cfg(feature = "show_crash_trace")]
-    let _crash_guard = {
-        // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
-        // borrows for the crash-trace vtable only.
-        let (c, chunk): (&LinkerContext, &Chunk) =
-            (part_range.ctx.c.get(), part_range.ctx.chunk.get());
-        crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
-    };
-
-    #[cfg(feature = "show_crash_trace")]
-    {
-        // `parse_graph()` is the safe accessor over the `BundleV2.graph` backref.
-        let parse_graph = part_range.ctx.c.get().parse_graph();
-        let path = &parse_graph.input_files.items_source()
-            [part_range.part_range.source_index.get() as usize]
-            .path;
-        if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
-            // No stable breakpoint intrinsic; left as a no-op.
-        }
-    }
 
     let result = {
         // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
@@ -149,6 +126,13 @@ fn generate_compile_result_for_js_chunk_impl(
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
+    // Collects what the printer emits for this part range; `post_process_js_chunk`
+    // appends it to the chunk's ModuleInfo, which is the one that gets finalized,
+    // so the `is_typescript` flag of this accumulator is never read.
+    let mut module_info: Option<Box<ModuleInfo>> = c
+        .options
+        .generates_module_info()
+        .then(|| ModuleInfo::create(false));
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter; take a raw-ptr view so borrowck doesn't
     // see two overlapping `&mut chunk` borrows.
@@ -168,6 +152,7 @@ fn generate_compile_result_for_js_chunk_impl(
         stmt_list,
         worker_alloc,
         &**arena,
+        module_info.as_deref_mut(),
     );
 
     // Update bytesInOutput for this source in the chunk (for metafile)
@@ -192,5 +177,6 @@ fn generate_compile_result_for_js_chunk_impl(
     CompileResult::Javascript {
         source_index: part_range.source_index.get(),
         result,
+        module_info,
     }
 }

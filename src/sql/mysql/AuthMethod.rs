@@ -38,7 +38,7 @@ impl AuthMethod {
         Ok(&mut buf[..len])
     }
 
-    pub fn scramble_length(self) -> usize {
+    pub(crate) fn scramble_length(self) -> usize {
         match self {
             AuthMethod::MysqlNativePassword => 20,
             AuthMethod::CachingSha2Password => 32,

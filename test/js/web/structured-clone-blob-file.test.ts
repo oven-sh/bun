@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss } from "harness";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -767,10 +767,10 @@ describe("structuredClone with Blob and File", () => {
       // with it the window is flat modulo a few MiB of noise.
       for (let i = 0; i < 1000; i++) attempt();
       Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
+      const rssBefore = rss();
       for (let i = 0; i < 1500; i++) attempt();
       Bun.gc(true);
-      const rssAfter = process.memoryUsage.rss();
+      const rssAfter = rss();
 
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
       // ASAN's quarantine retains freed allocations (default 256 MB) so the

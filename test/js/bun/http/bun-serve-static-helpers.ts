@@ -1,6 +1,6 @@
-import { expect } from "bun:test";
 import type { Server } from "bun";
-import { fillRepeating, isASAN, isDebug, isWindows } from "harness";
+import { expect } from "bun:test";
+import { fillRepeating, isASAN, isDebug, isWindows, rss } from "harness";
 
 // /big is 4MB so that the first send() cannot drain the body in one write: the
 // static-route sender has to take the to_async + on_writable backpressure loop
@@ -93,25 +93,25 @@ export async function runStress(
   }
 
   Bun.gc(true);
-  const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  const baseline = (rss() / 1024 / 1024) | 0;
   let lastRSS = baseline;
   console.log("Start RSS", baseline);
   for (let i = 0; i < iterations; i++) {
     await iterate();
-    const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    if (lastRSS + 50 < rss) {
-      console.log("RSS Growth", rss - lastRSS);
+    const rssMB = (rss() / 1024 / 1024) | 0;
+    if (lastRSS + 50 < rssMB) {
+      console.log("RSS Growth", rssMB - lastRSS);
     }
-    lastRSS = rss;
+    lastRSS = rssMB;
   }
   Bun.gc(true);
 
-  const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-  const delta = rss - baseline;
-  console.log("Final RSS", rss);
+  const finalRSS = (rss() / 1024 / 1024) | 0;
+  const delta = finalRSS - baseline;
+  console.log("Final RSS", finalRSS);
   console.log("Delta RSS", delta);
   // ASAN's shadow memory + quarantine raise the absolute RSS floor.
-  expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
+  expect(finalRSS).toBeLessThan(isASAN ? 6144 : 4092);
   if (isASAN || isDebug) {
     // With the reduced iteration count the absolute ceiling alone would miss a
     // per-request body leak on the first /big case (4 iter * 64 * 4MB = 1GB is

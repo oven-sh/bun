@@ -10,7 +10,7 @@ use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths as path;
 use bun_sys;
 
 pub(crate) struct PmPkgCommand;
@@ -118,7 +118,7 @@ impl PmPkgCommand {
     }
 
     fn find_package_json(cwd: &[u8]) -> Result<Box<[u8]>, Error> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = cwd;
 
         loop {
@@ -412,7 +412,7 @@ impl PmPkgCommand {
                         if pkg_dir.is_empty() {
                             pkg_dir = cwd;
                         }
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let full_path = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
                         >(pkg_dir, &mut buf, &[bin_path]);
@@ -494,7 +494,7 @@ impl PmPkgCommand {
             return Err(crate::Error::NotFound);
         }
 
-        let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let mut parts = strings::tokenize(key, b".");
         let mut current = root;
 
         while let Some(part) = parts.next() {
@@ -575,7 +575,7 @@ impl PmPkgCommand {
     fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
         let mut path_parts: Vec<&[u8]> = Vec::new();
 
-        let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let mut parts = strings::tokenize(key, b".");
 
         while let Some(part) = parts.next() {
             if let Some(first_bracket) = strings::index_of(part, b"[") {
@@ -725,7 +725,7 @@ impl PmPkgCommand {
         }
 
         let mut path_parts: Vec<&[u8]> = Vec::new();
-        for part in key.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
+        for part in strings::tokenize(key, b".") {
             path_parts.push(part);
         }
 

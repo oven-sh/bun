@@ -4,7 +4,7 @@ use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_object(
+    pub(crate) fn to_be_object(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,

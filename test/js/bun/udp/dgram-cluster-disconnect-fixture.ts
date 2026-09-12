@@ -6,7 +6,7 @@ import dgram from "node:dgram";
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  // Fail fast instead of hanging the (synchronous) toRun() harness matcher.
+  // Fail fast instead of hanging the harness.
   const watchdog = setTimeout(() => {
     worker.process.kill("SIGKILL");
     console.error("worker did not exit after disconnect");

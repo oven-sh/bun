@@ -17,7 +17,6 @@ use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
 use crate::hir::IdentifierName;
 use crate::hir::InstructionValue;
-use crate::hir::ParamPattern;
 use crate::hir::Place;
 use crate::hir::PrunedReactiveScopeBlock;
 use crate::hir::ReactiveBlock;
@@ -203,7 +202,10 @@ impl ReactiveFunctionVisitor for Visitor<'_> {
 /// Renames variables for output — assigns unique names, handles SSA renames.
 /// Returns a Set of all unique variable names used.
 /// TS: `renameVariables`
-pub fn rename_variables(func: &mut ReactiveFunction, env: &mut Environment) -> HashSet<String> {
+pub(crate) fn rename_variables(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+) -> HashSet<String> {
     rename_variables_with_parent(func, env, None)
 }
 
@@ -254,10 +256,7 @@ fn rename_variables_with_parent(
 fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mut Scopes) {
     scopes.enter();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         visitor.visit_param(place, scopes);
     }
     visitors::visit_reactive_function(func, visitor, scopes);

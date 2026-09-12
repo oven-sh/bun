@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -83,6 +83,71 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
     }
   });
 }
+
+// Assigning onmessage/onerror through a receiver that is not the global object
+// (e.g. a Proxy of globalThis) used to crash with a type confusion.
+test.concurrent("onmessage/onerror assignment through a Proxy of globalThis", async () => {
+  const script = `
+    const messages = [];
+    const onMessage = e => messages.push(e.data);
+    new Proxy(globalThis, {}).onmessage = onMessage;
+    if (globalThis.onmessage !== onMessage) throw new Error("onmessage not installed through Proxy");
+    dispatchEvent(new MessageEvent("message", { data: "hello" }));
+    if (messages.join() !== "hello") throw new Error("onmessage not dispatched");
+    new Proxy(globalThis, {}).onmessage = null;
+    if (globalThis.onmessage !== null) throw new Error("onmessage not cleared through Proxy");
+
+    const onError = () => {};
+    new Proxy(globalThis, {}).onerror = onError;
+    if (globalThis.onerror !== onError) throw new Error("onerror not installed through Proxy");
+    new Proxy(globalThis, {}).onerror = null;
+    if (globalThis.onerror !== null) throw new Error("onerror not cleared through Proxy");
+
+    with (new Proxy(globalThis, {})) { onmessage = function () {} }
+    if (typeof globalThis.onmessage !== "function") throw new Error("onmessage not installed through with scope");
+    globalThis.onmessage = null;
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("worker: onmessage assignment through a Proxy of self", async () => {
+  using dir = tempDir("worker-proxy-onmessage", {
+    "worker.js": `
+      new Proxy(self, {}).onmessage = e => postMessage("echo:" + e.data);
+      postMessage("ready");
+    `,
+    "main.js": `
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      worker.onmessage = e => {
+        if (e.data === "ready") {
+          worker.postMessage("hi");
+        } else {
+          console.log(e.data);
+          worker.terminate();
+        }
+      };
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("echo:hi\n");
+  expect(exitCode).toBe(0);
+});
 
 test("CloseEvent", () => {
   var event = new CloseEvent("close", { reason: "world" });
@@ -190,14 +255,16 @@ it("crypto.randomUUID", () => {
 
   withoutAggressiveGC(() => {
     // check that the fast path works
-    for (let i = 0; i < 9000; i++) {
+    // (45,000 expect() calls don't fit in the test budget on debug builds, so
+    // check the predicate and call expect() on the first malformed UUID only)
+    let malformed;
+    for (let i = 0; i < 9000 && malformed === undefined; i++) {
       var uuid2 = crypto.randomUUID();
-      expect(uuid2.length).toBe(36);
-      expect(uuid2[8]).toBe("-");
-      expect(uuid2[13]).toBe("-");
-      expect(uuid2[18]).toBe("-");
-      expect(uuid2[23]).toBe("-");
+      if (uuid2.length !== 36 || uuid2[8] !== "-" || uuid2[13] !== "-" || uuid2[18] !== "-" || uuid2[23] !== "-") {
+        malformed = uuid2;
+      }
     }
+    expect(malformed).toBeUndefined();
   });
 });
 

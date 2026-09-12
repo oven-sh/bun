@@ -53,9 +53,9 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     alloc: ArenaPtr,
 }
 
-pub struct BuildResult<Impl: ValidSelectorImpl> {
-    pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
+pub(crate) struct BuildResult<Impl: ValidSelectorImpl> {
+    pub(crate) specificity_and_flags: SpecificityAndFlags,
+    pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
@@ -110,23 +110,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub(crate) fn build(
-        &mut self,
-        parsed_pseudo: bool,
-        parsed_slotted: bool,
-        parsed_part: bool,
-    ) -> BuildResult<Impl> {
+    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
-        let mut flags = SelectorFlags::empty();
-        if parsed_pseudo {
-            flags |= SelectorFlags::HAS_PSEUDO;
-        }
-        if parsed_slotted {
-            flags |= SelectorFlags::HAS_SLOTTED;
-        }
-        if parsed_part {
-            flags |= SelectorFlags::HAS_PART;
-        }
         // `build_with_specificity_and_flags()` drains the contents; `Drop` on
         // `SelectorBuilder` frees the SmallList capacity when the builder goes
         // out of scope.
@@ -136,18 +121,15 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Builds a selector with the given specificity and flags.
     ///
     /// PERF:
-    ///     Recall that this code is ported from servo, which optimizes for matching speed, so
-    ///     the final AST has the components of the selector stored in reverse order, which is
-    ///     optimized for matching.
+    /// Recall that this code is ported from servo, which optimizes for matching speed, so
+    /// the final AST has the components of the selector stored in reverse order, which is
+    /// optimized for matching.
     ///
-    ///     We don't really care about matching selectors, and storing the components in reverse
-    ///     order requires additional allocations, and undoing the reversal when serializing the
-    ///     selector. So we could just change this code to store the components in the same order
-    ///     as the source.
-    pub(crate) fn build_with_specificity_and_flags(
-        &mut self,
-        spec: SpecificityAndFlags,
-    ) -> BuildResult<Impl> {
+    /// We don't really care about matching selectors, and storing the components in reverse
+    /// order requires additional allocations, and undoing the reversal when serializing the
+    /// selector. So we could just change this code to store the components in the same order
+    /// as the source.
+    fn build_with_specificity_and_flags(&mut self, spec: SpecificityAndFlags) -> BuildResult<Impl> {
         // Capture combinators.len() before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 
@@ -213,7 +195,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 }
 
-pub(crate) fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
+fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
 }

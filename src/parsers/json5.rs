@@ -270,24 +270,21 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Scanner ──
 
-    /// Returns the byte at the current position, or 0 if at EOF.
-    /// All source access in scan() goes through this to avoid bounds checks.
-    fn peek(&self) -> u8 {
-        if self.pos < self.source.len() {
-            return self.source[self.pos];
-        }
-        0
+    /// Returns the byte at the current position, or `None` at the end of the
+    /// source. A NUL byte in the source is `Some(0)`, not the end.
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.pos).copied()
     }
 
     fn scan(&mut self) -> Result<(), ParseError> {
         self.token.data = 'next: loop {
-            match self.peek() {
-                0 => {
-                    self.token.loc = Loc {
-                        start: i32::try_from(self.pos).expect("int cast"),
-                    };
-                    break 'next TokenData::Eof;
-                }
+            let Some(c) = self.peek() else {
+                self.token.loc = Loc {
+                    start: i32::try_from(self.pos).expect("int cast"),
+                };
+                break 'next TokenData::Eof;
+            };
+            match c {
                 // Whitespace — skip without setting loc
                 b'\t' | b'\n' | b'\r' | b' ' | 0x0B | 0x0C => {
                     self.pos += 1;
@@ -382,7 +379,7 @@ impl<'a> JSON5Parser<'a> {
                     }
                     return Err(ParseError::UnexpectedCharacter);
                 }
-                c => {
+                _ => {
                     if c == b't' {
                         self.token.loc = Loc {
                             start: i32::try_from(self.pos).expect("int cast"),
@@ -467,11 +464,11 @@ impl<'a> JSON5Parser<'a> {
 
     fn scan_signed_value(&mut self, is_negative: bool) -> Result<f64, ParseError> {
         match self.peek() {
-            b'0'..=b'9' | b'.' => {
+            Some(b'0'..=b'9' | b'.') => {
                 let n = self.scan_number()?;
                 Ok(if is_negative { -n } else { n })
             }
-            b'I' => {
+            Some(b'I') => {
                 if self.scan_keyword(b"Infinity") {
                     return Ok(if is_negative {
                         f64::NEG_INFINITY
@@ -481,15 +478,15 @@ impl<'a> JSON5Parser<'a> {
                 }
                 Err(ParseError::UnexpectedCharacter)
             }
-            b'N' => {
+            Some(b'N') => {
                 if self.scan_keyword(b"NaN") {
                     let nan = f64::NAN;
                     return Ok(if is_negative { -nan } else { nan });
                 }
                 Err(ParseError::UnexpectedCharacter)
             }
-            0 => Err(ParseError::UnexpectedEof),
-            _ => Err(ParseError::UnexpectedCharacter),
+            None => Err(ParseError::UnexpectedEof),
+            Some(_) => Err(ParseError::UnexpectedCharacter),
         }
     }
 
@@ -801,7 +798,7 @@ impl<'a> JSON5Parser<'a> {
         let start = self.pos;
 
         // Leading zero: check for hex prefix or invalid leading zeros
-        if self.peek() == b'0' && self.pos + 1 < self.source.len() {
+        if self.peek() == Some(b'0') && self.pos + 1 < self.source.len() {
             match self.source[self.pos + 1] {
                 b'x' | b'X' => return self.scan_hex_number(),
                 b'0'..=b'9' => return Err(ParseError::LeadingZeros),
@@ -822,7 +819,7 @@ impl<'a> JSON5Parser<'a> {
         }
 
         // Fractional part
-        if self.peek() == b'.' {
+        if self.peek() == Some(b'.') {
             self.pos += 1;
             let mut has_frac_digits = false;
             while self.pos < self.source.len() {
@@ -846,14 +843,14 @@ impl<'a> JSON5Parser<'a> {
 
         // Exponent part
         match self.peek() {
-            b'e' | b'E' => {
+            Some(b'e' | b'E') => {
                 self.pos += 1;
                 match self.peek() {
-                    b'+' | b'-' => self.pos += 1,
+                    Some(b'+' | b'-') => self.pos += 1,
                     _ => {}
                 }
                 match self.peek() {
-                    b'0'..=b'9' => self.pos += 1,
+                    Some(b'0'..=b'9') => self.pos += 1,
                     _ => return Err(ParseError::InvalidNumber),
                 }
                 while self.pos < self.source.len() {

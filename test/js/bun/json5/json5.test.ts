@@ -3,6 +3,7 @@
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -518,6 +519,40 @@ describe("error messages", () => {
     expect(() => JSON5.parse("@")).toThrow("Unexpected character");
     expect(() => JSON5.parse("undefined")).toThrow("Unexpected token");
     expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
+  });
+
+  // -- U+0000 outside a string or a comment --
+  test("NUL after a value is not the end of input", () => {
+    expect(() => JSON5.parse("123\0")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("1.\0")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("true\0false")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("{a:1}\0{b:2}")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("[1]\0]]] anything")).toThrow("Unexpected character");
+  });
+
+  test("NUL in place of a token", () => {
+    expect(() => JSON5.parse("\0")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("\0true")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("[1,\0]")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("{a\0:1}")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("{a:\0}")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("+\0")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("-\0")).toThrow("Unexpected character");
+  });
+
+  test("NUL inside a string or a comment is kept", () => {
+    expect(JSON5.parse("'a\0b'")).toBe("a\0b");
+    expect(JSON5.parse("1 //\0\n")).toBe(1);
+    expect(JSON5.parse("1 /*\0*/")).toBe(1);
+  });
+
+  test("NUL after a value in an imported .json5 file is an error at the NUL", async () => {
+    using dir = tempDir("json5-nul", { "nul.json5": "{a:1}\0{b:2}" });
+    const result = await import(join(String(dir), "nul.json5")).then(
+      mod => ({ parsed: mod.default }),
+      e => ({ message: e.message, line: e.position?.line, column: e.position?.column }),
+    );
+    expect(result).toEqual({ message: "Unexpected character", line: 1, column: 6 });
   });
 
   // -- Unterminated multi-line comment --

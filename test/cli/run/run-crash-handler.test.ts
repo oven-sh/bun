@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, noCoreDump, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -407,13 +407,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(sent).toBe(false);
 });
 
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
-
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)
 // must route through the crash handler so they are not silently lost. Outside
@@ -479,7 +472,7 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: noCoreCmd([bunExe(), "-e", "process.abort()"]),
+      cmd: noCoreDump([bunExe(), "-e", "process.abort()"]),
       env: mergeWindowEnvs([
         bunEnv,
         {
@@ -518,7 +511,7 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
   // process-group forms of kill(2) below cannot reach this test runner.
   async function run(code: string, { detached = false } = {}) {
     await using proc = Bun.spawn({
-      cmd: noCoreCmd([bunExe(), "-e", code, "--debug-crash-handler-use-trace-string"]),
+      cmd: noCoreDump([bunExe(), "-e", code, "--debug-crash-handler-use-trace-string"]),
       env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
       detached,

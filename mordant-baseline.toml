@@ -116,7 +116,6 @@
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
-"same_match_twice:src/runtime/webcore/Blob.rs" = 2
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2

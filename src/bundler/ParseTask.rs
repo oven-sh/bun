@@ -1231,23 +1231,24 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                // Liveness for this synthetic part is seeded in
-                // `tree_shaking_and_code_splitting` (the per-part bitset
-                // does not exist at parse time).
-                ast.parts.as_mut_slice()[1] = Part {
-                    stmts: ast::StoreSlice::EMPTY,
-                    import_record_indices: {
-                        // Generate a single part that depends on all the import records.
-                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
-                            import_records_len as usize,
-                        );
-                        import_record_indices
-                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
-                        import_record_indices
-                    },
-                    ..Default::default()
-                };
+                // One statement-less part per import record, in document order.
+                // The linker prints a part after the files it imports, so a
+                // `<script src>` that resolves to a wrapped module gets its
+                // `require_foo()` / `init_foo()` call at the tag's position
+                // (see `append_html_script_wrapper_calls`). Liveness for these
+                // parts is seeded in `tree_shaking_and_code_splitting` (the
+                // per-part bitset does not exist at parse time).
+                ast.parts.truncate(1);
+                ast.parts.reserve(import_records_len);
+                for import_record_index in 0..u32::try_from(import_records_len).expect("int cast") {
+                    let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(1);
+                    import_record_indices.push(import_record_index);
+                    ast.parts.push(Part {
+                        stmts: ast::StoreSlice::EMPTY,
+                        import_record_indices,
+                        ..Default::default()
+                    });
+                }
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
                 if output_format == js_parser::options::Format::Esm

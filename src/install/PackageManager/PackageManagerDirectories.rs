@@ -243,6 +243,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
             Err(err) => {
+                // The rename failed, so the probe is still sitting in `tempdir`.
+                let _ = tempdir.delete_file_z(tmpname);
                 if !tried_dot_tmp {
                     tried_dot_tmp = true;
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {

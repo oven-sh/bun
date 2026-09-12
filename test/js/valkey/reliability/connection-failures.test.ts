@@ -879,7 +879,7 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
-  test("a rejected SELECT after an accepted HELLO fails the connection once and connect() from onclose dials again", async () => {
+  test("a rejected SELECT after an accepted HELLO fails the handshake once and connect() from onclose dials again", async () => {
     // HELLO and SELECT are written together, and both replies come back in one
     // read: connection 1 accepts HELLO and rejects SELECT, connection 2 accepts both.
     const fake = helloServer({
@@ -888,10 +888,25 @@ describe("Valkey: Recovering After fail()", () => {
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: true });
     try {
-      const closes: { message: string; connected: boolean; connections: number }[] = [];
+      const closes: { message: string; connected: boolean; connections: number; connects: number }[] = [];
       let secondConnect: Promise<string> | undefined;
+      // The handshake is HELLO and then SELECT, so nothing may report the
+      // client connected in between: a command sent from there would be
+      // pipelined behind a SELECT the server is about to reject and run
+      // against database 0.
+      let connects = 0;
+      const sentFromOnconnect: Promise<string>[] = [];
+      client.onconnect = () => {
+        connects++;
+        sentFromOnconnect.push(
+          client.ping().then(
+            () => "resolved",
+            (err: Error & { code: string }) => `${err.code}: ${err.message}`,
+          ),
+        );
+      };
       client.onclose = err => {
-        closes.push({ message: err.message, connected: client.connected, connections: fake.connections });
+        closes.push({ message: err.message, connected: client.connected, connections: fake.connections, connects });
         secondConnect ??= client.connect().then(
           () => "connected",
           (err: Error) => `rejected: ${err.message}`,
@@ -902,15 +917,23 @@ describe("Valkey: Recovering After fail()", () => {
         () => "resolved",
         (err: Error & { code: string }) => `${err.code}: ${err.message}`,
       );
-      // connect() settles on the accepted HELLO, before the SELECT reply is
-      // read, so it resolves; the failure that follows is reported by onclose.
-      await client.connect();
-      expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
+      const firstConnect = await client.connect().then(
+        () => "resolved",
+        (err: Error & { code: string }) => `rejected: ${err.code}`,
+      );
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
-      // connection is the one dialed from it.
-      expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
+      // connection is the one dialed from it. onconnect first runs for that one.
+      expect({ firstConnect, queued: await queued, closes }).toEqual({
+        firstConnect: "rejected: ERR_REDIS_CONNECTION_CLOSED",
+        queued: "ERR_REDIS_SERVER_ERROR: ERR DB index is out of range",
+        closes: [{ message: "Connection closed", connected: false, connections: 1, connects: 0 }],
+      });
       expect(await secondConnect).toBe("connected");
+      expect({ connects, sentFromOnconnect: await Promise.all(sentFromOnconnect) }).toEqual({
+        connects: 1,
+        sentFromOnconnect: ["resolved"],
+      });
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
     } finally {
@@ -2141,6 +2164,118 @@ describe("Valkey: Recovering After fail()", () => {
       expect(bytesRead).toBeGreaterThan(drained);
     } finally {
       client.close();
+    }
+  });
+});
+
+// With a database in the URL the handshake is HELLO and then SELECT. The
+// client is connected once both are accepted, not in between.
+describe("Valkey: Handshake SELECT", () => {
+  // Answers HELLO (with a RESP3 map), PING and SET as they arrive, but holds
+  // the reply to SELECT until `answerSelect()` is called. `events` records, in
+  // order, when SELECT was answered and whether a SET got in ahead of that.
+  function selectServer() {
+    const events: string[] = [];
+    const selectArrived = Promise.withResolvers<net.Socket>();
+    let selectAnswered = false;
+    const server = net.createServer(socket => {
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const [name] of readCommands(state)) {
+          switch (name.toUpperCase()) {
+            case "HELLO":
+              socket.write("%2\r\n+server\r\n+redis\r\n+proto\r\n:3\r\n");
+              break;
+            case "SELECT":
+              selectArrived.resolve(socket);
+              break;
+            case "SET":
+              events.push(`SET arrived ${selectAnswered ? "after" : "before"} SELECT was answered`);
+              socket.write("+OK\r\n");
+              break;
+            default:
+              socket.write("+PONG\r\n");
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      server,
+      events,
+      selectArrived: selectArrived.promise,
+      answerSelect: async () => {
+        const socket = await selectArrived.promise;
+        selectAnswered = true;
+        events.push("SELECT answered");
+        socket.write("+OK\r\n");
+      },
+      listen: async () => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return (server.address() as net.AddressInfo).port;
+      },
+    };
+  }
+
+  test("connected, onconnect and connect() wait for the SELECT reply, and so does the first command", async () => {
+    const fake = selectServer();
+    const port = await fake.listen();
+    // No database: this one's handshake is HELLO alone. Its round trips are
+    // what turns the event loop below.
+    const control = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    const client = new RedisClient(`redis://127.0.0.1:${port}/2`, { autoReconnect: false });
+    try {
+      await control.connect();
+      let set: Promise<unknown> | undefined;
+      client.onconnect = () => {
+        fake.events.push("onconnect");
+        set = client.set("key", "value");
+      };
+      const connected = client.connect().then(() => fake.events.push("connect() resolved"));
+      await fake.selectArrived;
+      // The stub answered HELLO when it arrived, ahead of SELECT, and now sits
+      // on SELECT. Each round trip on the control connection takes the event
+      // loop through at least two polls, so after these the client has long
+      // read that HELLO reply and done whatever it does on it.
+      for (let i = 0; i < 5; i++) await control.ping();
+      const connectedBeforeSelect = client.connected;
+      await fake.answerSelect();
+      await connected;
+      await set;
+      expect({ connectedBeforeSelect, events: fake.events }).toEqual({
+        connectedBeforeSelect: false,
+        events: ["SELECT answered", "onconnect", "connect() resolved", "SET arrived after SELECT was answered"],
+      });
+    } finally {
+      client.close();
+      control.close();
+      fake.server.close();
+    }
+  });
+
+  test("a SELECT reply that never comes is bounded by connectionTimeout", async () => {
+    const fake = selectServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}/2`, { autoReconnect: false, connectionTimeout: 200 });
+    try {
+      const queued = client.get("key").then(
+        () => "resolved",
+        (err: Error & { code: string }) => err.code,
+      );
+      const connect = await client.connect().then(
+        () => "resolved",
+        (err: Error & { code: string }) => `rejected: ${err.code}`,
+      );
+      expect({ connect, connected: client.connected }).toEqual({
+        connect: "rejected: ERR_REDIS_CONNECTION_CLOSED",
+        connected: false,
+      });
+      expect(await queued).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
+    } finally {
+      client.close();
+      fake.server.close();
     }
   });
 });

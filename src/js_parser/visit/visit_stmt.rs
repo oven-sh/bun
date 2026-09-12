@@ -1363,8 +1363,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::SExpr,
     ) -> Result<(), Error> {
-        let should_trim_primitive = p.options.features.dead_code_elimination
-            && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
 
         let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
@@ -1423,17 +1421,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if should_trim_primitive && data.value.is_primitive_literal() {
-            restore_stmt_expr!();
-            return Ok(());
+        if p.options.features.minify_syntax {
+            let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
+                restore_stmt_expr!();
+                return Ok(());
+            };
+            data.value = simplified;
         }
-
-        // simplify unused
-        let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
-            restore_stmt_expr!();
-            return Ok(());
-        };
-        data.value = simplified;
 
         if p.should_unwrap_common_js_to_esm() {
             if is_top_level {

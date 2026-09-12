@@ -211,6 +211,16 @@ impl Loader {
         self.get_node_env() == Some(b"test")
     }
 
+    pub fn default_suffix(&self) -> DotEnvFileSuffix {
+        if self.is_test() {
+            DotEnvFileSuffix::Test
+        } else if self.is_production() {
+            DotEnvFileSuffix::Production
+        } else {
+            DotEnvFileSuffix::Development
+        }
+    }
+
     pub fn get_node_path<'b>(
         &mut self,
         fs: &bun_paths::fs::FileSystem,

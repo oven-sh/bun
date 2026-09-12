@@ -566,23 +566,26 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // raw pointers are already nullable, and `Option<*const T>` is a 2-word
             // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
             // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
+            let mut argv: [*const c_char; 5] = if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
                     (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
                     c"-c".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
+                    core::ptr::null(),
                     core::ptr::null(),
                 ]
             } else {
                 [
                     bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
                     c"exec".as_ptr(),
+                    // envp already holds the .env* values bun install loaded.
+                    c"--no-env-file".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
             };
             const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
+                core::mem::size_of::<[*const c_char; 5]>() == 5 * core::mem::size_of::<usize>()
             );
 
             // OWNERSHIP:
@@ -663,7 +666,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
+                // argv is `[*const c_char; 5]` with trailing null — exactly the
                 // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
                 argv.as_mut_ptr().cast(),
                 (*this).envp.as_ptr().cast::<*const c_char>(),

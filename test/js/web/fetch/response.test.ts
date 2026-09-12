@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { isASAN, isDebug, normalizeBunSnapshot } from "harness";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -47,9 +47,13 @@ describe("2-arg form", () => {
 });
 
 test("print size", () => {
-  expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
-    .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+  // this file's own size changes with every edit, so pin only the shape
+  const inspected = normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))).replace(
+    /^Response \(\d+(?:\.\d+)? KB\)/,
+    "Response (<size> KB)",
+  );
+  expect(inspected).toMatchInlineSnapshot(`
+    "Response (<size> KB) {
       ok: true,
       url: "",
       status: 200,
@@ -98,6 +102,89 @@ test("Response.redirect status code validation", () => {
   // Check that the correct status is set
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
+});
+
+test("Response.redirect with a ResponseInit checks status the same way as the number form", () => {
+  // no `status` member: the redirect default, not the ResponseInit default of 200
+  expect(Response.redirect("url", {}).status).toBe(302);
+  expect(Response.redirect("url", { statusText: "Found It" }).status).toBe(302);
+  const withHeaders = Response.redirect("http://x/", { headers: { "X-A": "1" } });
+  expect(withHeaders.status).toBe(302);
+  expect(withHeaders.headers.get("X-A")).toBe("1");
+  expect(withHeaders.headers.get("Location")).toBe("http://x/");
+
+  // a `status` member goes through the same check as `Response.redirect(url, status)`
+  for (const status of [301, 302, 303, 307, 308]) {
+    expect(Response.redirect("url", { status }).status).toBe(status);
+    expect(Response.redirect("url", { status: String(status) }).status).toBe(status);
+  }
+  for (const status of [0, 101, 200, 204, 304, 399, 404, 600, NaN, "200"]) {
+    expect(() => Response.redirect("url", { status })).toThrow(RangeError);
+  }
+  // a Response used as the init lends its status, which goes through the same check
+  expect(() => Response.redirect("url", new Response())).toThrow(RangeError);
+  expect(() => Response.redirect("url", Response.error())).toThrow(RangeError);
+  expect(Response.redirect("url", Response.redirect("other", 307)).status).toBe(307);
+
+  // `status` is read once
+  let reads = 0;
+  const init = {
+    get status() {
+      reads++;
+      return 307;
+    },
+  };
+  expect(Response.redirect("url", init).status).toBe(307);
+  expect(reads).toBe(1);
+});
+
+test("Response.json(data, status) checks status the same way as Response.json(data, { status })", () => {
+  for (const status of [101, 200, 201, 204, 301, 404, 418, 500, 599]) {
+    expect(Response.json({}, status).status).toBe(status);
+    expect(Response.json({}, { status }).status).toBe(status);
+  }
+  expect(Response.json({}, 404.9).status).toBe(404);
+  for (const status of [0, -1, 99, 100, 103, 199, 600, 999, 65536 + 200, NaN, Infinity, -Infinity]) {
+    expect(() => Response.json({}, status)).toThrow(RangeError);
+    expect(() => Response.json({}, { status })).toThrow(RangeError);
+  }
+  // null and undefined still mean "no init"
+  expect(Response.json({}, null).status).toBe(200);
+  expect(Response.json({}, undefined).status).toBe(200);
+
+  // a Response used as the init lends its status, which goes through the same check
+  expect(Response.json({}, new Response(null, { status: 201 })).status).toBe(201);
+  expect(() => Response.json({}, Response.error())).toThrow(RangeError);
+});
+
+test("new Response(body, response) checks the status it copies from the other Response", () => {
+  const copied = new Response("x", new Response(null, { status: 404, statusText: "Nope" }));
+  expect(copied.status).toBe(404);
+  expect(copied.statusText).toBe("Nope");
+  expect(new Response(null, new Response(null, { status: 101 })).status).toBe(101);
+  // Response.error() carries status 0, which a ResponseInit cannot set either
+  expect(() => new Response("x", Response.error())).toThrow(RangeError);
+  expect(() => new Response("x", { status: 0 })).toThrow(RangeError);
+});
+
+test("the ResponseInit status check does not apply to new Request(input, init)", () => {
+  // RequestInit has no `status` or `statusText`: neither is read, so neither can throw
+  expect(new Request("http://x/", { method: "POST", status: 0 }).method).toBe("POST");
+  const init = {
+    method: "PUT",
+    get status() {
+      throw new Error("status was read");
+    },
+    get statusText() {
+      throw new Error("statusText was read");
+    },
+  };
+  expect(new Request("http://x/", init).method).toBe("PUT");
+  // a Response as the init lends its method and headers, whatever its status
+  const fromError = new Request("http://x/", Response.error());
+  expect(fromError.method).toBe("GET");
+  const withHeaders = new Request("http://x/", new Response(null, { status: 599, headers: { "X-A": "1" } }));
+  expect(withHeaders.headers.get("X-A")).toBe("1");
 });
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect
@@ -149,19 +236,24 @@ test("new Response(123, { method: 456 }) does not throw", () => {
   expect(() => new Response("123", { method: 456 })).not.toThrow();
 });
 
-test("handle stack overflow", () => {
-  function f0(a1, a2) {
-    const v4 = new Response();
-    // @ts-ignore
-    const v5 = v4.text(a2, a2, v4, f0, f0);
-    a1(a1); // Recursive call causes stack overflow
-    return v5;
-  }
-  expect(() => {
-    // @ts-ignore
-    f0(f0);
-  }).toThrow("Maximum call stack size exceeded.");
-});
+test(
+  "handle stack overflow",
+  () => {
+    function f0(a1, a2) {
+      const v4 = new Response();
+      // @ts-ignore
+      const v5 = v4.text(a2, a2, v4, f0, f0);
+      a1(a1); // Recursive call causes stack overflow
+      return v5;
+    }
+    expect(() => {
+      // @ts-ignore
+      f0(f0);
+    }).toThrow("Maximum call stack size exceeded.");
+  },
+  // one Response and one pending text() per frame until the stack runs out: seconds under ASAN
+  isDebug || isASAN ? 30_000 : 5000,
+);
 
 describe("clone()", () => {
   test("does not lock original body when body was accessed before clone", async () => {

@@ -44,6 +44,30 @@ describe.concurrent("bun info", () => {
       expect(output).toContain("maintainers:");
     });
 
+    // A runtime flag ahead of the subcommand, typed or spliced into argv by
+    // BUN_OPTIONS, moves "info" out of argv[1]. The package-name scan used to
+    // start at a fixed offset and picked up the shifted "info" keyword as the
+    // package (#20347, #39377).
+    it.each([
+      ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+      ["a flag typed before the subcommand", ["--smol"], {}],
+    ])("should read the package name with %s", async (_, flagsBeforeSubcommand, extraEnv) => {
+      const testDir = await setupTest();
+      await using proc = spawn({
+        cmd: [bunExe(), ...flagsBeforeSubcommand, "info", "is-number"],
+        cwd: testDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: { ...bunEnv, ...extraEnv },
+      });
+      const [output, error, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(error).toBe("");
+      expect(output).toContain("is-number@");
+      expect(code).toBe(0);
+    });
+
     it("should display package info for specific version", async () => {
       const testDir = await setupTest();
       const { output, error, code } = await runCommand([bunExe(), "info", "is-number@7.0.0"], testDir);

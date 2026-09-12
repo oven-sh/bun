@@ -1084,3 +1084,56 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// A runtime flag ahead of the subcommand, typed or spliced into argv by
+// BUN_OPTIONS, moves "pm" out of argv[1]. trust used to take its package names
+// from a fixed argv offset, so the shifted "trust" keyword was itself treated as
+// a package name and `bun pm trust` without packages no longer errored (#20347).
+test.each([
+  ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+  ["a flag typed before the subcommand", ["--smol"], {}],
+])("bun pm trust reads its package names with %s", async (_, flagsBeforeSubcommand, extraEnv) => {
+  using dir = tempDir("pm-trust-shifted-argv", {
+    "package.json": JSON.stringify({
+      name: "trust-shifted-argv",
+      version: "1.0.0",
+      dependencies: { dep: "file:./dep" },
+    }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  const dirStr = String(dir);
+
+  // trust needs a lockfile before it looks at the package names; a file: dependency produces one offline.
+  await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: dirStr, stdout: "pipe", stderr: "pipe", env });
+  const [installErr, installExit] = await Promise.all([install.stderr.text(), install.exited, install.stdout.text()]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
+
+  const spawnEnv = { ...env, ...extraEnv };
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flagsBeforeSubcommand, "pm", "trust"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(stderr).toContain("expected package names(s) or --all");
+    expect(exitCode).toBe(1);
+  }
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flagsBeforeSubcommand, "pm", "trust", "not-a-dependency"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // The "don't exist" listing names exactly the packages given on the command line.
+    expect(stderr).toContain("- not-a-dependency");
+    expect(stderr).not.toContain("- trust");
+    expect(exitCode).toBe(1);
+  }
+});

@@ -22,7 +22,7 @@ async function run(script: string) {
 // A broken Console builtin aborts the whole process the moment `node:console`
 // is loaded, so this has to be a spawned fixture: an in-process test in
 // console.test.ts would take the test runner down with it.
-test("console.Console#table renders Map and Set iterators", async () => {
+test.concurrent("console.Console#table renders Map and Set iterators", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     c.table(new Map([["a", 1], ["b", 2]]).entries());
     c.table(new Set([7, 8]).values());
@@ -46,7 +46,7 @@ test("console.Console#table renders Map and Set iterators", async () => {
 });
 
 // Like Node.js: the rows are what the iterator has left, and the iterator does not move.
-test("console.Console#table shows what a Map or Set iterator has left and does not advance it", async () => {
+test.concurrent("console.Console#table shows what a Map or Set iterator has left and does not advance it", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const entries = new Map([["a", 1], ["b", 2], ["c", 3]]).entries();
     entries.next();
@@ -94,7 +94,7 @@ test("console.Console#table shows what a Map or Set iterator has left and does n
 
 // Every key and value of an iterator is a cell of its own, so an object that is
 // not an array reaches the isBuffer() check of the cell formatter.
-test("console.Console#table formats object keys and values of a Map or Set iterator", async () => {
+test.concurrent("console.Console#table formats object keys and values of a Map or Set iterator", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     c.table(new Map([["a", { x: 1 }], [{ k: 1 }, [1, 2]]]).entries());
     c.table(new Map([["a", { x: 1 }]]).values());
@@ -136,7 +136,7 @@ const guard = /* js */ `
   }
 `;
 
-test("console.Console#table does not run a replaced next() of a Map or Set iterator", async () => {
+test.concurrent("console.Console#table does not run a replaced next() of a Map or Set iterator", async () => {
   const { stdout, exitCode } = await run(
     guard +
       /* js */ `
@@ -171,7 +171,7 @@ test("console.Console#table does not run a replaced next() of a Map or Set itera
 // A Map or a Set itself is read through its own iterator, and every entry the
 // iterator yields is a row, as in Node.js. `size` does not bound it: quick-lru
 // caps `size` at maxSize, and its iterator also yields the older generation.
-test("console.Console#table prints every entry that a Map subclass yields, also past its size", async () => {
+test.concurrent("console.Console#table prints every entry that a Map subclass yields, also past its size", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     class TwoGenerations extends Map {
       #recent = [["d", 4], ["e", 5]];

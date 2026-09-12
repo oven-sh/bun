@@ -549,13 +549,9 @@ impl SlotAndCount {
 pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
     pub(crate) symbols: ManuallyDrop<symbol::Map>,
-    /// By source index, then inner index: a row per file of the chunk, grown
-    /// to the highest index named so far. `None` for every other file.
+    /// By source index, then inner index. `None`: the file is not in this chunk.
     pub(crate) names: Box<[Option<Vec<NameStr>>]>,
-    /// Names of the symbols that files of other chunks declare (cross-chunk
-    /// imports). A row that reaches one costs the importing chunk 12 bytes
-    /// per symbol declared before it, and the parser declares a file's
-    /// wrapper (`require_foo`, `init_foo`) after all its other symbols.
+    /// Names of symbols of `None` files. In a row, each would cost 12 bytes x its inner index.
     names_from_other_chunks: HashMap<Ref, NameStr>,
     /// Backs top-level renamed-name slices in `names` and interned keys.
     pub(crate) arena: Bump,
@@ -810,11 +806,10 @@ impl NameScopes for NumberRenamer {
 }
 
 impl NumberRenamer {
-    /// `files_in_chunk`: source indices of the chunk's files. Only they get a
-    /// row in `names`, and `ids` and `slots` are sized from the symbols they
-    /// declare. `symbols` spans the whole bundle and every chunk's renamer is
-    /// alive at once, so a table sized from it costs each chunk the whole
-    /// bundle. `names` is still one: it has a slot per file of the bundle.
+    /// `files_in_chunk`: the files whose symbols the chunk declares, to size
+    /// the name table. `symbols` spans the whole bundle and every chunk's
+    /// renamer is alive at once, so sizing from it costs a bundle-sized table
+    /// per chunk.
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
@@ -941,9 +936,7 @@ impl NumberRenamer {
 
         let renamed = self.stored_name(resolved);
         if renamed.raw_len() > 0 {
-            // `StoreStr::slice` centralises the deref; allocated from
-            // `self.arena` (or a bundler worker arena) or borrows an AST-arena `original_name`, both
-            // of which outlive `self`.
+            // In `self.arena`, a bundler worker arena or the AST arena: all outlive `self`.
             return renamed.slice();
         }
 

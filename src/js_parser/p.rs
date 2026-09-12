@@ -1187,6 +1187,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// result? The linker binds it only to an export of a bundled ES module.
     /// Otherwise it prints `ns.a`, a property read on an object: a getter can
     /// run, and a call through it passes `ns` as `this`.
+    ///
+    /// Only valid before `to_ast`: `ImportScanner::scan` runs there and sets
+    /// the same bit on the items of `import * as ns`. Every caller runs in the
+    /// visit pass or at the end of `append_part`, both earlier.
     pub(crate) fn is_namespace_local_read(&self, expr: &Expr) -> bool {
         matches!(
             expr.data,

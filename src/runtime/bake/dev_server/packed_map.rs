@@ -12,8 +12,8 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 /// generated_line is recomputed per concatenation).
 #[derive(Copy, Clone, Default)]
 pub struct EndState {
-    pub original_line: i32,
-    pub original_column: i32,
+    pub(crate) original_line: i32,
+    pub(crate) original_column: i32,
 }
 
 /// Packed source mapping data for a single file.
@@ -24,11 +24,14 @@ pub struct PackedMap {
     /// The bundler runs quoting on multiple threads, so it only makes sense
     /// to preserve that effort for concatenation and re-concatenation.
     escaped_source: Box<[u8]>,
-    pub end_state: EndState,
+    pub(crate) end_state: EndState,
 }
 
 impl PackedMap {
-    pub fn new_non_empty(chunk: &mut bun_sourcemap::Chunk, escaped_source: Box<[u8]>) -> Rc<Self> {
+    pub(crate) fn new_non_empty(
+        chunk: &mut bun_sourcemap::Chunk,
+        escaped_source: Box<[u8]>,
+    ) -> Rc<Self> {
         let buffer = &mut chunk.buffer;
         debug_assert!(!buffer.is_empty());
         Rc::new(Self {
@@ -42,18 +45,18 @@ impl PackedMap {
     }
 
     #[inline]
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>()
     }
 
     #[inline]
-    pub fn vlq(&self) -> &[u8] {
+    pub(crate) fn vlq(&self) -> &[u8] {
         &self.vlq_
     }
 
     // TODO: rename to `escaped_source`
     #[inline]
-    pub fn quoted_contents(&self) -> &[u8] {
+    pub(crate) fn quoted_contents(&self) -> &[u8] {
         &self.escaped_source
     }
 }

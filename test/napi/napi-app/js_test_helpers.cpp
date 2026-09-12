@@ -209,6 +209,96 @@ static napi_value perform_get(const Napi::CallbackInfo &info) {
   }
 }
 
+static napi_value define_properties_getter(napi_env env,
+                                           napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, 123, &result);
+  return result;
+}
+
+static napi_value define_properties_setter(napi_env env,
+                                           napi_callback_info info) {
+  return nullptr;
+}
+
+static napi_value define_properties_method(napi_env env,
+                                           napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, 456, &result);
+  return result;
+}
+
+// define_properties(target, kind, name, isClass)
+// kind: "value" | "getter" | "setter" | "accessor" | "method"
+// name: if undefined, utf8name "k" is used; otherwise the napi_value itself is
+//       passed as the descriptor's name (any type).
+// isClass: if true, passes the descriptor to napi_define_class instead of
+//          napi_define_properties (target is ignored).
+// Returns { status, pending } where status is the napi_status returned and
+// pending is whether an exception was left pending.
+static napi_value define_properties(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value target = info[0];
+  std::string kind = info[1].As<Napi::String>().Utf8Value();
+  Napi::Value name_arg = info[2];
+
+  napi_value js_value = nullptr;
+  NODE_API_CALL(env, napi_create_int32(env, 42, &js_value));
+
+  napi_property_descriptor desc = {};
+  desc.attributes = napi_default;
+  if (name_arg.IsUndefined()) {
+    desc.utf8name = "k";
+  } else if (name_arg.IsNull()) {
+    desc.utf8name = "\x80"; // lone continuation byte: invalid UTF-8
+  } else {
+    desc.name = name_arg;
+  }
+  if (kind == "value") {
+    desc.value = js_value;
+  } else if (kind == "getter") {
+    desc.getter = define_properties_getter;
+  } else if (kind == "setter") {
+    desc.setter = define_properties_setter;
+  } else if (kind == "accessor") {
+    desc.getter = define_properties_getter;
+    desc.setter = define_properties_setter;
+  } else if (kind == "method") {
+    desc.method = define_properties_method;
+  } else {
+    napi_throw_error(env, nullptr, "unknown kind");
+    return nullptr;
+  }
+
+  napi_status status;
+  bool is_class = false;
+  napi_get_value_bool(env, info[3], &is_class);
+  if (is_class) {
+    napi_value cls = nullptr;
+    status = napi_define_class(env, "C", NAPI_AUTO_LENGTH,
+                               define_properties_method, nullptr, 1, &desc,
+                               &cls);
+  } else {
+    status = napi_define_properties(env, target, 1, &desc);
+  }
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  if (pending) {
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+  }
+
+  napi_value result, js_status, js_pending;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  NODE_API_CALL(env, napi_create_int32(env, (int32_t)status, &js_status));
+  NODE_API_CALL(env, napi_get_boolean(env, pending, &js_pending));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "status", js_status));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, result, "pending", js_pending));
+  return result;
+}
+
 // perform_set(object, key, value)
 static napi_value perform_set(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -272,6 +362,50 @@ static napi_value perform_instanceof(const Napi::CallbackInfo &info) {
   return out;
 }
 
+// perform_get_prototype(object) -> { status, result, pending, exception }
+//
+// `result` is the string "untouched" if napi_get_prototype did not write to
+// *result, the string "null handle" if it wrote a NULL napi_value, and
+// otherwise the prototype it returned.
+static napi_value perform_get_prototype(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object = info[0];
+
+  napi_value untouched;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "untouched", NAPI_AUTO_LENGTH,
+                                             &untouched));
+  napi_value result = untouched;
+  napi_status status = napi_get_prototype(env, object, &result);
+
+  bool pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+
+  napi_value exception;
+  if (pending) {
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+  } else {
+    NODE_API_CALL(env, napi_get_undefined(env, &exception));
+  }
+
+  if (result == nullptr) {
+    NODE_API_CALL(env, napi_create_string_utf8(env, "null handle",
+                                               NAPI_AUTO_LENGTH, &result));
+  }
+
+  napi_value out;
+  NODE_API_CALL(env, napi_create_object(env, &out));
+
+  napi_value status_val, pending_val;
+  NODE_API_CALL(env, napi_create_uint32(env, status, &status_val));
+  NODE_API_CALL(env, napi_get_boolean(env, pending, &pending_val));
+
+  NODE_API_CALL(env, napi_set_named_property(env, out, "status", status_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "result", result));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "pending", pending_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "exception", exception));
+  return out;
+}
+
 // create_latin1_string(byte_length): returns a JS string created via
 // napi_create_string_latin1. Used by the leak test in napi.test.ts.
 static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
@@ -286,7 +420,8 @@ static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
 }
 
 // get_all_property_names(object, key_mode, key_filter, key_conversion)
-// returns { status, keys }
+// returns { status, keys, exception }; a pending exception is cleared and
+// returned as `exception` so callers can observe `status` alongside it.
 static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value object = info[0];
@@ -301,6 +436,15 @@ static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
       static_cast<napi_key_filter>(key_filter),
       static_cast<napi_key_conversion>(key_conversion), &keys);
 
+  bool is_pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_pending));
+  napi_value exception;
+  if (is_pending) {
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+  } else {
+    NODE_API_CALL(env, napi_get_undefined(env, &exception));
+  }
+
   napi_value result;
   NODE_API_CALL(env, napi_create_object(env, &result));
   napi_value status_val;
@@ -310,6 +454,8 @@ static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
     NODE_API_CALL(env, napi_get_undefined(env, &keys));
   }
   NODE_API_CALL(env, napi_set_named_property(env, result, "keys", keys));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, result, "exception", exception));
   return result;
 }
 
@@ -517,13 +663,27 @@ static napi_value test_reference_unref_underflow(const Napi::CallbackInfo &info)
   return result;
 }
 
+// Returns the this_arg that napi_get_cb_info reports for this call, so JS can
+// check what a callback sees as its receiver for different call shapes.
+static napi_value return_this(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value this_arg;
+  NODE_API_CALL(env,
+                napi_get_cb_info(env, static_cast<napi_callback_info>(info),
+                                 nullptr, nullptr, &this_arg, nullptr));
+  return this_arg;
+}
+
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, return_this);
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
+  REGISTER_FUNCTION(env, exports, define_properties);
   REGISTER_FUNCTION(env, exports, perform_instanceof);
+  REGISTER_FUNCTION(env, exports, perform_get_prototype);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, call_fatal_exception);

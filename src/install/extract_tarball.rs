@@ -4,8 +4,6 @@ use core::fmt;
 use bun_core::fmt::s;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
@@ -23,29 +21,32 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::FdDirExt;
 type Error = crate::Error;
 
-const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
-
 pub struct ExtractTarball {
-    pub name: StringOrTinyString,
-    pub resolution: Resolution,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) resolution: Resolution,
     /// Borrowed view of `PackageManager`'s cache directory fd; the manager
     /// owns and closes it, so this stays a non-owning raw `Fd`.
-    pub cache_dir: Fd,
+    pub(crate) cache_dir: Fd,
     /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
     /// story as `cache_dir`).
-    pub temp_dir: Fd,
-    pub dependency_id: DependencyID,
-    pub skip_verify: bool, // = false
-    pub in_trusted_dependencies: bool,
-    pub integrity: Integrity, // = Integrity::default()
-    pub url: StringOrTinyString,
+    pub(crate) temp_dir: Fd,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) skip_verify: bool, // = false
+    pub(crate) in_trusted_dependencies: bool,
+    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) url: StringOrTinyString,
+    /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
+    /// copied out because extract workers must not read lockfile buffers. When
+    /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
+    /// it); empty on a fresh resolve, which uses the archive's root dir name.
+    pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
     #[inline]
-    pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub(crate) fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
@@ -101,7 +102,7 @@ pub(crate) fn build_url(
 }
 
 /// Generic URL builder; the closure carries its own context.
-pub(crate) fn build_url_with_printer<R, E>(
+pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -188,7 +189,7 @@ impl ExtractTarball {
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
     /// temp-dir and cache-folder names.
-    pub fn name_and_basename(&self) -> (&[u8], &[u8]) {
+    pub(crate) fn name_and_basename(&self) -> (&[u8], &[u8]) {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
@@ -233,7 +234,7 @@ impl ExtractTarball {
         let tmpdir = Dir::borrow(&self.temp_dir);
         // UTF-8 on every platform; the Windows tmpdir path is converted to
         // wide at the `open_dir_at_windows_a` boundary, not here.
-        let mut tmpname_buf = PathBuffer::uninit();
+        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let (name, basename) = self.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
@@ -281,12 +282,9 @@ impl ExtractTarball {
             };
 
             use bun_libarchive::Archiver;
-            use bun_zlib as Zlib;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
-
-            let mut esimated_output_size: usize = 0;
 
             let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
                 bun_core::Timespec::now_allow_mocked_time().ns()
@@ -294,77 +292,53 @@ impl ExtractTarball {
                 0
             };
 
-            {
-                // Last 4 bytes of a gzip-compressed file are the uncompressed size.
-                if tgz_bytes.len() > 16 {
-                    // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
-                    // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
-                    let last_4_bytes: u32 = u32::from_ne_bytes(
-                        tgz_bytes[tgz_bytes.len() - 4..][..4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    );
-                    if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
-                        // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
-                        esimated_output_size = last_4_bytes as usize;
-                        if zlib_pool.list.capacity() == 0 {
-                            let _ = zlib_pool.list.try_reserve_exact(last_4_bytes as usize);
-                        } else {
-                            let _ = zlib_pool.ensure_unused_capacity(last_4_bytes as usize);
+            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // so hand it the compressed bytes and never buffer the full tar.
+            // Small tarballs still try libdeflate first for speed; the gzip
+            // ISIZE trailer (size mod 2^32) is only trusted when small.
+            let mut decompressed_in_memory = false;
+            if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
+                let isize: u32 = u32::from_le_bytes(
+                    tgz_bytes[tgz_bytes.len() - 4..][..4]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
+                if isize > 16 && isize < 64 * 1024 * 1024 {
+                    if zlib_pool.list.capacity() == 0 {
+                        let _ = zlib_pool.list.try_reserve_exact(isize as usize);
+                    } else {
+                        let _ = zlib_pool.ensure_unused_capacity(isize as usize);
+                    }
+                    if zlib_pool.list.capacity() > 16 {
+                        use bun_libdeflate_sys::libdeflate;
+                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                            zlib_pool.list.clear();
+                            let result = decompressor.decompress_to_vec(
+                                tgz_bytes,
+                                &mut zlib_pool.list,
+                                libdeflate::Encoding::Gzip,
+                            );
+                            if result.status == libdeflate::Status::Success {
+                                decompressed_in_memory = true;
+                            }
                         }
                     }
                 }
             }
 
-            let mut needs_to_decompress = true;
-            if bun_core::FeatureFlags::is_libdeflate_enabled()
-                && zlib_pool.list.capacity() > 16
-                && esimated_output_size > 0
-            {
-                use bun_libdeflate_sys::libdeflate;
-                if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
-                    zlib_pool.list.clear();
-                    let result = decompressor.decompress_to_vec(
-                        tgz_bytes,
-                        &mut zlib_pool.list,
-                        libdeflate::Encoding::Gzip,
-                    );
-                    if result.status == libdeflate::Status::Success {
-                        needs_to_decompress = false;
-                    }
-                    // If libdeflate fails for any reason, fallback to zlib.
-                }
-            }
-
-            if needs_to_decompress {
+            let tar_input: &[u8] = if decompressed_in_memory {
+                &zlib_pool.list
+            } else {
                 zlib_pool.list.clear();
-                let mut zlib_entry =
-                    Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
-                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
-                if let Err(err) = zlib_entry.read_all(true) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} decompressing \"{}\" to \"{}\"",
-                            err,
-                            bun_fmt::s(name),
-                            bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            }
+                tgz_bytes
+            };
 
             if PackageManager::verbose_install() {
-                let decompressing_ended_at: u64 = bun_core::Timespec::now_allow_mocked_time().ns();
-                let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
                 bun_core::pretty_errorln!(
-                    "[{}] Extract {}<r> (decompressed {} tgz file in {})",
+                    "[{}] Extract {}<r> ({} tgz file)",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
-                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 );
             }
 
@@ -395,7 +369,7 @@ impl ExtractTarball {
                     };
 
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut dirname_reader,
@@ -406,6 +380,14 @@ impl ExtractTarball {
                             ..Default::default()
                         },
                     )?;
+
+                    let lockfile_tag = self.github_resolved.slice();
+                    if !lockfile_tag.is_empty() {
+                        resolved = FileSystem::instance()
+                            .dirname_store()
+                            .append(lockfile_tag)
+                            .expect("unreachable");
+                    }
 
                     // This tag is used to know which version of the package was
                     // installed from GitHub. package.json version becomes sort of
@@ -433,7 +415,7 @@ impl ExtractTarball {
                 }
                 _ => {
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut (),
@@ -474,7 +456,7 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
-    pub fn move_to_cache_directory(
+    pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
         tmpname: &ZStr,
@@ -557,7 +539,7 @@ impl ExtractTarball {
                 // handle to the destination. Back off briefly between retries.
                 const MAX_RETRIES: u32 = 4;
                 let mut retries: u32 = 0;
-                let mut path2_buf = WPathBuffer::uninit();
+                let mut path2_buf = bun_paths::w_path_buffer_pool::get();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname_u16(path2) {
@@ -574,7 +556,6 @@ impl ExtractTarball {
                         sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
                             iterable: false,
-                            read_only: true,
                             ..Default::default()
                         },
                     ) {
@@ -618,14 +599,14 @@ impl ExtractTarball {
                                         // we rename it back into the temp dir
                                         // and then delete that temp dir
                                         // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
+                                        let mut tempdest_buf = bun_paths::path_buffer_pool::get();
                                         tempdest_buf[0..tmpname.len()]
                                             .copy_from_slice(tmpname.as_bytes());
                                         tempdest_buf[tmpname.len()..][0..4]
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
                                         let tempdest =
                                             ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
+                                        let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
                                         folder_name_z_buf[0..folder_name.len()]
                                             .copy_from_slice(folder_name);
                                         folder_name_z_buf[folder_name.len()] = 0;
@@ -845,7 +826,7 @@ impl ExtractTarball {
                                 break 'create_index;
                             }
 
-                            let mut dest_buf = PathBuffer::uninit();
+                            let mut dest_buf = bun_paths::path_buffer_pool::get();
                             let dest_path = path::resolve_path::join_abs_string_buf_z::<
                                 path::platform::Windows,
                             >(
@@ -875,7 +856,7 @@ impl ExtractTarball {
                                 break 'create_index;
                             };
 
-                            let mut dest_buf = PathBuffer::uninit();
+                            let mut dest_buf = bun_paths::path_buffer_pool::get();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);
                             dest_buf[dest_name.len()] = 0;
                             let dest_z = ZStr::from_buf(&dest_buf, dest_name.len());

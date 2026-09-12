@@ -2,6 +2,9 @@
 
 #include "ErrorCode.h"
 #include "headers.h"
+#include "ZigGlobalObject.h"
+#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/CustomGetterSetter.h>
 
 namespace Bun {
 
@@ -60,7 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -117,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 #endif
 
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -163,7 +166,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     }
 
-    return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
+    RELEASE_AND_RETURN(scope, Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
@@ -230,6 +233,57 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 #endif
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
+}
+
+static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+{
+    return timersPromisesExport(globalObject, "setTimeout"_s);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+{
+    return timersPromisesExport(globalObject, "setInterval"_s);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+{
+    return timersPromisesExport(globalObject, "setImmediate"_s);
+}
+
+static JSValue createTimerFunction(VM& vm, JSObject* globalObject, ASCIILiteral name, NativeFunction function, JSC::CustomGetterSetter::CustomGetter promisifyCustomGetter)
+{
+    auto* timerFunction = JSFunction::create(vm, globalObject->globalObject(), 1, name, function, ImplementationVisibility::Public);
+    // Same shape as Node's lib/timers.js: an enumerable, non-configurable accessor.
+    timerFunction->putDirectCustomAccessor(vm,
+        Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),
+        CustomGetterSetter::create(vm, promisifyCustomGetter, nullptr),
+        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete | 0);
+    return timerFunction;
+}
+
+JSValue createSetTimeoutFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setTimeout"_s, functionSetTimeout, setTimeoutPromisifyCustomGetter);
+}
+
+JSValue createSetIntervalFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setInterval"_s, functionSetInterval, setIntervalPromisifyCustomGetter);
+}
+
+JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setImmediate"_s, functionSetImmediate, setImmediatePromisifyCustomGetter);
 }
 
 } // namespace Bun

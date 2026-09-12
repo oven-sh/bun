@@ -7,13 +7,6 @@ pub mod api {
     pub use bun_http_types::ETag::StringPointer;
 }
 
-// TYPE_ONLY moved-in: `bun_http_types::Method::HeaderName` is the `#[repr(u8)]`
-// enum mirroring WebCore's `HTTPHeaderNames.in` (same discriminants as
-// `bun_jsc::HTTPHeaderName`). Re-export for the `FetchHeadersRef::fast_has`
-// signature so impls can forward the discriminant straight to
-// `WebCore__FetchHeaders__fastHas_`.
-pub use bun_http_types::Method::HeaderName;
-
 // LAYERING: `Headers` (and its tier-safe inherent methods: `memory_cost`,
 // `get`, `append`, `get_content_*`, `as_str`, `Clone`) is owned by
 // `bun_http_types` (T3) so the ETag matcher and bake DevServer can name the

@@ -26,8 +26,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::us_socket_t;
-
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
 /// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
 ///
@@ -151,14 +149,6 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
     ext.map(|mut p| unsafe { p.as_mut() })
 }
 
-/// `Option<NonNull<T>>` at context creation; pointee (if any) is live and
-/// uniquely accessed.
-#[inline(always)]
-pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
-}
-
 // ───────────────────────── safe-surface trampoline ──────────────────────────
 //
 // S005: the primitives above are `unsafe fn` because each call site must
@@ -203,6 +193,16 @@ impl<T> ExtSlot<T> {
             // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
             // user-data, so no aliasing `&mut T` exists for `'_`.
             Some(mut p) => Some(unsafe { p.as_mut() }),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn owner_ref(&self) -> Option<&T> {
+        match self.0 {
+            // SAFETY: same liveness invariant as `owner_mut`; only `&T` is
+            // formed, so re-entrant dispatch cannot alias an exclusive borrow.
+            Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
     }

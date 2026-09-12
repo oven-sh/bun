@@ -1,7 +1,8 @@
 use core::fmt;
+use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -14,90 +15,82 @@ const MAX_PRETTY_PRINT_BYTES: usize = 1024 * 1024;
 
 const TRUNCATION_NOTICE: &[u8] = b"\n... [value too large, output truncated]";
 
-#[derive(Default)]
+/// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
+/// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
+/// inside `Display::fmt`.
 pub struct DiffFormatter<'a> {
-    pub received_string: Option<&'a [u8]>,
-    pub expected_string: Option<&'a [u8]>,
-    pub received: Option<JSValue>,
-    pub expected: Option<JSValue>,
-    pub global_this: Option<&'a JSGlobalObject>,
-    pub not: bool,
+    pub(crate) received_string: Cow<'a, [u8]>,
+    pub(crate) expected_string: Cow<'a, [u8]>,
+    pub(crate) not: bool,
+}
+
+impl<'a> DiffFormatter<'a> {
+    pub fn new(
+        global_this: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        not: bool,
+    ) -> JsResult<DiffFormatter<'static>> {
+        Ok(DiffFormatter {
+            received_string: Cow::Owned(format_capped(global_this, received)?),
+            expected_string: Cow::Owned(format_capped(global_this, expected)?),
+            not,
+        })
+    }
+
+    pub fn from_strings(received: &'a [u8], expected: &'a [u8], not: bool) -> Self {
+        DiffFormatter {
+            received_string: Cow::Borrowed(received),
+            expected_string: Cow::Borrowed(expected),
+            not,
+        }
+    }
+}
+
+/// Pretty-prints one side of the diff, keeping at most [`MAX_PRETTY_PRINT_BYTES`] of it.
+fn format_capped(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut writer = bun_io::LimitedWriter::new(&mut buf, MAX_PRETTY_PRINT_BYTES);
+    JestPrettyFormat::format(
+        MessageLevel::Debug,
+        global_this,
+        core::slice::from_ref(&value),
+        1,
+        &mut writer,
+        FormatOptions {
+            enable_colors: false,
+            add_newline: false,
+            flush: false,
+            quote_strings: true,
+        },
+    )?;
+    if writer.truncated {
+        buf.extend_from_slice(TRUNCATION_NOTICE);
+    }
+    Ok(trim_one_newline(buf))
+}
+
+fn trim_one_newline(mut buf: Vec<u8>) -> Vec<u8> {
+    if buf.ends_with(b"\n") {
+        buf.pop();
+    }
+    if buf.starts_with(b"\n") {
+        buf.remove(0);
+    }
+    buf
 }
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
-
-        if let (Some(expected), Some(received)) = (self.expected_string, self.received_string) {
-            print_diff_main(self.not, received, expected, f, &diff_config)?;
-            return Ok(());
-        }
-
-        if self.received.is_none() || self.expected.is_none() {
-            return Ok(());
-        }
-
-        let global_this = self.global_this.expect("DiffFormatter.global_this not set");
-
-        let received = self.received.unwrap();
-        let expected = self.expected.unwrap();
-        let mut received_buf: Vec<u8> = Vec::new();
-        let mut expected_buf: Vec<u8> = Vec::new();
-
-        {
-            let fmt_options = FormatOptions {
-                enable_colors: false,
-                add_newline: false,
-                flush: false,
-                quote_strings: true,
-            };
-            let mut received_writer =
-                bun_io::LimitedWriter::new(&mut received_buf, MAX_PRETTY_PRINT_BYTES);
-            let _ = JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global_this,
-                core::slice::from_ref(&received),
-                1,
-                &mut received_writer,
-                fmt_options,
-            ); // TODO:
-            if received_writer.truncated {
-                received_buf.extend_from_slice(TRUNCATION_NOTICE);
-            }
-
-            let mut expected_writer =
-                bun_io::LimitedWriter::new(&mut expected_buf, MAX_PRETTY_PRINT_BYTES);
-            let _ = JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global_this,
-                core::slice::from_ref(&expected),
-                1,
-                &mut expected_writer,
-                fmt_options,
-            ); // TODO:
-            if expected_writer.truncated {
-                expected_buf.extend_from_slice(TRUNCATION_NOTICE);
-            }
-        }
-
-        let mut received_slice: &[u8] = received_buf.as_slice();
-        let mut expected_slice: &[u8] = expected_buf.as_slice();
-        if received_slice.starts_with(b"\n") {
-            received_slice = &received_slice[1..];
-        }
-        if expected_slice.starts_with(b"\n") {
-            expected_slice = &expected_slice[1..];
-        }
-        if received_slice.ends_with(b"\n") {
-            received_slice = &received_slice[..received_slice.len() - 1];
-        }
-        if expected_slice.ends_with(b"\n") {
-            expected_slice = &expected_slice[..expected_slice.len() - 1];
-        }
-
-        print_diff_main(self.not, received_slice, expected_slice, f, &diff_config)?;
-        Ok(())
+        print_diff_main(
+            self.not,
+            &self.received_string,
+            &self.expected_string,
+            f,
+            &diff_config,
+        )
     }
 }
 
@@ -110,12 +103,11 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// the `extern "C"` symbol resolves the same at link time regardless of which
 /// crate defines it.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__renderDiff(
+extern "C" fn zig__renderDiff(
     expected_ptr: *const core::ffi::c_char,
     expected_len: usize,
     received_ptr: *const core::ffi::c_char,
     received_len: usize,
-    global_this: &JSGlobalObject,
 ) {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `expected_len` that outlives this call.
@@ -123,11 +115,6 @@ pub(crate) extern "C" fn zig__renderDiff(
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `received_len` that outlives this call.
     let received = unsafe { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
-    let formatter = DiffFormatter {
-        received_string: Some(received),
-        expected_string: Some(expected),
-        global_this: Some(global_this),
-        ..Default::default()
-    };
+    let formatter = DiffFormatter::from_strings(received, expected, false);
     let _ = bun_core::output::error_writer().print(format_args!("DIFF:\n{}\n", formatter));
 }

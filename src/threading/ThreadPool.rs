@@ -28,7 +28,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -180,7 +180,6 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    pub sleep_on_idle_network_thread: bool,
     /// When `true` (default), each worker calls
     /// [`Output::Source::configure_named_thread`] on startup, which initializes
     /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
@@ -192,19 +191,14 @@ pub struct ThreadPool {
     /// Left as a public field (not in [`Config`]) so existing
     /// `Config { max_threads, stack_size }` literals keep compiling; callers
     /// flip it after [`ThreadPool::init`].
-    pub needs_stack_bounds: bool,
-    pub stack_size: u32,
-    pub max_threads: u32,
+    pub(crate) needs_stack_bounds: bool,
+    pub(crate) stack_size: u32,
+    pub(crate) max_threads: u32,
     sync: AtomicSync,
     idle_event: Event,
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    pub name: &'static [u8],
-    pub spawned_thread_count: AtomicU32,
-    wait_group: WaitGroup,
-    /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
-    is_running: AtomicBool,
     stats: PoolStats,
 }
 
@@ -229,7 +223,6 @@ impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
-            sleep_on_idle_network_thread: true,
             needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
@@ -238,10 +231,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            name: b"",
-            spawned_thread_count: AtomicU32::new(0),
-            wait_group: WaitGroup::init(),
-            is_running: AtomicBool::new(false),
             stats: PoolStats {
                 // Seed wall-clock origin so the first `dump_stats` window is
                 // measured from pool creation. Skip the syscall when stats are
@@ -303,14 +292,6 @@ impl ThreadPool {
     }
 }
 
-impl Default for ThreadPool {
-    /// Default-initialised pool with zero `max_threads` (`init()` clamps to
-    /// ≥1 when actually started).
-    fn default() -> Self {
-        Self::init(Config::default())
-    }
-}
-
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
@@ -325,6 +306,54 @@ impl Drop for ThreadPool {
 pub struct Task {
     pub node: Node,
     pub callback: unsafe fn(*mut Task),
+}
+
+/// A [`Task`] that counts itself out of a caller-owned [`WaitGroup`] when it finishes, so a
+/// caller can schedule a batch on a shared pool and wait for *that batch* — not for the pool
+/// to go idle, which on the runtime pool means waiting for every unrelated fs/crypto/etc.
+/// task too (unboundedly, if one of them blocks). Embed this where you would embed `Task`
+/// (it is `repr(C)` with `task` first, so a `*mut Task` handed to `run` is also the
+/// `*mut CountedTask` and container-of over the embedding field still works), schedule
+/// `&raw mut outer.counted.task` — a raw place projection through the *outer* struct, so the
+/// callback's container-of keeps provenance over its sibling fields — then `wait()` on the group.
+#[repr(C)]
+pub struct CountedTask {
+    pub task: Task,
+    run: unsafe fn(*mut Task),
+    group: *const WaitGroup,
+}
+
+// SAFETY: as `Task` (sent to one worker, never shared); `group` is only touched through
+// `WaitGroup::finish_raw`, which any thread may call.
+unsafe impl Send for CountedTask {}
+
+impl CountedTask {
+    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// returning is that completion).
+    pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
+        Self {
+            task: Task {
+                node: Node::default(),
+                callback: Self::run_and_finish,
+            },
+            run,
+            group: core::ptr::from_ref(group),
+        }
+    }
+
+    unsafe fn run_and_finish(task: *mut Task) {
+        // The cast below and every embedder's container-of over its `CountedTask` field rely on it.
+        const _: () = assert!(core::mem::offset_of!(CountedTask, task) == 0);
+        let this = task.cast::<CountedTask>();
+        // SAFETY: `task` is the `task` field (offset 0) of a live `CountedTask`; read both
+        // fields before `run`, after which the embedding struct is the callee's to consume.
+        let (run, group) = unsafe { ((*this).run, (*this).group) };
+        // SAFETY: the embedder's own callback contract.
+        unsafe { run(task) };
+        // SAFETY: `group` counts this task and is live until this lets `wait()` return; last
+        // access (see `WaitGroup::finish_raw`).
+        unsafe { WaitGroup::finish_raw(group) };
+    }
 }
 
 // SAFETY: `Task` is the unit handed across threads by `ThreadPool::schedule`;
@@ -375,8 +404,8 @@ impl Task {
 #[derive(Default, Clone, Copy)]
 pub struct Batch {
     pub len: usize,
-    pub head: Option<NonNull<Task>>,
-    pub tail: Option<NonNull<Task>>,
+    pub(crate) head: Option<NonNull<Task>>,
+    pub(crate) tail: Option<NonNull<Task>>,
 }
 
 impl Batch {
@@ -410,6 +439,11 @@ impl Batch {
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
+        if let Some(task) = task {
+            // A rescheduled task may still carry the link from its last batch.
+            // SAFETY: caller passes a live Task that is not currently queued.
+            unsafe { (*Task::node_of(task).as_ptr()).next = ptr::null_mut() };
+        }
         Batch {
             len: 1,
             head: task,
@@ -516,9 +550,9 @@ impl ThreadPool {
 
         #[repr(C)]
         struct RunnerTask<Ctx, V, F> {
-            task: Task,
+            task: CountedTask,
             // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
+            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
             // tasks finish), so this is the canonical `BackRef` invariant.
             ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
@@ -532,7 +566,7 @@ impl ThreadPool {
                 unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
+            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
             // every task finishes); each task owns a distinct index `i`.
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
@@ -545,6 +579,7 @@ impl ThreadPool {
             run_fn,
         };
 
+        let group = WaitGroup::init_with_count(values.len());
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -553,20 +588,17 @@ impl ThreadPool {
             offset -= 1;
             tasks.push(RunnerTask {
                 i: offset,
-                task: Task {
-                    node: Node::default(),
-                    callback: call::<Ctx, V, F>,
-                },
+                task: CountedTask::new(call::<Ctx, V, F>, &group),
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
         // Push to the Vec first (no realloc: capacity reserved), then take
         // stable addresses.
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
+            batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
-        self.wait_for_all();
+        group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
@@ -584,23 +616,6 @@ impl ThreadPool {
             tail: Task::node_of(tail.unwrap()),
         };
 
-        // .monotonic access is okay because:
-        //
-        // * If the thread pool hasn't started yet, no thread could concurrently set
-        //   `is_running` to true, because thread pool initialization should only
-        //   happen on one thread.
-        //
-        // * If the thread pool is running, the current thread could be one of the threads
-        //   in the thread pool, but `is_running` was necessarily set to true before the
-        //   thread was created.
-        if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(len);
-        } else {
-            // `&self` precludes `&mut WaitGroup` here, so use the relaxed
-            // atomic add even though the pool isn't running yet.
-            self.wait_group.add(len);
-        }
-
         let current: *mut Thread = 'blk: {
             if !try_current {
                 break 'blk ptr::null_mut();
@@ -612,10 +627,7 @@ impl ThreadPool {
             // `current` is the calling worker's own stack-local `Thread` (set in
             // `ThreadRegistration::new`); BackRef invariant — pointee outlives
             // this read — holds for the `thread_pool` field load.
-            if bun_ptr::BackRef::from(current)
-                .thread_pool
-                .as_ptr()
-                .cast_const()
+            if bun_ptr::BackRef::from(current).thread_pool.as_const_ptr()
                 == std::ptr::from_ref::<ThreadPool>(self)
             {
                 current.as_ptr()
@@ -644,11 +656,6 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
-    }
-
-    /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
-    pub fn wait_for_all(&self) {
-        self.wait_group.wait();
     }
 
     fn force_spawn(&self) {
@@ -727,8 +734,7 @@ impl ThreadPool {
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        self.is_running.store(true, Ordering::Relaxed);
-        let target = count.min((self.max_threads & 0x3FFF) as u16);
+        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;
@@ -764,7 +770,6 @@ impl ThreadPool {
 
     #[inline(never)]
     fn notify_slow(&self, is_waking: bool) {
-        self.is_running.store(true, Ordering::Relaxed);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
@@ -822,7 +827,6 @@ impl ThreadPool {
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
-                            // if (self.name.len > 0) thread.setName(self.name) catch {};
                             return;
                         }
 
@@ -910,7 +914,7 @@ impl ThreadPool {
 
     /// Marks the thread pool as shutdown
     #[inline(never)]
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let mut new_sync = sync;
@@ -1085,7 +1089,7 @@ impl Drop for ThreadRegistration {
         // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1246,7 +1250,6 @@ impl Thread {
                         .fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
                     pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                pool.wait_group.finish();
             }
 
             Output::flush();
@@ -1255,7 +1258,7 @@ impl Thread {
         }
     }
 
-    pub fn drain_idle_events(&self) {
+    pub(crate) fn drain_idle_events(&self) {
         let Ok(mut consumer) = self.idle_queue.try_acquire_consumer() else {
             return;
         };
@@ -1275,7 +1278,7 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    pub fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
+    pub(crate) fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1354,7 +1357,7 @@ impl Default for Event {
 impl Event {
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
-    pub(crate) const NOTIFIED: u32 = 2;
+    const NOTIFIED: u32 = 2;
     const SHUTDOWN: u32 = 3;
 
     /// Wait for and consume a notification
@@ -1478,9 +1481,9 @@ pub mod node {
     use super::*;
 
     /// A linked list of Nodes
-    pub struct List {
-        pub head: NonNull<Node>,
-        pub tail: NonNull<Node>,
+    pub(crate) struct List {
+        pub(crate) head: NonNull<Node>,
+        pub(crate) tail: NonNull<Node>,
     }
 
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1675,7 +1678,7 @@ pub mod node {
     }
 
     type Index = u32;
-    pub(crate) const CAPACITY: usize = 256; // Appears to be a pretty good trade-off in space vs contended throughput
+    const CAPACITY: usize = 256; // Appears to be a pretty good trade-off in space vs contended throughput
 
     const _: () = assert!(Index::MAX as usize >= CAPACITY);
     const _: () = assert!(CAPACITY.is_power_of_two());
@@ -1708,9 +1711,9 @@ pub mod node {
         }
     }
 
-    pub struct Stole {
-        pub node: NonNull<Node>,
-        pub pushed: bool,
+    pub(crate) struct Stole {
+        pub(crate) node: NonNull<Node>,
+        pub(crate) pushed: bool,
     }
 
     impl Buffer {

@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
-import "harness";
+import { bunRun } from "harness";
 import * as path from "node:path";
 
-it("works", async () => {
-  expect([path.join(import.meta.dirname, "msw.fixture.ts")]).toRun("2\n");
+it.concurrent("works", async () => {
+  expect(await bunRun(path.join(import.meta.dirname, "msw.fixture.ts"))).toSpawn("2");
 });

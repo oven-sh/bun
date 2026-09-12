@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { exec } from "node:child_process";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -304,6 +305,144 @@ test.concurrent("stdin should not allow process to exit when not paused", async 
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
 
+// unref() drops stdin's hold on the event loop and ref() takes it back: after
+// the pair the child has nothing else pending and must still receive every
+// later byte up to EOF.
+test.concurrent("stdin.ref() after unref() keeps the process alive until EOF", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let total = 0;
+      process.stdin.on("data", chunk => {
+        if (total === 0) {
+          process.stdin.unref();
+          process.stdin.ref();
+          process.stdout.write("ready\\n");
+        }
+        total += chunk.length;
+      });
+      process.stdin.on("end", () => {
+        process.stdout.write("TOTAL " + total + "\\n");
+      });
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  proc.stdin.write("x");
+  while (!stdout.includes("ready\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value);
+  }
+  // The child is idle again with only stdin to wait for; these bytes must still reach it.
+  const rest = Buffer.alloc(64 * 1024, "y");
+  proc.stdin.write(rest);
+  await proc.stdin.end();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value);
+  }
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`ready\nTOTAL ${1 + rest.length}\n`);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a throw from a 'data' listener is an uncaughtException, and stdin keeps reading", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      process.on("uncaughtException", (e, origin) => seen.push("uncaughtException:" + e.message + ":" + origin));
+      process.stdin.on("error", e => seen.push("stream-error:" + e.message));
+      let n = 0;
+      process.stdin.on("data", d => {
+        seen.push("data:" + d.toString());
+        if (++n === 1) { console.log("GOT1"); throw new Error("handler-throw"); }
+      });
+      process.stdin.on("end", () => {
+        console.log(JSON.stringify({ seen, destroyed: process.stdin.destroyed }));
+      });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("one");
+  await proc.stdin.flush();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let r; !(r = await reader.read()).done; ) {
+    stdout += decoder.decode(r.value, { stream: true });
+    if (stdout.includes("GOT1")) break;
+  }
+  proc.stdin.write("two");
+  await proc.stdin.end();
+  for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+    stdout:
+      "GOT1\n" +
+      JSON.stringify({
+        seen: ["data:one", "uncaughtException:handler-throw:uncaughtException", "data:two"],
+        destroyed: false,
+      }) +
+      "\n",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("a throw from a 'readable' listener is an uncaughtException, including the EOF emission", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      process.on("uncaughtException", e => seen.push("uncaughtException:" + e.message));
+      process.stdin.on("error", e => seen.push("stream-error:" + e.message));
+      let n = 0;
+      process.stdin.on("readable", () => {
+        n++;
+        let chunk;
+        while ((chunk = process.stdin.read()) !== null) seen.push("readable:" + chunk.toString());
+        throw new Error("readable-throw-" + n);
+      });
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("hello");
+  await proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout:
+      JSON.stringify([
+        "readable:hello",
+        "uncaughtException:readable-throw-1",
+        "end",
+        "uncaughtException:readable-throw-2",
+      ]) + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("pause() and resume() churn while data is in flight never destroys stdin", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -331,4 +470,198 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
   expect(exitCode).toBe(0);
+});
+
+// The native FileReader source over a pollable pipe used to drain the fd to
+// EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
+// pipe into an internal buffer. The kernel pipe buffer filling up is the
+// backpressure signal; these tests feed far more than that and check the
+// child's resident set does not grow to match.
+describe.skipIf(isWindows)("pipe backpressure", () => {
+  const feedMB = 40;
+  // With no backpressure the child buffers the whole feed (Vec growth roughly
+  // doubles that in RSS). With backpressure only the highwater mark plus the
+  // kernel pipe buffer are resident in the child.
+  const maxDeltaMB = isASAN || isDebug ? 24 : 16;
+
+  async function run(consumer: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", consumer],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    // The child exits under backpressure having accepted only a few KB, so
+    // the queued writes here fail with EPIPE; that is the expected outcome.
+    const chunk = Buffer.alloc(1024 * 1024, 0x78);
+    const ignoreEpipe = (e: any) => {
+      if (e?.code !== "EPIPE") throw e;
+    };
+    for (let i = 0; i < feedMB; i++) {
+      const r = proc.stdin.write(chunk);
+      if (r && typeof (r as any).then === "function") (r as Promise<number>).catch(ignoreEpipe);
+    }
+    Promise.resolve(proc.stdin.flush()).catch(ignoreEpipe);
+    Promise.resolve(proc.stdin.end()).catch(ignoreEpipe);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(exitCode).toBe(0);
+    return result;
+  }
+
+  test.concurrent("Bun.stdin.stream(): a single read does not ingest the whole pipe", async () => {
+    const { first, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rd = Bun.stdin.stream().getReader();
+      const c = await rd.read();
+      const base = rss();
+      // Give the event loop time to (incorrectly) drain the pipe. The loop is
+      // native (no JS on the no-pending path), so debug/ASAN overhead is small.
+      await new Promise(r => setTimeout(r, 1500));
+      const deltaMB = Math.round((rss() - base) / 1048576);
+      process.stdout.write(JSON.stringify({ first: c.value?.length ?? 0, deltaMB }));
+      process.exit(0);
+    `);
+    expect(first).toBeGreaterThan(0);
+    expect(deltaMB).toBeLessThan(maxDeltaMB);
+  });
+
+  test.concurrent("process.stdin.pause() stops the fd from being read", async () => {
+    const { bytesAfter, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      let bytes = 0, pausedAt = 0;
+      process.stdin.on("data", chunk => {
+        bytes += chunk.length;
+        if (!pausedAt && bytes >= 1 << 20) {
+          pausedAt = bytes;
+          process.stdin.pause();
+          const base = rss();
+          setTimeout(() => {
+            const deltaMB = Math.round((rss() - base) / 1048576);
+            process.stdout.write(JSON.stringify({ bytesAtPause: pausedAt, bytesAfter: bytes, deltaMB }));
+            process.exit(0);
+          }, 1500);
+        }
+      });
+    `);
+    expect(bytesAfter).toBeLessThan(feedMB * 1024 * 1024);
+    expect(deltaMB).toBeLessThan(maxDeltaMB);
+  });
+
+  // Stopped at the backstop, the reader's one-shot poll is left unarmed until
+  // the next read, so it can observe nothing (not even the writer going away)
+  // and must not keep the event loop alive on its own. Node behaves the same:
+  // readStop() at the highWaterMark leaves the handle inactive.
+  test.concurrent("a reader stopped at the highwater backstop does not keep the process alive", async () => {
+    const { first } = await run(`
+      const rd = Bun.stdin.stream().getReader();
+      const c = await rd.read();
+      process.stdout.write(JSON.stringify({ first: (c.value?.length ?? 0) > 0 }));
+      // No further read and no exit(): once the backstop engages nothing is pending.
+    `);
+    expect(first).toBe(true);
+  });
+
+  // The same over an anonymous pipe (the blocking-pipe read path; Bun.spawn
+  // stdio above is a socketpair). The writer keeps the pipe full until the
+  // reader is gone, so EOF can never be what lets the reader exit.
+  test.concurrent("over a shell pipe, a reader stopped at the backstop does not keep the process alive", async () => {
+    using dir = tempDir("stdin-backstop-pipe", {
+      "writer.js": `
+        const chunk = Buffer.alloc(65536, 0x78);
+        process.stdout.on("error", () => process.exit(0));
+        (function pump() {
+          while (process.stdout.write(chunk)) {}
+          process.stdout.once("drain", pump);
+        })();
+      `,
+      "reader.js": `
+        const reader = Bun.stdin.stream().getReader();
+        const { value } = await reader.read();
+        process.on("exit", () => console.log("EXIT"));
+        console.log("FIRST " + (value.byteLength > 0));
+      `,
+    });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({ err: null, stdout: "FIRST true\nEXIT\n", stderr: "" });
+  });
+
+  // Stopping unregisters a fired one-shot poll without a syscall, which leaves
+  // its disarmed registration in the kernel. Cancelling the stream must still
+  // take it out: fd 0 stays open, and the next poll on it would hit EEXIST.
+  test.concurrent("a reader cancelled at the highwater backstop frees fd 0 for the next reader", async () => {
+    const { second } = await run(`
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      // Not top-level await: an unsettled entry-module promise would keep the process alive by itself.
+      (async () => {
+        const reader = Bun.stdin.stream().getReader();
+        await reader.read();
+        // The parent keeps the pipe full, so the reader soon stops and lets go of the loop.
+        while (getEventLoopStats().loopActive) await new Promise(resolve => setImmediate(resolve));
+        await reader.cancel();
+        const next = await Bun.file(0).stream().getReader().read();
+        process.stdout.write(JSON.stringify({ second: (next.value?.length ?? 0) > 0 }));
+        process.exit(0);
+      })();
+    `);
+    expect(second).toBe(true);
+  });
+
+  test.concurrent("reading resumes after the highwater backstop", async () => {
+    // Stop reading long enough for the backstop to engage, then drain to EOF
+    // and make sure every byte written by the parent is delivered.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const rd = Bun.stdin.stream().getReader();
+        await rd.read().then(c => { globalThis.total = c.value?.length ?? 0; });
+        await new Promise(r => setTimeout(r, 200));
+        while (true) {
+          const { value, done } = await rd.read();
+          if (value) total += value.length;
+          if (done) break;
+        }
+        process.stdout.write(String(total));
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const chunk = Buffer.alloc(64 * 1024, 0x79);
+    const n = 64;
+    for (let i = 0; i < n; i++) proc.stdin.write(chunk);
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(String(n * chunk.length));
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
+  const total = 10 * 1024 * 1024;
+  using dir = tempDir("stdin-pipe-exactly-once", {
+    "writer.js": `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
+    "reader.js": `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`,
+  });
+  const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+  exec(`"${bunExe()}" writer.js | "${bunExe()}" reader.js`, { cwd: String(dir), env: bunEnv }, (err, stdout, stderr) =>
+    resolve({ err, stdout, stderr }),
+  );
+  const { err, stdout, stderr } = await promise;
+  expect(stderr).toBe("");
+  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
+  expect(stdout).toBe(`${total} ${expected}`);
+  expect(err).toBeNull();
 });

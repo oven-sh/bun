@@ -18,7 +18,6 @@
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_ast::Log;
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
@@ -40,7 +39,7 @@ use bun_core::fmt::parse_hex_to_int;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     // BodyReaderMixin is a generic helper that stores the buffered body and
     // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -79,7 +78,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
+    fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -100,7 +99,7 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub(crate) unsafe fn run_with_body(
+    unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
@@ -131,8 +130,8 @@ impl ErrorReportRequest {
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
-                function_name: BunString::init(function_name),
-                source_url: BunString::init(file_name),
+                function_name: BunString::from_bytes(function_name),
+                source_url: BunString::from_bytes(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -177,8 +176,8 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // Every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])`), so `byte_slice()` is the right view.
+            // Every `source_url` here is `Tag::EncodedSlice` (built via
+            // `String::from_bytes`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
@@ -225,7 +224,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::init(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::static_(RUNTIME_NAME); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -243,7 +242,7 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = BunString::init(abs_path);
+                    frame.source_url = BunString::from_bytes(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
                     if strings::eql(frame.function_name.byte_slice(), rel_path) {
@@ -269,7 +268,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::init(RUNTIME_NAME);
+                    frame.source_url = BunString::static_(RUNTIME_NAME);
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -302,12 +301,12 @@ impl ErrorReportRequest {
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::init(name),
-            message: BunString::init(message),
+            name: BunString::from_bytes(name),
+            message: BunString::from_bytes(message),
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::init(browser_url),
+            browser_url: BunString::from_bytes(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -403,7 +402,7 @@ impl ErrorReportRequest {
     }
 }
 
-pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }
@@ -459,40 +458,6 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 
     let mut rest = &contents[index_of_first_line..];
 
-    // For decoding JSON escapes, the JS Lexer decoding function has
-    // `decodeEscapeSequences`, which only supports decoding to UTF-16.
-    // Alternatively, it appears the TOML lexer has copied this exact
-    // function but for UTF-8. So the decoder can just use that.
-    //
-    // This function expects but does not assume the escape sequences
-    // given are valid, and does not bubble errors up.
-    //
-    // Note: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
-    // both from the caller's arena so their lifetime matches the decoded
-    // `ArenaVec<'a, u8>` slices we hand back in `result`.
-    let log: &'a mut Log = arena.alloc(Log::init());
-    let source: &'a bun_ast::Source = arena.alloc(bun_ast::Source::init_empty_file(b""));
-    let mut l = bun_parsers::toml::Lexer {
-        log,
-        source,
-        start: 0,
-        end: 0,
-        current: 0,
-        bump: arena,
-        code_point: -1,
-        identifier: b"",
-        number: 0.0,
-        prev_error_loc: bun_ast::Loc::EMPTY,
-        string_literal_slice: b"",
-        string_literal_is_ascii: true,
-        line_number: 0,
-        token: bun_parsers::toml::lexer::T::t_end_of_file,
-        allow_double_bracket: true,
-        has_newline_before: false,
-        should_redact_logs: false,
-    };
-    // log dropped at scope exit
-
     let mut result: [&'a [u8]; N] = [b""; N];
     for decoded_line in result.iter_mut() {
         let mut has_extra_escapes = false;
@@ -515,11 +480,11 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
         };
         let encoded_line = &rest[..end_of_line];
 
-        // Decode it
+        // Decode JSON escapes straight to UTF-8.
         if has_extra_escapes {
             let mut bytes: bun_alloc::ArenaVec<'a, u8> =
                 bun_alloc::ArenaVec::with_capacity_in(encoded_line.len(), arena);
-            l.decode_escape_sequences::<false>(0, encoded_line, &mut bytes)?;
+            super::js_escape::decode_js_escape_sequences(encoded_line, &mut bytes)?;
             *decoded_line = bytes.into_bump_slice();
         } else {
             *decoded_line = encoded_line;
@@ -545,7 +510,7 @@ fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Resu
         .pos
         .checked_add(len)
         .filter(|&e| e <= buf.len())
-        .ok_or(crate::Error::EndOfStream)?;
+        .ok_or(bun_core::Error::EndOfStream)?;
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)

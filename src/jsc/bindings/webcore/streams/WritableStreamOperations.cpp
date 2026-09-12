@@ -2,10 +2,12 @@
 #include "WebStreamsInternals.h"
 
 #include "AbortController.h"
+#include "ErrorCode.h"
 #include "JSAbortController.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSStreamsRuntime.h"
+#include "JSTransformStream.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
@@ -231,7 +233,7 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
 
     WritableStreamState state = stream->m_state;
     if (state == WritableStreamState::Closed || state == WritableStreamState::Errored)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createTypeError(globalObject, "Cannot close a WritableStream that is closed or errored"_s)));
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is closed or errored"_s)));
     ASSERT(state == WritableStreamState::Writable || state == WritableStreamState::Erroring);
     ASSERT(!writableStreamCloseQueuedOrInFlight(stream));
 
@@ -283,6 +285,16 @@ void writableStreamDealWithRejection(JSGlobalObject* globalObject, JSWritableStr
     RELEASE_AND_RETURN(scope, writableStreamFinishErroring(globalObject, stream));
 }
 
+// `$webStreamControllerError` — see the ReadableStream overload in ReadableStreamOperations.cpp.
+// Mirrors WritableStreamDefaultController.prototype.error, which is what Node's
+// addAbortSignal() holds a bound reference to.
+void webStreamControllerError(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue error)
+{
+    if (stream->m_state != WritableStreamState::Writable)
+        return;
+    writableStreamDefaultControllerError(globalObject, stream->m_controller.get(), error);
+}
+
 void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue reason)
 {
     auto& vm = getVM(globalObject);
@@ -297,6 +309,13 @@ void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream*
     stream->m_storedError.set(vm, stream, reason);
     if (auto* writer = stream->m_writer.get()) {
         writableStreamDefaultWriterEnsureReadyPromiseRejected(globalObject, writer, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    // The in-flight write may be a native codec chunk still being drained into the readable,
+    // which nothing on this side would ever finish; give it up so the erroring can complete.
+    // An in-flight close (a flush) is left to finish: a close in progress wins over the abort.
+    if (controller->m_algorithms.kind == SinkKind::Transform && stream->m_inFlightWriteRequest) {
+        nativeCodecAbandon(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()));
         RETURN_IF_EXCEPTION(scope, );
     }
     if (!writableStreamHasOperationMarkedInFlight(stream) && controller->m_started)

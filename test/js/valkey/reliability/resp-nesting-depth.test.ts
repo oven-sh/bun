@@ -239,6 +239,76 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
   });
 });
 
+describe("Valkey: RESP line-terminated replies (>512KB)", () => {
+  // The Zig parser scanned for CRLF over the whole buffer. A later hardening
+  // pass capped the scan window at 512KB, which rejects valid RESP simple
+  // strings and error replies that a real server emits (Lua
+  // redis.status_reply(...) / redis.error_reply(...) with a long payload).
+  // https://redis.io/docs/latest/develop/reference/protocol-spec/ places no
+  // length limit on `+` / `-` lines.
+
+  async function roundtrip(payload: Buffer): Promise<any> {
+    const { server, port } = await createMockRedisServer([payload, Buffer.from("+PONG\r\n")]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        const reply = await client.send("PING", []);
+        // The client must still be usable for the next command: a parse
+        // failure here used to latch `failed` and reject forever.
+        const pong = await client.send("PING", []);
+        return { reply, pong };
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  test("accepts a simple string (`+`) reply longer than 512KB", async () => {
+    const body = Buffer.alloc(600_000, "x").toString();
+    const { reply, pong } = await roundtrip(Buffer.from(`+${body}\r\n`));
+    expect(typeof reply).toBe("string");
+    expect(reply.length).toBe(600_000);
+    expect(pong).toBe("PONG");
+  });
+
+  test("accepts a simple string at exactly 512KB + 1 bytes", async () => {
+    // 524288 worked, 524289 was rejected by an off-by-one in the scan window.
+    const body = Buffer.alloc(512 * 1024 + 1, "y").toString();
+    const { reply, pong } = await roundtrip(Buffer.from(`+${body}\r\n`));
+    expect(reply.length).toBe(512 * 1024 + 1);
+    expect(pong).toBe("PONG");
+  });
+
+  test("surfaces an error (`-`) reply longer than 512KB with its original text", async () => {
+    const body = "ERR user_script:1: " + Buffer.alloc(600_000, "e").toString();
+    const { server, port } = await createMockRedisServer([Buffer.from(`-${body}\r\n`), Buffer.from("+PONG\r\n")]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        const rejection = await client.send("EVAL", ["script", "0"]).then(
+          () => null,
+          (e: any) => e,
+        );
+        expect(rejection?.message).toBe(body);
+        // Client must survive and serve the next command.
+        expect(await client.send("PING", [])).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("Valkey: RESP push frame routing", () => {
   test("resolves a pending command with its own reply when an out-of-band push frame precedes it", async () => {
     const payload = Buffer.from(

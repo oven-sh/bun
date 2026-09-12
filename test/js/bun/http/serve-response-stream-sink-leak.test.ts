@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
 
 // Regression: doRenderStream allocates a ResponseStream.JSSink on the heap
@@ -31,5 +31,5 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   // `delta` is the median RSS growth per 10k requests (settledRss in the fixture
   // explains RSS over currentCommit). macOS debug: 1.0 MB fixed vs 3.5 MB leaking
   // (~350 B/req); Linux release: flat fixed vs +4.1 MB on the original #29877 leak.
-  expect(delta).toBeLessThan(2 * 1024 * 1024);
+  expect(delta).toBeLessThan(2 * 1024 * 1024 * (isASAN ? 2 : 1));
 }, 300_000);

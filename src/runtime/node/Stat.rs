@@ -8,15 +8,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 // libc-stat → uv_stat_t field copy on both POSIX and Windows there.
 pub use bun_sys::PosixStat;
 
-const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
-const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
-
-/// Stats and BigIntStats classes from node:fs
-// `BIG` selects the BigIntStats (i64) vs Stats (f64) flavour. A
-// const-generic-dependent type alias (`if BIG { i64 } else { f64 }`) is not
-// expressible in stable Rust, so `to_time_ms` is split into
-// `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
-// branch in `stat_to_js`.
+/// Stats and BigIntStats classes from node:fs. `BIG` selects BigIntStats vs Stats.
 pub struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
@@ -32,54 +24,22 @@ impl<const BIG: bool> StatType<BIG> {
         Self { value: *stat_ }
     }
 
+    /// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
     #[inline]
-    fn to_nanoseconds(ts: StatTimespec) -> u64 {
-        if ts.sec < 0 {
-            return ts.ns_signed().max(0) as u64;
-        }
-        ts.ns()
-    }
-
-    // Split into i64/f64 variants for const-generic type selection — see the
-    // struct-level note.
-    fn to_time_ms_i64(ts: StatTimespec) -> i64 {
-        // On windows, Node.js purposefully misinterprets time values
-        // > On win32, time is stored in uint64_t and starts from 1601-01-01.
-        // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
-        // > which causes Y2038 overflow. On the other platforms it is safe to treat
-        // > negative values as pre-epoch time.
+    fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
         #[cfg(windows)]
-        let (tv_sec, tv_nsec): (i64, i64) = (
+        return (
             ((ts.sec as i32) as u32) as i64,
             ((ts.nsec as i32) as u32) as i64,
         );
         #[cfg(not(windows))]
-        let (tv_sec, tv_nsec): (i64, i64) = (ts.sec as i64, ts.nsec as i64);
-
-        let sec: i64 = tv_sec;
-        let nsec: i64 = tv_nsec;
-        (sec * MS_PER_S).saturating_add(nsec / NS_PER_MS)
+        (ts.sec, ts.nsec)
     }
 
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {
-        // On windows, Node.js purposefully misinterprets time values
-        // > On win32, time is stored in uint64_t and starts from 1601-01-01.
-        // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
-        // > which causes Y2038 overflow. On the other platforms it is safe to treat
-        // > negative values as pre-epoch time.
-        #[cfg(windows)]
-        let (tv_sec, tv_nsec): (f64, f64) = (
-            ((ts.sec as i32) as u32) as f64,
-            ((ts.nsec as i32) as u32) as f64,
-        );
-        #[cfg(not(windows))]
-        let (tv_sec, tv_nsec): (f64, f64) = (ts.sec as f64, ts.nsec as f64);
-
-        // Use floating-point arithmetic to preserve sub-millisecond precision.
-        // Node.js returns fractional milliseconds (e.g. 1773248895434.0544).
-        let sec_ms: f64 = tv_sec * 1000.0;
-        let nsec_ms: f64 = tv_nsec / 1_000_000.0;
-        sec_ms + nsec_ms
+        let (sec, nsec) = Self::timespec_parts(ts);
+        // Floating-point to preserve sub-millisecond precision (e.g. 1773248895434.0544).
+        (sec as f64) * 1000.0 + (nsec as f64) / 1_000_000.0
     }
 
     fn get_birthtime(stat_: &PosixStat) -> StatTimespec {
@@ -105,10 +65,10 @@ impl<const BIG: bool> StatType<BIG> {
         let b_time = Self::get_birthtime(stat_);
 
         if BIG {
-            let atime_ms: i64 = Self::to_time_ms_i64(a_time);
-            let mtime_ms: i64 = Self::to_time_ms_i64(m_time);
-            let ctime_ms: i64 = Self::to_time_ms_i64(c_time);
-            let birthtime_ms: i64 = Self::to_time_ms_i64(b_time);
+            let (a_sec, a_nsec) = Self::timespec_parts(a_time);
+            let (m_sec, m_nsec) = Self::timespec_parts(m_time);
+            let (c_sec, c_nsec) = Self::timespec_parts(c_time);
+            let (b_sec, b_nsec) = Self::timespec_parts(b_time);
 
             return bun_jsc::from_js_host_call(global, || {
                 Bun__createJSBigIntStatsObject(
@@ -123,14 +83,14 @@ impl<const BIG: bool> StatType<BIG> {
                     stat_.size,
                     stat_.blksize,
                     stat_.blocks,
-                    atime_ms,
-                    mtime_ms,
-                    ctime_ms,
-                    birthtime_ms,
-                    Self::to_nanoseconds(a_time),
-                    Self::to_nanoseconds(m_time),
-                    Self::to_nanoseconds(c_time),
-                    Self::to_nanoseconds(b_time),
+                    a_sec,
+                    a_nsec,
+                    m_sec,
+                    m_nsec,
+                    c_sec,
+                    c_nsec,
+                    b_sec,
+                    b_nsec,
                 )
             });
         }
@@ -194,14 +154,14 @@ unsafe extern "C" {
         size: u64,
         blksize: u64,
         blocks: u64,
-        atime_ms: i64,
-        mtime_ms: i64,
-        ctime_ms: i64,
-        birthtime_ms: i64,
-        atime_ns: u64,
-        mtime_ns: u64,
-        ctime_ns: u64,
-        birthtime_ns: u64,
+        atime_sec: i64,
+        atime_nsec: i64,
+        mtime_sec: i64,
+        mtime_nsec: i64,
+        ctime_sec: i64,
+        ctime_nsec: i64,
+        birthtime_sec: i64,
+        birthtime_nsec: i64,
     ) -> JSValue;
 }
 
@@ -231,7 +191,7 @@ pub enum Stats {
 
 impl Stats {
     #[inline]
-    pub fn init(stat_: &PosixStat, big: bool) -> Stats {
+    pub(crate) fn init(stat_: &PosixStat, big: bool) -> Stats {
         if big {
             Stats::Big(StatsBig::init(stat_))
         } else {
@@ -239,7 +199,7 @@ impl Stats {
         }
     }
 
-    pub fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Stats::Big(v) => v.to_js(global),
             Stats::Small(v) => v.to_js(global),

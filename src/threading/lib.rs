@@ -1,8 +1,5 @@
 //! bun_threading crate root — thin re-exports.
 
-pub mod error;
-pub use error::{Error, Result};
-
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;
@@ -21,6 +18,7 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
+pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;
@@ -32,17 +30,12 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::Debug as DebugGuarded;
-pub use guarded::RawMutex;
-pub use guarded::{Guarded, GuardedBy, GuardedLock};
+pub use guarded::{Guarded, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
-pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
-/// `parking_lot::Once` parity. Bun has no custom `Once`,
-/// and `std::sync::Once` has no poisoning concern, so
-/// just re-export it for callers migrating off `parking_lot::Once`.
-pub use std::sync::Once;
+pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;

@@ -8,6 +8,11 @@ pub enum Error {
     ParserError,
     #[error("UTF8Fail")]
     UTF8Fail,
+    /// The input's narrow encoding cannot hold the result (a Latin-1 XML
+    /// document with a character reference above U+00FF); parse it again
+    /// as UTF-8.
+    #[error("NeedsWiderEncoding")]
+    NeedsWiderEncoding,
     #[error("UnexpectedSyntax")]
     UnexpectedSyntax,
     #[error("JSONStringsMustUseDoubleQuotes")]
@@ -24,6 +29,7 @@ impl Error {
             Self::SyntaxError => "SyntaxError",
             Self::ParserError => "ParserError",
             Self::UTF8Fail => "UTF8Fail",
+            Self::NeedsWiderEncoding => "NeedsWiderEncoding",
             Self::UnexpectedSyntax => "UnexpectedSyntax",
             Self::JSONStringsMustUseDoubleQuotes => "JSONStringsMustUseDoubleQuotes",
             Self::Alloc(_) => "OutOfMemory",
@@ -31,23 +37,16 @@ impl Error {
     }
 }
 
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
+/// Already logged, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for Error {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        Error::SyntaxError
     }
 }
 
-impl From<crate::toml::lexer::Error> for Error {
-    fn from(e: crate::toml::lexer::Error) -> Self {
-        use crate::toml::lexer::Error as LexErr;
-        match e {
-            LexErr::UTF8Fail => Error::UTF8Fail,
-            LexErr::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-            LexErr::SyntaxError => Error::SyntaxError,
-            LexErr::UnexpectedSyntax => Error::UnexpectedSyntax,
-            LexErr::JSONStringsMustUseDoubleQuotes => Error::JSONStringsMustUseDoubleQuotes,
-            LexErr::ParserError => Error::ParserError,
-        }
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] {
+        (*self).name().as_bytes()
     }
 }
 

@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[features]
-debug_logs = []
-
 [lints]
 workspace = true
 
@@ -17,7 +14,6 @@ strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
-enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
@@ -49,4 +45,3 @@ bun_url.workspace = true
 bun_wyhash.workspace = true
 bun_hash.workspace = true
 bun_zstd.workspace = true
-bumpalo.workspace = true

@@ -9,7 +9,7 @@ use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
-pub fn post_process_css_chunk(
+pub(crate) fn post_process_css_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
@@ -128,15 +128,6 @@ pub fn post_process_css_chunk(
 
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
-    // if c.options.UnsupportedCSSFeatures.Has(compat.InlineStyle) {
-    //    slashTag = ""
-    // }
-    // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
-
-    // if len(c.options.CSSFooter) > 0 {
-    //     j.AddString(c.options.CSSFooter)
-    //     j.AddString("\n")
-    // }
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();

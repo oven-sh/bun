@@ -360,6 +360,59 @@ describe("Glob.match", () => {
     expect(glob.match("{")).toBeFalse();
   });
 
+  test("wide brace group with matching alternatives and failing tail is not quadratic", () => {
+    // A group of N alternatives that each match the subject prefix, followed by
+    // a tail that then fails, used to cost O(BRACE_BRANCH_BUDGET * N) because
+    // every budgeted attempt re-scanned the whole group to find the closing `}`.
+    // With the close-brace index cached per group that scan is O(1), so the
+    // whole match() is O(N). Unfixed, each case below takes ~5 s release /
+    // ~30 s ASAN; fixed, low single-digit ms. The 2 s budget is >100x headroom
+    // over the fixed cost and >10x under the unfixed cost even in release.
+    const budgetMs = 2000;
+
+    for (const [label, pattern, path] of [
+      ["150k '*' alternatives", "{" + Buffer.alloc(300_000, "*,").toString() + "*}b", "az"],
+      ["300k literal-prefix alternatives", "{" + Buffer.alloc(600_000, "a,").toString() + "a}b", "az"],
+      ["750k empty alternatives", "{" + Buffer.alloc(750_000, ",").toString() + "a}", "a"],
+    ] as const) {
+      const glob = new Glob(pattern);
+      const t0 = performance.now();
+      glob.match(path);
+      const elapsed = performance.now() - t0;
+      if (elapsed >= budgetMs) {
+        throw new Error(`${label}: match() took ${elapsed.toFixed(0)} ms (budget ${budgetMs} ms)`);
+      }
+    }
+
+    // Correctness is unchanged for the shapes above. Use smaller groups so the
+    // pre-existing branch budget (which makes very wide groups return false
+    // regardless of the fix) isn't hit.
+    expect(new Glob("{" + Buffer.alloc(1000, "*,").toString() + "*}b").match("ab")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, "*,").toString() + "*}b").match("az")).toBeFalse();
+    expect(new Glob("{" + Buffer.alloc(1000, "a,").toString() + "a}b").match("ab")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, "a,").toString() + "a}b").match("az")).toBeFalse();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("a")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("b")).toBeFalse();
+  });
+
+  test("literal ',' or '}' after sequential brace groups", () => {
+    // A `,`/`}` past the second group's `}` is a literal. Previously
+    // `brace_depth` was set from the stack length (which still holds the first
+    // group's frame) so the literal was treated as a separator and the whole
+    // tail was skipped.
+    expect(new Glob("{a,b}{c,d},x").match("ac,x")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},x").match("bd,x")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},x").match("ac")).toBeFalse();
+    expect(new Glob("{a,b}{c,d}}x").match("ac}x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("a/c,x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("b/d,x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("a/c")).toBeFalse();
+    // Single group followed by a literal `,` already worked; keep covered.
+    expect(new Glob("{a,b},x").match("a,x")).toBeTrue();
+    expect(new Glob("{a,b},x").match("b,x")).toBeTrue();
+  });
+
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
   // using the `[...]` syntax, it tries to match each char in the brackets. With
@@ -1555,7 +1608,7 @@ describe("Glob.match", () => {
       expect(new Glob("!f*b").match("foo")).toBeTrue();
       expect(new Glob("!.md").match(".md")).toBeFalse();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
-      // try expect(!match("!**/*.md", "b.md"));
+      expect(new Glob("!**/*.md").match("b.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("c.txt")).toBeTrue();
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("b.md")).toBeFalse();
@@ -1585,9 +1638,9 @@ describe("Glob.match", () => {
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("b.txt")).toBeTrue();
       expect(new Glob("!*.md").match("c.md")).toBeFalse();
-      // try expect(!match("!**/a.js", "a/a/a.js"));
-      // try expect(!match("!**/a.js", "a/b/a.js"));
-      // try expect(!match("!**/a.js", "a/c/a.js"));
+      expect(new Glob("!**/a.js").match("a/a/a.js")).toBeFalse();
+      expect(new Glob("!**/a.js").match("a/b/a.js")).toBeFalse();
+      expect(new Glob("!**/a.js").match("a/c/a.js")).toBeFalse();
       expect(new Glob("!**/a.js").match("a/a/b.js")).toBeTrue();
       expect(new Glob("!a/**/a.js").match("a/a/a/a.js")).toBeFalse();
       expect(new Glob("!a/**/a.js").match("b/a/b/a.js")).toBeTrue();
@@ -1595,7 +1648,7 @@ describe("Glob.match", () => {
       expect(new Glob("!**/*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a/b.md")).toBeFalse();
-      // try expect(!match("!**/*.md", "a.md"));
+      expect(new Glob("!**/*.md").match("a.md")).toBeFalse();
       expect(new Glob("**/*.md").match("a/b.js")).toBeFalse();
       expect(new Glob("**/*.md").match("a.js")).toBeFalse();
       expect(new Glob("**/*.md").match("a/b.md")).toBeTrue();
@@ -1603,14 +1656,52 @@ describe("Glob.match", () => {
       expect(new Glob("!**/*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a/b.md")).toBeFalse();
-      // try expect(!match("!**/*.md", "a.md"));
+      expect(new Glob("!**/*.md").match("a.md")).toBeFalse();
       expect(new Glob("!*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("a/b.md")).toBeTrue();
       expect(new Glob("!*.md").match("a.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
-      // try expect(!match("!**/*.md", "b.md"));
+      expect(new Glob("!**/*.md").match("b.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("c.txt")).toBeTrue();
+    });
+
+    test("negation with leading globstar", () => {
+      // `!p` must be the exact complement of `p`, including when `p` starts with `**`.
+      expect(new Glob("**/a").match("a")).toBeTrue();
+      expect(new Glob("**/a").match("x/y/a")).toBeTrue();
+      expect(new Glob("!**/a").match("a")).toBeFalse();
+      expect(new Glob("!**/a").match("x/y/a")).toBeFalse();
+      expect(new Glob("!**/a").match("zzz")).toBeTrue();
+      expect(new Glob("!**/a").match("x/y/b")).toBeTrue();
+
+      // trailing globstar
+      expect(new Glob("!**").match("a")).toBeFalse();
+      expect(new Glob("!**").match("a/b/c")).toBeFalse();
+
+      // `!!p` must equal `p` (involution)
+      expect(new Glob("!!**/a").match("a")).toBeTrue();
+      expect(new Glob("!!**/a").match("x/y/a")).toBeTrue();
+      expect(new Glob("!!**/a").match("zzz")).toBeFalse();
+      expect(new Glob("!!!**/a").match("a")).toBeFalse();
+      expect(new Glob("!!!**/a").match("x/y/a")).toBeFalse();
+
+      // canonical negated ignore glob
+      expect(new Glob("**/node_modules/**").match("node_modules/pkg/index.js")).toBeTrue();
+      expect(new Glob("!**/node_modules/**").match("node_modules/pkg/index.js")).toBeFalse();
+      expect(new Glob("!**/node_modules/**").match("a/b/node_modules/pkg/index.js")).toBeFalse();
+      expect(new Glob("!**/node_modules/**").match("src/index.js")).toBeTrue();
+
+      // control: `**` not at pattern start was already correct
+      expect(new Glob("!x/**/a").match("x/a")).toBeFalse();
+      expect(new Glob("!x/**/a").match("x/y/a")).toBeFalse();
+      expect(new Glob("!x/**/a").match("y/a")).toBeTrue();
+
+      // negation combined with braces containing a leading globstar
+      expect(new Glob("!{**/a,**/b}").match("a")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/a")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/b")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/c")).toBeTrue();
     });
 
     test("question_mark", () => {

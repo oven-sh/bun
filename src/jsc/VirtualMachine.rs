@@ -6793,7 +6793,18 @@ impl VirtualMachine {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
-        let top_frame = frames.first();
+        // Anchor at the first located frame outside node_modules (GitHub only places files in the checkout), else the top frame.
+        let top_frame = frames
+            .iter()
+            .find(|frame| {
+                let source_url = frame.source_url.to_utf8();
+                let source_url = source_url.slice();
+                !frame.position.is_invalid()
+                    && !source_url.is_empty()
+                    && !bun_core::strings::contains(source_url, b"/node_modules/")
+                    && !bun_core::strings::contains(source_url, b"\\node_modules\\")
+            })
+            .or(frames.first());
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
         bun_core::Output::flush();

@@ -55,7 +55,9 @@ us_quic_socket_context_t *us_create_quic_socket_context(
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
-/* Register an additional SSL_CTX for the given SNI hostname (exact or `*.`). */
+/* Register an additional SSL_CTX for the given SNI hostname: an exact name or
+ * a `*.suffix` pattern whose `*` covers one label. Names are matched without
+ * regard to ASCII case, as in the TCP listener's SNI tree. */
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options);
 

@@ -373,18 +373,23 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 
 /* ───── SSL ───── */
 
-/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
+/* Exact match, then `*.tail` wildcards, both with us_sni_name_cmp. Like the
+ * TCP listener's SNI tree (crypto/sni_tree.cpp), the `*` stands for exactly
+ * one label: "a.tail" matches, "tail" and "a.b.tail" do not. */
 static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
     if (!sni) return ctx->ssl_ctx;
     size_t sl = strlen(sni);
     for (unsigned i = 0; i < ctx->sni_count; i++) {
-        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
+        const char *n = ctx->sni[i].name;
+        if (us_sni_name_cmp(n, strlen(n), sni, sl) == 0) return ctx->sni[i].ctx;
     }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         const char *n = ctx->sni[i].name;
         if (n[0] == '*' && n[1] == '.') {
             size_t tl = strlen(n + 1);
-            if (sl > tl && memcmp(sni + sl - tl, n + 1, tl) == 0) return ctx->sni[i].ctx;
+            if (sl > tl && !memchr(sni, '.', sl - tl) && us_sni_name_cmp(sni + sl - tl, tl, n + 1, tl) == 0) {
+                return ctx->sni[i].ctx;
+            }
         }
     }
     return ctx->ssl_ctx;

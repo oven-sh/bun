@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
@@ -1531,6 +1531,68 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       responses: { fetch: "200 ok", route: "200 ok" },
       fetch: expectedOrder,
       route: expectedOrder,
+    });
+  });
+});
+
+describe("Bun.serve HTTP/3 SNI", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  // Each agent certificate has its own CN, which tells the contexts apart.
+  const identity = (agent: string) => ({
+    key: readFileSync(join(tlsFixtures, `${agent}-key.pem`), "utf8"),
+    cert: readFileSync(join(tlsFixtures, `${agent}-cert.pem`), "utf8"),
+  });
+
+  // fetch() takes the SNI from the URL host, which URL parsing lowercases, so
+  // the handshake is driven with node:quic: it sends `servername` as written
+  // and exposes the certificate the server picked. The server runs in-process
+  // because nothing here touches fetch()'s shared HTTP/3 client engine.
+  async function servedCN(port: number, servername: string): Promise<string> {
+    const session = await connect({ address: "127.0.0.1", port }, { alpn: "h3", servername, verifyPeer: "manual" });
+    try {
+      await session.opened;
+      const cert = session.peerCertificate;
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+      return x509.subject.match(/CN=([^\s,]+)/)![1];
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("serverName entries match regardless of case and a wildcard covers one label", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "Agent2.Example", ...identity("agent2") },
+        { serverName: "*.wild.example", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served: Record<string, string> = {};
+    for (const servername of [
+      "Agent2.Example",
+      "agent2.example",
+      "AGENT2.EXAMPLE",
+      "a.wild.example",
+      "A.WILD.EXAMPLE",
+      "a.b.wild.example",
+      "wild.example",
+      "other.example",
+    ]) {
+      served[servername] = await servedCN(server.port, servername);
+    }
+    // The same names select the same entries on the TCP listener.
+    expect(served).toEqual({
+      "Agent2.Example": "agent2",
+      "agent2.example": "agent2",
+      "AGENT2.EXAMPLE": "agent2",
+      "a.wild.example": "agent3",
+      "A.WILD.EXAMPLE": "agent3",
+      "a.b.wild.example": "agent1",
+      "wild.example": "agent1",
+      "other.example": "agent1",
     });
   });
 });

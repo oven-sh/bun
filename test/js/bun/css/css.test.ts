@@ -187,6 +187,48 @@ describe("css tests", () => {
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
+  describe("min() and max() simplification", () => {
+    minify_test(`a { opacity: min(.5, .2) }`, `a{opacity:.2}`);
+    minify_test(`a { opacity: max(.5, .2) }`, `a{opacity:.5}`);
+    minify_test(`a { line-height: min(1.5, 1.2) }`, `a{line-height:1.2}`);
+    minify_test(`a { flex-grow: max(1, 2, 3) }`, `a{flex-grow:3}`);
+    minify_test(`a { opacity: min(.5, .2, .7) }`, `a{opacity:.2}`);
+    minify_test(`a { opacity: max(.2, .7, .5) }`, `a{opacity:.7}`);
+    minify_test(`a { opacity: min(.5, .5) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: min(infinity, .5) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: max(-infinity, .5) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: min(2 * .2, .5) }`, `a{opacity:.4}`);
+    minify_test(`a { opacity: max(min(.5, .2), .3) }`, `a{opacity:.3}`);
+    minify_test(`a { opacity: calc(1 - min(.5, .2)) }`, `a{opacity:.8}`);
+    minify_test(`a { color: rgb(min(255, 20) 0 0) }`, `a{color:#140000}`);
+    minify_test(`a { color: rgb(max(255, 100), 0, 0) }`, `a{color:red}`);
+    minify_test(`a { color: hsl(max(100, 200) 50% 50%) }`, `a{color:#4095bf}`);
+    minify_test(`a { color: rgb(0 0 0 / min(1, .5)) }`, `a{color:#00000080}`);
+    minify_test(`a { font-weight: max(100, 700) }`, `a{font-weight:700}`);
+    minify_test(`a { font: 12px/min(1.2, 1.5) serif }`, `a{font:12px/1.2 serif}`);
+    minify_test(`a { aspect-ratio: min(1, 2) / 1 }`, `a{aspect-ratio:1}`);
+    // Without the fold, the flex shorthand takes the min() as the <length-percentage> basis and
+    // the numbers after it as grow and shrink.
+    minify_test(`a { flex: min(1, 2) 1 0 }`, `a{flex:1 1 0}`);
+    minify_test(`a { flex: min(1, 2) 2 }`, `a{flex:1 2}`);
+    minify_test(`a { flex: 2 min(1, 2) }`, `a{flex:2}`);
+    // A <ratio> media feature has no unparsed fallback, so without the fold this is an error.
+    minify_test(`@media (aspect-ratio: min(1, 2) / 1) { a { b: c } }`, `@media (aspect-ratio:1){a{b:c}}`);
+    // The alpha channel of a relative color is a number on the same scale as a literal, so these
+    // fold on their own; the other channels are #38553.
+    minify_test(`a { color: rgb(from #336699 r g b / min(alpha, .5)) }`, `a{color:#33669980}`);
+    minify_test(`a { color: rgb(from #336699 r g b / max(alpha, .5)) }`, `a{color:#369}`);
+    // Numbers are only compared with numbers and dimensions with dimensions.
+    minify_test(`a { line-height: max(1.2, 1.5, 1em, 2em) }`, `a{line-height:max(1.5,2em)}`);
+    minify_test(`a { opacity: min(.5, 20%) }`, `a{opacity:min(.5,20%)}`);
+    // NaN compares with nothing, so a NaN argument is never removed.
+    minify_test(`a { opacity: min(NaN, .5) }`, `a{opacity:min(NaN,.5)}`);
+    minify_test(`a { opacity: max(.5, NaN) }`, `a{opacity:max(.5,NaN)}`);
+    // Dimensions keep reducing the way they did: the winner takes the loser's position.
+    minify_test(`a { width: min(1px, 1em, 2px, 3in) }`, `a{width:min(1px,1em)}`);
+    minify_test(`a { width: min(3px, 10%, 2px) }`, `a{width:min(2px,10%)}`);
+    minify_test(`a { width: max(3px, 10%, 2px) }`, `a{width:max(3px,10%)}`);
+  });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.
     minify_test(`.foo { border-width: clamp(1px, 2px, 3px) }`, `.foo{border-width:2px}`);
@@ -221,6 +263,20 @@ describe("css tests", () => {
     minify_test(`a { rotate: clamp(0deg, 45deg, 30deg) }`, `a{rotate:30deg}`);
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
+    // Plain numbers.
+    minify_test(`a { opacity: clamp(.3, .5, .9) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: clamp(.3, .1, .9) }`, `a{opacity:.3}`);
+    minify_test(`a { opacity: clamp(0, .5, .2) }`, `a{opacity:.2}`);
+    minify_test(`a { opacity: clamp(.2, .2, .9) }`, `a{opacity:.2}`);
+    minify_test(`a { opacity: clamp(.1, .2, .2) }`, `a{opacity:.2}`);
+    minify_test(`a { line-height: clamp(1, 1.5, 2) }`, `a{line-height:1.5}`);
+    minify_test(`a { flex: clamp(1, 5.20, 20) }`, `a{flex:5.2}`);
+    minify_test(`a { color: rgb(clamp(0, 255, 300), 0, 0) }`, `a{color:red}`);
+    minify_test(`a { color: rgb(from #336699 r g b / clamp(.1, alpha, .5)) }`, `a{color:#33669980}`);
+    minify_test(`a { opacity: calc(1 - clamp(0, .5, .2)) }`, `a{opacity:.8}`);
+    minify_test(`a { width: clamp(1px, 2, 3px) }`, `a{width:clamp(1px,2,3px)}`);
+    minify_test(`a { opacity: clamp(0, .5, 20%) }`, `a{opacity:clamp(0,.5,20%)}`);
+    minify_test(`a { opacity: clamp(0, NaN, 1) }`, `a{opacity:clamp(0,NaN,1)}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

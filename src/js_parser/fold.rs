@@ -614,8 +614,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(
                                 p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
-                        } else if name == b"path" {
-                            // Inline import.meta.path (full path)
+                        } else if name == b"path" || name == b"filename" {
+                            // Inline import.meta.path / import.meta.filename (full path)
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL

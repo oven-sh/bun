@@ -32,16 +32,18 @@ const password = "super-secure-pa$$word";
 // use argon2 (default)
 const argonHash = await Bun.password.hash(password, {
   algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
-  memoryCost: 8, // memory usage in kibibytes (minimum 8)
-  timeCost: 3, // the number of iterations
+  memoryCost: 19456, // memory usage in kibibytes (minimum 8)
+  timeCost: 2, // the number of iterations
 });
 
 // use bcrypt
 const bcryptHash = await Bun.password.hash(password, {
   algorithm: "bcrypt",
-  cost: 4, // number between 4-31
+  cost: 10, // number between 4-31
 });
 ```
+
+These example parameters follow the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html). Avoid the minimum values in production — they verify fast but offer little protection against offline attacks.
 
 The algorithm used to create the hash is stored in the hash itself. When using `bcrypt`, Bun encodes the returned hash in [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) for compatibility with most existing `bcrypt` implementations. With `argon2`, Bun encodes the result in the newer [PHC format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md).
 

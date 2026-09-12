@@ -153,10 +153,7 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
-            // Placeholder only. Every constructor supplies the real default
-            // (`cpu_count * 2` for an install). `load()` then applies bunfig's
-            // `concurrentScripts`, then `--concurrent-scripts`.
-            max_concurrent_lifecycle_scripts: 0,
+            max_concurrent_lifecycle_scripts: usize::from(bun_core::get_thread_count()) * 2,
             publish_config: PublishConfig::default(),
             ca: Box::default(),
             ca_file_name: b"",

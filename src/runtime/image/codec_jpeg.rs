@@ -263,9 +263,6 @@ pub(crate) fn decode(
     }
     // SAFETY: rc 0 (no warning) with unchanged dims means all `ht` rows of `w` pixels were written.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
-    if cmyk {
-        codecs::cmyk_to_rgba(&mut out);
-    }
 
     // Extract the APP2 ICC profile (if the source carried one). The marker
     // parser ran during tj3DecompressHeader, so this is a copy-out of
@@ -279,16 +276,10 @@ pub(crate) fn decode(
     // exact bug #30197 is about.
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
+    let mut cmyk_converted = false;
     let icc: Option<Vec<u8>> = 'blk: {
-        // A CMYK profile describes ink channels, not the RGBA produced above.
-        if cmyk {
-            break 'blk None;
-        }
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
-        {
-            break 'blk None;
-        }
+        let result = unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) };
         let _free = scopeguard::guard(icc_ptr, |p| {
             if !p.is_null() {
                 // SAFETY: `p` was allocated by libjpeg-turbo via tj3GetICCProfile;
@@ -296,13 +287,21 @@ pub(crate) fn decode(
                 unsafe { tj3Free(p.cast()) };
             }
         });
-        if icc_ptr.is_null() {
+        if result != 0 || icc_size == 0 || icc_ptr.is_null() {
             break 'blk None;
         }
         // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.
         let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
-        break 'blk Some(src.to_vec());
+        if cmyk {
+            cmyk_converted = super::color_management::cmyk_to_srgb(src, &mut out)?;
+        } else {
+            break 'blk Some(src.to_vec());
+        }
+        break 'blk None;
     };
+    if cmyk && !cmyk_converted {
+        codecs::cmyk_to_rgba(&mut out);
+    }
     Ok(codecs::Decoded {
         rgba: out,
         width: w,

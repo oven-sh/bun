@@ -793,6 +793,113 @@ describe("Bun.Image", () => {
       expect(extractWebpIccp(lossless)).toBeNull();
     });
 
+    // CC0 synthetic v4.3 CMYK-to-Lab profile, generated with Little CMS 2.19.1.
+    // A 5-point-per-axis CLUT samples sRGB ((1-C)*(1-K))^0.6,
+    // ((1-M)*(1-K))^0.7, ((1-Y)*(1-K))^0.8 into D50 Lab.
+    // Unlike an identity profile, its mixed-ink pixels detect ignored ICC data.
+    const cmykProfile = zlib.inflateSync(
+      Buffer.from(
+        "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",
+        "base64",
+      ),
+    );
+
+    function jpegWithCmykProfile(jpeg: Uint8Array, profile: Uint8Array, multipart = false) {
+      const split = multipart ? Math.floor(profile.length / 2) : profile.length;
+      const parts = multipart ? [profile.subarray(0, split), profile.subarray(split)] : [profile];
+      const segments = parts.map((part, i) => {
+        const header = Buffer.alloc(18);
+        header.set([0xff, 0xe2]);
+        header.writeUInt16BE(part.length + 16, 2);
+        header.write("ICC_PROFILE\0", 4, "ascii");
+        header[16] = i + 1;
+        header[17] = parts.length;
+        return Buffer.concat([header, part]);
+      });
+      // JPEG ICC chunks are identified by sequence number, not file order.
+      return Buffer.concat([jpeg.subarray(0, 2), ...segments.reverse(), jpeg.subarray(2)]);
+    }
+
+    describe.each([
+      ["CMYK", cmykJpeg],
+      ["YCCK", ycckJpeg],
+    ] as const)("%s ICC conversion", (_name, fixture) => {
+      test.each([64, 32, 8, 128])("applies the profile before encoding a %i-pixel PNG", async size => {
+        const input = jpegWithCmykProfile(fixture, cmykProfile);
+        const original = Buffer.from(input);
+        const png = await new Bun.Image(input).resize(size, size).png().bytes();
+        const { w, h, data } = decodePngRaw(png);
+        expect([w, h]).toEqual([size, size]);
+        // Independent reference: sharp 0.35.3 toColorspace('srgb'), raw RGB.
+        const expected = [
+          [0, 255, 255],
+          [255, 0, 255],
+          [140, 170, 202],
+          [0, 0, 0],
+        ];
+        for (const [i, [x, y]] of [
+          [1, 1],
+          [3, 1],
+          [1, 3],
+          [3, 3],
+        ].entries()) {
+          const pixel = rgbaAt(data, w, (x * size) / 4, (y * size) / 4);
+          for (let channel = 0; channel < 3; channel++) {
+            expect(Math.abs(pixel[channel] - expected[i][channel])).toBeLessThanOrEqual(4);
+          }
+          expect(pixel[3]).toBe(255);
+        }
+        expect(extractPngIccp(png)).toBeNull();
+        expect(input).toEqual(original);
+      });
+
+      test("reassembles out-of-order ICC chunks", async () => {
+        const single = jpegWithCmykProfile(fixture, cmykProfile);
+        const multipart = jpegWithCmykProfile(fixture, cmykProfile, true);
+        expect(await new Bun.Image(multipart).png().bytes()).toEqual(await new Bun.Image(single).png().bytes());
+      });
+
+      test("parallel decodes own independent color transforms", async () => {
+        const input = jpegWithCmykProfile(fixture, cmykProfile);
+        const expected = await new Bun.Image(input).png().bytes();
+        const results = await Promise.all(Array.from({ length: 16 }, () => new Bun.Image(input).png().bytes()));
+        for (const result of results) expect(result).toEqual(expected);
+      });
+
+      test("does not attach the consumed CMYK profile to RGB JPEG or WebP", async () => {
+        const input = jpegWithCmykProfile(fixture, cmykProfile);
+        const jpeg = await new Bun.Image(input).jpeg({ quality: 100 }).bytes();
+        const webp = await new Bun.Image(input).webp({ lossless: true }).bytes();
+        expect(extractJpegIcc(jpeg)).toBeNull();
+        expect(extractWebpIccp(webp)).toBeNull();
+        for (const output of [jpeg, webp]) {
+          const { w, data } = decodePngRaw(await new Bun.Image(output).png().bytes());
+          const pixel = rgbaAt(data, w, 16, 48);
+          for (const [channel, value] of [140, 170, 202].entries()) {
+            expect(Math.abs(pixel[channel] - value)).toBeLessThanOrEqual(4);
+          }
+          expect(pixel[3]).toBe(255);
+        }
+      });
+
+      test("invalid and mismatched profiles retain the unprofiled fallback", async () => {
+        const mismatched = Buffer.from(cmykProfile);
+        mismatched.write("RGB ", 16, "ascii");
+        const deviceLink = Buffer.from(cmykProfile);
+        deviceLink.write("link", 12, "ascii");
+        const reference = await new Bun.Image(fixture).png().bytes();
+        for (const profile of [
+          Buffer.from("not an ICC profile"),
+          cmykProfile.subarray(0, 100),
+          mismatched,
+          deviceLink,
+        ]) {
+          const input = jpegWithCmykProfile(fixture, profile);
+          expect(await new Bun.Image(input).png().bytes()).toEqual(reference);
+        }
+      });
+    });
+
     test("CMYK JPEG's ink-channel ICC profile is dropped on re-encode", async () => {
       expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull();
       const jpg = await new Bun.Image(cmykIccJpeg).jpeg({ quality: 90 }).bytes();

@@ -1243,6 +1243,10 @@ pub struct FnOrArrowDataParse {
 
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_decorators: bool,
+    /// A getter or setter in a class body. Its type annotations become
+    /// decorator metadata when the other half of the accessor pair is
+    /// decorated, so they are collected even without decorators of its own.
+    pub(crate) is_class_accessor: bool,
 
     pub(crate) is_return_disallowed: bool,
     pub(crate) is_this_disallowed: bool,
@@ -1270,6 +1274,7 @@ impl Default for FnOrArrowDataParse {
             is_typescript_declare: false,
             has_argument_decorators: false,
             has_decorators: false,
+            is_class_accessor: false,
             is_return_disallowed: false,
             is_this_disallowed: false,
             arrow_arg_errors: DeferredArrowArgErrors::default(),

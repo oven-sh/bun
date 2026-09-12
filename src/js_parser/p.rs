@@ -570,6 +570,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// We must be careful to avoid revisiting nodes that have scopes.
     pub(crate) is_revisit_for_substitution: bool,
 
+    /// Set while the type annotations of an undecorated class accessor are
+    /// parsed for decorator metadata. The metadata is only emitted when the
+    /// other half of the accessor pair is decorated, so the identifiers it
+    /// names must not count as used yet (that would keep a type-only import
+    /// alive). `serialize_metadata` records the use when it emits them.
+    pub(crate) ts_metadata_defer_usage: bool,
+
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
@@ -7346,7 +7353,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                for prop in s_class.class.properties.slice_mut().iter_mut() {
+                let accessor_siblings = if self.options.features.emit_decorator_metadata {
+                    self.collect_decorated_accessor_siblings(s_class.class.properties.slice())
+                } else {
+                    BumpVec::new_in(self.arena)
+                };
+
+                for (prop_index, prop) in
+                    s_class.class.properties.slice_mut().iter_mut().enumerate()
+                {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -7428,7 +7443,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut array = BumpVec::<Expr>::new_in(self.arena);
 
                         if self.options.features.emit_decorator_metadata {
-                            self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
+                            let sibling = accessor_siblings
+                                .iter()
+                                .find(|(i, _)| *i == prop_index)
+                                .map(|(_, value)| *value);
+                            self.emit_decorator_metadata_for_prop(prop, sibling, &mut array, loc);
                         }
 
                         let mut full = BumpVec::<Expr>::with_capacity_in(
@@ -7737,16 +7756,103 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// For every decorated getter or setter, the value (an `E::Function`) of
+    /// the other half of its accessor pair: same key, same `static`, opposite
+    /// kind. Legacy decorator metadata for a pair reads both halves, like tsc's
+    /// `getAllAccessorDeclarations`.
+    #[cold]
+    #[inline(never)]
+    fn collect_decorated_accessor_siblings(
+        &self,
+        properties: &[G::Property],
+    ) -> BumpVec<'a, (usize, Expr)> {
+        use js_ast::g::PropertyKind;
+
+        fn keys_match(a: Expr, b: Expr) -> bool {
+            match (&a.data, &b.data) {
+                (js_ast::ExprData::EString(x), js_ast::ExprData::EString(y)) => x.eql_string(y),
+                (js_ast::ExprData::ENumber(x), js_ast::ExprData::ENumber(y)) => {
+                    x.value() == y.value()
+                }
+                (
+                    js_ast::ExprData::EPrivateIdentifier(x),
+                    js_ast::ExprData::EPrivateIdentifier(y),
+                ) => x.ref_.eql(y.ref_),
+                _ => false,
+            }
+        }
+
+        let mut out = BumpVec::new_in(self.arena);
+        for (index, prop) in properties.iter().enumerate() {
+            let sibling_kind = match prop.kind {
+                PropertyKind::Get => PropertyKind::Set,
+                PropertyKind::Set => PropertyKind::Get,
+                _ => continue,
+            };
+            if prop.ts_decorators.len_u32() == 0 || !prop.flags.contains(Flags::Property::IsMethod)
+            {
+                continue;
+            }
+            let Some(key) = prop.key else { continue };
+            let is_static = prop.flags.contains(Flags::Property::IsStatic);
+            let sibling_value = properties
+                .iter()
+                .find(|other| {
+                    other.kind == sibling_kind
+                        && other.flags.contains(Flags::Property::IsMethod)
+                        && other.flags.contains(Flags::Property::IsStatic) == is_static
+                        && matches!(other.key, Some(other_key) if keys_match(key, other_key))
+                })
+                .and_then(|other| other.value);
+            if let Some(value) = sibling_value {
+                out.push((index, value));
+            }
+        }
+        out
+    }
+
+    /// `design:paramtypes` for `args`: one serialized type per parameter.
+    fn serialize_param_types_metadata(&mut self, args: &[G::Arg]) -> Expr {
+        let args_array = self.arena.alloc_slice_fill_default::<Expr>(args.len());
+        for (entry, arg) in args_array.iter_mut().zip(args) {
+            *entry = self
+                .serialize_metadata(arg.ts_metadata.clone())
+                .expect("unreachable");
+        }
+        let items = ExprNodeList::from_arena_slice(args_array);
+        self.new_expr(
+            E::Array {
+                items,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        )
+    }
+
+    /// The getter's return type as the `design:type` of an accessor pair.
+    /// The parser stores `MUndefined` for a missing return annotation (the
+    /// `design:returntype` of a method is `undefined` then), but tsc serializes
+    /// a missing accessor type as `Object`.
+    fn accessor_return_type_metadata(getter: &G::Fn) -> bun_ast::ts::Metadata {
+        match getter.return_ts_metadata {
+            bun_ast::ts::Metadata::MUndefined => bun_ast::ts::Metadata::MNone,
+            ref metadata => metadata.clone(),
+        }
+    }
+
     // Helper extracted from lower_class to keep that fn readable; condenses
-    // the per-kind metadata switch.
+    // the per-kind metadata switch. `accessor_sibling` is the other half of a
+    // decorated getter/setter pair, from `collect_decorated_accessor_siblings`.
     #[cold]
     #[inline(never)]
     fn emit_decorator_metadata_for_prop(
         &mut self,
         prop: &G::Property,
+        accessor_sibling: Option<Expr>,
         array: &mut BumpVec<'a, Expr>,
         loc: bun_ast::Loc,
     ) {
+        use bun_ast::ts::Metadata as M;
         use js_ast::g::PropertyKind;
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
@@ -7780,22 +7886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // arena-owned `StoreSlice<Arg>` valid for parser 'a.
                         let method_args: &[G::Arg] = func.func.args.slice();
                         {
-                            let args_array = self
-                                .arena
-                                .alloc_slice_fill_default::<Expr>(method_args.len());
-                            for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
-                                    .expect("unreachable");
-                            }
-                            let items = ExprNodeList::from_arena_slice(args_array);
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
+                            let arr = self.serialize_param_types_metadata(method_args);
                             push_metadata!(b"design:paramtypes", arr);
                         }
                         {
@@ -7809,26 +7900,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             PropertyKind::Get => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
-                    // typescript sets design:type to the return value & design:paramtypes to [].
+                    // typescript sets design:type to the setter's parameter type when the pair
+                    // has an annotated setter, else to the getter's return type. design:paramtypes
+                    // is the setter's parameter list, or [] without a setter.
                     if let Some(prop_value) = prop.value {
                         let func = prop_value
                             .data
                             .e_function()
                             .expect("infallible: variant checked");
+                        let setter_args: &[G::Arg] = accessor_sibling
+                            .and_then(|value| value.data.e_function())
+                            .map(|setter| setter.func.args.slice())
+                            .unwrap_or(&[]);
                         {
-                            let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
-                                .expect("unreachable");
+                            let metadata = match setter_args.first() {
+                                Some(arg) if !matches!(arg.ts_metadata, M::MNone) => {
+                                    arg.ts_metadata.clone()
+                                }
+                                _ => Self::accessor_return_type_metadata(&func.func),
+                            };
+                            let v = self.serialize_metadata(metadata).expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
                         {
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
+                            let arr = self.serialize_param_types_metadata(setter_args);
                             push_metadata!(b"design:paramtypes", arr);
                         }
                     }
@@ -7836,7 +7931,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             PropertyKind::Set => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
-                    // typescript sets design:type to the return value & design:paramtypes to [arg].
+                    // typescript sets design:type to the parameter type (or the getter's return
+                    // type when the parameter has no annotation) & design:paramtypes to [arg].
                     // note that typescript does not allow you to put a decorator on both the getter and the setter.
                     // if you do anyway, bun will set design:type and design:paramtypes twice, so it's fine.
                     if let Some(prop_value) = prop.value {
@@ -7847,28 +7943,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // arena-owned `StoreSlice<Arg>` valid for parser 'a.
                         let method_args: &[G::Arg] = func.func.args.slice();
                         {
-                            let args_array = self
-                                .arena
-                                .alloc_slice_fill_default::<Expr>(method_args.len());
-                            for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
-                                    .expect("unreachable");
-                            }
-                            let items = ExprNodeList::from_arena_slice(args_array);
-                            let arr = self.new_expr(
-                                E::Array {
-                                    items,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            );
+                            let arr = self.serialize_param_types_metadata(method_args);
                             push_metadata!(b"design:paramtypes", arr);
                         }
-                        if !method_args.is_empty() {
-                            let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
-                                .expect("unreachable");
+                        if let Some(arg) = method_args.first() {
+                            let metadata = if matches!(arg.ts_metadata, M::MNone) {
+                                accessor_sibling
+                                    .and_then(|value| value.data.e_function())
+                                    .map(|getter| Self::accessor_return_type_metadata(&getter.func))
+                                    .unwrap_or(M::MNone)
+                            } else {
+                                arg.ts_metadata.clone()
+                            };
+                            let v = self.serialize_metadata(metadata).expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
                     }
@@ -7930,6 +8017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
+                self.record_usage(refs[0]);
                 // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
@@ -9845,6 +9933,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
+            ts_metadata_defer_usage: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

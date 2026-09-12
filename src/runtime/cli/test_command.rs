@@ -1960,11 +1960,6 @@ impl TestCommand {
         vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
-        if ctx.test_options.isolate {
-            vm.test_isolation_enabled = true;
-            vm.auto_killer.enabled = true;
-        }
-
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;
             vm.transpiler.options.minify_syntax = false;
@@ -1990,13 +1985,8 @@ impl TestCommand {
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
-        if vm.test_isolation_enabled {
-            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
-            vm.test_isolation_state.proxy_env = Some(
-                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
-            );
-            vm.test_isolation_state.synthetic_allocation_limit =
-                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+        if ctx.test_options.isolate {
+            vm.enable_test_isolation(tz_name);
         }
 
         if ctx.test_options.test_worker {

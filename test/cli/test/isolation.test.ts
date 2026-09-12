@@ -409,6 +409,86 @@ describe.concurrent("bun test --isolate", () => {
     }
   });
 
+  // The swap closes every socket group. JS that runs inside one of those
+  // closes (the close handler, or a reaction to a promise that the close
+  // rejects) can connect again, and the new socket lands in the group that is
+  // being closed. The swap must not free that socket without a close event:
+  // the client keeps the pointer and uses it when its connection timer fires.
+  test.each([
+    ["an onclose handler", "onclose"],
+    ["a rejection handler", "rejection"],
+  ])("with --isolate, a socket that %s opens during the swap keeps its close event", async (_, reconnectFrom) => {
+    using dir = tempDir("isolate-reconnect", {
+      "a-reconnect.test.ts": `
+        import { test } from "bun:test";
+        import { RedisClient } from "bun";
+        import fs from "node:fs";
+
+        const closesFile = process.env.CLOSES_FILE!;
+        const fromOnclose = process.env.RECONNECT_FROM === "onclose";
+
+        test("leave a TLS client that reconnects when the swap closes it", () => {
+          const client = new RedisClient("rediss://127.0.0.1:" + process.env.PORT, {
+            autoReconnect: false,
+            connectionTimeout: 3000,
+          });
+          let closes = 0;
+          client.onclose = () => {
+            closes++;
+            fs.writeFileSync(closesFile, String(closes));
+            // The first close comes from the swap after this file.
+            if (fromOnclose && closes === 1) client.connect().catch(() => {});
+          };
+          client.connect().catch(() => {
+            if (!fromOnclose) client.connect().catch(() => {});
+          });
+        });
+      `,
+      "b-wait.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("the connect from the swap reports its close", async () => {
+          const closesFile = process.env.CLOSES_FILE!;
+          const closes = () => (fs.existsSync(closesFile) ? fs.readFileSync(closesFile, "utf8") : "0");
+          for (let i = 0; i < 400 && closes() !== "2"; i++) await Bun.sleep(10);
+          expect(closes()).toBe("2");
+        });
+      `,
+    });
+
+    // The first connection stays open without a TLS handshake, so the swap
+    // closes it. Each later connection is dropped, so the connect made during
+    // the swap fails at once.
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(sock => {
+      sock.on("error", () => {});
+      sockets.add(sock);
+      if (sockets.size > 1) sock.destroy();
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+
+    try {
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a-reconnect.test.ts", "./b-wait.test.ts"],
+        {
+          ...bunEnv,
+          PORT: String((server.address() as net.AddressInfo).port),
+          CLOSES_FILE: join(String(dir), "closes.txt"),
+          RECONNECT_FROM: reconnectFrom,
+        },
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    } finally {
+      for (const sock of sockets) sock.destroy();
+      server.close();
+    }
+  });
+
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
     using dir = tempDir("isolate-fswatch", {
       "watched/.keep": "",

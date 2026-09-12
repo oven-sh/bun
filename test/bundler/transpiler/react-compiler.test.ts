@@ -888,6 +888,19 @@ describe("bundler", () => {
           return <div>{element}</div>;
         }
 
+        // The closure captures a handler local that came from the caught value.
+        // (One that captures the catch parameter itself is not compiled.)
+        function ClosureInCatch(props) {
+          let read = () => "none";
+          try {
+            parse(props.text);
+          } catch (error) {
+            const message = error.message;
+            read = () => message;
+          }
+          return <div>{read()}</div>;
+        }
+
         // The handler reads a local whose value depends on which call threw.
         function ReadInCatch(props) {
           let stage = "first";
@@ -1007,6 +1020,7 @@ describe("bundler", () => {
           { strict: true, text: "!c" },
           { strict: true, text: "d" },
         );
+        renders(ClosureInCatch, ...texts);
         renders(
           ReadInCatch,
           { first: "a", second: "b" },
@@ -1048,6 +1062,7 @@ describe("bundler", () => {
         ReturnedFromUseMemo (memoized): failed, ok, failed, ok
         CaughtValue (memoized): cannot parse !a, ok, cannot parse !c, ok
         ScopeAroundTry (memoized): cannot parse !a, null, cannot parse !c, null
+        ClosureInCatch (memoized): cannot parse !a, none, cannot parse !c, none
         ReadInCatch (memoized): none, first, second, none
         NestedTry (memoized): failed, ok, failed, ok
         IfInTry (memoized): left, right, left, right

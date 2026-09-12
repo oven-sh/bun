@@ -5,6 +5,6 @@
 pub mod color_js;
 pub mod css_internals;
 
-pub use color_js::js_function_color;
+pub use color_js::{js_color_input_to_css_color, js_function_color};
 
 pub(crate) use bun_jsc::JsResult;

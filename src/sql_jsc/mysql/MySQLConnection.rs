@@ -1359,14 +1359,6 @@ impl MySQLConnection {
                 // `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
-                // err.error_message is a Data{ .temporary = ... } slice into the socket read
-                // buffer which will be overwritten by the next packet. The statement is cached
-                // in this.statements and its error_response may be read later via
-                // stmt.error_response.toJS(), so we must own a copy of the message bytes.
-                // ErrorPacket lacks Clone in bun_sql (Data is not Clone), so
-                // reconstruct field-by-field with an owned dupe of the message
-                // — the scalar fields (header / error_code / sql_state) are
-                // all Copy.
                 statement.error_response = ErrorPacket {
                     header: err.header,
                     error_code: err.error_code,
@@ -1375,6 +1367,17 @@ impl MySQLConnection {
                     error_message: Data::create(err.error_message.slice())
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
                 };
+                // The request still holds another ref; this cannot drop to 0.
+                let stmt_ptr: *const MySQLStatement = core::ptr::from_ref(&*statement);
+                let name = &statement.signature.name[..];
+                if self.statements.get(name).is_some_and(|p| {
+                    core::ptr::eq(
+                        p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
+                        stmt_ptr,
+                    )
+                }) {
+                    self.statements.remove(name);
+                }
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 

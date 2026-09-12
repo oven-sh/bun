@@ -44,7 +44,7 @@ pub mod reactive;
 pub mod type_config;
 pub mod visitors;
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
@@ -1532,7 +1532,7 @@ impl NonLocalBinding {
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
 /// apply because `Type` is stored in `Drop`-running containers (registry
 /// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
-/// slabs. `Phi::operands` is an `Arc` so that every path to one phi shares it.
+/// slabs. `Phi::operands` is an `Rc` so that every path to one phi shares it.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,
@@ -1549,7 +1549,7 @@ pub enum Type {
     },
     Poly,
     Phi {
-        operands: Arc<[Type]>,
+        operands: Rc<[Type]>,
     },
     Property {
         object_type: Box<Type>,

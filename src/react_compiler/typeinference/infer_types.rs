@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
@@ -1062,8 +1062,8 @@ fn resolve_identifier(
 struct Resolver<'a> {
     unifier: &'a Unifier,
     vars: HashMap<TypeId, Type>,
-    /// Keyed by operand slice address; the entry holds the `Arc` so the address stays allocated.
-    phis: HashMap<*const Type, (Arc<[Type]>, Type)>,
+    /// Keyed by operand slice address; the entry holds the `Rc` so the address stays allocated.
+    phis: HashMap<*const Type, (Rc<[Type]>, Type)>,
     /// Type slots that `apply_function` has resolved.
     applied: HashSet<TypeId>,
 }
@@ -1107,7 +1107,7 @@ impl<'a> Resolver<'a> {
                 }
             };
             self.phis
-                .insert(operands.as_ptr(), (Arc::clone(operands), resolved.clone()));
+                .insert(operands.as_ptr(), (Rc::clone(operands), resolved.clone()));
             return resolved;
         }
 
@@ -1132,7 +1132,7 @@ impl<'a> Resolver<'a> {
 fn is_unchanged(new: &Type, old: &Type) -> bool {
     match (new, old) {
         (Type::TypeVar { id: new }, Type::TypeVar { id: old }) => new == old,
-        (Type::Phi { operands: new }, Type::Phi { operands: old }) => Arc::ptr_eq(new, old),
+        (Type::Phi { operands: new }, Type::Phi { operands: old }) => Rc::ptr_eq(new, old),
         (
             Type::Function {
                 return_type: new, ..
@@ -1175,7 +1175,7 @@ struct Visited {
 struct Stripped {
     vars: HashMap<TypeId, Type>,
     /// Keyed like `Resolver::phis`.
-    phis: HashMap<*const Type, (Arc<[Type]>, Type)>,
+    phis: HashMap<*const Type, (Rc<[Type]>, Type)>,
 }
 
 // =============================================================================
@@ -1437,7 +1437,7 @@ impl Unifier {
                 };
                 stripped
                     .phis
-                    .insert(operands.as_ptr(), (Arc::clone(operands), resolved.clone()));
+                    .insert(operands.as_ptr(), (Rc::clone(operands), resolved.clone()));
                 Some(resolved)
             }
             Type::TypeVar { id } => {

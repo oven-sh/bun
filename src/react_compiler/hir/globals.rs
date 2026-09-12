@@ -186,6 +186,14 @@ struct BaseRegistries {
     globals: Box<[Global]>,
 }
 
+// SAFETY: `Type` is `!Send + !Sync` only because `Type::Phi` holds an `Rc`.
+// A `Phi` is built by InferTypes for one function and never enters the base
+// registries, which hold `Primitive`, `Poly`, `Object` and `Function` types
+// and are read-only after `BASE` is initialized.
+unsafe impl Send for BaseRegistries {}
+// SAFETY: see `Send` above.
+unsafe impl Sync for BaseRegistries {}
+
 static BASE: LazyLock<BaseRegistries> = LazyLock::new(|| {
     let mut shapes = build_builtin_shapes();
     let mut globals_map = build_default_globals(&mut shapes).into_inner();

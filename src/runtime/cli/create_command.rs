@@ -20,7 +20,7 @@ use bun_sys::FdDirExt as _;
 use bun_sys::copy_file as CopyFile;
 use bun_threading::Futex;
 use bun_url::URL;
-use bun_which::which;
+use bun_which::{which, which_for_spawn};
 use bun_zlib as Zlib;
 
 use crate::Command;
@@ -59,38 +59,25 @@ const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b"
 
 const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
 
-fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
+/// A task command containing one of these is a path, spawned as written.
+const TASK_PATH_SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
+fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMClient>) {
     let task = strings::trim(task_, b" \n\r\t");
     if task.is_empty() {
         return;
     }
 
-    let mut count: usize = 0;
-    for _ in strings::split(task, b" ") {
-        count += 1;
-    }
+    let is_bun_task = strings::starts_with(task, b"bun ");
 
-    let npm_args = 2 * usize::from(npm_client.is_some());
-    let total = count + npm_args;
-    // `set_len` + index-write into uninitialized `&[u8]` slots is UB (invalid
-    // references exist before assignment). Build with `push` instead — same
-    // allocation, no unsafe.
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
-
-    if let Some(ref client) = npm_client {
+    let mut argv: Vec<&[u8]> = Vec::new();
+    if let Some(client) = npm_client
+        && !is_bun_task
+    {
         argv.push(client.bin);
         argv.push(NPM_TASK_ARGS[0]);
     }
-
-    for split in strings::split(task, b" ") {
-        argv.push(split);
-    }
-    debug_assert_eq!(argv.len(), total);
-
-    let mut argv: &[&[u8]] = &argv;
-    if npm_client.is_some() && strings::starts_with(task, b"bun ") {
-        argv = &argv[2..];
-    }
+    argv.extend(strings::split(task, b" "));
 
     pretty!("\n<r><d>$<b>");
     for (i, arg) in argv.iter().enumerate() {
@@ -106,8 +93,49 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 
     let _unbuffered = Output::disable_buffering_scope();
 
-    let _ = spawn_sync::spawn(&spawn_sync::Options {
+    // The spawn itself does no $PATH search.
+    let mut exec_path_buf = bun_paths::path_buffer_pool::get();
+    let exec_path: Option<&bun_core::ZStr> = if is_bun_task {
+        match bun_core::self_exe_path() {
+            Ok(exec_path) => Some(exec_path),
+            Err(err) => return print_task_error(task, err),
+        }
+    } else if npm_client.is_some() || strings::contains_any(argv[0], TASK_PATH_SEPARATORS) {
+        None
+    } else {
+        match which_for_spawn(&mut *exec_path_buf, path_env, cwd, argv[0]) {
+            Some(exec_path) => Some(exec_path),
+            None => {
+                return print_task_error(
+                    task,
+                    format_args!(
+                        "executable not found in $PATH: {}",
+                        bun_core::fmt::quote(argv[0])
+                    ),
+                );
+            }
+        }
+    };
+
+    let program: &[u8] = exec_path.map_or(argv[0], bun_core::ZStr::as_bytes);
+    if cfg!(windows)
+        && bun_which::is_batch_file(program)
+        && let Some(arg) = argv
+            .iter()
+            .find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+    {
+        return print_task_error(
+            task,
+            format_args!(
+                "argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                bun_core::fmt::quote(arg)
+            ),
+        );
+    }
+
+    let result = spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+        argv0: exec_path.map(bun_core::ZStr::as_ptr),
         envp: None,
         cwd: Box::from(cwd),
         stderr: spawn_sync::SyncStdio::Inherit,
@@ -126,6 +154,20 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         windows: (),
         ..Default::default()
     });
+
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => print_task_error(task, err),
+        Err(err) => print_task_error(task, err),
+    }
+}
+
+fn print_task_error(task: &[u8], reason: impl core::fmt::Display) {
+    pretty_errorln!(
+        "<r><red>error<r><d>:<r> Failed to run <b>{}<r>: {}",
+        bun_core::fmt::quote(task),
+        reason,
+    );
 }
 
 // We don't want to allocate memory each time

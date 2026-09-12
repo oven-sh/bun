@@ -163,3 +163,85 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
 });
+
+// https://github.com/oven-sh/bun/issues/40772
+it("fd_write advances the file offset", () => {
+  using dir = tempDir("wasi-fd-write-offset", {
+    "file.txt": "abc",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_WHENCE_CUR = 1;
+  const rights = BigInt(2) | BigInt(4) | BigInt(32) | BigInt(64); // read|seek|tell|write
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const dataPtr = 2048;
+  const iovPtr = 4096;
+  const fdPtr = 8192;
+  const resPtr = 8200;
+
+  const len = memory.write("file.txt", pathPtr);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), 0, fdPtr)).toBe(WASI_ESUCCESS);
+  const fd = view.getUint32(fdPtr, true);
+
+  // write "XY" at offset 0
+  memory.write("XY", dataPtr);
+  view.setUint32(iovPtr, dataPtr, true);
+  view.setUint32(iovPtr + 4, 2, true);
+  expect(wasi.wasiImport.fd_write(fd, iovPtr, 1, resPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getUint32(resPtr, true)).toBe(2);
+
+  // the offset must now be 2
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(0), WASI_WHENCE_CUR, resPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getBigUint64(resPtr, true)).toBe(BigInt(2));
+
+  // a second write continues at offset 2, not at 0
+  memory.write("Z", dataPtr);
+  view.setUint32(iovPtr + 4, 1, true);
+  expect(wasi.wasiImport.fd_write(fd, iovPtr, 1, resPtr)).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(0), WASI_WHENCE_CUR, resPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getBigUint64(resPtr, true)).toBe(BigInt(3));
+  expect(fs.readFileSync(path.join(String(dir), "file.txt"), "utf8")).toBe("XYZ");
+});
+
+it("fd_write on an append fd leaves the offset at EOF", () => {
+  using dir = tempDir("wasi-fd-write-append", {
+    "file.txt": "abc",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_WHENCE_CUR = 1;
+  const WASI_FDFLAG_APPEND = 1;
+  const rights = BigInt(2) | BigInt(4) | BigInt(32) | BigInt(64); // read|seek|tell|write
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const dataPtr = 2048;
+  const iovPtr = 4096;
+  const fdPtr = 8192;
+  const resPtr = 8200;
+
+  const len = memory.write("file.txt", pathPtr);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), WASI_FDFLAG_APPEND, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
+  const fd = view.getUint32(fdPtr, true);
+
+  memory.write("de", dataPtr);
+  view.setUint32(iovPtr, dataPtr, true);
+  view.setUint32(iovPtr + 4, 2, true);
+  expect(wasi.wasiImport.fd_write(fd, iovPtr, 1, resPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getUint32(resPtr, true)).toBe(2);
+
+  // the write appended and the offset is at EOF
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(0), WASI_WHENCE_CUR, resPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getBigUint64(resPtr, true)).toBe(BigInt(5));
+  expect(fs.readFileSync(path.join(String(dir), "file.txt"), "utf8")).toBe("abcde");
+});

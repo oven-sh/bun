@@ -896,6 +896,8 @@ Bun.wrapAnsi("\u001b[31mThe quick brown fox jumps over the lazy dog\u001b[0m", 2
 // => "\u001b[31mThe quick brown fox\u001b[39m\n\u001b[31mjumps over the lazy\u001b[39m\n\u001b[31mdog\u001b[0m"
 ```
 
+The output can be longer than the input, because every row re-opens an open style or OSC 8 hyperlink. If the output passes the maximum string length (2^31 - 1 characters), `Bun.wrapAnsi()` throws an `Error` with the code `ERR_STRING_TOO_LONG`.
+
 ### Options
 
 ```ts

@@ -1029,6 +1029,11 @@ declare module "bun" {
    * @param options Wrapping options
    * @returns The wrapped string
    *
+   * @throws An `Error` with the code `ERR_STRING_TOO_LONG` when the wrapped
+   * output passes the maximum string length (2^31 - 1 characters). The output
+   * can be longer than the input, because every row re-opens an open style or
+   * OSC 8 hyperlink.
+   *
    * @example
    * ```ts
    * import { wrapAnsi } from "bun";

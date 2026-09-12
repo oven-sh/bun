@@ -1014,6 +1014,13 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
+    /// The root, a workspace, or a `file:` folder package: a package.json on
+    /// disk rather than content fetched from a registry, git host, or tarball.
+    /// These get `local_package_features`.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
     pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

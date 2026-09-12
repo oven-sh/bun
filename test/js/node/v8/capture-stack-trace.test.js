@@ -535,6 +535,18 @@ test("Error.captureStackTrace cannot write stack through a lock the message gett
   expect(Object.getOwnPropertyNames(frozen)).toEqual(["message"]);
 });
 
+test("Error.captureStackTrace does not run the isExtensible trap of a Proxy", () => {
+  const isExtensible = mock(target => Reflect.isExtensible(target));
+  const proxy = new Proxy({}, { isExtensible });
+  try {
+    // Node throws "invalid_argument" here: V8 does not count a Proxy as a JSObject
+    Error.captureStackTrace(proxy);
+  } catch {}
+  expect(isExtensible).not.toHaveBeenCalled();
+  expect(Object.isExtensible(proxy)).toBe(true);
+  expect(isExtensible).toHaveBeenCalledTimes(1);
+});
+
 test("Error.prepareStackTrace is still handed the default stack of a non-extensible error", () => {
   let seen;
   Error.prepareStackTrace = error => {

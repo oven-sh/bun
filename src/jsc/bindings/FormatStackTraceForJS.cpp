@@ -50,6 +50,9 @@ static bool canPutStackDirect(JSC::VM& vm, JSC::JSObject* object)
 static void throwIfStackIsNotDefinable(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // putDirect() lands on a Proxy's own cell, where nothing observes it, so no trap has to run.
+    if (object->type() == JSC::ProxyObjectType)
+        return;
     bool isExtensible = object->isExtensible(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (!isExtensible)

@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
   bunRun,
+  isDebug,
   isIPv6,
   isLinux,
   isWindows,
@@ -11,7 +12,22 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
-import net from "node:net";
+
+// Every test forks cluster workers, and a debug build spends about a second per process evaluating
+// node:cluster, node:net and node:tls. The tests run concurrently, so under `bun bd test` each one
+// also shares the CPU with the others in flight and the 5s default is not enough. The release and
+// ASAN binaries CI runs are not debug builds, so the --timeout the runner passes still applies there.
+if (isDebug) setDefaultTimeout(60_000);
+
+// On Windows a busy machine can make the primary drop a worker's ack for a handed-off connection (#37815),
+// and every later IPC message to that worker waits behind it. Tests whose completion depends on IPC after
+// a round-robin handoff run one at a time there until that fix lands.
+const concurrentAfterHandoff = !isWindows;
+
+// The message a worker's server 'error' carries when a TLS and a plain server ask for one address:port.
+const sharedOnlyEinvalMessage =
+  "bind EINVAL\n  note: TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
+  "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -43,7 +59,7 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn("W ArrayBuffer(7) [ 21, 11, 96, 126, 243, 128, 164 ]");
 });
 
 test.concurrent("cloneable and non-transferable not-equals (BunFile)", async () => {
@@ -88,7 +104,17 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
+  const result = await bunRun(joinP(dir, "index.ts"), bunEnv);
+  expect(result).toSpawn();
+  expect(result.stdout.split("\n")).toEqual([
+    expect.stringMatching(/^P O FileRef \(".*index\.ts"\) \{$/),
+    '  type: "text/javascript;charset=utf-8"',
+    "}",
+    "W {",
+    "  file: {},",
+    "}",
+    "P M {}",
+  ]);
 });
 
 test.concurrent("cloneable and non-transferable not-equals (net.BlockList)", async () => {
@@ -131,7 +157,21 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn(
+    [
+      "P O BlockList {",
+      "  addAddress: [Function: addAddress],",
+      "  addRange: [Function: addRange],",
+      "  addSubnet: [Function: addSubnet],",
+      "  check: [Function: check],",
+      "  rules: [],",
+      "}",
+      "W {",
+      "  blocklist: {},",
+      "}",
+      "P M {}",
+    ].join("\n"),
+  );
 });
 
 test.concurrent("non-cluster parent ignores cluster-internal IPC messages from a forked child", async () => {
@@ -169,12 +209,12 @@ require("node:cluster");
 process.send("regular message");
 `,
   });
-  const { stdout, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
-  expect(stdout).toContain("P received regular message");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
+  expect({ stdout, stderr }).toEqual({ stdout: "P received regular message", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
-test("TLS worker listening on a key already owned by a round-robin handle fails with EINVAL", async () => {
+test.concurrent("TLS worker listening on a key already owned by a round-robin handle fails with EINVAL", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -186,7 +226,7 @@ if (cluster.isPrimary) {
   cluster.once("listening", () => {
     const tlsWorker = cluster.fork({ ROLE: "tls" });
     tlsWorker.on("message", msg => {
-      console.log("tls listen error code:", msg.code, msg.msg);
+      console.log(JSON.stringify(msg));
       netWorker.kill();
       tlsWorker.kill();
       process.exit(0);
@@ -196,35 +236,32 @@ if (cluster.isPrimary) {
   net.createServer(() => {}).listen(0);
 } else {
   const server = tls.createServer({});
-  server.on("error", err => process.send({ code: err.code, msg: err.message }));
+  server.on("error", err => process.send({ code: err.code, syscall: err.syscall, message: err.message }));
   server.listen(0);
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("tls listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+    out: { code: "EINVAL", syscall: "bind", message: sharedOnlyEinvalMessage },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
-test("cluster pipe listen error carries no port suffix", async () => {
+test.concurrent("cluster pipe listen error carries no port suffix", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
-const path = require("node:path");
 
+const PIPE = process.env.BUN_CLUSTER_PIPE;
 if (cluster.isPrimary) {
-  const PIPE =
-    process.platform === "win32"
-      ? String.raw\`\\\\.\\pipe\\bun-cluster-pipe-err-\${process.pid}\`
-      : path.join(__dirname, "test.sock");
   const blocker = net.createServer(() => {});
   blocker.listen(PIPE, () => {
-    const worker = cluster.fork({ BUN_CLUSTER_PIPE: PIPE });
+    const worker = cluster.fork();
     worker.on("message", msg => {
-      console.log("code:", msg.code);
-      console.log("message:", msg.message);
-      console.log("port:", msg.port);
+      console.log(JSON.stringify(msg));
       worker.kill();
       blocker.close();
       process.exit(0);
@@ -232,20 +269,27 @@ if (cluster.isPrimary) {
   });
 } else {
   const server = net.createServer(() => {});
-  server.on("error", err => process.send({ code: err.code, message: err.message, port: err.port }));
-  server.listen(process.env.BUN_CLUSTER_PIPE);
+  server.on("error", err =>
+    process.send({ code: err.code, syscall: err.syscall, message: err.message, address: err.address, port: err.port }),
+  );
+  server.listen(PIPE);
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("code: EADDRINUSE");
-  expect(stdout).not.toContain(":-1");
-  expect(stdout).toContain("port: -1");
+  const PIPE = isWindows ? `\\\\.\\pipe\\bun-cluster-pipe-err-${process.pid}` : joinP(dir, "test.sock");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), { ...bunEnv, BUN_CLUSTER_PIPE: PIPE });
+  expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+    out: { code: "EADDRINUSE", syscall: "bind", message: `bind EADDRINUSE ${PIPE}`, address: PIPE, port: -1 },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("SCHED_NONE pipe listen unlinks the socket file when the last worker leaves", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.concurrent.skipIf(isWindows)(
+  "SCHED_NONE pipe listen unlinks the socket file when the last worker leaves",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -260,7 +304,8 @@ if (cluster.isPrimary) {
     console.log("exists while listening:", fs.existsSync(SOCK));
     worker.disconnect();
   });
-  cluster.on("exit", () => {
+  cluster.on("exit", (w, code, signal) => {
+    console.log("worker exit:", code, signal);
     console.log("exists after exit:", fs.existsSync(SOCK));
     process.exit(0);
   });
@@ -268,15 +313,21 @@ if (cluster.isPrimary) {
   net.createServer(() => {}).listen(process.env.BUN_CLUSTER_SOCK);
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("exists while listening: true");
-  expect(stdout).toContain("exists after exit: false");
-});
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "exists while listening: true\nworker exit: 0 null\nexists after exit: false",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.concurrent.skipIf(isWindows)(
+  "round-robin pipe listen applies readableAll/writableAll to the socket file",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -299,15 +350,18 @@ if (cluster.isPrimary) {
   net.createServer(() => {}).listen({ path: process.env.BUN_CLUSTER_SOCK, readableAll: true, writableAll: true });
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("perm bits: 66");
-  expect(stdout).toContain("worker exit: 0");
-});
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ stdout, stderr }).toEqual({ stdout: "perm bits: 66\nworker exit: 0 null", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(isWindows)("round-robin accepted sockets honor allowHalfOpen after the client's FIN", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.concurrent.skipIf(isWindows)(
+  "round-robin accepted sockets honor allowHalfOpen after the client's FIN",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 
@@ -337,18 +391,22 @@ if (cluster.isPrimary) {
       let buf = "";
       socket.on("data", d => (buf += d));
       socket.on("end", () => {
-        setTimeout(() => socket.end("pong:" + buf), 50);
+        // Without allowHalfOpen the Duplex ends its writable side on the next tick after 'end', so a
+        // reply written after that tick only reaches the client if the option was honored.
+        setImmediate(() => socket.end("pong:" + buf));
       });
     })
     .listen(0, "127.0.0.1");
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("client got: pong:ping");
-});
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ stdout, stderr }).toEqual({ stdout: "client got: pong:ping", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("round-robin accepted sockets honor the server's highWaterMark", async () => {
+test.concurrent("round-robin accepted sockets honor the server's highWaterMark", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -375,11 +433,12 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("accepted hwm: 1234");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ stdout, stderr }).toEqual({ stdout: "accepted hwm: 1234", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isIPv6())("SCHED_NONE listen with no host binds the IPv6 wildcard (dual-stack)", async () => {
+test.concurrent.skipIf(!isIPv6())("SCHED_NONE listen with no host binds the IPv6 wildcard (dual-stack)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -408,11 +467,12 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("ipv6 connect ok");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ stdout, stderr }).toEqual({ stdout: "ipv6 connect ok", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
-test("SCHED_NONE: a second worker listens on the same shared handle", async () => {
+test.concurrent("SCHED_NONE: a second worker listens on the same shared handle", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -446,14 +506,19 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("policy is SCHED_NONE: true");
-  expect(stdout).toContain("listening workers: 2 distinct ports: 1");
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ stdout, stderr }).toEqual({
+    stdout: "policy is SCHED_NONE: true\nlistening workers: 2 distinct ports: 1",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
-test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
-  using dir = tempDir("cluster-shared-relisten", {
-    "main.ts": `
+test.concurrent(
+  "SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port",
+  async () => {
+    using dir = tempDir("cluster-shared-relisten", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
@@ -461,7 +526,7 @@ if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => {
     if (m.port) { const c = net.connect(m.port, "127.0.0.1"); c.on("error", () => {}); return; }
-    console.log(JSON.stringify(m));
+    worker.on("exit", (code, signal) => console.log(JSON.stringify({ ...m, exit: [code, signal] })));
     worker.disconnect();
   });
 } else {
@@ -477,25 +542,28 @@ if (cluster.isPrimary) {
   first.listen(0, "127.0.0.1", () => process.send({ port: first.address().port }));
 }
 `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { relisten: "ok", samePort: true },
-    stderr: expect.any(String),
-  });
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { relisten: "ok", samePort: true, exit: [0, null] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(isWindows)("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
-  using dir = tempDir("cluster-shared-unix-address", {
-    "main.ts": `
+test.concurrent.skipIf(isWindows)(
+  "SCHED_NONE: a worker listening on a unix path reports it from address()",
+  async () => {
+    using dir = tempDir("cluster-shared-unix-address", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const path = require("node:path");
@@ -503,27 +571,33 @@ cluster.schedulingPolicy = cluster.SCHED_NONE;
 const SOCK = path.join(__dirname, "srv.sock");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });
+  worker.on("message", m => {
+    worker.on("exit", (code, signal) => console.log(JSON.stringify({ ...m, exit: [code, signal] })));
+    worker.disconnect();
+  });
 } else {
   const server = net.createServer();
-  server.listen(SOCK, () => { const address = server.address(); server.close(() => process.send({ address, expected: SOCK })); });
+  server.listen(SOCK, () => { const address = server.address(); server.close(() => process.send({ address })); });
 }
 `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout.trim());
-  expect({ address: out.address, stderr }).toEqual({ address: out.expected, stderr: expect.any(String) });
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { address: joinP(String(dir), "srv.sock"), exit: [0, null] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(!isLinux)("SCHED_NONE: an abstract-namespace listen is reachable by clients", async () => {
+test.concurrent.skipIf(!isLinux)("SCHED_NONE: an abstract-namespace listen is reachable by clients", async () => {
   using dir = tempDir("cluster-shared-abstract", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -533,11 +607,13 @@ const NAME = "\\0bun-cluster-abstract-" + (process.env.ABSTRACT_ID || process.pi
 if (cluster.isPrimary) {
   const worker = cluster.fork({ ABSTRACT_ID: String(process.pid) });
   worker.on("message", () => {
-    const finish = result => { console.log(JSON.stringify(result)); worker.send("close"); };
+    const finish = result => {
+      worker.on("exit", (code, signal) => console.log(JSON.stringify({ ...result, exit: [code, signal] })));
+      worker.send("close");
+    };
     const c = net.connect(NAME, () => { c.destroy(); finish({ connect: "ok" }); });
     c.on("error", err => finish({ connect: err.code }));
   });
-  worker.on("exit", code => process.exitCode = code);
 } else {
   const server = net.createServer(s => s.end());
   process.on("message", () => server.close(() => process.disconnect()));
@@ -553,11 +629,14 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({ out: { connect: "ok" }, stderr: expect.any(String) });
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+    out: { connect: "ok", exit: [0, null] },
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 
-test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
+test.concurrent("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own
   // tests mock workers) hands `undefined` to the native `sendHelper` binding.
@@ -589,8 +668,13 @@ const targets = JSON.parse(process.env.TARGETS);
 
 if (cluster.isPrimary) {
   const payloads = [];
+  // What each server's own address() said once its listen() callback ran, in target order.
+  const bound = [];
   const { promise, resolve, reject } = Promise.withResolvers();
   const worker = cluster.fork();
+  const done = () => {
+    if (payloads.length === targets.length && bound.length === targets.length) resolve();
+  };
 
   cluster.on("listening", (listeningWorker, address) => {
     if (listeningWorker !== worker) {
@@ -598,7 +682,11 @@ if (cluster.isPrimary) {
       return;
     }
     payloads.push({ address: address.address, addressType: address.addressType, port: address.port });
-    if (payloads.length === targets.length) resolve();
+    done();
+  });
+  worker.on("message", message => {
+    bound.push(message);
+    done();
   });
   worker.on("error", reject);
   worker.on("exit", (code, signal) => {
@@ -607,7 +695,7 @@ if (cluster.isPrimary) {
 
   promise.then(
     () => {
-      console.log(JSON.stringify(payloads));
+      console.log(JSON.stringify({ payloads, bound }));
       worker.kill();
       process.exit(0);
     },
@@ -628,6 +716,7 @@ if (cluster.isPrimary) {
         else if (target.host === null) server.listen(0, resolve);
         else server.listen(0, target.host, resolve);
       });
+      process.send(server.address());
     }
   })().catch(error => {
     console.error(error);
@@ -636,29 +725,31 @@ if (cluster.isPrimary) {
 }
 `;
 
-test.each(["net", "http"])("cluster 'listening' reports the address a %s server bound", async moduleName => {
+test.concurrent.each(["net", "http"])("cluster 'listening' reports the address a %s server bound", async moduleName => {
   const dir = tempDirWithFiles("cluster-listening", { "fixture.js": listeningPayloadFixture });
   const targets: ({ host: string | null } | { path: string })[] = [{ host: "127.0.0.1" }, { host: null }];
   if (isIPv6()) targets.push({ host: "::1" });
   if (!isWindows) targets.push({ path: joinP(dir, `${moduleName}.sock`) });
 
-  const { stdout } = await bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName, TARGETS: JSON.stringify(targets) });
-  const payloads = JSON.parse(stdout);
-
-  expect(payloads).toEqual(
-    targets.map(target =>
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "fixture.js"), {
+    MODULE: moduleName,
+    TARGETS: JSON.stringify(targets),
+  });
+  const report = JSON.parse(stdout || "null");
+  // Each 'listening' payload must name the port the worker's server really bound, not just some port.
+  const boundPort = (i: number) => report?.bound?.[i]?.port;
+  expect({ payloads: report?.payloads, stderr }).toEqual({
+    payloads: targets.map((target, i) =>
       "path" in target
         ? { address: target.path, addressType: -1, port: -1 }
-        : {
-            address: target.host,
-            addressType: target.host?.includes(":") ? 6 : 4,
-            port: expect.any(Number),
-          },
+        : { address: target.host, addressType: target.host?.includes(":") ? 6 : 4, port: boundPort(i) },
     ),
-  );
+    stderr: "",
+  });
   for (const [i, target] of targets.entries()) {
-    if (!("path" in target)) expect(payloads[i].port).toBeWithin(1, 65536);
+    if (!("path" in target)) expect(boundPort(i)).toBeWithin(1, 65536);
   }
+  expect(exitCode).toBe(0);
 });
 
 // Node registers the listen() callback before the worker's own 'listening' listener that notifies
@@ -694,7 +785,7 @@ if (cluster.isPrimary) {
 }
 `;
 
-test.each(["net", "http"])(
+test.concurrent.each(["net", "http"])(
   "a %s server's listen() callback runs before the worker reports 'listening'",
   async moduleName => {
     const dir = tempDirWithFiles("cluster-listen-callback", { "fixture.js": listenCallbackOrderFixture });
@@ -707,9 +798,11 @@ test.each(["net", "http"])(
   },
 );
 
-test("round-robin worker connection socket has connecting=false and remoteAddress synchronously", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.concurrent(
+  "round-robin worker connection socket has connecting=false and remoteAddress synchronously",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 
@@ -729,24 +822,36 @@ if (cluster.isPrimary) {
       process.send({
         connecting: socket.connecting,
         readyState: socket.readyState,
-        remote: typeof socket.remoteAddress,
+        remoteAddress: socket.remoteAddress,
+        remoteFamily: socket.remoteFamily,
+        localAddress: socket.localAddress,
       });
       socket.end();
     })
     .listen(0, "127.0.0.1");
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  const m = JSON.parse(stdout.trim());
-  expect(m.connecting).toBe(false);
-  expect(m.readyState).toBe("open");
-  expect(m.remote).toBe("string");
-});
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: {
+        connecting: false,
+        readyState: "open",
+        remoteAddress: "127.0.0.1",
+        remoteFamily: "IPv4",
+        localAddress: "127.0.0.1",
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("round-robin: primary never consumes accepted-socket bytes before handoff", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.concurrentIf(concurrentAfterHandoff)(
+  "round-robin: primary never consumes accepted-socket bytes before handoff",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 
@@ -780,16 +885,20 @@ if (cluster.isPrimary) {
     .listen(0, "127.0.0.1");
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  const lines = stdout.trim().split("\n").sort();
-  expect(lines.length).toBe(20);
-  for (const line of lines) {
-    expect(line).toMatch(/^MAGIC-\d+-x+ 41\d\d$/);
-  }
-});
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    // The worker reports the first 20 bytes and the length of each connection's payload, in the
+    // order the connections finished. Every byte the client wrote must have reached the worker.
+    const expected = Array.from({ length: 20 }, (_, i) => {
+      const payload = "MAGIC-" + i + "-" + Buffer.alloc(4096, "x").toString();
+      return payload.slice(0, 20) + " " + payload.length;
+    });
+    expect({ lines: stdout.split("\n").sort(), stderr }).toEqual({ lines: expected.sort(), stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("TLS cluster worker under SCHED_RR listens on a shared handle and completes handshakes", async () => {
+test.concurrent("TLS cluster worker under SCHED_RR listens on a shared handle and completes handshakes", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,
     "key.pem": tlsCerts.key,
@@ -848,16 +957,18 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("distinct ports: 1");
-  expect(stdout).toContain("reply: echo:hi");
-}, 30_000);
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect({ stdout, stderr }).toEqual({ stdout: "distinct ports: 1\nreply: echo:hi", stderr: "" });
+  expect(exitCode).toBe(0);
+});
 
-test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "cert.pem": tlsCerts.cert,
-    "key.pem": tlsCerts.key,
-    "main.ts": `
+test.concurrent(
+  "plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "cert.pem": tlsCerts.cert,
+      "key.pem": tlsCerts.key,
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -871,7 +982,7 @@ if (cluster.isPrimary) {
   cluster.once("listening", () => {
     const netWorker = cluster.fork({ ROLE: "net" });
     netWorker.on("message", msg => {
-      console.log("net listen error code:", msg.code, msg.msg);
+      console.log(JSON.stringify(msg));
       tlsWorker.kill();
       netWorker.kill();
       process.exit(0);
@@ -881,17 +992,21 @@ if (cluster.isPrimary) {
   tls.createServer({ key, cert }, () => {}).listen(0);
 } else {
   const server = net.createServer(() => {});
-  server.on("error", err => process.send({ code: err.code, msg: err.message }));
+  server.on("error", err => process.send({ code: err.code, syscall: err.syscall, message: err.message }));
   server.listen(0);
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("net listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
-}, 30_000);
+    });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: { code: "EINVAL", syscall: "bind", message: sharedOnlyEinvalMessage },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(isWindows)(
+test.concurrent.skipIf(isWindows)(
   "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",
   async () => {
     const dir = tempDirWithFiles("bun-test", {
@@ -905,10 +1020,11 @@ cluster.schedulingPolicy = cluster.SCHED_NONE;
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => {
-    console.log("worker error code:", m.code);
+    console.log(JSON.stringify(m));
     worker.disconnect();
   });
-  cluster.on("exit", () => {
+  cluster.on("exit", (w, code, signal) => {
+    console.log("worker exit:", code, signal);
     try {
       fs.fstatSync(2);
       console.log("stderr open: true");
@@ -920,19 +1036,26 @@ if (cluster.isPrimary) {
 } else {
   const server = net.createServer(() => {});
   server.on("error", err => {
-    process.send({ code: err.code });
+    process.send({ code: err.code, syscall: err.syscall, message: err.message });
   });
   server.listen({ fd: 2 });
 }
 `,
     });
-    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-    expect(stdout).toContain("worker error code: EINVAL");
-    expect(stdout).toContain("stderr open: true");
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        JSON.stringify({ code: "EINVAL", syscall: "bind", message: "bind EINVAL" }),
+        "worker exit: 0 null",
+        "stderr open: true",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   },
 );
 
-test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
+test.concurrent.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
   using dir = tempDir("cluster-dgram-adopt-fail", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -982,11 +1105,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)(
-  "round-robin: RST-while-queued handle is dropped, not shipped stale",
-  async () => {
-    using dir = tempDir("cluster-rst-queued", {
-      "main.ts": `
+test.concurrent.skipIf(isWindows)("round-robin: RST-while-queued handle is dropped, not shipped stale", async () => {
+  using dir = tempDir("cluster-rst-queued", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1021,29 +1142,32 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: "" });
+  expect(exitCode).toBe(0);
+});
 
-test("round-robin worker closes a server.blockList peer silently, like node", async () => {
-  using dir = tempDir("cluster-blocklist", {
-    "main.ts": `
+test.concurrentIf(concurrentAfterHandoff)(
+  "round-robin worker closes a server.blockList peer silently, like node",
+  async () => {
+    using dir = tempDir("cluster-blocklist", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });
+  worker.on("message", m => {
+    worker.on("exit", (code, signal) => console.log(JSON.stringify({ ...m, exit: [code, signal] })));
+    worker.disconnect();
+  });
   cluster.on("listening", (_w, addr) => {
     const c = net.connect(addr.port, "127.0.0.1");
     c.on("error", () => {});
@@ -1060,23 +1184,24 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr }).toEqual({
-    stdout: JSON.stringify({ connection: false, drop: false, clientClosed: true }),
-    stderr: expect.any(String),
-  });
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { connection: false, drop: false, clientClosed: true, exit: [0, null] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("round-robin worker honors server.pauseOnConnect and sets socket._server", async () => {
+test.concurrent("round-robin worker honors server.pauseOnConnect and sets socket._server", async () => {
   using dir = tempDir("cluster-pauseonconnect", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1108,16 +1233,18 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
     out: { paused: true, earlyData: false, _server: true },
-    stderr: expect.any(String),
+    stderr: "",
   });
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
-test("round-robin worker adopts a pauseOnConnect connection without reading from it", async () => {
-  using dir = tempDir("cluster-pauseonconnect-bytes", {
-    "main.ts": `
+test.concurrentIf(concurrentAfterHandoff)(
+  "round-robin worker adopts a pauseOnConnect connection without reading from it",
+  async () => {
+    using dir = tempDir("cluster-pauseonconnect-bytes", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1148,25 +1275,28 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { paused: true, bytesRead: 0, earlyData: false, _server: true },
-    stderr: expect.any(String),
-  });
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { paused: true, bytesRead: 0, earlyData: false, _server: true },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("round-robin accepted socket buffers early bytes until a 'data' listener is attached", async () => {
-  using dir = tempDir("cluster-early-bytes", {
-    "main.ts": `
+test.concurrentIf(concurrentAfterHandoff)(
+  "round-robin accepted socket buffers early bytes until a 'data' listener is attached",
+  async () => {
+    using dir = tempDir("cluster-early-bytes", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1174,7 +1304,7 @@ if (cluster.isPrimary) {
   let c;
   worker.on("message", m => {
     if (m === "connected") return c.end("early", () => worker.send("attach"));
-    console.log(JSON.stringify(m));
+    worker.on("exit", (code, signal) => console.log(JSON.stringify({ ...m, exit: [code, signal] })));
     c.destroy();
     worker.disconnect();
   });
@@ -1196,23 +1326,24 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { endedBeforeListener: false, data: "early" },
-    stderr: expect.any(String),
-  });
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { endedBeforeListener: false, data: "early", exit: [0, null] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("worker listen(0, 'localhost') resolves before querying the primary", async () => {
+test.concurrent("worker listen(0, 'localhost') resolves before querying the primary", async () => {
   using dir = tempDir("cluster-dns", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1237,46 +1368,44 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout.trim());
-  expect(net.isIP(out.address)).toBeGreaterThan(0);
-  expect([4, 6]).toContain(out.type);
-  expect(stderr).toEqual(expect.any(String));
+  const out = JSON.parse(stdout.trim() || "null");
+  // The primary sees the resolved loopback address, never the name, and the matching family.
+  expect({ out, stderr }).toEqual({
+    out: out?.address === "::1" ? { address: "::1", type: 6 } : { address: "127.0.0.1", type: 4 },
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
-test.skipIf(isWindows)(
+test.concurrent.skipIf(isWindows)(
   "worker death mid-handoff redistributes the connection to another worker",
   async () => {
     using dir = tempDir("cluster-mid-handoff", {
       "main.ts": `const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
-  // One shared round-robin handle on a pre-picked port. "die" registers first, so the first connection
-  // is handed to it; it exits on that newconn and the primary must hand the unacked connection to "live".
-  const pick = net.createServer();
-  pick.listen(0, "127.0.0.1", () => {
-    const port = pick.address().port;
-    pick.close(() => {
-      const die = cluster.fork({ ROLE: "die", PORT: port });
-      die.once("listening", () => {
-        const live = cluster.fork({ ROLE: "live", PORT: port });
-        let served = false;
-        live.on("message", m => { served = true; console.log(m); live.send("close"); });
-        live.once("listening", () => {
-          const client = net.connect(port, "127.0.0.1", () => client.write("hi"));
-          client.on("error", () => {});
-          client.on("close", () => { if (!served) { console.log("connection dropped"); live.send("close"); } });
-        });
-      });
+  // Each worker's first listen(0, "127.0.0.1") maps to the same key in the primary, so both share one
+  // round-robin handle. "die" registers first, so the first connection is handed to it; it exits on
+  // that newconn and the primary must hand the unacked connection to "live".
+  const die = cluster.fork({ ROLE: "die" });
+  die.once("listening", dieAddress => {
+    const live = cluster.fork({ ROLE: "live" });
+    let served = false;
+    live.on("message", m => { served = true; console.log(m); live.send("close"); });
+    live.once("listening", liveAddress => {
+      console.log("shared port:", liveAddress.port === dieAddress.port);
+      const client = net.connect(dieAddress.port, "127.0.0.1", () => client.write("hi"));
+      client.on("error", () => {});
+      client.on("close", () => { if (!served) { console.log("connection dropped"); live.send("close"); } });
     });
   });
 } else if (process.env.ROLE === "die") {
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
-  net.createServer(() => {}).listen(+process.env.PORT, "127.0.0.1");
+  net.createServer(() => {}).listen(0, "127.0.0.1");
 } else {
   const server = net.createServer(sock => sock.on("data", d => { process.send("live got: " + d); sock.destroy(); }));
   process.on("message", () => server.close(() => process.disconnect()));
-  server.listen(+process.env.PORT, "127.0.0.1");
+  server.listen(0, "127.0.0.1");
 }
 `,
     });
@@ -1288,13 +1417,12 @@ if (cluster.isPrimary) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "shared port: true\nlive got: hi", stderr: "" });
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
-test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
+test.concurrent("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
   using dir = tempDir("cluster-handle-slot", {
     "main.ts": `
@@ -1335,7 +1463,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test("cluster child send() clones and stamps cmd:NODE_CLUSTER", async () => {
+test.concurrent("cluster child send() clones and stamps cmd:NODE_CLUSTER", async () => {
   using dir = tempDir("cluster-send-shape", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1365,9 +1493,9 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
     out: { qCmd: "NODE_CLUSTER", lCmd: "NODE_CLUSTER", qActNow: "queryServer" },
-    stderr: expect.any(String),
+    stderr: "",
   });
   expect(exitCode).toBe(0);
-}, 30_000);
+});

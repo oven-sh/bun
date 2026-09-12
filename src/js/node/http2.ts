@@ -5325,12 +5325,13 @@ class ClientHttp2Session extends Http2Session {
       // node.js emits value, origin, streamId
       self.emit("altsvc", value, origin, streamId);
     },
-    origin(self: ClientHttp2Session, origin: string | Array<string> | undefined) {
+    // The native parser dispatches one origin as a string and several as an array. It never
+    // dispatches an empty frame.
+    origin(self: ClientHttp2Session, origin: string | Array<string>) {
       if (!self) return;
       if (self.encrypted) {
         const originSet = initOriginSet(self);
-        const origins = $isArray(origin) ? origin : origin ? [origin] : [];
-        if (origins.length === 0) return;
+        const origins = $isArray(origin) ? origin : [origin];
         for (let i = 0; i < origins.length; i++) {
           if (originSet.size >= self.#maxOriginSetSize) {
             self.destroy($ERR_HTTP2_TOO_MANY_ORIGINS(self.#maxOriginSetSize));

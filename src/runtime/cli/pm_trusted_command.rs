@@ -249,7 +249,17 @@ impl TrustCommand {
         );
         Output::flush();
 
-        if args.len() == 2 {
+        let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
+        for arg in &args[2..] {
+            if !arg.is_empty() && arg[0] != b'-' {
+                packages_to_trust.push(arg);
+            }
+        }
+        let trust_all = bun_core::argv()
+            .iter()
+            .any(|a| matches!(a, b"-a" | b"--all"));
+
+        if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();
         }
 
@@ -271,19 +281,6 @@ impl TrustCommand {
             for meta in slice.items_meta_mut() {
                 meta.set_has_install_script(false);
             }
-        }
-
-        let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
-        for arg in &args[2..] {
-            if !arg.is_empty() && arg[0] != b'-' {
-                packages_to_trust.push(arg);
-            }
-        }
-        let trust_all =
-            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
-
-        if !trust_all && packages_to_trust.is_empty() {
-            Self::error_expected_args();
         }
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.

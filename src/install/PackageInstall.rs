@@ -7,8 +7,6 @@ use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
 use bun_semver::String as SemverString;
-#[cfg(not(windows))]
-use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
@@ -1072,13 +1070,11 @@ impl<'a> PackageInstall<'a> {
             Ok(())
         }
 
-        let subdir = match destination_dir.make_open_path(
-            self.destination_dir_subpath.as_bytes(),
-            OpenDirOptions::default(),
-        ) {
-            Ok(d) => d,
-            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
-        };
+        let subdir =
+            match destination_dir.make_open_real_path(self.destination_dir_subpath.as_bytes()) {
+                Ok(d) => d,
+                Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
+            };
         if let Err(err) = copy(&subdir, &mut walker_) {
             return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
         }
@@ -1089,22 +1085,35 @@ impl<'a> PackageInstall<'a> {
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
-        if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
-                let slash = slash as usize;
-                self.destination_dir_subpath_buf[slash] = 0;
-                // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir, subdir, 0o755);
-                self.destination_dir_subpath_buf[slash] = SEP;
+        // For `@scope/<pkg>`, open `@scope` as a real directory (replacing a
+        // symlink planted there) and clone relative to that fd with the bare
+        // package name, so no component of the destination is resolved by path.
+        let subpath = self.destination_dir_subpath.as_bytes();
+        let mut scope_dir: Option<Dir> = None;
+        let mut clone_name: &ZStr = self.destination_dir_subpath;
+        if subpath[0] == b'@' {
+            if let Some(slash) = strings::index_of_char_usize(subpath, SEP) {
+                match destination_dir.make_open_real_dir(&subpath[..slash]) {
+                    Ok(dir) => scope_dir = Some(dir),
+                    Err(err) => {
+                        return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None));
+                    }
+                }
+                // SAFETY: `destination_dir_subpath` is NUL-terminated inside
+                // `destination_dir_subpath_buf`, so this suffix of it is too.
+                clone_name = ZStr::from_buf(
+                    &self.destination_dir_subpath_buf[slash + 1..],
+                    subpath.len() - slash - 1,
+                );
             }
         }
+        let clone_dir = scope_dir.as_ref().unwrap_or(destination_dir);
 
         match sys::clonefileat(
             self.cache_dir,
             self.cache_dir_subpath,
-            destination_dir.fd(),
-            self.destination_dir_subpath,
+            clone_dir.fd(),
+            clone_name,
         ) {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
@@ -1189,13 +1198,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(not(windows))]
         {
-            let subdir = match destbase.make_open_path(
-                destpath.as_bytes(),
-                OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            ) {
+            let subdir = match destbase.make_open_real_path(destpath.as_bytes()) {
                 Ok(d) => d,
                 Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
@@ -1240,6 +1243,12 @@ impl<'a> PackageInstall<'a> {
             buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
+            // Replace a symlink at any of `destpath`'s components with a real
+            // directory, so the absolute path above cannot resolve out of the
+            // tree. The copy below goes by that path, so stop if this fails.
+            if let Err(err) = destbase.make_open_real_path(destpath.as_bytes()) {
+                return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None));
+            }
             let _ = mkdir_recursive_os_path(fullpath);
             let to_copy_buf_off = fullpath.len();
 
@@ -1938,12 +1947,35 @@ impl<'a> PackageInstall<'a> {
             ZStr::from_buf(&rand_path_buf, written)
         };
 
-        match sys::renameat(
-            destination_dir.fd(),
-            self.destination_dir_subpath,
-            destination_dir.fd(),
-            temp_path,
-        ) {
+        // `destination_dir_subpath` is `<pkg>` or `@scope/<pkg>` (the alias,
+        // verbatim, so the separator is `/` on Windows too). The installer
+        // creates the `@scope` directory, so open it as a real directory first.
+        // Otherwise a symlink there makes this rename pull a directory out of
+        // the link target, and the task below deletes it.
+        let subpath = self.destination_dir_subpath.as_bytes();
+        let slash = strings::index_of_char_usize(subpath, b'/');
+        let scope_dir = match slash {
+            Some(slash) => match destination_dir.make_open_real_dir(&subpath[..slash]) {
+                Ok(dir) => Some(dir),
+                // Nothing to rename aside when the scope directory is unusable.
+                Err(_) => return,
+            },
+            None => None,
+        };
+        let (from_dir, from_path) = match (&scope_dir, slash) {
+            (Some(dir), Some(slash)) => (
+                dir.fd(),
+                // SAFETY: `destination_dir_subpath` is NUL-terminated inside
+                // `destination_dir_subpath_buf`, so this suffix of it is too.
+                ZStr::from_buf(
+                    &self.destination_dir_subpath_buf[slash + 1..],
+                    subpath.len() - slash - 1,
+                ),
+            ),
+            _ => (destination_dir.fd(), self.destination_dir_subpath),
+        };
+
+        match sys::renameat(from_dir, from_path, destination_dir.fd(), temp_path) {
             Err(_) => {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             }
@@ -2139,6 +2171,12 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written at [i].
                 let fullpath = bun_core::WStr::from_buf(&wbuf[..], i);
 
+                // Replace a symlink at the `@scope` directory with a real one,
+                // so the absolute path above cannot resolve out of the tree.
+                // The link below is made by that path, so stop if this fails.
+                if let Err(err) = destination_dir.make_open_real_path(dir) {
+                    return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                }
                 let _ = mkdir_recursive_os_path(fullpath);
             }
 
@@ -2185,18 +2223,12 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         {
             let owned_dest_dir: Option<Dir> = if let Some(dir) = subdir {
-                Some(
-                    match bun_sys::MakePath::make_open_path(
-                        destination_dir,
-                        dir,
-                        OpenDirOptions::default(),
-                    ) {
-                        Ok(d) => d,
-                        Err(err) => {
-                            return InstallResult::fail(err.into(), Step::LinkingDependency, None);
-                        }
-                    },
-                )
+                Some(match destination_dir.make_open_real_path(dir) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                    }
+                })
             } else {
                 None
             };

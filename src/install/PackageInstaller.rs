@@ -243,36 +243,88 @@ impl NodeModulesFolder {
         }
     }
 
-    fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
-        let out = 'brk: {
-            #[cfg(unix)]
-            {
-                break 'brk root.make_open_path(
-                    self.path.as_slice(),
-                    bun_sys::OpenDirOptions {
-                        iterate: true,
-                        ..Default::default()
-                    },
-                )?;
-            }
+    /// `self.path` below `root`, the project's own `node_modules`. Empty for
+    /// the root tree. `None` when `self.path` is not below `root` at all,
+    /// which only happens if the top level directory changed mid-install.
+    fn path_below_root_node_modules(&self) -> Option<&[u8]> {
+        let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        let prefix_len = top.len() + 1 + b"node_modules".len();
+        let (prefix, rest) = self.path.split_at_checked(prefix_len)?;
+        if prefix[..top.len()] != *top
+            || prefix[top.len()] != SEP
+            || prefix[top.len() + 1..] != *b"node_modules"
+        {
+            return None;
+        }
+        if !rest.is_empty() && rest[0] != SEP {
+            return None;
+        }
+        Some(rest)
+    }
 
-            #[cfg(not(unix))]
-            {
-                break 'brk Dir::from_fd(
-                    bun_sys::open_dir_at_windows_a(
-                        root.fd(),
-                        self.path.as_slice(),
-                        bun_sys::WindowsOpenDirOptions {
-                            can_rename_or_delete: false,
-                            op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
-                            ..Default::default()
-                        },
-                    )
-                    .map_err(|e| e.to_zig_err())?,
-                );
-            }
+    /// Creates and opens this tree's `node_modules`, walking down from `root`
+    /// one component at a time.
+    ///
+    /// Below `root` the path is `(<folder name>/node_modules)+`, where a folder
+    /// name is `<pkg>` or `@scope/<pkg>` (see
+    /// `lockfile::tree::relative_path_and_depth`). Only the `<pkg>` component
+    /// can be a symlink, because the installer makes that entry a symlink
+    /// itself for a workspace member, a `link:` dependency, and a `file:`
+    /// folder dependency. So the one component this follows is the one right
+    /// before a `node_modules`. Every other component is a directory the
+    /// installer creates, and a symlink there is replaced with a real
+    /// directory: it must not redirect the install out of the project.
+    pub(crate) fn make_and_open_dir(&self, root: &Dir) -> crate::Result<Dir> {
+        let Some(below_root) = self.path_below_root_node_modules() else {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
-        Ok(out)
+
+        let mut dir: Option<Dir> = None;
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        let mut components = strings::split_any(below_root, separators)
+            .filter(|component| !component.is_empty())
+            .peekable();
+        while let Some(component) = components.next() {
+            let parent = dir.as_ref().unwrap_or(root);
+            let next = if components.peek() == Some(&(b"node_modules" as &[u8])) {
+                Self::make_and_open_package_dir(parent, component)?
+            } else {
+                parent.make_open_real_dir(component)?
+            };
+            dir = Some(next);
+        }
+
+        match dir {
+            Some(dir) => Ok(dir),
+            // The root tree: `root` already is this tree's `node_modules`.
+            None => Ok(root.open_real_dir(b".")?),
+        }
+    }
+
+    fn make_and_open_package_dir(parent: &Dir, name: &[u8]) -> bun_sys::Result<Dir> {
+        #[cfg(unix)]
+        {
+            parent.make_open_path(
+                name,
+                bun_sys::OpenDirOptions {
+                    iterate: true,
+                    ..Default::default()
+                },
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            bun_sys::open_dir_at_windows_a(
+                parent.fd(),
+                name,
+                bun_sys::WindowsOpenDirOptions {
+                    can_rename_or_delete: false,
+                    op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
+                    ..Default::default()
+                },
+            )
+            .map(Dir::from_fd)
+        }
     }
 }
 
@@ -535,6 +587,33 @@ impl<'a> PackageInstaller<'a> {
         link_rel_buf: &mut [u8],
         log_level: Options::LogLevel,
     ) {
+        // `.bin` is the installer's directory. Open this tree's `node_modules`
+        // and the `.bin` below it without following symlinks before
+        // `bin::Linker` runs: it reaches `.bin` through this `node_modules`
+        // path, and writes Windows shims by absolute path, so a symlink
+        // planted at either one would redirect the links out of the project.
+        // No real `.bin`, no linking.
+        if let Err(err) = self
+            .node_modules
+            .make_and_open_dir(&self.root_node_modules_folder)
+            .and_then(|tree_node_modules| Ok(tree_node_modules.make_open_real_dir(b".bin")?))
+        {
+            if log_level != Options::LogLevel::Silent {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: could not create <b>{}{}.bin<r> to link binaries: {}",
+                    bstr::BStr::new(self.node_modules.path.as_slice()),
+                    SEP as char,
+                    err,
+                );
+            }
+            let tree = &mut self.trees[tree_id as usize];
+            while tree.binaries.remove_or_null().is_some() {}
+            if self.manager().options.enable.fail_early() {
+                Global::crash();
+            }
+            return;
+        }
+
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -685,6 +764,7 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    bin_dir: None,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };

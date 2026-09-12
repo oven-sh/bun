@@ -90,9 +90,10 @@ impl FuzzilliCommand {
 
             // A fuzz program can call `require("a")`. With no node_modules above the wrapper, that
             // auto-installs. The fuzzer must still reach that code, but it must not download or
-            // run packages. So the defaults are a registry that nothing listens on and a cache
-            // that starts empty. Child processes inherit both. A campaign that has a fixture
-            // registry sets BUN_CONFIG_REGISTRY itself.
+            // run packages. So the defaults are a registry that nothing listens on and a scratch
+            // cache in place of the user's. Child processes inherit both. A campaign that has a
+            // fixture registry sets BUN_CONFIG_REGISTRY itself. The cache path is fixed because
+            // Fuzzilli respawns this process constantly, and a killed one cannot clean up.
             // SAFETY: main thread during startup, before any concurrent reader of the environment
             // exists. setenv copies the NUL-terminated strings.
             unsafe {

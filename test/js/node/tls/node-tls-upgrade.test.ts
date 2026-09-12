@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs, nodeExe } from "harness";
 import net from "net";
+import { join } from "path";
 import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
@@ -147,4 +148,84 @@ test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrap
   } finally {
     server.close();
   }
+});
+
+// TLSWrap owns the reads of the handle it wraps, so the EOF or the read error of a connection that closes is the TLS
+// socket's to report: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
+// The wrapped socket only closes, from TLSWrap.close(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
+// Each log is the ordered events of both sockets. The fixture runs on both runtimes so the logs are pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("the close of a connection under a TLS socket and the net.Socket it wraps (%s)", (_runtime, exe) => {
+  async function run(...cell: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, "tls-wrapped-socket-close-fixture.mjs"), ...cell],
+      env: { ...bunEnv, TLS_KEY: certs.key, TLS_CERT: certs.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const events = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return events;
+  }
+
+  // The TLS socket has sent its FIN, so the peer's FIN closes the connection with no TLS-level EOF ahead of it.
+  const eof = ["tls finish", "tls end", "raw close hadError=false", "tls close hadError=false"];
+  const reset = ["tls error ECONNRESET", "raw close hadError=false", "tls close hadError=true"];
+
+  test.concurrent.skipIf(!exe).each([
+    ["tls", "process.nextTick"],
+    ["tls", "setImmediate"],
+    ["net", "process.nextTick"],
+    ["net", "setImmediate"],
+  ])(
+    "new TLSSocket(socket, { isServer }) end()s before the handshake completes, %s peer, from %s",
+    async (peer, when) => {
+      expect(await run("end-before-handshake", peer, when)).toEqual(eof);
+    },
+  );
+
+  test.concurrent.skipIf(!exe)(
+    "new TLSSocket(socket, { isServer }) end()s, the peer answers 'end' with destroy()",
+    async () => {
+      expect(await run("end-after-handshake")).toEqual(eof);
+    },
+  );
+
+  test.concurrent.skipIf(!exe)("tls.connect({ socket }) end()s, the peer answers 'end' with destroy()", async () => {
+    expect(await run("client-end-after-handshake")).toEqual(eof);
+  });
+
+  test.concurrent.skipIf(!exe)("data that nothing read before the connection closed is still delivered", async () => {
+    expect(await run("unread-data")).toEqual([
+      "tls finish",
+      "connection closed, unread=4",
+      "tls data late",
+      "tls end",
+      "raw close hadError=false",
+      "tls close hadError=false",
+    ]);
+  });
+
+  test.concurrent.skipIf(!exe).each([
+    ["new TLSSocket(socket, { isServer }), before the handshake completes", "reset-before-handshake"],
+    ["new TLSSocket(socket, { isServer }), after the handshake", "reset-after-handshake"],
+    ["tls.connect({ socket }), after the handshake", "client-reset-after-handshake"],
+  ])("a peer reset is an 'error' on the TLS socket only: %s", async (_, cell) => {
+    expect(await run(cell)).toEqual(reset);
+  });
+
+  test.concurrent.skipIf(!exe)(
+    "a peer reset of a socket injected into a tls.Server is a 'tlsClientError'",
+    async () => {
+      expect(await run("tls-server-reset-before-handshake")).toEqual([
+        "tlsClientError ECONNRESET",
+        "raw close hadError=false",
+        "tls close hadError=true",
+      ]);
+    },
+  );
 });

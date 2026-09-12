@@ -186,6 +186,11 @@ pub(crate) struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// Decoded trailing inline `//# sourceMappingURL=data:...` map; `None`
+    /// when absent, disabled, or malformed. Moved into
+    /// `graph.input_files.input_source_map` by `on_parse_task_complete`.
+    pub(crate) input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 
 pub(crate) struct ResultError {
@@ -2663,6 +2668,11 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
+        // Copy these out before the tombstone: get_ast reborrows
+        // `(*transpiler).options` mutably, invalidating `topts` under
+        // Stacked Borrows.
+        let source_map_option = topts.source_map;
+        let has_dev_server = topts.has_dev_server();
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
@@ -2724,6 +2734,20 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
+        // Scan for an inline `//# sourceMappingURL=data:...` map to chain
+        // into the output sourcemap. Runs on `source.contents` regardless
+        // of origin (file read or plugin `onLoad`, covering #6173). Skipped
+        // under DevServer: its stitcher never consumes the result.
+        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if !has_dev_server
+            && source_map_option != options::SourceMapOption::None
+            && loader.can_have_source_map()
+            && !source.contents.is_empty()
+        {
+            bun_sourcemap::InputSourceMap::parse_from_source(&source.contents)
+        } else {
+            None
+        };
+
         Ok(Success {
             ast,
             source: source.clone(),
@@ -2736,6 +2760,8 @@ pub mod parse_worker {
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
+
+            input_source_map,
         })
     }
 

@@ -2663,7 +2663,15 @@ it("onread: read() then pause() inside the callback stops the delivery", async (
         },
       },
     });
-    client.on("error", done.reject);
+    client.on("error", e => {
+      firstDelivery.reject(e);
+      done.reject(e);
+    });
+    client.on("close", () => {
+      const e = new Error(`closed before all data was delivered: ${received.join("|")}`);
+      firstDelivery.reject(e);
+      done.reject(e);
+    });
     await firstDelivery.promise;
     await new Promise<void>(resolve => serverSockets[0].end("wxyz", () => resolve()));
     for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));

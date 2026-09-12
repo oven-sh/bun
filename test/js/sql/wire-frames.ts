@@ -70,6 +70,23 @@ export function pgSSLResponse(answer: "S" | "N"): Buffer {
   return Buffer.from(answer, "latin1");
 }
 
+// PostgreSQL FE/BE protocol §55.2.3 CancelRequest: Int32(16) Int32(80877102) Int32(pid) Int32(secret)
+// Sent by the client as the first (and only) message of a second connection; it
+// has no message-type byte, same as the startup packet.
+export function pgCancelRequest(processId: number, secretKey: number): Buffer {
+  const buf = Buffer.alloc(16);
+  buf.writeInt32BE(16, 0);
+  buf.writeInt32BE(80877102, 4); // 0x04d2162e
+  buf.writeInt32BE(processId, 8);
+  buf.writeInt32BE(secretKey, 12);
+  return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 BackendKeyData: Byte1('K') Int32(12) Int32(pid) Int32(secret)
+export function pgBackendKeyData(processId: number, secretKey: number): Buffer {
+  return pgRaw("K", Buffer.concat([pgInt32(processId), pgInt32(secretKey)]));
+}
+
 // PostgreSQL FE/BE protocol §55.7 AuthenticationOk: Byte1('R') Int32(8) Int32(0)
 export function pgAuthenticationOk(): Buffer {
   const buf = Buffer.alloc(9);

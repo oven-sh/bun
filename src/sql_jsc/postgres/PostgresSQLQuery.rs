@@ -187,6 +187,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -214,6 +215,12 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// The cached `connection` is a strong GC edge; every terminal path must
+    /// clear it or a retained `Query` pins the whole connection.
+    fn release_connection(this_value: JSValue, global_object: &JSGlobalObject) {
+        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
+    }
+
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
@@ -221,11 +228,36 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
         };
+        self.run_reject_callback(global_object, this_value, target_value, err);
+    }
 
+    /// Reject a request whose Bind/Execute is already on the wire. Unlike
+    /// `on_js_error` this leaves `status` and the FIFO entry alone: the backend
+    /// will still answer, and a `Fail` entry gets discarded by `advance()`, so
+    /// the next BindComplete would land on the wrong request.
+    pub(crate) fn reject_in_place(&self, err: JSValue, global_object: &JSGlobalObject) {
+        let _guard = self.ref_guard();
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target(global_object, false) else {
+            return;
+        };
+        self.run_reject_callback(global_object, this_value, target_value, err);
+    }
+
+    fn run_reject_callback(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        target_value: JSValue,
+        err: JSValue,
+    ) {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm
@@ -263,6 +295,7 @@ impl PostgresSQLQuery {
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
+        Self::release_connection(this_value, global_object);
     }
 
     pub(crate) fn on_result(
@@ -446,7 +479,8 @@ impl PostgresSQLQuery {
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let connection_value = arguments[0];
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
@@ -529,6 +563,7 @@ impl PostgresSQLQuery {
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
+            js::connection_set_cached(this_value, global_object, connection_value);
             if this.status.get() == Status::Running {
                 connection.flush_data_and_reset_timeout();
             } else {
@@ -790,6 +825,7 @@ impl PostgresSQLQuery {
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);
+        js::connection_set_cached(this_value, global_object, connection_value);
         if did_write {
             connection.flush_data_and_reset_timeout();
         } else {
@@ -801,15 +837,54 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Returns the CancelRequest packet to deliver on a second connection, or
+    /// `undefined` when there is nothing for the server to stop.
     pub fn do_cancel(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = callframe;
-        let _ = global_object;
-        let _ = this;
+        let this_value = callframe.this();
+        let Some(connection_value) = js::connection_get_cached(this_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
-        Ok(JSValue::UNDEFINED)
+        let status = this.status.get();
+        if matches!(status, Status::Success | Status::Fail) {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // A CancelRequest names the backend process, not a statement, so it only
+        // ever stops the FIFO head. Anything else is settled locally.
+        if status == Status::Pending || !connection.is_current_request(this) {
+            let err = postgres_error_to_js(
+                global_object,
+                Some(b"Query cancelled"),
+                AnyPostgresError::QueryCancelled,
+            );
+            if status == Status::Pending {
+                // Nothing on the wire yet: a Fail entry is discarded, never written.
+                connection.finish_request(this);
+                this.on_js_error(err, global_object);
+            } else {
+                // Already on the wire: the backend will answer it regardless.
+                this.reject_in_place(err, global_object);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Copy out before the JS-heap allocation below can re-enter.
+        let (process_id, packet) = {
+            let key = connection.backend_key_data.get();
+            (key.process_id, key.cancel_request())
+        };
+        // No BackendKeyData was ever received, so the server cannot be asked.
+        if process_id == 0 {
+            return Ok(JSValue::UNDEFINED);
+        }
+        crate::jsc::JSUint8Array::from_bytes_copy(global_object, &packet)
     }
 }

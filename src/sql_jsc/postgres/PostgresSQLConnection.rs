@@ -133,6 +133,7 @@ pub struct PostgresSQLConnection {
     pub(crate) js_value: JsCell<crate::jsc::JsRef>,
 
     pub(crate) backend_parameters: JsCell<StringMap>,
+    pub(crate) backend_key_data: JsCell<protocol::BackendKeyData>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
@@ -1183,6 +1184,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
             backend_parameters: JsCell::new(StringMap::init(true)),
+            backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
             database,
             user: username,
             password,
@@ -1518,6 +1520,14 @@ impl PostgresSQLConnection {
             .map(|req| ParentRef::from(req.as_non_null()))
     }
 
+    /// Whether `request` is the FIFO head, the one the backend is executing now.
+    pub(crate) fn is_current_request(&self, request: &PostgresSQLQuery) -> bool {
+        self.requests
+            .get()
+            .front()
+            .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
+    }
+
     /// Pop the FIFO head if it is still `request` (re-entrant JS may already
     /// have removed it), dropping the queue's ref.
     #[inline]
@@ -1737,7 +1747,9 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn finish_request(&self, item: &PostgresSQLQuery) {
+    /// Take `item` out of the connection's request accounting. Call it once,
+    /// while `item` still has the status it was counted under.
+    pub(crate) fn finish_request(&self, item: &PostgresSQLQuery) {
         match item.status.get() {
             QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
                 let counter = item.flags.get().counter;
@@ -2909,7 +2921,10 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                let _ = protocol::BackendKeyData::decode_internal(reader.reborrow())?;
+                self.backend_key_data
+                    .set(protocol::BackendKeyData::decode_internal(
+                        reader.reborrow(),
+                    )?);
             }
             MessageType::ErrorResponse => {
                 let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;

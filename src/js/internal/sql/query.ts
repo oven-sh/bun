@@ -15,7 +15,8 @@ const PublicPromise = Promise;
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
-  cancel?(): void;
+  /** Returns bytes the adapter must deliver out-of-band, or undefined. */
+  cancel?(): Uint8Array | undefined;
   setMode(mode: SQLQueryResultMode): void;
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
@@ -100,15 +101,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   #run() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 
@@ -130,15 +133,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   async #runAsync() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 
@@ -222,7 +227,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       const handle = this.#getQueryHandle();
 
       if (handle) {
-        handle.cancel?.();
+        const cancelRequest = handle.cancel?.();
+        if (cancelRequest) {
+          this[_adapter].sendCancelRequest?.(cancelRequest);
+        }
       }
     }
 

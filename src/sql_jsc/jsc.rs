@@ -28,7 +28,7 @@ use core::ptr::NonNull;
 
 pub use bun_jsc::{
     CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
-    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    JSGlobalObject, JSObject, JSType, JSUint8Array, JSValue, JsCell, JsError, JsRef, JsResult,
     MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
@@ -621,6 +621,7 @@ pub mod codegen {
         impl_js_class {
             binding,
             columns,
+            connection,
             pendingValue,
             target
         }

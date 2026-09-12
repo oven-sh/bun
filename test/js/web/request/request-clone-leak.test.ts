@@ -1,7 +1,13 @@
-import { expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { test as bunTest, expect } from "bun:test";
+import { isASAN, isDebug, rss } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
+
+// Each case builds ~100k Requests, which a debug JSC takes ~30s to do — past
+// the default test timeout. Shrinking the workload enough to fit would leave
+// the RSS bounds measuring nothing, so skip instead: the release and
+// release-ASAN lanes are where this guard earns its keep.
+const test = isDebug ? bunTest.skip : bunTest;
 
 const constructorArgs = [
   [
@@ -77,10 +83,11 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
     // ASAN's quarantine and redzones retain freed pages so RSS over-reports
-    // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
-    // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
-    expect(delta).toBeLessThan(isASAN ? 64 : 30);
+    // even when nothing leaks; CI samples show 50-67 MB delta with ASAN's 1/10
+    // iteration multiplier now that Request carries referrer/integrity/
+    // keepalive fields, vs <10 MB native. The unfixed leak presents as
+    // 100+ MB so 80 MB still catches it.
+    expect(delta).toBeLessThan(isASAN ? 80 : 30);
   });
 
   test("request.clone(test #" + i + ")", () => {
@@ -106,9 +113,10 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
     // ASAN's quarantine and redzones retain freed pages so RSS over-reports
-    // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
-    // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
-    expect(delta).toBeLessThan(isASAN ? 64 : 30);
+    // even when nothing leaks; CI samples show 50-67 MB delta with ASAN's 1/10
+    // iteration multiplier now that Request carries referrer/integrity/
+    // keepalive fields, vs <10 MB native. The unfixed leak presents as
+    // 100+ MB so 80 MB still catches it.
+    expect(delta).toBeLessThan(isASAN ? 80 : 30);
   });
 }

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";

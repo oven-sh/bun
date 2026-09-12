@@ -7046,6 +7046,43 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
+/// The kind of entry at `path`, not following a final link (Windows: a symlink or junction is `SymLink`).
+pub fn lstat_kind_os_path(path: &bun_paths::OSPathSliceZ) -> Maybe<FileKind> {
+    #[cfg(not(windows))]
+    {
+        lstat(path).map(|st| kind_from_mode(st.st_mode as Mode))
+    }
+    #[cfg(windows)]
+    {
+        use bun_windows_sys::externs as w;
+        // SAFETY: path is NUL-terminated UTF-16.
+        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
+        if attrs == windows::INVALID_FILE_ATTRIBUTES {
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::lstat));
+        }
+        if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            let mut found: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; found is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut found) };
+            if find == bun_windows_sys::INVALID_HANDLE_VALUE {
+                return Err(Error::from_win32(windows::Win32Error::get(), Tag::lstat));
+            }
+            // SAFETY: valid find handle from FindFirstFileW.
+            unsafe {
+                let _ = w::FindClose(find);
+            }
+            if w::is_reparse_tag_name_surrogate(found.dwReserved0) {
+                return Ok(FileKind::SymLink);
+            }
+        }
+        if (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+            Ok(FileKind::Directory)
+        } else {
+            Ok(FileKind::File)
+        }
+    }
+}
+
 /// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]

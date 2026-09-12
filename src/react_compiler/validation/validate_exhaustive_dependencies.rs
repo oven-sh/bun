@@ -1602,8 +1602,7 @@ fn is_optional_dependency_inferred(
 // Equality check for temporaries
 // =============================================================================
 
-/// Membership in a TS `Set<InferredDependency>`, which is object identity. The
-/// port clones where TS shares an object, so every field decides, `loc` too.
+/// Stands in for object identity in the TS `Set<InferredDependency>` of a phi.
 fn is_same_dependency(a: &InferredDependency, b: &InferredDependency) -> bool {
     match (a, b) {
         (

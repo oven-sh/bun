@@ -1878,6 +1878,7 @@ impl Data {
                 let item = bump.alloc(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
+                    parenthesized_assign: el.parenthesized_assign,
                     was_originally_macro: el.was_originally_macro,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
@@ -2065,6 +2066,7 @@ impl Data {
                 let item = bump.alloc(E::Object {
                     properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump))?,
                     comma_after_spread: el.comma_after_spread,
+                    parenthesized_assign: el.parenthesized_assign,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     was_originally_macro: el.was_originally_macro,

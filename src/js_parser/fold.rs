@@ -924,6 +924,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    pub(crate) fn maybe_parenthesized_assign_error(&mut self, parenthesized_assign: bun_ast::Loc) {
+        if let Some(loc) = parenthesized_assign.to_nullable() {
+            self.log()
+                .add_error(Some(self.source), loc, b"Invalid assignment target");
+        }
+    }
+
     pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
         if comma_after_spread.is_empty() {

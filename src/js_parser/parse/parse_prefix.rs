@@ -44,12 +44,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
+    fn pfx_t_open_paren(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
         // Arrow functions aren't allowed in the middle of expressions
-        if level.gt(Level::Assign) {
+        let value = if level.gt(Level::Assign) {
             // Allow "in" inside parentheses
             let old_allow_in = p.allow_in;
             p.allow_in = true;
@@ -59,17 +64,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TCloseParen)?;
 
             p.allow_in = old_allow_in;
-            return Ok(value);
+            value
+        } else {
+            p.parse_paren_expr(
+                loc,
+                level,
+                ParenExprOpts {
+                    is_after_question_and_before_colon: flags
+                        == EFlags::AfterQuestionAndBeforeColon,
+                    ..Default::default()
+                },
+            )?
+        };
+
+        // "[(a = 1)] = []" is not the pattern "[a = 1] = []".
+        if let Some(errors) = errors
+            && let ExprData::EBinary(bin) = &value.data
+            && bin.op == OpCode::BinAssign
+        {
+            errors.parenthesized_assign = Some(loc);
         }
 
-        p.parse_paren_expr(
-            loc,
-            level,
-            ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                ..Default::default()
-            },
-        )
+        Ok(value)
     }
 
     #[inline]
@@ -741,7 +757,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     // Parse into a local then push.
                     let mut value = Expr::EMPTY;
+                    let parenthesized_assign = self_errors.parenthesized_assign;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                    // "...(a = 1)" is already an invalid rest target without the parentheses
+                    self_errors.parenthesized_assign = parenthesized_assign;
                     items.push(p.new_expr(E::Spread { value }, dots_loc));
 
                     // Commas are not allowed here when destructuring
@@ -794,6 +813,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Array {
                 items: items_list,
                 comma_after_spread,
+                parenthesized_assign: self_errors
+                    .parenthesized_assign
+                    .unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_bracket_loc,
                 ..Default::default()
@@ -819,7 +841,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TDotDotDot {
                 p.lexer.next()?;
                 let mut value = Expr::EMPTY;
+                let parenthesized_assign = self_errors.parenthesized_assign;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                self_errors.parenthesized_assign = parenthesized_assign;
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
                     value: Some(value),
@@ -882,6 +906,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Object {
                 properties: properties_list,
                 comma_after_spread,
+                parenthesized_assign: self_errors
+                    .parenthesized_assign
+                    .unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_brace_loc,
                 ..Default::default()
@@ -1010,7 +1037,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, errors, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
             T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),

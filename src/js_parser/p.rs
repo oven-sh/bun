@@ -3965,6 +3965,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         kind: crate::parser::InvalidLocTag::Spread,
                     });
                 }
+                if let Some(paren) = ex.parenthesized_assign.to_nullable() {
+                    invalid_loc.push(InvalidLoc {
+                        loc: paren,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
+                    });
+                }
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
@@ -4020,6 +4026,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         kind: crate::parser::InvalidLocTag::Spread,
                     });
                 }
+                if let Some(paren) = ex.parenthesized_assign.to_nullable() {
+                    invalid_loc.push(InvalidLoc {
+                        loc: paren,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
+                    });
+                }
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
@@ -4049,11 +4061,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     let value = item.value.as_mut().unwrap();
-                    let tup =
-                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
-                    let initializer = tup.expr.or(item.initializer);
                     let is_spread = item.kind == js_ast::g::PropertyKind::Spread
                         || item.flags.contains(Flags::Property::IsSpread);
+                    let tup =
+                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, is_spread);
+                    // "({ ...[a] }) => 0"
+                    if is_spread
+                        && let Some(binding) = &tup.binding
+                        && matches!(
+                            binding.data,
+                            js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_)
+                        )
+                    {
+                        invalid_loc.push(InvalidLoc {
+                            loc: binding.loc,
+                            kind: crate::parser::InvalidLocTag::Unknown,
+                        });
+                    }
+                    let initializer = tup.expr.or(item.initializer);
                     let mut flags = Flags::PropertySet::empty();
                     if is_spread {
                         flags |= Flags::Property::IsSpread;
@@ -4110,17 +4135,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
-        if let Some(initial) = initializer {
-            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
-            if is_spread {
-                self.log().add_range_error(
-                    Some(self.source),
-                    equals_range,
-                    b"A rest argument cannot have a default initializer",
-                );
-            } else {
-                // p.markSyntaxFeature();
-            }
+        if is_spread && let Some(initial) = initializer {
+            invalid_log.push(InvalidLoc {
+                loc: self.source.range_of_operator_before(initial.loc, b"=").loc,
+                kind: crate::parser::InvalidLocTag::RestInitializer,
+            });
         }
         ExprBindingTuple {
             binding: bind,

@@ -3068,6 +3068,96 @@ console.log(<div {...obj} key="after" />);`),
       // );
     });
 
+    it("parenthesized assignment in a destructuring pattern", () => {
+      // A parenthesized simple target may take a default value
+      expectPrinted_("[(a)] = [1]", "[a] = [1]");
+      expectPrinted_("[(a) = 1] = []", "[a = 1] = []");
+      expectPrinted_("[(o.b) = 1] = []", "[o.b = 1] = []");
+      expectPrinted_("({ x: (a) = 1 } = {})", "({ x: a = 1 } = {})");
+      expectPrinted_("({ x: (o.b) = 1 } = {})", "({ x: o.b = 1 } = {})");
+      expectPrinted_("[...(o.r)] = []", "[...o.r] = []");
+      expectPrinted_("[...[a]] = [[1]]", "[...[a]] = [[1]]");
+      expectPrinted_("({ ...(a) } = {})", "({ ...a } = {})");
+      expectPrinted_("({ ...(o.b) } = {})", "({ ...o.b } = {})");
+
+      // A member expression on a parenthesized assignment is a simple target
+      expectPrinted_("[(a = {}).b] = [1]", "[(a = {}).b] = [1]");
+      expectPrinted_("[(a = [])[0]] = [1]", "[(a = [])[0]] = [1]");
+      expectPrinted_("[(a = {}).b = 1] = []", "[(a = {}).b = 1] = []");
+      expectPrinted_("({ x: (a = {}).b } = {})", "({ x: (a = {}).b } = {})");
+      expectPrinted_("({ ...(a = {}).b } = {})", "({ ...(a = {}).b } = {})");
+      expectPrinted_("[[(a = 1)].x] = []", "[[a = 1].x] = []");
+
+      // A default value is an arbitrary expression
+      expectPrinted_("[x = (a = 1)] = []", "[x = a = 1] = []");
+      expectPrinted_("({ x = (a = 1) } = {})", "({ x = a = 1 } = {})");
+      expectPrinted_("x = (y = (a = 1)) => 0", "x = (y = a = 1) => 0");
+
+      // Outside a pattern the parentheses mean nothing
+      expectPrinted_("x = [(a = 1)]", "x = [a = 1]");
+      expectPrinted_("x = [[(a = 1)]]", "x = [[a = 1]]");
+      expectPrinted_("x = { y: (a = 1) }", "x = { y: a = 1 }");
+      expectPrinted_("x = { ...(a = 1) }", "x = { ...a = 1 }");
+      expectPrinted_("f([(a = 1)])", "f([a = 1])");
+      expectPrinted_("x = ([(a = 1)])", "x = [a = 1]");
+      expectPrinted_("x = ((a = 1))", "x = a = 1");
+      expectPrinted_("x = (y = [(a = 1)]) => 0", "x = (y = [a = 1]) => 0");
+
+      // A parenthesized assignment is not a valid destructuring target
+      const message = "Invalid assignment target";
+      expectParseError("[(a = 1)] = []", message);
+      expectParseError("[[(a = 1)]] = [[]]", message);
+      expectParseError("[[(a = 1)] = 2] = []", message);
+      expectParseError("[{ x: (a = 1) }] = [{}]", message);
+      expectParseError("[...(a = 1)] = []", message);
+      expectParseError("[((a = 1))] = []", message);
+      expectParseError("[(a = 1) = 2] = []", message);
+      expectParseError("({ x: (a = 1) = 2 } = {})", message);
+      expectParseError("({ x: (a = 2) } = {})", message);
+      expectParseError("({ ...(a = 3) } = {})", message);
+      expectParseError("for ([(a = 1)] of x);", message);
+      expectParseError("for ([(a = 1)] in x);", message);
+
+      // The target of an object rest property is a simple target with no initializer
+      expectParseError("({ ...a = 4 } = {})", message);
+      expectParseError("({ ...[a] } = {})", message);
+      expectParseError("({ ...{ a } } = {})", message);
+      expectParseError("[{ ...[a] }] = [{}]", message);
+
+      // Several items share one pattern, in either order
+      expectParseError("[(a = 1), (b = 2).c] = []", message);
+      expectParseError("[(a = 1).c, (b = 2)] = []", message);
+      expectPrinted_("[(a = 1).c, (b = 2).d] = []", "[(a = 1).c, (b = 2).d] = []");
+      expectParseError("({ x: (a = 1), y: (b = 2).c } = {})", message);
+      expectParseError("({ x: (a = 1).c, y: (b = 2) } = {})", message);
+      expectPrinted_("({ x: (a = 1).c, y: (b = 2).d } = {})", "({ x: (a = 1).c, y: (b = 2).d } = {})");
+      expectParseError("[x, [(a = 1).c], (b = 2)] = []", message);
+      expectPrinted_("[x, [(a = 1)].c, (b = 2).d] = []", "[x, [a = 1].c, (b = 2).d] = []");
+
+      // A literal in a for-in initializer (Annex B) is not a pattern
+      expectPrinted_("for (var x = [(a = 1)] in o);", "x = [a = 1];\nfor (x in o)\n  ;\nvar x;\n");
+      expectPrinted_("for (var x = { y: (a = 1) } in o);", "x = { y: a = 1 };\nfor (x in o)\n  ;\nvar x;\n");
+
+      // The same forms are not valid arrow parameters either
+      const arrowMessage = "Unexpected parentheses in binding pattern";
+      expectParseError("((a = 1)) => 0", arrowMessage);
+      expectParseError("([(a = 1)]) => 0", arrowMessage);
+      expectParseError("([(a = 1)] = []) => 0", arrowMessage);
+      expectParseError("async ((a = 1)) => 0", arrowMessage);
+      expectParseError("(...(a = 1)) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("([...(a = 1)]) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("(x, (b = 2)) => 0", arrowMessage);
+      expectParseError("((a = 1), x) => 0", arrowMessage);
+      expectPrinted_("x = ((a = 1).c, (b = 2))", "x = ((a = 1).c, b = 2)");
+      expectPrinted_("x = ({ ...a }) => a", "x = ({ ...a }) => a");
+      ts.expectPrinted_("x = c ? ({ ...a = 1 }) : b", "x = c ? { ...a = 1 } : b");
+      ts.expectPrinted_("x = c ? ([...a = 1]) : b", "x = c ? [...a = 1] : b");
+      ts.expectPrinted_("x = c ? ([(a = 1)]) : b", "x = c ? [a = 1] : b");
+      expectParseError("({ ...a = 1 }) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("({ ...[a] }) => 0", "Invalid binding pattern");
+      expectParseError("({ ...{ a } }) => 0", "Invalid binding pattern");
+    });
+
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);

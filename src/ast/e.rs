@@ -41,6 +41,8 @@ impl Default for NameOfSymbol {
 pub struct Array {
     pub items: ExprNodeList,
     pub comma_after_spread: crate::Loc,
+    /// `[(a = 1)]`: an error only if this literal is a pattern.
+    pub parenthesized_assign: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -51,6 +53,7 @@ impl Default for Array {
         Self {
             items: bun_alloc::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
+            parenthesized_assign: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -1274,6 +1277,8 @@ impl ArrayJSON {
 pub struct Object {
     pub properties: G::PropertyList,
     pub comma_after_spread: crate::Loc,
+    /// `{ x: (a = 1) }`: see `Array::parenthesized_assign`.
+    pub parenthesized_assign: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -1285,6 +1290,7 @@ impl Default for Object {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
+            parenthesized_assign: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -1351,6 +1357,7 @@ impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
         comma_after_spread: crate::Loc::EMPTY,
+        parenthesized_assign: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,

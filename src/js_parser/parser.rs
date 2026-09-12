@@ -1105,6 +1105,7 @@ pub struct InvalidLoc {
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum InvalidLocTag {
     Spread,
+    RestInitializer,
     Parentheses,
     Getter,
     Setter,
@@ -1118,6 +1119,7 @@ impl InvalidLoc {
     pub(crate) fn add_error(self, log: &mut bun_ast::Log, source: &bun_ast::Source) {
         let text: &'static [u8] = match self.kind {
             InvalidLocTag::Spread => b"Unexpected trailing comma after rest element",
+            InvalidLocTag::RestInitializer => b"A rest argument cannot have a default initializer",
             InvalidLocTag::Parentheses => b"Unexpected parentheses in binding pattern",
             InvalidLocTag::Getter => b"Unexpected getter in binding pattern",
             InvalidLocTag::Setter => b"Unexpected setter in binding pattern",
@@ -1324,6 +1326,9 @@ pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+
+    /// `[(a = 1)]`: stored on the enclosing literal, not merged upward.
+    pub(crate) parenthesized_assign: Option<bun_ast::Loc>,
 }
 
 impl DeferredErrors {

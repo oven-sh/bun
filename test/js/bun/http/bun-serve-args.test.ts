@@ -261,6 +261,46 @@ describe("Bun.serve development options", () => {
     expect(server.development).toBe(false);
     server.stop();
   });
+
+  test.each(["false", "0", "true", "", 0, 1, null])(
+    "non-boolean development: %p must be rejected, not coerced",
+    value => {
+      // "false"/"0" are truthy under ToBoolean. Accepting them silently would
+      // flip on development mode (and its error page) for a server the caller
+      // configured as production via an env-var string.
+      expect(() =>
+        serve({
+          port: 0,
+          // @ts-expect-error - Testing runtime validation
+          development: value,
+          fetch() {
+            return new Response("ok");
+          },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('"development"'),
+        }),
+      );
+    },
+  );
+
+  test.each([
+    [true, true],
+    [false, false],
+    [{ hmr: false }, true],
+  ])("valid development: %p is accepted", (value, expected) => {
+    using server = serve({
+      port: 0,
+      development: value,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    expect(server.development).toBe(expected);
+    server.stop();
+  });
 });
 
 describe("Bun.serve static routes", () => {

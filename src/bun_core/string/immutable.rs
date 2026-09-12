@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, ArenaVec, ArenaVecExt, MimallocArena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -1358,6 +1358,30 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// `bytes` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD.
+pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'a [u8] {
+    if is_valid_utf8(bytes) {
+        return bytes;
+    }
+    const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+    let mut out_len = 0;
+    for chunk in bytes.utf8_chunks() {
+        out_len += chunk.valid().len();
+        if !chunk.invalid().is_empty() {
+            out_len += REPLACEMENT.len();
+        }
+    }
+    let mut out = ArenaVec::<u8>::with_capacity_in(out_len, arena);
+    for chunk in bytes.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(REPLACEMENT);
+        }
+    }
+    debug_assert_eq!(out.len(), out_len);
+    out.into_bump_slice()
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

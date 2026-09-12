@@ -455,6 +455,10 @@ pub struct PackageManager {
     // package.json cache entries that differ from disk; written by package_json_write_back::flush.
     pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
 
+    // pnpm migration: what it moved into the cached root package.json. The file is only written along with the
+    // migrated lockfile (package_json_write_back::record_migrated_root); loads that are never saved leave it alone.
+    pub(crate) migrated_package_json_moves: Vec<&'static str>,
+
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
     pub(crate) catalog_add: add_catalog::State,
 
@@ -2145,6 +2149,7 @@ pub fn init(
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(migrated_package_json_moves, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
@@ -2612,6 +2617,7 @@ fn init_with_runtime_once(
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
+        wr!(migrated_package_json_moves, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);

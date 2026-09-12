@@ -89,7 +89,7 @@ it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile
   await access(join(package_dir, lockfile));
 });
 
-describe("--lockfile-only under --frozen-lockfile", () => {
+describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-run, and --no-save", () => {
   const project = {
     "foo/package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     "package.json": JSON.stringify({ name: "mig", dependencies: { foo: "file:./foo" } }),
@@ -138,7 +138,7 @@ describe("--lockfile-only under --frozen-lockfile", () => {
   }
   const lock = (dir: string) => join(dir, "bun.lock");
 
-  it.concurrent.each(["--frozen-lockfile", "--production"])(
+  it.concurrent.each(["--frozen-lockfile", "--production", "--dry-run", "--no-save"])(
     "%s --lockfile-only leaves an up-to-date bun.lock byte-identical",
     async flag => {
       using tmp = tempDir("lockfile-only-frozen", project);
@@ -157,7 +157,7 @@ describe("--lockfile-only under --frozen-lockfile", () => {
     },
   );
 
-  it.concurrent.each(["--frozen-lockfile", "--production"])(
+  it.concurrent.each(["--frozen-lockfile", "--production", "--dry-run", "--no-save"])(
     "%s --lockfile-only does not create a missing bun.lock",
     async flag => {
       using tmp = tempDir("lockfile-only-frozen-missing", project);
@@ -199,32 +199,84 @@ describe("--lockfile-only under --frozen-lockfile", () => {
     expect(exitCode).toBe(0);
   });
 
+  const frozenNote = (name: string) =>
+    `note: the lockfile is frozen, so the migration from ${name} was not written to bun.lock; run 'bun install' and commit the result`;
+
   it.concurrent.each(migrations)(
-    "--frozen-lockfile --lockfile-only still writes bun.lock when migrating from %s",
+    "--frozen-lockfile --lockfile-only migrates %s in memory and does not write bun.lock",
     async (name, contents) => {
       using tmp = tempDir("lockfile-only-frozen-migrate", { ...project, [name]: contents });
       const dir = String(tmp);
 
       const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile", "--lockfile-only");
       expect(stderr).toContain(`migrated lockfile from ${name}`);
-      expect(stdout).toContain("Saved bun.lock (2 packages)");
-      expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
+      expect(stderr).toContain(frozenNote(name));
+      expect(stdout + stderr).not.toContain("Saved");
+      expect(existsSync(lock(dir))).toBe(false);
       expect(existsSync(join(dir, "node_modules"))).toBe(false);
       expect(exitCode).toBe(0);
     },
   );
 
-  it.concurrent.each(migrations)("--frozen-lockfile writes bun.lock when migrating from %s", async (name, contents) => {
-    using tmp = tempDir("frozen-migrate", { ...project, [name]: contents });
+  it.concurrent.each(migrations)(
+    "--frozen-lockfile installs from a migrated %s and does not write bun.lock",
+    async (name, contents) => {
+      using tmp = tempDir("frozen-migrate", { ...project, [name]: contents });
+      const dir = String(tmp);
+
+      const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile");
+      expect(stderr).toContain(`migrated lockfile from ${name}`);
+      expect(stderr).toContain(frozenNote(name));
+      expect(stdout + stderr).not.toContain("Saved");
+      expect(existsSync(lock(dir))).toBe(false);
+      expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.each(migrations)("--dry-run does not write bun.lock when migrating from %s", async (name, contents) => {
+    using tmp = tempDir("dry-run-migrate", { ...project, [name]: contents });
     const dir = String(tmp);
 
-    const { stderr, exitCode } = await run(dir, "--frozen-lockfile");
+    const { stdout, stderr, exitCode } = await run(dir, "--dry-run");
     expect(stderr).toContain(`migrated lockfile from ${name}`);
-    expect(existsSync(lock(dir))).toBe(true);
-    expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
-    expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
+    expect(stderr).not.toContain("note:");
+    expect(stdout + stderr).not.toContain("Saved");
+    expect(existsSync(lock(dir))).toBe(false);
+    expect(existsSync(join(dir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(0);
   });
+
+  it.concurrent.each(migrations)(
+    "--no-save installs from a migrated %s and does not write bun.lock",
+    async (name, contents) => {
+      using tmp = tempDir("no-save-migrate", { ...project, [name]: contents });
+      const dir = String(tmp);
+
+      const { stdout, stderr, exitCode } = await run(dir, "--no-save");
+      expect(stderr).toContain(`migrated lockfile from ${name}`);
+      expect(stderr).not.toContain("note:");
+      expect(stdout + stderr).not.toContain("Saved");
+      expect(existsSync(lock(dir))).toBe(false);
+      expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.each(migrations)(
+    "a plain install still writes bun.lock when migrating from %s",
+    async (name, contents) => {
+      using tmp = tempDir("install-migrate", { ...project, [name]: contents });
+      const dir = String(tmp);
+
+      const { stderr, exitCode } = await run(dir);
+      expect(stderr).toContain(`migrated lockfile from ${name}`);
+      expect(stderr).toContain("Saved lockfile");
+      expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
+      expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("--lockfile-only with remove and update", () => {

@@ -18,6 +18,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::add_remove_with_filter::root_package_json_path;
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
@@ -479,7 +480,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
@@ -1622,7 +1622,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -2320,31 +2320,31 @@ fn rewrite_bare_patch_keys(
             bstr::BStr::new(&**res_str)
         )
         .map_err(|_| AllocError)?;
-        // Interned into the DATA_STORE backing the cached package.json Expr tree, which outlives this fn.
+        // `join_buf` is reused by the next key; the tree is printed after this fn returns.
         let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
         prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
     }
     Ok(())
 }
 
-/// Updates package.json with workspace and catalog information after migration
+/// Moves the workspace, catalog, override, and patch settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm`
+/// key into the cached root package.json. Only the cache entry changes here: the rest of the load (frozen check,
+/// differ) reads it from there, and `package_json_write_back::record_migrated_root` writes it when the migrated
+/// lockfile is saved.
 fn update_package_json_after_migration(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-    dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+    let pkg_json_path = root_package_json_path();
 
     let bump = bun_alloc::Arena::new();
-    let silent = manager.options.log_level.is_silent();
 
     let root_pkg_json = match manager
         .workspace_package_json_cache
         .get_with_path(
             log,
-            pkg_json_path.slice(),
+            &pkg_json_path,
             crate::GetJsonOptions {
                 guess_indentation: true,
                 ..Default::default()
@@ -2501,7 +2501,7 @@ fn update_package_json_after_migration(
 
     // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
     // (see `data_store_dupe_str` below) so it shares the lifetime of the
-    // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
+    // `Expr` nodes it backs until the edited tree is printed below.
     let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
     let mut catalog_obj: Option<Expr> = None;
     let mut catalogs_obj: Option<Expr> = None;
@@ -2512,8 +2512,7 @@ fn update_package_json_after_migration(
         Ok(contents) => 'read_pnpm_workspace_yaml: {
             // The `Vec<u8>` would drop at the end of this arm while the
             // `Expr`s it backs (catalog/catalogs/overrides/patchedDependencies
-            // below) escape into `json` and the
-            // `workspace_package_json_cache`. Intern the bytes into the same
+            // below) escape into `json`. Intern the bytes into the same
             // thread-local `DATA_STORE` that owns the surrounding `Expr`
             // nodes — arena ownership, not a leak (bulk-freed on
             // `Expr::data_store_reset`). This only covers scalars that slice
@@ -2536,12 +2535,6 @@ fn update_package_json_after_migration(
                     let mut paths: Vec<&'static [u8]> = Vec::new();
                     while let Some(package_path) = packages.next() {
                         if let Some(package_path_str) = as_string(&package_path) {
-                            // Intern (vs. the prior `Box<[u8]>`) so the
-                            // `EString` nodes built from these paths below do
-                            // not dangle once this function returns and the
-                            // boxes drop — they are stored into
-                            // `root_pkg_json.root` which is cached in
-                            // `manager.workspace_package_json_cache`.
                             paths.push(js_ast::data_store_dupe_str(package_path_str));
                         }
                     }
@@ -2732,23 +2725,17 @@ fn update_package_json_after_migration(
         print_package_json_into_cache_entry(root_pkg_json, json);
         // The edits above spliced `Store`-allocated nodes into the cached tree,
         // and the next `initialize_store()` recycles them. Re-parse so the entry
-        // owns its tree again before `bun add` prints it after the install.
+        // owns its tree again before the write-back prints it after the install.
         if let Err(err) = root_pkg_json.reparse_root(log) {
             bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
             bun_core::Global::crash();
         }
-
-        // Write the updated package.json
-        if sys::File::write_file(
-            dir,
-            bun_core::zstr!("package.json"),
-            root_pkg_json.source.contents(),
-        )
-        .is_ok()
-            && !moved.is_empty()
-            && !silent
-        {
-            bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+        // Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already
+        // edited entry the second time, so only the pnpm-workspace.yaml moves repeat.
+        for what in moved {
+            if !manager.migrated_package_json_moves.contains(&what) {
+                manager.migrated_package_json_moves.push(what);
+            }
         }
     }
 

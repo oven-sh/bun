@@ -510,6 +510,8 @@ Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ..
       break;
     }
     default:
+      // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
+      //   .apply(this, arguments);
       const { 1: res } = args;
       res?.socket?.destroy();
       break;

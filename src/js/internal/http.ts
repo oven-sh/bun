@@ -60,6 +60,8 @@ export const enum NodeHTTPResponseAbortEvent {
   timeout = 2,
 }
 export const enum NodeHTTPIncomingRequestType {
+  FetchRequest,
+  FetchResponse,
   NodeHTTPResponse,
 }
 export const enum NodeHTTPBodyReadState {

@@ -1144,15 +1144,16 @@ try {
 
 ### Authentication Errors
 
-| Authentication Errors                            | Description                              |
-| ------------------------------------------------ | ---------------------------------------- |
-| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`      | Password authentication failed           |
-| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`     | Server requested unknown auth method     |
-| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | Server requested unsupported auth method |
-| `ERR_POSTGRES_INVALID_SERVER_KEY`                | Invalid server key during authentication |
-| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`          | Invalid server signature                 |
-| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`     | Invalid SASL signature encoding          |
-| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`           | SASL signature verification failed       |
+| Authentication Errors                            | Description                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------- |
+| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`      | Password authentication failed                                 |
+| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`     | Server requested unknown auth method                           |
+| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | Server requested unsupported auth method                       |
+| `ERR_POSTGRES_INVALID_SERVER_KEY`                | Invalid server key during authentication                       |
+| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`          | Invalid server signature                                       |
+| `ERR_POSTGRES_SASL_ITERATION_COUNT_TOO_HIGH`     | SCRAM-SHA-256 server asked for more than 10,000,000 iterations |
+| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`     | Invalid SASL signature encoding                                |
+| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`           | SASL signature verification failed                             |
 
 ### Query Errors
 

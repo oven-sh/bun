@@ -3461,21 +3461,54 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 
+/// How `_resolve` reads a `#` in a relative specifier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HashSign {
+    /// A file name byte.
+    FileName,
+    /// The start of a URL fragment, as in Node.
+    Fragment,
+}
+
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
+    hash_sign: HashSign,
 ) -> &'a [u8] {
     // In a `data:` URL everything after the comma is the payload; a `?` is
     // part of the data, not a query string.
     if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
         return specifier_;
     }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
+    if let Some(i) = index_of_specifier_suffix(specifier_, hash_sign) {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
         specifier_
     }
+}
+
+/// Start of a specifier's `?query` or, in a relative specifier only, `#fragment` suffix.
+fn index_of_specifier_suffix(specifier: &[u8], hash_sign: HashSign) -> Option<usize> {
+    let query = bun_core::strings::index_of_char_usize(specifier, b'?');
+    if hash_sign == HashSign::FileName
+        || !(specifier.starts_with(b"./") || specifier.starts_with(b"../"))
+    {
+        return query;
+    }
+    let before_query = &specifier[..query.unwrap_or(specifier.len())];
+    bun_core::strings::index_of_char_usize(before_query, b'#').or(query)
+}
+
+/// The loader cuts a key at its first `?` only, so a bare `#fragment` is carried as `?#fragment`.
+fn module_key_suffix(suffix: &[u8]) -> bun_core::String {
+    if suffix.first() != Some(&b'#') {
+        return bun_core::String::clone_utf8(suffix);
+    }
+    let mut key_suffix = Vec::with_capacity(suffix.len() + 1);
+    key_suffix.push(b'?');
+    key_suffix.extend_from_slice(suffix);
+    bun_core::String::clone_utf8(&key_suffix)
 }
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
@@ -4507,6 +4540,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        hash_sign: HashSign,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -4571,7 +4605,8 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string, hash_sign);
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -4847,13 +4882,29 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
-        let resolve_result = jsc_vm._resolve(
+        let mut resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            HashSign::FileName,
         );
+        // The literal file name wins. Failing that, a relative ESM `#` starts a fragment (Node).
+        if mode.is_esm()
+            && matches!(resolve_result, Err(crate::CrateError::ModuleNotFound))
+            && index_of_specifier_suffix(specifier_utf8.slice(), HashSign::Fragment)
+                != index_of_specifier_suffix(specifier_utf8.slice(), HashSign::FileName)
+        {
+            resolve_result = jsc_vm._resolve(
+                &mut result,
+                specifier_utf8.slice(),
+                normalize_source(source_utf8.slice()),
+                mode.is_esm(),
+                IS_A_FILE_PATH,
+                HashSign::Fragment,
+            );
+        }
         if let Err(err_) = resolve_result {
             let err = err_;
             let import_kind = mode.import_kind();
@@ -4893,7 +4944,7 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = bun_core::String::clone_utf8(result.query_string);
+            *query = module_key_suffix(result.query_string);
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))

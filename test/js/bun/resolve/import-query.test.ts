@@ -475,6 +475,238 @@ test.concurrent("static imports of a file:// URL with distinct queries evaluate 
   expect(exitCode).toBe(0);
 });
 
+// Node keys the ESM registry on the full URL, fragment included, so "./x.mjs#a" and
+// "./x.mjs#b" are two module instances, and the file:// spelling of each shares its key.
+test.concurrent("dynamic import keeps a #fragment in the module key", async () => {
+  using dir = tempDir("import-fragment-dynamic", {
+    "config.mjs": `export default 1;\nexport const url = import.meta.url;`,
+    "sub/entry.mjs": `
+      import { fileURLToPath } from "node:url";
+      import { writeFileSync } from "node:fs";
+      const fileURL = new URL("../config.mjs", import.meta.url).href;
+      const configPath = fileURLToPath(fileURL);
+      const tail = u => u.slice(u.lastIndexOf("/") + 1);
+      const rewrite = n => writeFileSync(configPath, "export default " + n + ";\\nexport const url = import.meta.url;");
+
+      const plain = await import("../config.mjs");
+      const rel1 = await import("../config.mjs#a");
+      const urlA = await import(fileURL + "#a");
+      rewrite(2);
+      const rel2 = await import("./../config.mjs#b");
+      const rel2Again = await import("../config.mjs#b");
+      rewrite(3);
+      const url1 = await import(fileURL + "#c");
+      rewrite(4);
+      const url2 = await import(fileURL + "#d");
+      rewrite(5);
+      const mix1 = await import("../config.mjs?v=1#x");
+      const mix2 = await import("../config.mjs?v=1#y");
+      const mixUrl = await import(fileURL + "?v=1#x");
+
+      console.log(JSON.stringify({
+        rel: [rel1.default, rel2.default],
+        relUrls: [tail(rel1.url), tail(rel2.url)],
+        relDistinct: rel1 !== rel2 && rel1 !== plain,
+        relCached: rel2 === rel2Again,
+        relEqFileURL: rel1 === urlA,
+        url: [url1.default, url2.default],
+        urlUrls: [tail(url1.url), tail(url2.url)],
+        urlDistinct: url1 !== url2,
+        mixDistinct: mix1 !== mix2,
+        mixEqFileURL: mix1 === mixUrl,
+        mixUrls: [tail(mix1.url), tail(mix2.url)],
+        resolvedEqual: Bun.resolveSync("../config.mjs#a", import.meta.dir) === Bun.resolveSync(fileURL + "#a", import.meta.dir),
+        resolved: Bun.resolveSync(fileURL + "#a", import.meta.dir).slice(configPath.length),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "sub/entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    rel: [1, 2],
+    relUrls: ["config.mjs#a", "config.mjs#b"],
+    relDistinct: true,
+    relCached: true,
+    relEqFileURL: true,
+    url: [3, 4],
+    urlUrls: ["config.mjs#c", "config.mjs#d"],
+    urlDistinct: true,
+    mixDistinct: true,
+    mixEqFileURL: true,
+    mixUrls: ["config.mjs?v=1#x", "config.mjs?v=1#y"],
+    resolvedEqual: true,
+    // A fragment with no query rides behind a "?" in the module key.
+    resolved: "?#a",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("static import keeps a #fragment in the module key", async () => {
+  using dir = tempDir("import-fragment-static", {
+    "target.mjs": `(globalThis.hits ??= []).push(import.meta.url);`,
+  });
+  const target = Bun.pathToFileURL(path.join(String(dir), "target.mjs")).href;
+  await Bun.write(
+    path.join(String(dir), "entry.mjs"),
+    [
+      `import "./target.mjs#a";`,
+      `import "./target.mjs#b";`,
+      `import ${JSON.stringify(target + "#a")};`,
+      `import ${JSON.stringify(target + "#c")};`,
+      `console.log(JSON.stringify(globalThis.hits.map(u => u.slice(u.lastIndexOf("/") + 1))));`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["target.mjs#a", "target.mjs#b", "target.mjs#c"]);
+  expect(exitCode).toBe(0);
+});
+
+// Every one of these loads today. "#" is a legal file name byte, so a "#" that names a real
+// file or directory must not be cut off as a fragment.
+test.concurrent("a # that names a file or a directory is not a fragment", async () => {
+  using dir = tempDir("import-fragment-literal-hash", {
+    "C#proj/target.mjs": `export default 42;\nexport const url = import.meta.url;`,
+    "C#proj/hash#name.mjs": `export default "esm";\nexport const url = import.meta.url;`,
+    "C#proj/hash#name.cjs": `module.exports = "cjs";`,
+    "C#proj/entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      import v, { url } from "./target.mjs";
+      import sibling from "../C#proj/target.mjs";
+      const tail = u => u.slice(u.lastIndexOf("/") + 1);
+      const fragment = await import("./target.mjs#x");
+      const literal = await import("./hash#name.mjs");
+      const literalURL = await import(pathToFileURL(import.meta.dir + "/hash#name.mjs").href);
+      const relative = await import("./target.mjs");
+      const absolute = await import(import.meta.dir + "/target.mjs");
+      console.log(JSON.stringify({
+        v,
+        sibling,
+        fragment: [fragment.default, fragment.url === url, tail(fragment.url)],
+        literal: [literal.default, literal === literalURL, tail(literal.url)],
+        absolute: absolute === relative,
+      }));
+    `,
+    "C#proj/req.cjs": `console.log(JSON.stringify({ r: require("./hash#name.cjs") }));`,
+  });
+  const run = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout.trim()), stderr, exitCode };
+  };
+  expect(await run("C#proj/entry.mjs")).toEqual({
+    stdout: {
+      v: 42,
+      sibling: 42,
+      fragment: [42, false, "target.mjs#x"],
+      literal: ["esm", true, "hash%23name.mjs"],
+      absolute: true,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run("C#proj/req.cjs")).toEqual({ stdout: { r: "cjs" }, stderr: "", exitCode: 0 });
+});
+
+test.concurrent("a leading # is a package.json imports subpath, not a fragment", async () => {
+  using dir = tempDir("import-fragment-imports-field", {
+    "package.json": JSON.stringify({ type: "module", imports: { "#pkg": "./target.mjs" } }),
+    "target.mjs": `export default "ok";`,
+    "entry.mjs": `
+      const m = await import("#pkg");
+      const r = Bun.resolveSync("#pkg", import.meta.dir);
+      console.log(JSON.stringify({ d: m.default, r: r.endsWith("target.mjs") }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ d: "ok", r: true });
+  expect(exitCode).toBe(0);
+});
+
+// Each suffix is its own module, evaluated in import order. import.meta.url keeps the suffix,
+// and a module that carries one can still import its neighbours.
+test.concurrent("file URL queries and fragments preserve module identity and import.meta.url", async () => {
+  const target = `
+    const { value } = await import("./dependency.js");
+    (globalThis.importURLSuffixOrder ??= []).push(import.meta.url);
+    export const url = import.meta.url;
+    export const dependency = value;
+  `;
+  using dir = tempDir("import-url-suffixes", {
+    "dependency.js": `export const value = "dependency";`,
+    "target.js": target,
+    "target#copy.js": target,
+    "entry.js": `
+      import { resolve } from "node:path";
+      import { pathToFileURL } from "node:url";
+      const base = pathToFileURL(resolve("target.js")).href;
+      const specifiers = [
+        base + "?version=1",
+        base + "#generation-1",
+        "./target.js?version=2#generation-2",
+        pathToFileURL(resolve("target#copy.js")).href,
+      ];
+      const modules = [];
+      for (const specifier of specifiers) modules.push(await import(specifier));
+      console.log(JSON.stringify({
+        urls: modules.map(module => module.url),
+        dependencies: modules.map(module => module.dependency),
+        order: globalThis.importURLSuffixOrder,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const base = Bun.pathToFileURL(`${dir}/target.js`).href;
+  const expected = [
+    base + "?version=1",
+    base + "#generation-1",
+    base + "?version=2#generation-2",
+    Bun.pathToFileURL(`${dir}/target#copy.js`).href,
+  ];
+  expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    urls: expected,
+    dependencies: expected.map(() => "dependency"),
+    order: expected,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   using dir = tempDir("resolve-query-nonascii", {
     "target.js": ``,

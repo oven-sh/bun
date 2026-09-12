@@ -359,7 +359,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
 
-WTF::String fileSystemPathWithQuery(const WTF::URL&);
+WTF::String fileSystemPathWithSuffix(const WTF::URL&);
 }
 
 typedef struct {

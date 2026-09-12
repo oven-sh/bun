@@ -38,6 +38,12 @@ inline constexpr std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too bi
 inline constexpr std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
 inline constexpr std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
 inline constexpr std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
+inline constexpr std::string_view ERR_PROTOCOL("WebSocket protocol error");
+
+/* RFC 6455 7.4.1 status codes an endpoint sends when it Fails the connection. */
+inline constexpr uint16_t CLOSE_PROTOCOL_ERROR = 1002;
+inline constexpr uint16_t CLOSE_INVALID_DATA = 1007;
+inline constexpr uint16_t CLOSE_MESSAGE_TOO_BIG = 1009;
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -121,25 +127,32 @@ static bool isValidUtf8(unsigned char *s, size_t length)
 
 struct CloseFrame {
     uint16_t code;
-    char *message;
+    const char *message;
     size_t length;
 };
 
 static inline CloseFrame parseClosePayload(char *src, size_t length) {
-    /* If we get no code or message, default to reporting 1005 no status code present */
-    CloseFrame cf = {1005, nullptr, 0};
-    if (length >= 2) {
-        memcpy(&cf.code, src, 2);
-        cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};
-        // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
-        // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
-        // private use. 1004/1005/1006/1015 are not valid on the wire.
-        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1015 && cf.code < 3000) ||
-            (cf.code >= 1004 && cf.code <= 1006) || cf.code == 1015 ||
-            !isValidUtf8((unsigned char *) cf.message, cf.length)) {
-            /* Even though we got a WebSocket close frame, it in itself is abnormal */
-            return {1006, nullptr, 0};
-        }
+    /* No body: report 1005 "no status code present". An empty Close is echoed back empty. */
+    if (length == 0) {
+        return {1005, nullptr, 0};
+    }
+    /* RFC 6455 5.5.1: if there is a body, its first two bytes MUST be a 2-byte
+     * status code. A 1-byte body is a protocol error, not "no status present". */
+    if (length < 2) {
+        return {CLOSE_PROTOCOL_ERROR, ERR_INVALID_CLOSE_PAYLOAD.data(), ERR_INVALID_CLOSE_PAYLOAD.length()};
+    }
+    CloseFrame cf;
+    memcpy(&cf.code, src, 2);
+    cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};
+    // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
+    // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
+    // private use. 1004/1005/1006/1015 are not valid on the wire.
+    if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1015 && cf.code < 3000) ||
+        (cf.code >= 1004 && cf.code <= 1006) || cf.code == 1015) {
+        return {CLOSE_PROTOCOL_ERROR, ERR_INVALID_CLOSE_PAYLOAD.data(), ERR_INVALID_CLOSE_PAYLOAD.length()};
+    }
+    if (!isValidUtf8((unsigned char *) cf.message, cf.length)) {
+        return {CLOSE_INVALID_DATA, ERR_INVALID_TEXT.data(), ERR_INVALID_TEXT.length()};
     }
     return cf;
 }
@@ -285,18 +298,18 @@ protected:
     static inline bool consumeMessage(T payLength, char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (getOpCode(src)) {
             if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 2)) {
-                Impl::forceClose(wState, user);
+                Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_PROTOCOL);
                 return true;
             }
             wState->state.opCode[++wState->state.opStack] = (OpCode) getOpCode(src);
         } else if (wState->state.opStack == -1) {
-            Impl::forceClose(wState, user);
+            Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_PROTOCOL);
             return true;
         }
         wState->state.lastFin = isFin(src);
 
         if (Impl::refusePayloadLength(payLength, wState, user)) {
-            Impl::forceClose(wState, user, ERR_TOO_BIG_MESSAGE);
+            Impl::failConnection(wState, user, CLOSE_MESSAGE_TOO_BIG, ERR_TOO_BIG_MESSAGE);
             return true;
         }
 
@@ -411,7 +424,7 @@ public:
                  * The MESSAGE_HEADER constants assume the mask bit matches our role, so a
                  * mismatched frame would otherwise desync the parser. */
                 if (isMasked(src) != isServer) {
-                    Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                    Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_INVALID_MASKING);
                     return;
                 }
 
@@ -419,14 +432,14 @@ public:
                  * only if negotiated (RFC 7692 6.1). A control frame or continuation must never
                  * reach setCompressed(): the armed flag would inflate the next data frame. */
                 if (rsv1(src) && (getOpCode(src) == 0 || getOpCode(src) > 2 || !Impl::setCompressed(wState, user))) {
-                    Impl::forceClose(wState, user, ERR_INVALID_RSV1);
+                    Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_INVALID_RSV1);
                     return;
                 }
 
                 // invalid reserved bits / invalid opcodes / invalid control frames
                 if (rsv23(src) || (getOpCode(src) > 2 && getOpCode(src) < 8) ||
                     getOpCode(src) > 10 || (getOpCode(src) > 2 && (!isFin(src) || payloadLength(src) > 125))) {
-                    Impl::forceClose(wState, user);
+                    Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_PROTOCOL);
                     return;
                 }
 
@@ -450,7 +463,7 @@ public:
              * bit is already visible once the 2-byte base header is in: an unmasked frame
              * must be refused now, not spilled until enough of a masked header arrives. */
             if (isServer && length >= 2 && !isMasked(src)) {
-                Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                Impl::failConnection(wState, user, CLOSE_PROTOCOL_ERROR, ERR_INVALID_MASKING);
                 return;
             }
             if (length) {

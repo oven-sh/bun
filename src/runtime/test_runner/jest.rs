@@ -831,7 +831,7 @@ pub(crate) fn format_label(
 
 pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
     if let Some(runner) = Jest::runner() {
-        if runner.test_options.reporters.junit {
+        if runner.test_options.reporters.junit || global_this.bun_vm().is_inspector_enabled() {
             unsafe extern "C" {
                 fn Bun__CallFrame__getLineNumber(
                     callframe: *const CallFrame,

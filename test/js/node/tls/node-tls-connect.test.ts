@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1222,6 +1222,48 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
       alive = nativeSockets() - baseline;
     }
     expect(alive).toBeLessThanOrEqual(count / 2);
+  });
+});
+
+describe("a TLS socket over a Duplex transport reports that transport's error", () => {
+  // Node re-emits the transport's 'error' on its JSStreamSocket wrap, and
+  // TLSSocket._init routes the wrap's error through _emitTLSError:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+  // Without a listener on the transport, node:stream throws the error.
+
+  it.each(["client", "server"])("a %s wrap listens for the transport's 'error'", side => {
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const socket =
+      side === "client"
+        ? tls.connect({ socket: transport, rejectUnauthorized: false })
+        : new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+    // Exactly one, like node's wrap: the forward to the TLS socket.
+    expect(transport.listenerCount("error")).toBe(1);
+    socket.destroy();
+    transport.destroy();
+  });
+
+  // Out of process: with nothing listening on the transport the error is
+  // thrown, which takes the process down. Each list is what node v26.3.0 prints.
+  it.concurrent.each([
+    ["client", "early", "_tlsError:transport failed|error:transport failed|close:false"],
+    ["client", "late", "_tlsError:transport failed|error:transport failed|close:false"],
+    // A server wrap still owns its socket, so there is no 'error'. A tls.Server
+    // reports its '_tlsError' as 'tlsClientError'.
+    ["server", "early", "_tlsError:transport failed|close:false"],
+    ["server", "late", "_tlsError:transport failed|close:false"],
+    // The http layer listens on the TLS socket only.
+    ["https", "late", "req.error:transport failed|req.close:true"],
+  ])("%s: a transport error %s reaches the TLS socket", async (side, when, stdout) => {
+    const fixture = join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts");
+    const result = await bunRun(fixture, { SIDE: side, WHEN: when });
+    expect(result).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 });
 

@@ -33,6 +33,7 @@
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
 #include "JSStructuredSerializeOptions.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -69,7 +70,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
+    // StructuredSerializeWithTransfer sets [[Detached]] on every transferable and
+    // StructuredDeserializeWithTransfer creates a fresh object per transferDataHolder.
+    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangled.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    auto entangled = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
+
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, entangled);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(deserialized);
@@ -136,7 +147,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
+    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangled.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    auto entangled = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
+
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, entangled);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(deserialized);

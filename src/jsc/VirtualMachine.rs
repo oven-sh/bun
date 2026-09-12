@@ -5693,10 +5693,8 @@ impl VirtualMachine {
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 )
                 .map(|lookup| {
-                    (
-                        lookup.display_source_url_if_needed(source_url.slice()),
-                        lookup,
-                    )
+                    let display_url = self.remapped_source_url(&lookup, source_url.slice());
+                    (display_url, lookup)
                 })
             };
             if let Some((display_url, lookup)) = resolved {
@@ -5894,6 +5892,13 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // A frame parsed from `error.stack` names whatever the thrown code chose.
+        let allow_source_from_disk = if already_remapped {
+            let url = frames[top].source_url.to_utf8();
+            self.source_mappings.is_loaded_path(url.slice()) || self.is_embedded_module(url.slice())
+        } else {
+            true
+        };
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
@@ -5926,7 +5931,7 @@ impl VirtualMachine {
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
                 let display_url = if !already_remapped {
-                    lookup.display_source_url_if_needed(top_source_url.slice())
+                    self.remapped_source_url(&lookup, top_source_url.slice())
                 } else {
                     None
                 };
@@ -5959,6 +5964,9 @@ impl VirtualMachine {
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
+                if !allow_source_from_disk {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
@@ -6040,10 +6048,8 @@ impl VirtualMachine {
                         bun_sourcemap::SourceContentHandling::NoSourceContents,
                     )
                     .map(|lookup| {
-                        (
-                            lookup.display_source_url_if_needed(source_url.slice()),
-                            lookup,
-                        )
+                        let display_url = self.remapped_source_url(&lookup, source_url.slice());
+                        (display_url, lookup)
                     })
                 };
                 if let Some((display_url, lookup)) = resolved {
@@ -6905,6 +6911,26 @@ impl VirtualMachine {
 
         let _ = writer.write_all(b"\n");
         let _ = writer.flush();
+    }
+
+    /// Whether `path` is a file embedded in this `bun build --compile` executable.
+    fn is_embedded_module(&self, path: &[u8]) -> bool {
+        bun_options_types::standalone_path::is_bun_standalone_file_path(path)
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.find_assume_standalone_path(path).is_some())
+    }
+
+    /// The URL `lookup` remaps `source_url` to, recorded as a path the printer may read.
+    fn remapped_source_url(
+        &mut self,
+        lookup: &bun_sourcemap::mapping::Lookup,
+        source_url: &[u8],
+    ) -> Option<bun_core::String> {
+        let display_url = lookup.display_source_url_if_needed(source_url)?;
+        self.source_mappings
+            .trust_path(display_url.to_utf8().slice());
+        Some(display_url)
     }
 
     /// Looks up the source-map mapping for `path` at `line:column`.

@@ -409,6 +409,12 @@ impl All {
         };
 
         let Some(timer) = timer else { return Ok(()) };
+        if kind != Kind::SetImmediate
+            // SAFETY: timer points to a live TimerObjectInternals
+            && let Some(js_timer) = unsafe { (*timer).this_value.get().try_get() }
+        {
+            TimeoutObject::mark_unenrolled(js_timer, global_this);
+        }
         // SAFETY: timer points to a live TimerObjectInternals
         unsafe { (*timer).cancel(vm) };
         Ok(())

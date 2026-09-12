@@ -32,8 +32,19 @@ impl TimeoutObject {
 
     #[bun_jsc::host_fn(method)]
     pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        this.before_explicit_cancel(global, frame.this());
         this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
+    }
+
+    /// Node's `unenroll`: an explicitly cancelled timer reads back `_idleTimeout === -1`.
+    pub(crate) fn mark_unenrolled(this_value: JSValue, global: &JSGlobalObject) {
+        js::idle_timeout_set_cached(this_value, global, JSValue::js_number(-1.0));
+    }
+
+    /// `impl_timer_object!`'s `dispose` hook.
+    pub(crate) fn before_explicit_cancel(&self, global: &JSGlobalObject, this_value: JSValue) {
+        Self::mark_unenrolled(this_value, global);
     }
 
     // Cached-property getters/setters — codegen passes `this_value` (the JS

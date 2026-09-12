@@ -23,6 +23,7 @@ function getTimerDuration(msecs, name) {
 }
 
 export default {
+  TIMEOUT_MAX,
   // For hiding Timeouts on other internals. A registered symbol so the node
   // test harness's --expose-internals shim ("internal/timers" virtual module
   // in test/js/node/test/common/index.js) can hand the same symbol to ported

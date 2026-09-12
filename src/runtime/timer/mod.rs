@@ -221,8 +221,9 @@ macro_rules! impl_timer_object {
             pub fn dispose(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
+                frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                this.before_explicit_cancel(global, frame.this());
                 this.internals.cancel(global.bun_vm_ptr());
                 Ok(::bun_jsc::JSValue::UNDEFINED)
             }

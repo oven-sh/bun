@@ -1,6 +1,6 @@
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -758,4 +758,31 @@ it("server.unref() on a pipe/unix-socket listener lets the process exit", async 
   expect(stdout).toBe("");
   expect(exitCode === 0 ? "" : stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+describe("keepAlive initial delay", () => {
+  // node stores the delay in whole seconds and passes it on to libuv without a
+  // ceiling; the native handle takes int32 milliseconds, so the conversion
+  // back must clamp instead of throwing inside the connection callbacks.
+  it("a delay above int32 milliseconds is stored in seconds and does not throw", async () => {
+    const delay = 3_000_000_000;
+    await using server = createServer({ keepAlive: true, keepAliveInitialDelay: delay });
+    expect(server.keepAliveInitialDelay).toBe(delay / 1000);
+    server.on("connection", socket => socket.end("ok"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const client = connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    await once(client, "connect");
+    expect(client.setKeepAlive(true, delay)).toBe(client);
+    const [data] = await once(client, "data");
+    expect(String(data)).toBe("ok");
+    await once(client, "close");
+  });
+
+  it("sub-second delays truncate to whole seconds like node", async () => {
+    await using server = createServer({ keepAlive: true, keepAliveInitialDelay: 1999 });
+    expect(server.keepAliveInitialDelay).toBe(1);
+    expect(createServer({ keepAliveInitialDelay: 999 }).keepAliveInitialDelay).toBe(0);
+  });
 });

@@ -198,6 +198,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
+                // In a `with` body the target can be a property of the `with` object.
+                && (!result.is_inside_with_scope
+                    // `select_local_kind` can print the `const` as `let` or `var` in these cases.
+                    || p.options.bundle
+                    || p.will_wrap_module_in_try_catch_for_using)
             {
                 // TODO: silence this for runtime transpiler
                 let r = js_lexer::range_of_identifier(p.source, expr.loc);

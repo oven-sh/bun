@@ -6335,10 +6335,6 @@ describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () 
   let server;
   beforeAll(async () => {
     server = http2.createSecureServer(TLS_CERT);
-    server.on("stream", stream => {
-      stream.respond();
-      stream.end("ok");
-    });
     // Every session gets ORIGIN frames of 10 new origins each, until it closes.
     server.on("session", session => {
       let i = 0;
@@ -6358,8 +6354,9 @@ describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () 
   });
   const url = () => `https://localhost:${server.address().port}`;
 
-  // Connects, sends one request, and resolves with what the session saw once it closes.
-  // With `stopAbove`, the client destroys itself once originSet grows past that size.
+  // Connects and resolves with what the session saw once it closes. No request is opened,
+  // so a destroyed session has no stream left to error. With `stopAbove`, the client
+  // destroys itself once originSet grows past that size.
   function run(options, stopAbove) {
     const { promise, resolve } = Promise.withResolvers();
     const client = http2.connect(url(), { ...TLS_OPTIONS, ...options });
@@ -6376,7 +6373,6 @@ describe("http2 client caps originSet at maxOriginSetSize (CVE-2026-48619)", () 
       result.goaway = true;
     });
     client.on("close", () => resolve(result));
-    client.request().resume();
     return promise;
   }
 

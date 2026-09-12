@@ -90,9 +90,7 @@ pub mod JSH2FrameParser {
 // ──────────────────────────────────────────────────────────────────────────
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
-/// nghttp2 caps a GOAWAY payload (last stream id + error code + opaque data) at
-/// NGHTTP2_MAX_PAYLOADLEN whatever MAX_FRAME_SIZE the peer advertises:
-/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L7227-L7229
+/// nghttp2's limit: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L7227-L7229
 const MAX_GOAWAY_OPAQUE_DATA_SIZE: usize = 16384 - 8;
 
 /// `Copy` view of [`NativeSocket`] for call sites to snapshot across
@@ -4722,8 +4720,7 @@ impl H2FrameParser {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
                         let opaque_data = array_buffer.byte_slice();
-                        // node sends nothing: nghttp2 refuses the frame and node ignores the result.
-                        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2979-L2980
+                        // node sends nothing: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2979-L2980
                         if opaque_data.len() > MAX_GOAWAY_OPAQUE_DATA_SIZE {
                             return Ok(JSValue::UNDEFINED);
                         }

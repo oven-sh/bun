@@ -222,6 +222,174 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
     selectors.into_boxed_slice()
 }
 
+/// Rough serialized byte size of `selectors` (proportional, not exact), for [`crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES`].
+pub(crate) fn selector_list_weight(selectors: &[Selector]) -> u64 {
+    let mut weight: u64 = 0;
+    for selector in selectors {
+        weight = weight.saturating_add(selector_weight(selector));
+    }
+    weight
+}
+
+pub(crate) fn selector_weight(selector: &Selector) -> u64 {
+    let mut weight: u64 = 0;
+    for component in selector.components.iter() {
+        weight = weight.saturating_add(component_weight(component));
+    }
+    weight
+}
+
+fn component_weight(component: &Component) -> u64 {
+    const BASE: u64 = 4;
+    let payload: u64 = match component {
+        Component::DefaultNamespace(url) => url.len() as u64,
+        Component::Namespace { prefix, url } => {
+            (prefix.v.len() as u64).saturating_add(url.len() as u64)
+        }
+        Component::LocalName(name) => name.name.v.len() as u64,
+        Component::Id(ident) | Component::Class(ident) => ident_or_ref_weight(*ident),
+        Component::AttributeInNoNamespaceExists { local_name, .. } => local_name.v.len() as u64,
+        Component::AttributeInNoNamespace {
+            local_name, value, ..
+        } => (local_name.v.len() as u64).saturating_add(value.len() as u64),
+        Component::AttributeOther(attr) => {
+            let op_len = match &attr.operation {
+                parser::attrs::ParsedAttrSelectorOperation::Exists => 0,
+                parser::attrs::ParsedAttrSelectorOperation::WithValue {
+                    expected_value, ..
+                } => expected_value.len() as u64,
+            };
+            (attr.local_name.v.len() as u64).saturating_add(op_len)
+        }
+        Component::Negation(list)
+        | Component::Where(list)
+        | Component::Is(list)
+        | Component::Any {
+            selectors: list, ..
+        }
+        | Component::Has(list) => selector_list_weight(list),
+        Component::NthOf(nth) => selector_list_weight(&nth.selectors),
+        Component::Slotted(selector) => selector_weight(selector),
+        Component::Host(selector) => selector.as_ref().map_or(0, selector_weight),
+        Component::Part(names) => {
+            let mut w: u64 = 0;
+            for name in names.iter() {
+                w = w.saturating_add(name.v.len() as u64);
+            }
+            w
+        }
+        Component::NonTsPseudoClass(pseudo) => pseudo_class_weight(pseudo),
+        Component::PseudoElement(pseudo) => pseudo_element_weight(pseudo),
+        _ => BASE,
+    };
+    BASE.saturating_add(payload)
+}
+
+fn ident_or_ref_weight(ident: css::css_values::ident::IdentOrRef) -> u64 {
+    // CSS-modules refs resolve through the symbol table; use a flat estimate.
+    match ident.as_ident() {
+        Some(ident) => ident.v.len() as u64,
+        None => 16,
+    }
+}
+
+fn pseudo_class_weight(pseudo: &PseudoClass) -> u64 {
+    // ~Longest built-in name with vendor prefix; input-controlled payloads are measured instead.
+    const NAME: u64 = 24;
+    match pseudo {
+        PseudoClass::Lang { languages } => {
+            // Downleveling wraps each language in its own `:lang()`, hence the per-language overhead.
+            let mut w: u64 = 0;
+            for lang in languages {
+                w = w.saturating_add(lang.len() as u64).saturating_add(8);
+            }
+            w
+        }
+        PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+            selector_weight(selector)
+        }
+        PseudoClass::Custom { name } => NAME.saturating_add(name.len() as u64),
+        PseudoClass::CustomFunction { name, arguments } => NAME
+            .saturating_add(name.len() as u64)
+            .saturating_add(token_list_weight(arguments)),
+        _ => NAME,
+    }
+}
+
+fn pseudo_element_weight(pseudo: &PseudoElement) -> u64 {
+    const NAME: u64 = 24;
+    match pseudo {
+        PseudoElement::CueFunction { selector } | PseudoElement::CueRegionFunction { selector } => {
+            NAME.saturating_add(selector_weight(selector))
+        }
+        PseudoElement::ViewTransitionGroup { part_name }
+        | PseudoElement::ViewTransitionImagePair { part_name }
+        | PseudoElement::ViewTransitionOld { part_name }
+        | PseudoElement::ViewTransitionNew { part_name } => NAME.saturating_add(match part_name {
+            parser::ViewTransitionPartName::All => 1,
+            parser::ViewTransitionPartName::Name(ident)
+            | parser::ViewTransitionPartName::Class(ident) => ident.v.len() as u64,
+        }),
+        PseudoElement::PickerFunction { identifier } => {
+            NAME.saturating_add(identifier.v.len() as u64)
+        }
+        PseudoElement::Custom { name } => NAME.saturating_add(name.len() as u64),
+        PseudoElement::CustomFunction { name, arguments } => NAME
+            .saturating_add(name.len() as u64)
+            .saturating_add(token_list_weight(arguments)),
+        _ => NAME,
+    }
+}
+
+fn token_list_weight(list: &crate::properties::custom::TokenList) -> u64 {
+    use crate::properties::custom::TokenOrValue;
+    let mut weight: u64 = 0;
+    for token_or_value in &list.v {
+        let w = match token_or_value {
+            TokenOrValue::Token(token) => token_weight(token),
+            TokenOrValue::Var(var) => var
+                .fallback
+                .as_ref()
+                .map_or(0, token_list_weight)
+                .saturating_add(16),
+            TokenOrValue::Env(env) => env
+                .fallback
+                .as_ref()
+                .map_or(0, token_list_weight)
+                .saturating_add(16),
+            TokenOrValue::Function(func) => {
+                (func.name.v.len() as u64).saturating_add(token_list_weight(&func.arguments))
+            }
+            _ => 16,
+        };
+        weight = weight.saturating_add(w).saturating_add(4);
+    }
+    weight
+}
+
+fn token_weight(token: &css::Token) -> u64 {
+    use css::Token;
+    const NUMERIC: u64 = 17;
+    match token {
+        Token::Ident(v)
+        | Token::Function(v)
+        | Token::AtKeyword(v)
+        | Token::UnrestrictedHash(v)
+        | Token::IdHash(v)
+        | Token::QuotedString(v)
+        | Token::BadString(v)
+        | Token::UnquotedUrl(v)
+        | Token::BadUrl(v)
+        | Token::Whitespace(v)
+        | Token::Comment(v) => v.len() as u64,
+        // Numerics print via dtoa's shortest round-trip form, which is at most ~17 bytes.
+        Token::Number(_) => NUMERIC,
+        Token::Percentage { .. } => NUMERIC.saturating_add(1),
+        Token::Dimension(dim) => (dim.unit.len() as u64).saturating_add(NUMERIC),
+        _ => 8,
+    }
+}
+
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
 pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
@@ -1292,35 +1460,15 @@ pub(crate) mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
+    /// Byte companion of [`MAX_NESTING_EXPANSIONS`], stylesheet-wide: the substituted parent list's size is input-controlled.
+    const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
+
     fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,
     ) -> Result<(), PrintErr> {
-        if let Some(ctx) = context {
-            dest.nesting_expansions += 1;
-            if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
-                return dest.new_error(
-                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
-                    None,
-                );
-            }
-            // If there's only one simple selector, just serialize it directly.
-            // Otherwise, use an :is() pseudo class.
-            // Type selectors are only allowed at the start of a compound selector,
-            // so use :is() if that is not the case.
-            if ctx.selectors.v.len() == 1
-                && (first
-                    || (!has_type_selector(ctx.selectors.v.at(0))
-                        && is_simple(ctx.selectors.v.at(0))))
-            {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
-            } else {
-                dest.write_str(b":is(")?;
-                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
-                dest.write_char(b')')?;
-            }
-        } else {
+        let Some(ctx) = context else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.
             if dest.targets.should_compile_same(Feature::Nesting) {
@@ -1328,8 +1476,63 @@ pub(crate) mod serialize {
             } else {
                 dest.write_char(b'&')?;
             }
+            return Ok(());
+        };
+
+        dest.nesting_expansions += 1;
+        if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
+            return dest.new_error(
+                crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                None,
+            );
+        }
+        // The outermost substitution opens the metered span; every nested return re-checks it so the cap trips mid-expansion.
+        let outermost = dest.nesting_expansion_span_start.is_none();
+        if outermost {
+            dest.nesting_expansion_span_start = Some(dest.bytes_written());
+        }
+        let result = serialize_nesting_substitution(dest, ctx, first)
+            .and_then(|()| charge_nesting_expansion_bytes(dest, outermost));
+        if outermost {
+            dest.nesting_expansion_span_start = None;
+        }
+        result
+    }
+
+    fn charge_nesting_expansion_bytes(dest: &mut Printer, commit: bool) -> Result<(), PrintErr> {
+        let written = dest.bytes_written();
+        let span_start = dest.nesting_expansion_span_start.unwrap_or(written);
+        let total = dest
+            .nesting_expansion_bytes
+            .saturating_add(written.saturating_sub(span_start));
+        if total > MAX_NESTING_EXPANSION_BYTES {
+            return dest.new_error(
+                crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                None,
+            );
+        }
+        if commit {
+            dest.nesting_expansion_bytes = total;
         }
         Ok(())
+    }
+
+    fn serialize_nesting_substitution(
+        dest: &mut Printer,
+        ctx: &StyleContext,
+        first: bool,
+    ) -> Result<(), PrintErr> {
+        // A lone simple selector serializes directly; otherwise wrap in :is() (type selectors must lead a compound).
+        if ctx.selectors.v.len() == 1
+            && (first
+                || (!has_type_selector(ctx.selectors.v.at(0)) && is_simple(ctx.selectors.v.at(0))))
+        {
+            serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)
+        } else {
+            dest.write_str(b":is(")?;
+            serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
+            dest.write_char(b')')
+        }
     }
 }
 

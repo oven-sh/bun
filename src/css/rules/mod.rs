@@ -1207,6 +1207,9 @@ pub struct StyleContext<'a> {
 /// instead.
 pub(crate) const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Byte companion of [`MAX_SELECTOR_EXPANSION`]: caps the expansion's estimated serialized size, since per-selector size is input-controlled.
+pub(crate) const MAX_SELECTOR_EXPANSION_BYTES: u64 = 64 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1242,4 +1245,8 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
+    /// Sum of the enclosing compiled style rules' average selector weights. `0` at the top level.
+    pub(crate) selector_expansion_chain_bytes: u64,
+    /// Running byte estimate of the expansion, checked against [`MAX_SELECTOR_EXPANSION_BYTES`].
+    pub(crate) selector_expansion_bytes_total: u64,
 }

@@ -5693,6 +5693,367 @@ describe("css tests", () => {
       },
     );
 
+    // Selector lists with selectors the targets do not support. A browser
+    // drops the whole rule when one selector is invalid, so the unsupported
+    // selectors are moved out of the rule. Chrome 80 supports neither
+    // :is()/:where() (88) nor :has() (105) nor :focus-visible (86).
+    // https://github.com/oven-sh/bun/issues/40364
+    prefix_test(
+      ":where(.a), :where(.b) { color: red; padding: 4px }",
+      `
+      :where(.a), :where(.b) {
+        color: red;
+        padding: 4px;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":has(.a), :has(.b) { color: red }",
+      `
+      :has(.a), :has(.b) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), .c { color: red }",
+      `
+      .c {
+        color: red;
+      }
+
+      :where(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), :has(.b), :where(.c), :has(.d) { color: red }",
+      `
+      :where(.a), :where(.c) {
+        color: red;
+      }
+
+      :has(.b), :has(.d) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ':where(.a)::before, :where(.c)::before, :where(.a)::after, :where(.c)::after { content: "" }',
+      `
+      :where(.a):before, :where(.c):before, :where(.a):after, :where(.c):after {
+        content: "";
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":hover, :focus-visible { color: red }",
+      `
+      :hover {
+        color: red;
+      }
+
+      :focus-visible {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":focus-within, :focus-visible { color: red }",
+      `
+      :focus-within {
+        color: red;
+      }
+
+      :focus-visible {
+        color: red;
+      }
+      `,
+      { safari: 9 << 16 },
+    );
+
+    prefix_test(
+      "a::unknown-a, a::unknown-b { color: red }",
+      `
+      a::unknown-a {
+        color: red;
+      }
+
+      a::unknown-b {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    prefix_test(
+      ":hover, :focus-visible { color: red }",
+      `
+      :is(:hover, :focus-visible) {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    prefix_test(
+      ":is(.a, .b), :where(.c) { color: red }",
+      `
+      :-webkit-any(.a, .b) {
+        color: red;
+      }
+
+      :is(.a, .b) {
+        color: red;
+      }
+
+      :where(.c) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    // A single simple selector inside :is() is printed unwrapped, so the rule
+    // needs what the inner selector needs, not :is() itself.
+    prefix_test(
+      ".foo :is(.bar), .bar :is(.baz) { color: red }",
+      `
+      .foo .bar, .bar .baz {
+        color: red;
+      }
+      `,
+      { chrome: 87 << 16 },
+    );
+
+    prefix_test(
+      ".foo :is(.bar:focus-visible), .bar :is(.baz:hover) { color: red }",
+      `
+      .bar .baz:hover {
+        color: red;
+      }
+
+      .foo .bar:focus-visible {
+        color: red;
+      }
+      `,
+      { chrome: 85 << 16 },
+    );
+
+    prefix_test(
+      ".a, .b:is(:focus-visible) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:focus-visible {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    // `&` is checked as :is() but a lone parent selector is inlined without
+    // it, so `&` never shares a rule with a selector that really prints :is()
+    // or :where(). An inner `&` under a type-selector parent does print :is().
+    prefix_test(
+      ".parent { .c, :where(.a) { color: red } }",
+      `
+      .parent .c {
+        color: red;
+      }
+
+      .parent :where(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ".parent { .c, .d { color: red } }",
+      `
+      .parent .c, .parent .d {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      "div { &:focus-visible, :focus-visible & { color: red } }",
+      `
+      div:focus-visible {
+        color: red;
+      }
+
+      :focus-visible :is(div) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    // :scope shares its compat bucket with :host and ::slotted() but shipped
+    // years earlier, so it does not share a rule with them.
+    prefix_test(
+      ":scope, :host { color: red }",
+      `
+      :scope {
+        color: red;
+      }
+
+      :host {
+        color: red;
+      }
+      `,
+      { firefox: 60 << 16 },
+    );
+
+    prefix_test(
+      ":scope, :scope > .a { color: red }",
+      `
+      :scope, :scope > .a {
+        color: red;
+      }
+      `,
+      { firefox: 60 << 16 },
+    );
+
+    // :host() and ::slotted() take one compound selector, so their argument
+    // counts too.
+    prefix_test(
+      ":host(:hover), :host(:focus-visible) { color: red }",
+      `
+      :host(:hover) {
+        color: red;
+      }
+
+      :host(:focus-visible) {
+        color: red;
+      }
+      `,
+      { chrome: 50 << 16 },
+    );
+
+    prefix_test(
+      ":host(:hover), ::slotted(.a) { color: red }",
+      `
+      :host(:hover), ::slotted(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 50 << 16 },
+    );
+
+    prefix_test(
+      ":host(:focus-visible), .x { color: red }",
+      `
+      .x {
+        color: red;
+      }
+
+      :host(:focus-visible) {
+        color: red;
+      }
+      `,
+      { chrome: 60 << 16 },
+    );
+
+    // The group key comes from the downleveled selector: a top-level :dir()
+    // prints as :lang(), one inside ::slotted() or :nth-child(of) prints as is.
+    prefix_test(
+      "::slotted(:dir(ltr)), :dir(ltr) { color: red }",
+      `
+      ::slotted(:dir(ltr)) {
+        color: red;
+      }
+
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      { chrome: 100 << 16 },
+    );
+
+    prefix_test(
+      ":nth-child(2 of :dir(ltr)), :dir(ltr) { color: red }",
+      `
+      :nth-child(2 of :dir(ltr)) {
+        color: red;
+      }
+
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      { chrome: 115 << 16 },
+    );
+
+    prefix_test(
+      ":dir(ltr)::before, :dir(ltr)::after { color: red }",
+      `
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)):before, :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)):after {
+        color: red;
+      }
+      `,
+      { chrome: 100 << 16 },
+    );
+
+    // The `s` flag has no support data. An implied HTML case-insensitive
+    // attribute prints without a flag and needs nothing more.
+    prefix_test(
+      "[a=b s], [c=d i] { color: red }",
+      `
+      [a="b" s] {
+        color: red;
+      }
+
+      [c="d" i] {
+        color: red;
+      }
+      `,
+      { chrome: 45 << 16 },
+    );
+
+    prefix_test(
+      "[type=text], .x { color: red }",
+      `
+      [type="text"], .x {
+        color: red;
+      }
+      `,
+      { chrome: 45 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), :where(.b) { margin-inline-start: 24px }",
+      `
+      :where(.a):not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)), :where(.b):not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        margin-left: 24px;
+      }
+
+      :where(.a):lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi), :where(.b):lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        margin-right: 24px;
+      }
+      `,
+      { safari: 11 << 16 },
+    );
+
     minify_test(".foo::cue {color: red}", ".foo::cue{color:red}");
     minify_test(".foo::cue-region {color: red}", ".foo::cue-region{color:red}");
     minify_test(".foo::cue(b) {color: red}", ".foo::cue(b){color:red}");

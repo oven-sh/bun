@@ -772,6 +772,7 @@ impl BunTest {
             return Ok(());
         }
 
+        this.on_callback_completed(&refdata.phase);
         this.add_result(refdata.phase);
         // `this` borrow ends here (NLL); `run_next_tick` re-derives via `.get()`.
         Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase);
@@ -842,7 +843,9 @@ impl BunTest {
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
-        strong.get().add_result(ref_in.phase);
+        let this = strong.get();
+        this.on_callback_completed(&ref_in.phase);
+        this.add_result(ref_in.phase);
         Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
         Ok(JSValue::UNDEFINED)
@@ -904,6 +907,13 @@ impl BunTest {
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
+    }
+
+    /// Call before `add_result` with the completion of a test or hook callback.
+    pub(crate) fn on_callback_completed(&mut self, data: &RefDataValue) {
+        if self.phase == Phase::Execution {
+            self.execution.handle_callback_completed(data);
+        }
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
@@ -1925,10 +1935,12 @@ impl ExecutionEntry {
         entry
     }
 
+    /// `callback_completed`: the callback already finished, so the missing-`done()` hint does not apply.
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
+        callback_completed: bool,
     ) -> bool {
         if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
@@ -1936,13 +1948,14 @@ impl ExecutionEntry {
             let is_test_entry = sequence
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
+            let waiting_for_done = self.has_done_parameter && !callback_completed;
             sequence.result = if is_test_entry {
-                if self.has_done_parameter {
+                if waiting_for_done {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
                     Execution::Result::FailBecauseTimeout
                 }
-            } else if self.has_done_parameter {
+            } else if waiting_for_done {
                 Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
                 Execution::Result::FailBecauseHookTimeout

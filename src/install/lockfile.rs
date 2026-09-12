@@ -1472,13 +1472,9 @@ impl Lockfile {
             name_hash: pkg_name_hashes,
             resolution: pkg_resolutions,
             bin: pkg_bins,
-            meta,
+            meta: pkg_metas,
             ..
         } = pkgs.split_mut();
-        // One loop serves both modes: bind `pkg_metas` as an empty slice
-        // when the const generic is false.
-        let pkg_metas: &mut [self::package::meta::Meta] =
-            if UPDATE_OS_CPU { meta } else { &mut [] };
 
         for i in 0..len {
             let pkg_name = pkg_names[i];
@@ -1556,8 +1552,11 @@ impl Lockfile {
 
                     builder.clamp();
 
+                    let pkg_meta = &mut pkg_metas[i];
+                    // Neither yarn.lock nor pnpm-lock.yaml records this.
+                    pkg_meta.set_has_install_script(pkg.package.has_install_script);
+
                     if UPDATE_OS_CPU {
-                        let pkg_meta = &mut pkg_metas[i];
                         // Update os/cpu metadata if not already set
                         if pkg_meta.os == Npm::OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;

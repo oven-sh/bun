@@ -317,7 +317,7 @@ diffme@1.0.0 → diffme@2.0.0
     const member = join(String(dir), "packages", "a");
     const tgz = await pack(member, join(String(dir), "out"));
 
-    // What was just packed from this folder is this folder, from inside the package and from the workspace root.
+    // The dependency versions pack just wrote are the ones this folder shows, from inside the package and from the root.
     expect(await diff([tgz, "."], member)).toEqual({
       stdout: `${tgz} → .\nNo differences (2 files)\n`,
       stderr: "",
@@ -329,8 +329,15 @@ diffme@1.0.0 → diffme@2.0.0
       exitCode: 0,
     });
 
-    // A folder this project's lockfile does not list keeps what it says: `workspace:2.x` is published as `2.x`
-    // anywhere, and the others are not taken from a workspace here that has the same name.
+    // The lockfile is the folder's own, not the one of the project the command runs in.
+    expect(await diff([tgz, "../../packages/a"], join(String(dir), "vendor", "a"))).toEqual({
+      stdout: `${tgz} → ../../packages/a\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // A folder the nearest lockfile does not list keeps what it says: `workspace:2.x` is published as `2.x`
+    // anywhere, and the others are not taken from a workspace that has the same name.
     const vendored = await diff([tgz, "./vendor/a", "--json"], String(dir));
     expect(vendored.stderr).toBe("");
     expect(JSON.parse(vendored.stdout)).toMatchObject({
@@ -345,7 +352,7 @@ diffme@1.0.0 → diffme@2.0.0
     });
     expect(vendored.exitCode).toBe(0);
 
-    // Two folders that spell a version the same way compare as written, even when only one of them resolves.
+    // Two folders compare as written, so the patch between them applies to the files on disk.
     expect(await diff(["./vendor/a", "./packages/a"], String(dir))).toEqual({
       stdout: "./vendor/a → ./packages/a\nNo differences (2 files)\n",
       stderr: "",

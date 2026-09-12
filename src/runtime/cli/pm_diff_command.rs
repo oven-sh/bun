@@ -57,21 +57,6 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Permission bits per path (0o755…), when the source records them.
     modes: BTreeMap<Vec<u8>, u32>,
-    /// For a folder: the dependency versions in its package.json that use `workspace:` or `catalog:`.
-    protocol_versions: Vec<ProtocolVersion>,
-}
-
-/// A dependency version in a folder's package.json that `bun pm pack` replaces before it writes the tarball.
-struct ProtocolVersion {
-    /// `dependencies`, `devDependencies`, …
-    section: &'static [u8],
-    name: Vec<u8>,
-    /// The version as written, e.g. `workspace:^`.
-    spec: Vec<u8>,
-    /// Its string token, quotes included, in the package.json bytes.
-    token: core::ops::Range<usize>,
-    /// The version pack writes in its place. `None` when it does not resolve (pack refuses those).
-    published: Option<Vec<u8>>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -116,13 +101,15 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec)?;
+            let local = materialize(pm, &left_spec, as_published)?;
             *name = package_name_in(&local).unwrap_or_else(|| {
                 Status::clear();
                 Output::err_generic(
@@ -134,7 +121,7 @@ pub(crate) fn exec(
             left_early = Some(local);
         }
     }
-    let mut right = materialize(pm, &right_spec)?;
+    let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
             *name = package_name_in(&right).unwrap_or_else(|| {
@@ -149,10 +136,8 @@ pub(crate) fn exec(
     }
     let mut left = match left_early {
         Some(tree) => tree,
-        None => materialize(pm, &left_spec)?,
+        None => materialize(pm, &left_spec, as_published)?,
     };
-    publish_versions(&mut left, &right.protocol_versions);
-    publish_versions(&mut right, &left.protocol_versions);
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -471,7 +456,11 @@ impl Drop for Status {
     }
 }
 
-fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+fn materialize(
+    pm: &mut PackageManager,
+    spec: &Spec,
+    as_published: bool,
+) -> Result<Tree, crate::Error> {
     let _status = match spec {
         Spec::Registry { name, version } => {
             Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
@@ -493,12 +482,11 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
                 label: path.clone(),
                 files: BTreeMap::new(),
                 modes: BTreeMap::new(),
-                protocol_versions: Vec::new(),
             };
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
         }
-        Spec::Dir(path) => read_dir_tree(pm, path),
+        Spec::Dir(path) => read_dir_tree(path, as_published),
     }
 }
 
@@ -559,12 +547,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     Ok(())
 }
 
-fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Error> {
+fn read_dir_tree(root: &[u8], as_published: bool) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
-        protocol_versions: Vec::new(),
     };
     let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
         Ok(fd) => fd,
@@ -590,7 +577,11 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
             // Before the parse below: loading a lockfile resets the AST store that parse allocates from.
             let mut lockfile = Lockfile::default();
-            let lockfile = project_lockfile(pm, &mut lockfile, root, &pkg);
+            let lockfile = if as_published {
+                lockfile_for(&mut lockfile, root, &pkg)
+            } else {
+                None
+            };
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -635,7 +626,11 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
                         Err(err) => fail(err, rel),
                     }
                 }
-                tree.protocol_versions = protocol_versions(&pkg, &json, lockfile);
+                let pkg = if as_published {
+                    with_published_versions(pkg, &json, lockfile)
+                } else {
+                    pkg
+                };
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
@@ -717,9 +712,8 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
     Ok(tree)
 }
 
-/// This project's lockfile, loaded into `lockfile`, when `manifest` (the package.json of `dir`) needs it and it covers `dir`.
-fn project_lockfile<'a>(
-    pm: &mut PackageManager,
+/// The lockfile `bun pm pack` reads in `dir`: the nearest one at or above it, if `dir` is that project's root or a workspace in it.
+fn lockfile_for<'a>(
     lockfile: &'a mut Lockfile,
     dir: &[u8],
     manifest: &[u8],
@@ -728,46 +722,59 @@ fn project_lockfile<'a>(
     if !strings::contains(manifest, b"workspace:") && !strings::contains(manifest, b"catalog:") {
         return None;
     }
-    let loaded = matches!(
-        lockfile.load_from_cwd::<false>(Some(&mut *pm), &mut bun_ast::Log::init()),
-        LoadResult::Ok(_)
-    );
-    if !loaded {
-        return None;
-    }
-    let lockfile = &*lockfile;
-    // Every path compared goes through the same join, so `./packages/a/` and `packages/a` are one folder.
-    fn absolute<'b>(top_level_dir: &'b [u8], buf: &'b mut [u8], path: &[u8]) -> &'b [u8] {
-        strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
-            top_level_dir,
-            buf,
-            &[path],
-        ))
-    }
-    let top_level_dir = bun_resolver::fs::FileSystem::instance().top_level_dir();
     let (mut dir_buf, mut buf) = (
         bun_paths::path_buffer_pool::get(),
         bun_paths::path_buffer_pool::get(),
     );
-    let dir = absolute(top_level_dir, &mut dir_buf[..], dir);
-    let mut is_dir = |path: &[u8]| absolute(top_level_dir, &mut buf[..], path) == dir;
+    // Every path compared goes through the same join, so `./packages/a/` and `packages/a` are one folder.
+    let dir = strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+        dir,
+        &mut dir_buf[..],
+        &[],
+    ));
+    let mut root = dir;
+    loop {
+        let fd = bun_sys::open_dir_at(Fd::cwd(), root).ok()?;
+        let found = match lockfile.load_from_dir::<false>(fd, None, &mut bun_ast::Log::init()) {
+            LoadResult::Ok(_) => Some(true),
+            LoadResult::NotFound => None,
+            LoadResult::Err(_) => Some(false),
+        };
+        fd.close();
+        match found {
+            Some(true) => break,
+            Some(false) => return None,
+            None => {
+                let parent = strings::without_trailing_slash(bun_paths::dirname(root)?);
+                if parent.len() >= root.len() {
+                    return None;
+                }
+                root = parent;
+            }
+        }
+    }
+    let lockfile = &*lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    // `bun pm pack` reads this lockfile in the invoking package, the project root and each workspace it lists. Not elsewhere.
-    let covered = is_dir(b"")
-        || bun_paths::dirname(pm.original_package_json_path.as_bytes()).is_some_and(&mut is_dir)
+    let listed = root == dir
         || lockfile.packages.items_resolution().iter().any(|res| {
-            res.tag == resolution::Tag::Workspace && is_dir(res.workspace().slice(string_buf))
+            res.tag == resolution::Tag::Workspace
+                && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+                    root,
+                    &mut buf[..],
+                    &[res.workspace().slice(string_buf)],
+                )) == dir
         });
-    covered.then_some(lockfile)
+    listed.then_some(lockfile)
 }
 
-/// The `workspace:` and `catalog:` versions in `manifest` (parsed as `json`), each with what `bun pm pack` publishes for it.
-fn protocol_versions(
-    manifest: &[u8],
+/// `manifest` (a package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as `bun pm pack` publishes them.
+fn with_published_versions(
+    manifest: Vec<u8>,
     json: &bun_js_parser::Expr,
     lockfile: Option<&Lockfile>,
-) -> Vec<ProtocolVersion> {
-    let mut versions: Vec<ProtocolVersion> = Vec::new();
+) -> Vec<u8> {
+    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
+    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     for section in bun_install_types::DependencyGroup::FOUR {
         let Some(dependencies) = json.get_object(section.prop) else {
             continue;
@@ -785,63 +792,40 @@ fn protocol_versions(
             ) else {
                 continue;
             };
-            let Some(published) = crate::cli::pack_command::published_version(lockfile, name, spec)
+            // A version that does not resolve stays as written: pack refuses to publish it.
+            let Some(Ok(published)) =
+                crate::cli::pack_command::published_version(lockfile, name, spec)
             else {
                 continue;
             };
-            // Only a token that reads exactly as the value the parser gave can be replaced.
+            // Only a token that reads exactly as the value the parser gave is replaced.
             let token = usize::try_from(version.loc.start).ok().and_then(|at| {
-                let end = bun_parsers::json::skip_string_token(manifest, at)?;
-                (manifest[at + 1..end - 1] == *spec).then_some(at..end)
+                let end = bun_parsers::json::skip_string_token(&manifest, at)?;
+                (manifest[at + 1..end - 1] == *spec).then_some((at, end))
             });
-            if let Some(token) = token {
-                versions.push(ProtocolVersion {
-                    section: section.prop,
-                    name: name.to_vec(),
-                    spec: spec.to_vec(),
-                    token,
-                    published: published.ok(),
-                });
+            if let Some((at, end)) = token {
+                edits.push((at, end, published));
             }
         }
     }
-    versions
-}
-
-/// Writes the published versions into `tree`'s package.json. `other` holds the versions of the folder on the other side.
-fn publish_versions(tree: &mut Tree, other: &[ProtocolVersion]) {
-    let Some(manifest) = tree.files.get_mut(b"package.json".as_slice()) else {
-        return;
-    };
-    let mut edits: Vec<(&core::ops::Range<usize>, &[u8])> = tree
-        .protocol_versions
-        .iter()
-        // A version both folders spell the same way already compares equal, and maybe only one folder's lockfile resolves it.
-        .filter(|v| {
-            !other
-                .iter()
-                .any(|o| o.section == v.section && o.name == v.name && o.spec == v.spec)
-        })
-        .filter_map(|v| Some((&v.token, v.published.as_deref()?)))
-        .collect();
     if edits.is_empty() {
-        return;
+        return manifest;
     }
-    edits.sort_unstable_by_key(|(token, _)| token.start);
-    edits.dedup_by_key(|(token, _)| token.start);
+    edits.sort_unstable_by_key(|&(at, ..)| at);
+    edits.dedup_by_key(|&mut (at, ..)| at);
     let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
     let mut copied = 0usize;
-    for (token, published) in edits {
-        out.extend_from_slice(&manifest[copied..token.start]);
+    for (at, end, published) in &edits {
+        out.extend_from_slice(&manifest[copied..*at]);
         let _ = write!(
             out,
             "{}",
             bun_core::fmt::format_json_string_utf8(published, Default::default())
         );
-        copied = token.end;
+        copied = *end;
     }
     out.extend_from_slice(&manifest[copied..]);
-    *manifest = out;
+    out
 }
 
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.
@@ -982,7 +966,6 @@ fn fetch_registry_tree(
         label,
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
-        protocol_versions: Vec::new(),
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)

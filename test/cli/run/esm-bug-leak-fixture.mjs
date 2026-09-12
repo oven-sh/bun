@@ -1,36 +1,29 @@
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const dest = await import.meta.resolve("./esm-leak-fixture-large-ast.mjs");
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
-const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const memory = require("./leak-metric.cjs");
+// require.cache uses the resolved path as its key, not the file:// URL that
+// import.meta.resolve returns.
+const dest = require.resolve("./esm-leak-fixture-large-ast.mjs");
+// The require() sibling of this fixture retained 20 MB per load on bun 1.0.0,
+// eight times the limit. Each load parses a 200 KB file, so ASAN runs fewer.
+const count = memory.iterations({ release: 50, asan: 10 });
 
-if (typeof Bun !== "undefined") Bun.gc(true);
+Bun.gc(true);
 for (let i = 0; i < 5; i++) {
   delete require.cache[dest];
   await import(dest);
 }
-if (typeof Bun !== "undefined") Bun.gc(true);
-const baseline = rss();
+// Under any other key the delete does nothing, and the module loads only once.
+if (!(dest in require.cache)) throw new Error(`require.cache has no entry for ${dest}`);
+Bun.gc(true);
+const baseline = memory.measure();
 
-for (let i = 0; i < 50; i++) {
+for (let i = 0; i < count; i++) {
   delete require.cache[dest];
   await import(dest);
 }
-if (typeof Bun !== "undefined") Bun.gc(true);
+Bun.gc(true);
 
 setTimeout(() => {
-  let diff = rss() - baseline;
-  diff = (diff / 1024 / 1024) | 0;
-  console.log({ leaked: diff + " MB" });
-  if (diff > (isASAN ? 400 : 120)) {
-    console.log("\n--fail--\n");
-    process.exit(1);
-  } else {
-    console.log("\n--pass--\n");
-  }
+  memory.report(memory.measure() - baseline, { count, limitBytesPerIteration: 2.4 * 1024 * 1024 });
 }, 16);

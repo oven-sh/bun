@@ -1,43 +1,26 @@
+const memory = require("./leak-metric.cjs");
 const dest = require.resolve("./leak-fixture-small-ast.js");
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
-const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+// bun 1.0.0 retained 10 KB per require here (104 MB at 10k requires), twice
+// the limit.
+const count = memory.iterations({ release: 10_000 });
+// require() appends every new Module to the parent's children list, as in
+// Node. That list is not what this fixture measures.
+module.children = { indexOf: () => 0 };
 
-let gc = globalThis.gc;
-if (typeof Bun !== "undefined") {
-  gc = () => Bun.gc(true);
-}
-
-if (!gc) {
-  gc = () => {};
-}
-
-gc();
+Bun.gc(true);
 for (let i = 0; i < 5; i++) {
   delete require.cache[dest];
   require(dest);
 }
-gc();
-const baseline = rss();
+Bun.gc(true);
+const baseline = memory.measure();
 
-for (let i = 0; i < 10000; i++) {
+for (let i = 0; i < count; i++) {
   delete require.cache[dest];
   require(dest);
 }
-gc();
+Bun.gc(true);
 
 setTimeout(() => {
-  let diff = rss() - baseline;
-  diff = (diff / 1024 / 1024) | 0;
-  console.log({ leaked: diff + " MB" });
-  if (diff > (isASAN ? 320 : 48)) {
-    console.log("\n--fail--\n");
-    process.exit(1);
-  } else {
-    console.log("\n--pass--\n");
-  }
+  memory.report(memory.measure() - baseline, { count, limitBytesPerIteration: 4800 });
 }, 16);

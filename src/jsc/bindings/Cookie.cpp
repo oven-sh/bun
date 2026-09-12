@@ -166,11 +166,13 @@ bool Cookie::isExpired() const
     return currentTime > m_expires;
 }
 
-String Cookie::toString(JSC::VM& vm) const
+ExceptionOr<String> Cookie::toString(JSC::VM& vm) const
 {
-    StringBuilder builder;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     appendTo(vm, builder);
-    return builder.toString();
+    if (builder.hasOverflowed()) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return String { builder.toString() };
 }
 
 static inline bool isValidCharacterInCookieName(char16_t c)

@@ -336,7 +336,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toSetCookieHeader
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t i = 0;
     for (auto& item : cookies) {
-        resultArray->putDirectIndex(lexicalGlobalObject, i, jsString(vm, item->toString(vm)));
+        auto header = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, item->toString(vm));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        resultArray->putDirectIndex(lexicalGlobalObject, i, header);
         RETURN_IF_EXCEPTION(throwScope, {});
         i += 1;
     }

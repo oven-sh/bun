@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -99,6 +99,68 @@ test("a resolver error delivered to both connectError() and the promise is not r
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "ok\n", exitCode: 0 });
   void stderr;
+});
+
+// uSockets parses the hostname as an IP literal before it resolves it. That
+// parse went through inet_aton(3), which stops at whitespace, so every
+// hostname below connected to 127.0.0.1 (or 0.0.0.12) and a hostname
+// allow-list that had inspected the full string never saw the resolver reject it.
+test("Bun.connect does not dial the IPv4 prefix of a hostname with trailing text", async () => {
+  const { promise: accepted, resolve: onAccept } = Promise.withResolvers<void>();
+  let acceptedCount = 0;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        acceptedCount++;
+        onAccept();
+        socket.end();
+      },
+      data() {},
+    },
+  });
+
+  // One hostname per byte C's isspace() accepts: space, \t, \n, \v, \f, \r.
+  const hostnames = [
+    "127.0.0.1 db.allowed.example",
+    "127.1 .allowed.example",
+    "0x7f.1 junk",
+    "127.0.0.1\tx",
+    "127.0.0.1\n",
+    "127.0.0.1\vx",
+    "127.0.0.1\fx",
+    "127.0.0.1\rx",
+    "12\t7.0.0.1",
+  ];
+  const results: unknown[] = [];
+  for (const hostname of hostnames) {
+    results.push(
+      await Bun.connect({
+        hostname,
+        port: listener.port,
+        socket: { open() {}, data() {} },
+      }).then(
+        socket => {
+          socket.end();
+          return "connected";
+        },
+        (e: any) => ({ syscall: e.syscall, hostname: e.hostname }),
+      ),
+    );
+  }
+  expect(results).toEqual(hostnames.map(hostname => ({ syscall: "getaddrinfo", hostname })));
+
+  // The inet_aton shorthand itself is still taken. Windows has no inet_aton; it
+  // leaves these spellings to the resolver.
+  const socket = await Bun.connect({
+    hostname: isWindows ? "127.0.0.1" : "127.1",
+    port: listener.port,
+    socket: { open() {}, data() {} },
+  });
+  await accepted;
+  socket.end();
+  expect(acceptedCount).toBe(1);
 });
 
 test("consecutive Bun.connect calls to the same unresolvable hostname all get the resolver error", async () => {

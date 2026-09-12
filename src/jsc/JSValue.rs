@@ -2276,6 +2276,24 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
     }
 
+    /// `parseInt(value, radix)`; radix 0 means "not given". A Symbol gives NaN.
+    pub fn parse_int(self, global: &JSGlobalObject, radix: i32) -> JsResult<f64> {
+        if self.is_symbol() {
+            return Ok(f64::NAN);
+        }
+        let string = self.to_bun_string(global)?;
+        Ok(Bun__parseInt(&string, radix))
+    }
+
+    /// `parseFloat(value)`. A Symbol gives NaN.
+    pub fn parse_float(self, global: &JSGlobalObject) -> JsResult<f64> {
+        if self.is_symbol() {
+            return Ok(f64::NAN);
+        }
+        let string = self.to_bun_string(global)?;
+        Ok(Bun__parseFloat(&string))
+    }
+
     /// `JSValue.toPortNumber` — Node `validatePort` semantics:
     /// numeric, non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
     pub fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
@@ -2703,6 +2721,10 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> bool;
     safe fn Bun__JSValue__toNumber(this: JSValue, global: &JSGlobalObject) -> f64;
+    /// `parseInt(str, radix)` on an already-converted string (ParseInt.h).
+    safe fn Bun__parseInt(str: &bun_core::String, radix: core::ffi::c_int) -> f64;
+    /// `parseFloat(str)` on an already-converted string.
+    safe fn Bun__parseFloat(str: &bun_core::String) -> f64;
     safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;

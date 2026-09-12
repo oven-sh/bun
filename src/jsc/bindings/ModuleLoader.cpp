@@ -831,6 +831,18 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     if (!res->success) {
+        if constexpr (isExtension) {
+            // A replaced `module._compile` gets the file from disk. Node's JSON loader does not call `_compile`.
+            if (target->m_overriddenCompile && forceLoaderType != BunLoaderTypeJSON && !scope.exception()) {
+                JSC::JSFunction* compileFromDisk = globalObject->compileFromHijackedExtension();
+                JSC::MarkedArgumentBuffer args;
+                args.append(specifierValue);
+                args.append(JSC::JSValue::decode(res->result.err));
+                JSC::profiledCall(globalObject, JSC::ProfilingReason::API, compileFromDisk, JSC::getCallData(compileFromDisk), target, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, target);
+            }
+        }
         throwException(scope, res->result.err, globalObject);
         RELEASE_AND_RETURN(scope, {});
     }

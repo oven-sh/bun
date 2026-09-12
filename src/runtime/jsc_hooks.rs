@@ -954,6 +954,47 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
+/// The check phase after a poll. The microtasks that the poll's callbacks
+/// queued run first, as they do in Node.
+///
+/// # Safety
+/// `vm` and its event loop `el` are live.
+#[cfg(unix)]
+unsafe fn run_check_phase(vm: *mut VirtualMachine, el: *mut bun_jsc::event_loop::EventLoop) {
+    // SAFETY: per fn contract.
+    unsafe { (*el).drain_microtasks_if_nested() };
+    // SAFETY: per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+}
+
+/// Runs the check phase and the timers if a `tick()` ran tasks. Returns whether a callback ran.
+///
+/// # Safety
+/// `vm`, its event loop `el`, and its `RuntimeState` `state` are live.
+#[cfg(unix)]
+unsafe fn run_phases_after_tasks(
+    vm: *mut VirtualMachine,
+    el: *mut bun_jsc::event_loop::EventLoop,
+    state: *mut RuntimeState,
+) -> bool {
+    // SAFETY: per fn contract.
+    if !unsafe { (*el).take_ran_tasks() } {
+        return false;
+    }
+    // SAFETY: per fn contract.
+    let ran_immediates = !unsafe { &*el }.immediate_tasks.is_empty();
+    // SAFETY: per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+    // SAFETY: per fn contract. See the Note on `drain_timers` in `auto_tick`.
+    let fired = unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
+    if ran_immediates || fired {
+        // Report a rejection before an I/O callback in the poll can handle it, as Node does.
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
+    }
+    ran_immediates || fired
+}
+
 /// `eventLoop().autoTick()`. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
@@ -971,12 +1012,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
-    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-    unsafe { (*el).tick_immediate_tasks(vm) };
-    // SAFETY: as above.
+    // Node's order is poll, check (setImmediate), timers. libuv runs the
+    // timers inside the Windows poll call, so there the check phase is first.
+    #[cfg(windows)]
+    {
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        unsafe { (*el).tick_immediate_tasks(vm) };
+    }
+    // SAFETY: `el` is the live per-thread event loop.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
@@ -1025,6 +1068,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // drain JS tasks and never touch kqueue/epoll.
         // SAFETY: `loop_` is the live per-thread uws loop.
         unsafe { (*loop_).tick_without_idle() };
+        #[cfg(unix)]
+        {
+            // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+            unsafe { run_check_phase(vm, el) };
+        }
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -1033,17 +1081,25 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
+    // Node runs thread-pool completions in the poll phase. Bun runs them as
+    // tasks in `tick()`, so a tick that ran tasks is a poll phase here.
+    // SAFETY: `el`, `state` and `vm` are live (see the timers phase below).
+    #[cfg(unix)]
+    let ran_callbacks = unsafe { run_phases_after_tasks(vm, el, state) };
+    #[cfg(not(unix))]
+    let ran_callbacks = false;
+
     // Call `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // Read `immediate_tasks` AFTER
-        // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
-        // reflects next-tick immediates (queued during the drain above).
+        // Do not wait while immediates are queued, or after a callback above:
+        // it can have settled what the caller waits for.
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = ran_callbacks
+            || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
@@ -1100,8 +1156,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         }
     }
 
+    // Check phase, then timers. The timers run last, so the caller sees what
+    // they did before the next poll.
     #[cfg(unix)]
     {
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        unsafe { run_check_phase(vm, el) };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
         // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
@@ -1109,7 +1169,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
         // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
         // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;
@@ -1135,9 +1195,13 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-    unsafe { (*el).tick_immediate_tasks(vm) };
-    // SAFETY: as above.
+    // The check phase runs before the poll on Windows only. See `auto_tick`.
+    #[cfg(windows)]
+    {
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        unsafe { (*el).tick_immediate_tasks(vm) };
+    }
+    // SAFETY: `el` is the live per-thread event loop.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
@@ -1173,15 +1237,28 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     if state.is_null() {
         // SAFETY: `loop_` is the live per-thread uws loop.
         unsafe { (*loop_).tick_without_idle() };
+        #[cfg(unix)]
+        {
+            // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+            unsafe { run_check_phase(vm, el) };
+        }
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         return;
     }
 
+    // The check phase and the timers after a tick that ran tasks. See `auto_tick`.
+    // SAFETY: `el` is the live per-thread event loop; `state` and `vm` are live.
+    #[cfg(unix)]
+    let ran_callbacks = unsafe { run_phases_after_tasks(vm, el, state) };
+    #[cfg(not(unix))]
+    let ran_callbacks = false;
+
     {
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = ran_callbacks
+            || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1227,11 +1304,14 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         }
     }
 
+    // Check phase, then timers. See `auto_tick`.
     #[cfg(unix)]
     {
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        unsafe { run_check_phase(vm, el) };
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;

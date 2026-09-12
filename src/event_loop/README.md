@@ -73,25 +73,25 @@ This is called when the event loop is active and needs to wait for I/O:
 
 ```
 ┌─────────────────────────────────────┐
-│  1. Tick immediate tasks            │ ← setImmediate() callbacks
+│  1. Update date header timer        │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  2. Update date header timer        │
+│  2. Process GC timer                │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  3. Process GC timer                │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  4. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
-│     (epoll_kqueue.c:251-320)        │
+│  3. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
+│     (epoll_kqueue.c:251-320)        │   (zero while immediates are queued)
 │     - Dispatch ready polls          │
 │     - Each I/O event treated as task│
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  4. Tick immediate tasks (POSIX)    │ ← setImmediate() callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -109,6 +109,12 @@ This is called when the event loop is active and needs to wait for I/O:
 │  7. Handle rejected promises        │
 └─────────────────────────────────────┘
 ```
+
+Steps 3 to 5 follow Node's phase order: poll, check (`setImmediate`), timers. The timers run last, so the caller of `autoTick` sees what they did before the next poll.
+
+Node runs thread-pool completions in the poll phase. Bun runs them as tasks in `tick()`. So a `tick()` that ran tasks counts as a poll phase: before step 3, `autoTick` runs the immediates and the timers once more. If one of them ran a callback, the poll does not wait.
+
+On Windows, libuv runs the timers inside the poll call (step 3). There, the immediates run before step 1, and steps 4 and 5 do not run.
 
 ## Task Draining Algorithm
 
@@ -287,7 +293,7 @@ Timers are handled differently based on platform:
 ctx.timer.drain_timers(ctx);
 ```
 
-Timers are drained after I/O polling. Each timer callback:
+Timers are drained after I/O polling and after the immediates. Each timer callback:
 
 1. Is wrapped in `enter()`/`exit()`
 2. Triggers microtask draining after execution
@@ -310,9 +316,11 @@ setImmediate(() => console.log("immediate"));
 
 This is because:
 
-- `setImmediate` runs in `tickImmediateTasks()` before I/O polling
-- `setTimeout` fires after I/O polling (even with 0ms)
-- However, this can vary based on timing and event loop state
+- In one turn of the loop, `tickImmediateTasks()` runs the queued immediates after I/O polling
+- The timers that are due run after them, in the same turn (a 0ms timer is due after 1ms)
+- This is not a guarantee for code at the top level: it can vary with timing and event loop state
+
+Inside an I/O callback the order is fixed, as in Node. An immediate that the callback queues runs before any timer, even a timer that came due while the callback ran.
 
 ## Enter/Exit Mechanism
 
@@ -338,8 +346,8 @@ This ensures microtasks are only drained once per top-level event loop task, eve
 
 The Bun event loop processes work in this order:
 
-1. **Immediate tasks** (setImmediate)
-2. **I/O polling** (epoll/kqueue)
+1. **I/O polling** (epoll/kqueue)
+2. **Immediate tasks** (setImmediate; on Windows these run before the poll)
 3. **Timer callbacks** (setTimeout/setInterval)
 4. **Regular tasks** from the task queue
    - For each task:

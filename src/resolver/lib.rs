@@ -54,9 +54,9 @@ pub use resolver::{
     AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
 };
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, DisabledReason, ExternalKind, FlushMode, LoadResult,
+    MatchResult, MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
+    ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 

@@ -57,6 +57,7 @@ pub struct ServerConfig {
     pub(crate) is_node_http_server: bool,
 
     pub(crate) websocket: Option<WebSocketServerContext>,
+    pub(crate) webtransport_handler: Option<super::WebTransportHandler>,
 
     pub(crate) reuse_port: bool,
     pub(crate) id: Box<[u8]>,
@@ -65,6 +66,9 @@ pub struct ServerConfig {
     pub(crate) http3: bool,
     pub(crate) http2: bool,
     pub(crate) http1: bool,
+    /// Decides the SETTINGS the HTTP/3 listener advertises, which lsquic reads
+    /// once at engine creation — so it cannot be turned on later.
+    pub(crate) webtransport: bool,
 
     pub(crate) had_routes_object: bool,
 
@@ -93,11 +97,13 @@ impl Default for ServerConfig {
             on_node_http_request: JSValue::ZERO,
             is_node_http_server: false,
             websocket: None,
+            webtransport_handler: None,
             reuse_port: false,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            webtransport: false,
             http2: false,
             http1: true,
             had_routes_object: false,
@@ -285,6 +291,7 @@ impl ServerConfig {
             on_node_http_request: self.on_node_http_request,
             is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
+            webtransport_handler: self.webtransport_handler.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
@@ -292,6 +299,7 @@ impl ServerConfig {
             http3: self.http3,
             http2: self.http2,
             http1: self.http1,
+            webtransport: self.webtransport,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -1055,6 +1063,21 @@ impl ServerConfig {
             )?);
         }
 
+        if let Some(webtransport_object) = arg.get_truthy(global, "webtransport")? {
+            if !webtransport_object.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected webtransport to be an object"
+                )));
+            }
+            args.webtransport_handler = Some(super::WebTransportHandler::from_js(
+                global,
+                webtransport_object,
+            )?);
+            // The SETTINGS an HTTP/3 listener advertises are decided when its
+            // lsquic engine is built, so this cannot wait for a route.
+            args.webtransport = true;
+        }
+
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let number = port_.to_number(global)?;
             if !number.is_finite() || number.fract() != 0.0 {
@@ -1291,6 +1314,15 @@ impl ServerConfig {
                 global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
             );
         }
+        if args.webtransport && !args.http3 && !opts.is_reload {
+            // A session arrives over HTTP/3 or not at all, so these handlers
+            // could never fire and the listener would look healthy. Not on a
+            // reload: `http3` belongs to the bound listener and is not
+            // restated.
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'webtransport' requires 'http3' to be set"
+            )));
+        }
         if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 without enabling http2 or http3"
@@ -1484,6 +1516,9 @@ pub struct FromJSOptions {
     /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
+    /// A `reload()` rather than a `Bun.serve()`: the listener is already bound,
+    /// so options that decided how it was bound are not restated.
+    pub(crate) is_reload: bool,
 }
 
 pub struct UserRouteBuilder {

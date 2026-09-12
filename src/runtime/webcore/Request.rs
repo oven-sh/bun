@@ -77,8 +77,9 @@ const _: () = {
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
 /// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
-/// `finalize`, so stay plain.
+/// `weak_ptr_data` are only written during construction, via raw-ptr
+/// `finalize`, or (for `request_context`) the raw-ptr detach after a
+/// WebTransport `upgrade` call, so stay plain.
 #[repr(C)]
 pub struct Request {
     pub(crate) url: JsCell<BunString>,

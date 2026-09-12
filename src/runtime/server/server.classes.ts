@@ -104,6 +104,11 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wtOnUpgrade",
+      "wtOnOpen",
+      "wtOnDatagram",
+      "wtOnDrain",
+      "wtOnClose",
     ],
   });
 }
@@ -366,6 +371,50 @@ export default [
     construct: true,
     klass: {},
     values: ["server"],
+  }),
+
+  define({
+    name: "WebTransportSession",
+    JSType: "0b11101110",
+    noConstructor: true,
+    finalize: true,
+    // The native side keeps its state in `Cell`s, so host-fns take `&self`
+    // and a re-entrant sendDatagram() from inside a datagram handler is not
+    // two overlapping `&mut`s.
+    sharedThis: true,
+    proto: {
+      sendDatagram: {
+        fn: "sendDatagram",
+        length: 1,
+      },
+      close: {
+        fn: "close",
+        length: 2,
+      },
+      // `startDraining`, not `drain`: the config's `drain` handler is the
+      // send queue regaining room, and this is the opposite direction — the
+      // DRAIN capsule asking the peer to wind the session up. One name for
+      // both read as nonsense (`drain(session) { session.drain() }`).
+      startDraining: {
+        fn: "drain",
+        length: 0,
+      },
+      data: {
+        getter: "getData",
+        cache: true,
+        setter: "setData",
+      },
+      maxDatagramSize: {
+        getter: "getMaxDatagramSize",
+      },
+      rtt: {
+        getter: "getRtt",
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
+    klass: {},
   }),
 
   define({

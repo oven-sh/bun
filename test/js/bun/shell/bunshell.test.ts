@@ -1190,10 +1190,10 @@ booga"
 
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
+      // `export FOO` persists; the `BAZ=1` prefix belonged to the first command only.
       procEnv = JSON.parse(str2);
       expect(procEnv).toEqual({
         ...bunEnv,
-        BAZ: "1",
         FOO: "bar",
         BUN_TEST_VAR: "1",
       });
@@ -3519,4 +3519,204 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+test.skipIf(isWindows)("external command resolution without a PATH ignores the launch PATH", async () => {
+  using dir = tempDir("shell-argv0-nopath", {
+    "onlyinlaunchpath": "#!/bin/sh\necho should-not-run\n",
+  });
+  chmodSync(join(String(dir), "onlyinlaunchpath"), 0o755);
+
+  // The tool is on the PATH this child starts with. The fixture then runs the
+  // shell with an environment that has no PATH, in two ways. Neither may find
+  // the tool, and both still search the platform default (_PATH_DEFPATH),
+  // like execvp() and node:child_process do. `which` must agree.
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    const results = {};
+    const run = async (label, pending) => {
+      const { exitCode, stdout, stderr } = await pending;
+      results[label] = { exitCode, stdout: stdout.toString().trim(), stderr: stderr.toString().trim() };
+    };
+    await run("env() without PATH", $\`onlyinlaunchpath\`.env({}).quiet().nothrow());
+    delete process.env.PATH;
+    await run("deleted PATH", $\`onlyinlaunchpath\`.quiet().nothrow());
+    await run("deleted PATH, which", $\`which onlyinlaunchpath\`.quiet().nothrow());
+    await run("deleted PATH, default", $\`sh -c "echo from-default-path"\`.quiet().nothrow());
+    const whichSh = await $\`which sh\`.quiet().nothrow();
+    results["deleted PATH, which default"] = { exitCode: whichSh.exitCode, endsWithSh: whichSh.stdout.toString().trim().endsWith("/sh") };
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, PATH: `${dir}:${bunEnv.PATH}` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyinlaunchpath" },
+    "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyinlaunchpath" },
+    "deleted PATH, which": { exitCode: 1, stdout: "which: onlyinlaunchpath not found", stderr: "" },
+    "deleted PATH, default": { exitCode: 0, stdout: "from-default-path", stderr: "" },
+    "deleted PATH, which default": { exitCode: 0, endsWithSh: true },
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("a VAR=value prefix applies to its own command only", async () => {
+  using dir = tempDir("shell-prefix-scope", {
+    "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+    "empty/.keep": "",
+  });
+  chmodSync(join(String(dir), "onlyintool"), 0o755);
+  const env = { ...bunEnv, PATH: `${dir}:${bunEnv.PATH}` };
+
+  {
+    // the environment of a later command
+    const { stdout, stderr, exitCode } = await $`FOO=leak true; printenv FOO`.env(env).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
+  }
+
+  {
+    // the PATH lookup of a later command, and of `which`
+    const { stdout, stderr, exitCode } = await $`PATH=${dir}/empty true; onlyintool; which onlyintool`
+      .env(env)
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe(`from-onlyintool\n${dir}/onlyintool\n`);
+    expect(exitCode).toBe(0);
+  }
+});
+
+// Windows spells the variable `Path`, and the shell env map is case-insensitive
+// there, so the lookup must not depend on the key casing. With no PATH under any
+// casing, the lookup uses the process's current PATH (what libuv also gives the
+// child), never the environment snapshot taken at startup.
+describe.concurrent.skipIf(!isWindows)("external command resolution on Windows", () => {
+  const envWithoutPath: Record<string, string> = {};
+  for (const [key, value] of Object.entries(bunEnv)) {
+    if (key.toLowerCase() !== "path" && value !== undefined) envWithoutPath[key] = value;
+  }
+  const processPath = process.env.PATH!;
+  const toolDir = (name: string, message: string, dirPrefix = name) =>
+    tempDir(`shell-argv0-${dirPrefix}`, { [`${name}.cmd`]: `@echo ${message}\r\n` });
+
+  test(".env() with a Path key", async () => {
+    using dir = toolDir("onlyintool-pathkey", "from-Path-key");
+    const { stdout, stderr, exitCode } = await $`onlyintool-pathkey`
+      .env({ ...envWithoutPath, Path: `${dir};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-Path-key");
+    expect(exitCode).toBe(0);
+  });
+
+  // `{ ...process.env, PATH }` on Windows: the spread contributes `Path`, the
+  // later `PATH` key must win.
+  test(".env() with PATH added to an env that already has Path", async () => {
+    using dir = toolDir("onlyintool-bothkeys", "from-PATH-over-Path");
+    const { stdout, stderr, exitCode } = await $`onlyintool-bothkeys`
+      .env({ ...envWithoutPath, Path: processPath, PATH: `${dir};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-PATH-over-Path");
+    expect(exitCode).toBe(0);
+  });
+
+  test("export PATH when the environment has Path", async () => {
+    using dir = toolDir("onlyintool-export", "from-export");
+    const { stdout, stderr, exitCode } = await $`export PATH=${`${dir};${processPath}`}; onlyintool-export`
+      .env({ ...envWithoutPath, Path: processPath })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-export");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a PATH= prefix beats export PATH", async () => {
+    using prefixDir = toolDir("onlyintool-priority", "from-prefix", "priority-prefix");
+    using exportDir = toolDir("onlyintool-priority", "from-export", "priority-export");
+    const exportPath = `${exportDir};${processPath}`;
+    const prefixPath = `${prefixDir};${processPath}`;
+    const { stdout, stderr, exitCode } =
+      await $`export PATH=${exportPath}; PATH=${prefixPath} onlyintool-priority; onlyintool-priority`
+        .env({ ...envWithoutPath, Path: processPath })
+        .quiet()
+        .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim().split(/\r?\n/)).toEqual(["from-prefix", "from-export"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun run <script>` runs package.json scripts through the Bun shell on
+  // Windows, with the shell environment seeded from the process environment.
+  test("export PATH in a package.json script", async () => {
+    using dir = toolDir("onlyintool-script", "from-script");
+    using project = tempDir("shell-argv0-project", {
+      "package.json": JSON.stringify({
+        scripts: { tool: `export PATH='${dir};${processPath}'; onlyintool-script` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "run", "tool"],
+      env: { ...envWithoutPath, Path: processPath },
+      cwd: String(project),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("from-script");
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.env.PATH changed or deleted at runtime, with and without PATH in .env()", async () => {
+    using launchDir = toolDir("onlyintool-launch", "from-launch");
+    using runtimeDir = toolDir("onlyintool-runtime", "from-runtime");
+    // `onlyintool-launch` is on the PATH the fixture starts with, `onlyintool-runtime`
+    // only on the PATH it sets at runtime.
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const results = {};
+      const run = async (label, pending) => {
+        const { exitCode, stdout, stderr } = await pending;
+        results[label] = { exitCode, stdout: stdout.toString().trim(), stderr: stderr.toString().trim() };
+      };
+      const envWithoutPath = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"));
+      process.env.PATH = ${JSON.stringify(String(runtimeDir))} + ";" + process.env.PATH;
+      await run("runtime PATH", $\`onlyintool-runtime\`.quiet().nothrow());
+      await run("runtime PATH, env() without PATH", $\`onlyintool-runtime\`.env(envWithoutPath).quiet().nothrow());
+      delete process.env.PATH;
+      await run("deleted PATH", $\`onlyintool-launch\`.quiet().nothrow());
+      await run("deleted PATH, env() without PATH", $\`onlyintool-launch\`.env(envWithoutPath).quiet().nothrow());
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...envWithoutPath, Path: `${launchDir};${processPath}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "runtime PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
+      "runtime PATH, env() without PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
+      "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
+      "deleted PATH, env() without PATH": {
+        exitCode: 1,
+        stdout: "",
+        stderr: "bun: command not found: onlyintool-launch",
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
 });

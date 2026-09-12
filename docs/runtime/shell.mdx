@@ -339,18 +339,25 @@ import { $ } from "bun";
 await $`echo $FOO`.env({ ...process.env, FOO: "bar" }); // bar
 ```
 
+<Note>
+  The object you pass to `.env()` or `$.env()` replaces the whole environment. It does not add to it. Spread
+  `process.env` to keep variables such as `PATH` and `HOME`. When the environment has no `PATH`, Bun looks up commands
+  the way `node:child_process` does: in `/usr/bin:/bin` on macOS and Linux, and on the current `PATH` of the Bun process
+  on Windows.
+</Note>
+
 To change the default environment variables for all commands, call `$.env`:
 
 ```js
 import { $ } from "bun";
 
-$.env({ FOO: "bar" });
+$.env({ ...process.env, FOO: "bar" });
 
 // the globally-set $FOO
 await $`echo $FOO`; // bar
 
 // the locally-set $FOO
-await $`echo $FOO`.env({ FOO: "baz" }); // baz
+await $`echo $FOO`.env({ ...process.env, FOO: "baz" }); // baz
 ```
 
 To reset the environment variables to the default, call `$.env()` with no arguments:
@@ -358,7 +365,7 @@ To reset the environment variables to the default, call `$.env()` with no argume
 ```js
 import { $ } from "bun";
 
-$.env({ FOO: "bar" });
+$.env({ ...process.env, FOO: "bar" });
 
 // the globally-set $FOO
 await $`echo $FOO`; // bar

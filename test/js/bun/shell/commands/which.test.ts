@@ -55,6 +55,20 @@ test.concurrent("which searches $PATH for bare names and the shell cwd for ./ na
   expect(exitCode).toBe(0);
 });
 
+// `which` resolves through the same PATH that running the command uses, so a
+// `PATH=... which tool` prefix assignment counts, for that command only.
+test.concurrent("which honors a PATH= prefix assignment", async () => {
+  using dir = tempDir("which-prefix", searchTree);
+  const { pathDir } = searchDirs(String(dir));
+
+  const { stdout, exitCode } = await $`PATH=${pathDir} which tool; which tool`
+    .env({ ...bunEnv, PATH: "" })
+    .quiet()
+    .nothrow();
+  expect(stdout.toString()).toBe(`${join(pathDir, exe)}\nwhich: tool not found\n`);
+  expect(exitCode).toBe(1);
+});
+
 test.skipIf(isWindows)("which with an absolute path at the platform path length limit reports not found", async () => {
   const fixture = /* ts */ `
     import { $ } from "bun";

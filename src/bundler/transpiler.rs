@@ -1990,15 +1990,14 @@ fn parse_data_loader<'a>(
                 // also random-access `decls[prev]`.
                 for i in 0..n {
                     let prop = &mut properties[i];
-                    // SAFETY: data-format parsers always emit
-                    // `e_string` keys.
                     let key = prop.key.as_mut().unwrap();
                     let key_loc = key.loc;
-                    let name: &[u8] = key
-                        .data
-                        .e_string_mut()
-                        .expect("infallible: variant checked")
-                        .slice(arena);
+                    // A YAML sequence or mapping used as a key is a computed
+                    // `E::Array`/`E::Object`; it has no name to export under.
+                    let Some(key_str) = key.data.e_string_mut() else {
+                        continue;
+                    };
+                    let name: &[u8] = key_str.slice(arena);
                     // Do not make named exports for "default" exports
                     if name == b"default" {
                         continue;

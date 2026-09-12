@@ -1084,6 +1084,69 @@ folded: >
       });
     });
 
+    test("non-string scalar keys become String(key)", () => {
+      const yaml = [
+        "true: t",
+        "false: f",
+        "null: n1",
+        "~: n2",
+        "0x10: hex",
+        "0o17: oct",
+        "1.0: float",
+        "-0: negzero",
+        "1e21: big",
+        "1e-7: tiny",
+        "123456789012345678901234567890: huge",
+        ".inf: inf",
+        "-.inf: ninf",
+        ".nan: nan",
+        "!!str 1e21: str",
+        '"true": quoted',
+        "",
+      ].join("\n");
+      const parsed = YAML.parse(yaml);
+      expect(parsed).toEqual({
+        true: "quoted",
+        false: "f",
+        null: "n2",
+        "16": "hex",
+        "15": "oct",
+        "1": "float",
+        "0": "negzero",
+        "1e+21": "big",
+        "1e-7": "tiny",
+        "1.2345678901234568e+29": "huge",
+        Infinity: "inf",
+        "-Infinity": "ninf",
+        NaN: "nan",
+        "1e21": "str",
+      });
+      expect(Object.keys(parsed)).toEqual([
+        "0",
+        "1",
+        "15",
+        "16",
+        "true",
+        "false",
+        "null",
+        "1e+21",
+        "1e-7",
+        "1.2345678901234568e+29",
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        "1e21",
+      ]);
+      // `<<` does not override an explicit key, including one spelled as a
+      // different scalar with the same string form.
+      expect(
+        YAML.parse("base: &base\n  0x1: merged\n  'null': merged\nchild:\n  1: own\n  ~: own\n  <<: *base\n"),
+      ).toEqual({
+        base: { "1": "merged", null: "merged" },
+        child: { "1": "own", null: "own" },
+      });
+    });
+
     describe("explicit mapping keys (?)", () => {
       describe("basic", () => {
         test("single explicit entry", () => {

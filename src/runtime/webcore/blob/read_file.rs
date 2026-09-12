@@ -923,9 +923,10 @@ impl ReadFile {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub struct ReadFileUV<'a> {
+pub struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
-    pub(crate) event_loop: &'a EventLoop,
+    /// Raw, not `&EventLoop`: `finalize`'s `enter_scope` writes through it.
+    pub(crate) event_loop: *mut EventLoop,
     pub(crate) file_store: FileStore,
     pub(crate) byte_store: ByteStore,
     pub(crate) store: RefPtr<Store>,
@@ -950,7 +951,7 @@ pub struct ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> FileOpener for ReadFileUV<'a> {
+impl FileOpener for ReadFileUV {
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -981,7 +982,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> FileCloser for ReadFileUV<'a> {
+impl FileCloser for ReadFileUV {
     const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -1021,7 +1022,7 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> ReadFileUV<'a> {
+impl ReadFileUV {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
     pub(crate) fn start<C: ReadFileCompletion>(
         event_loop: *mut EventLoop,
@@ -1049,15 +1050,14 @@ impl<'a> ReadFileUV<'a> {
         completion: ReadFileCompletionFns,
     ) {
         log!("ReadFileUV.start");
+        let file_store = store.data.as_file().clone();
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
         // async op, which additionally holds a keep-alive on it below.
-        let event_loop: &'a EventLoop = unsafe { &*event_loop };
-        let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
             // `&VirtualMachine`.
-            loop_: event_loop.uv_loop().cast(),
+            loop_: unsafe { (*event_loop).uv_loop().cast() },
             event_loop,
             file_store,
             byte_store: ByteStore::default(),
@@ -1078,8 +1078,9 @@ impl<'a> ReadFileUV<'a> {
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });
-        // Keep the event loop alive while the async operation is pending
-        event_loop.ref_keep_alive();
+        // Keep the event loop alive while the async operation is pending.
+        // SAFETY: `event_loop` is the live per-thread singleton (see above).
+        unsafe { (*event_loop).ref_keep_alive() };
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
@@ -1112,6 +1113,16 @@ impl<'a> ReadFileUV<'a> {
             })
         };
 
+        // Settling the promise enters JS from a libuv callback, so bracket it
+        // with enter/exit: the guard's drop (after the unref below) is the
+        // microtask checkpoint that runs the await continuation. Without it, a
+        // read that leaves nothing else pending lets the loop exit with the
+        // continuation still queued.
+        // SAFETY: `event_loop` is the raw VM-owned pointer stored at start()
+        // (valid for the process lifetime); `enter_scope` calls enter() now and
+        // exit() on drop.
+        let _guard = unsafe { EventLoop::enter_scope(event_loop) };
+
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /
         // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).
@@ -1119,8 +1130,9 @@ impl<'a> ReadFileUV<'a> {
 
         this_box.req.deinit();
         drop(this_box);
-        // Release the event loop reference now that we're done
-        event_loop.unref_keep_alive();
+        // Release the event loop reference now that we're done.
+        // SAFETY: same pointer as the enter_scope above.
+        unsafe { (*event_loop).unref_keep_alive() };
         log!("ReadFileUV.finalize destroy");
     }
 

@@ -25,14 +25,6 @@ static JSC::JSFunction* calleeFunction(JSC::JSCell* callee)
     return callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
 }
 
-/* getFunction() hands the frame's callee to JS. Hand out only a function that
- * user code could have called itself. JSC has callees that it could not:
- *   - a host function or a builtin, which are JSC's own implementation
- *   - the body function JSC compiles for an async function or a generator
- *   - no JSFunction at all, for a wasm frame or an eval/program frame
- * The body function is the dangerous one. It takes JSC's own arguments (the
- * generator object, a state, a value, a resume mode and a frame), so a call
- * from JS writes generator internal fields into whatever the caller passed. */
 static bool isUserFunction(JSC::JSCell* callee)
 {
     auto* function = calleeFunction(callee);
@@ -40,6 +32,7 @@ static bool isUserFunction(JSC::JSCell* callee)
         return false;
     }
 
+    // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
 }
 
@@ -68,19 +61,13 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (isStrictFrame) {
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     }
-    /* A strict frame hides its function from every caller below it, through the
-     * Flags::IsStrict cascade in createCallSitesFromFrames. A frame whose
-     * callee is not a user function hides only its own: it does not set that
-     * flag. JSC shows host frames that V8 leaves out of the stack, such as
-     * Reflect.construct under a transpiled `super()` call, so cascading from
-     * those would hide callers that V8 reports. */
+    // Hiding a callee must not set IsStrict: that cascades to the callers, and JSC shows host frames that V8 omits.
     if (isStrictFrame || !isUserFunction(callee)) {
         m_function.set(vm, this, JSC::jsUndefined());
     } else {
         m_function.set(vm, this, callee);
     }
-    // isToplevel() judges a frame by its callee. m_function cannot tell it what
-    // the callee was: a frame that hides its callee stores undefined there.
+    // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
     if (!isStrictFrame) {
         auto* function = calleeFunction(callee);
         if (function && !function->isHostFunction()) {

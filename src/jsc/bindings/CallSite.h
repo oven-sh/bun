@@ -29,8 +29,6 @@ public:
         IsWasm = 16,
         IsFunction = 32,
         IsAsync = 64,
-        // A sloppy frame whose callee is a function written in JS, whether or
-        // not getFunction() hands that function out.
         IsSloppyFunctionCall = 128,
     };
 

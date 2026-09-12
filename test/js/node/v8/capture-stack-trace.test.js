@@ -551,20 +551,12 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
-// getFunction() hands out the frame's callee. A JSC frame can carry a callee
-// that user code could never call itself: a host function, a builtin, the body
-// function JSC compiles for an async function or a generator, or no function at
-// all for a wasm or program frame. A body function takes JSC's own arguments, so
-// a call from JS crashes the interpreter. Each such frame now reports undefined.
-//
-// The frames below one of them keep their own function. A frame only hides its
-// caller's function when it is really strict, which is the Flags::IsStrict
-// cascade. The `...Caller=self` rows pin that half.
-//
-// isToplevel() used to read the same stored function. The `...IsToplevel=false`
-// rows pin that its answer does not change for a frame that now hides it.
-//
-// The fixture is CommonJS because a strict frame already returns undefined.
+// getFunction() must report undefined for a callee that user code could never
+// have called: a host function, a builtin, an async or generator body function,
+// a wasm frame, a program frame. A call to a body function crashed the process.
+// `...Caller=self` rows: a frame below one of those keeps its own function.
+// `...IsToplevel=false` rows: hiding a callee does not change isToplevel().
+// The fixture is CommonJS because a strict frame already reports undefined.
 test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
   using dir = tempDir("callsite-internal-callee", {
     "internal-callee-fixture.cjs": `

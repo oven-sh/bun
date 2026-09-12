@@ -514,7 +514,7 @@ pub fn get_loader_and_virtual_source<'a>(
     }
 
     if jsc_vm.is_blob_url(specifier) {
-        if let Some(blob) = jsc_vm.resolve_blob(&specifier[b"blob:".len()..]) {
+        if let Some(blob) = jsc_vm.resolve_blob(specifier) {
             *blob_to_deinit = Some(blob);
             loader = jsc_vm.blob_loader(blob);
 

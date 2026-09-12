@@ -9,6 +9,7 @@ use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
+use crate::npm as Npm;
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
     Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
@@ -443,6 +444,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+    pub(crate) unsupported_platform: UnsupportedPlatform,
 }
 
 pub struct BuilderEntry {
@@ -460,6 +462,12 @@ bun_collections::multi_array_columns! {
 pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
+}
+
+pub(crate) struct Hoisted {
+    /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
+    pub late_bound_optional_peer: bool,
+    pub unsupported_platform: UnsupportedPlatform,
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
@@ -537,9 +545,39 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
-// `Builder.lockfile` safety contract), so callers must thread `resolutions`
-// explicitly to avoid an aliasing read through the shared `&Lockfile`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DependencyFilter {
+    Keep,
+    Skip,
+    /// A required dependency that is left out only because the package's
+    /// `os`/`cpu` does not match the install target. `direct`: the dependent
+    /// is the root package or a workspace.
+    SkipUnsupportedPlatform {
+        direct: bool,
+    },
+}
+
+/// Required dependencies left out for an `os`/`cpu` mismatch, deduplicated.
+#[derive(Default)]
+pub(crate) struct UnsupportedPlatform {
+    pub direct: Vec<PackageID>,
+    pub transitive: Vec<PackageID>,
+}
+
+impl UnsupportedPlatform {
+    pub(crate) fn insert(&mut self, pkg_id: PackageID, direct: bool) {
+        if self.direct.contains(&pkg_id) {
+            return;
+        }
+        if direct {
+            self.transitive.retain(|&id| id != pkg_id);
+            self.direct.push(pkg_id);
+        } else if !self.transitive.contains(&pkg_id) {
+            self.transitive.push(pkg_id);
+        }
+    }
+}
+
 pub(crate) fn is_filtered_dependency_or_workspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,
@@ -549,13 +587,36 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
 ) -> bool {
+    filter_dependency_or_workspace(
+        dep_id,
+        parent_pkg_id,
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+    ) != DependencyFilter::Keep
+}
+
+// `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
+// `Builder.lockfile` safety contract), so callers must thread `resolutions`
+// explicitly to avoid an aliasing read through the shared `&Lockfile`.
+pub(crate) fn filter_dependency_or_workspace(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> DependencyFilter {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
         let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
         if dep.behavior.is_optional_peer() {
-            return false;
+            return DependencyFilter::Keep;
         }
-        return true;
+        return DependencyFilter::Skip;
     }
 
     let pkgs = lockfile.packages.slice();
@@ -566,58 +627,161 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
-    if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
-        if manager.options.log_level.is_verbose() {
-            let meta = &pkg_metas[pkg_id as usize];
-            let name = lockfile.str(&pkg_names[pkg_id as usize]);
-            if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
-                    bstr::BStr::new(name)
-                );
-            } else if !meta.os.is_match(manager.options.os) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- os mismatch<r>",
-                    bstr::BStr::new(name)
-                );
-            } else if !meta.arch.is_match(manager.options.cpu) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- cpu mismatch<r>",
-                    bstr::BStr::new(name)
-                );
-            }
+    let unsupported_platform =
+        pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os);
+    if unsupported_platform && manager.options.log_level.is_verbose() {
+        let meta = &pkg_metas[pkg_id as usize];
+        let name = lockfile.str(&pkg_names[pkg_id as usize]);
+        if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
+            bun_core::pretty_errorln!(
+                "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
+                bstr::BStr::new(name)
+            );
+        } else if !meta.os.is_match(manager.options.os) {
+            bun_core::pretty_errorln!(
+                "<d>Skip installing<r> <b>{}<r> <d>- os mismatch<r>",
+                bstr::BStr::new(name)
+            );
+        } else if !meta.arch.is_match(manager.options.cpu) {
+            bun_core::pretty_errorln!(
+                "<d>Skip installing<r> <b>{}<r> <d>- cpu mismatch<r>",
+                bstr::BStr::new(name)
+            );
         }
-        return true;
     }
 
-    if dep.behavior.is_bundled() {
-        return true;
-    }
+    let filtered = 'filtered: {
+        if dep.behavior.is_bundled() {
+            break 'filtered true;
+        }
 
-    let dep_features = match parent_res.tag {
-        crate::resolution::Tag::Root
-        | crate::resolution::Tag::Workspace
-        | crate::resolution::Tag::Folder => manager.options.local_package_features,
-        _ => manager.options.remote_package_features,
+        let dep_features = match parent_res.tag {
+            crate::resolution::Tag::Root
+            | crate::resolution::Tag::Workspace
+            | crate::resolution::Tag::Folder => manager.options.local_package_features,
+            _ => manager.options.remote_package_features,
+        };
+
+        if !dep.behavior.is_enabled(dep_features) {
+            break 'filtered true;
+        }
+
+        if parent_pkg_id != 0 {
+            break 'filtered false;
+        }
+
+        if !dep.behavior.is_workspace() {
+            break 'filtered !install_root_dependencies;
+        }
+
+        if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
+            break 'filtered true;
+        }
+
+        !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
     };
 
-    if !dep.behavior.is_enabled(dep_features) {
-        return true;
+    if !unsupported_platform {
+        return if filtered {
+            DependencyFilter::Skip
+        } else {
+            DependencyFilter::Keep
+        };
+    }
+    if filtered || dep.behavior.is_optional() || dep.behavior.is_optional_peer() {
+        return DependencyFilter::Skip;
+    }
+    DependencyFilter::SkipUnsupportedPlatform {
+        direct: matches!(
+            parent_res.tag,
+            crate::resolution::Tag::Root | crate::resolution::Tag::Workspace
+        ),
+    }
+}
+
+/// One warning per direct dependency, one summary line for all transitive ones.
+pub(crate) fn warn_unsupported_platform(
+    log: &mut bun_ast::Log,
+    lockfile: &Lockfile,
+    manager: &PackageManager,
+    skipped: &UnsupportedPlatform,
+) {
+    use core::fmt::Write as _;
+
+    let pkgs = lockfile.packages.slice();
+    let pkg_names = pkgs.items_name();
+    let pkg_metas = pkgs.items_meta();
+    let pkg_resolutions = pkgs.items_resolution();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+    for &pkg_id in &skipped.direct {
+        let meta = &pkg_metas[pkg_id as usize];
+        let mut wants = String::new();
+        let mut target = String::new();
+        if !meta.os.is_match(manager.options.os) {
+            wants.push_str("os ");
+            let _ = Npm::Negatable::to_json(meta.os, &mut wants);
+            target.push_str("os ");
+            let _ = Npm::Negatable::to_json(manager.options.os, &mut target);
+        }
+        if !meta.arch.is_match(manager.options.cpu) {
+            if !wants.is_empty() {
+                wants.push(' ');
+                target.push(' ');
+            }
+            wants.push_str("cpu ");
+            let _ = Npm::Negatable::to_json(meta.arch, &mut wants);
+            target.push_str("cpu ");
+            let _ = Npm::Negatable::to_json(manager.options.cpu, &mut target);
+        }
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{}@{} was not installed: unsupported platform (wants {}, current {})",
+                pkg_names[pkg_id as usize].fmt(string_buf),
+                pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                wants,
+                target,
+            ),
+        );
     }
 
-    if parent_pkg_id != 0 {
-        return false;
+    // one line in total: old bun lockfiles list esbuild's platform builds as plain dependencies
+    if !skipped.transitive.is_empty() {
+        const LISTED: usize = 3;
+        let count = skipped.transitive.len();
+        let mut names = String::new();
+        for (i, &pkg_id) in skipped.transitive.iter().take(LISTED).enumerate() {
+            if i > 0 {
+                names.push_str(", ");
+            }
+            let _ = write!(
+                names,
+                "{}@{}",
+                pkg_names[pkg_id as usize].fmt(string_buf),
+                pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Auto),
+            );
+        }
+        if count > LISTED {
+            let _ = write!(names, " and {} more", count - LISTED);
+        }
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{} {} of other packages {} not installed: unsupported platform ({})",
+                count,
+                if count == 1 {
+                    "dependency"
+                } else {
+                    "dependencies"
+                },
+                if count == 1 { "was" } else { "were" },
+                names,
+            ),
+        );
     }
-
-    if !dep.behavior.is_workspace() {
-        return !install_root_dependencies;
-    }
-
-    if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
-        return true;
-    }
-
-    !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -708,7 +872,7 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
-                if is_filtered_dependency_or_workspace(
+                match filter_dependency_or_workspace(
                     dep_id,
                     parent_pkg_id,
                     builder.workspace_filters,
@@ -717,7 +881,12 @@ impl Tree {
                     lockfile,
                     &*builder.resolutions,
                 ) {
-                    continue;
+                    DependencyFilter::Keep => {}
+                    DependencyFilter::Skip => continue,
+                    DependencyFilter::SkipUnsupportedPlatform { direct } => {
+                        builder.unsupported_platform.insert(pkg_id, direct);
+                        continue;
+                    }
                 }
 
                 // unresolved packages are skipped when filtering. they already had

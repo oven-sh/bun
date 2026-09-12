@@ -18,7 +18,6 @@ pub mod types;
 pub use types::{
     BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
     PathOrFileDescriptor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
-    mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -76,7 +75,6 @@ pub use util::validators;
 // callers reach `.Kind` through `Dirent`. Rust can't hang an associated
 // module off a struct re-export, so expose a tiny module mirroring that shape.
 pub mod dirent {
-    pub use super::types::Dirent;
     pub use super::types::DirentKind as Kind;
 }
 

@@ -252,6 +252,17 @@ impl FileResponseStream {
             return;
         }
 
+        // A Windows file read runs on the libuv threadpool and cannot be
+        // cancelled once it runs, so only the reader's file source can close
+        // the fd safely: it closes after the read in flight. Hand it the fd.
+        #[cfg(windows)]
+        if opts.auto_close {
+            this_ref
+                .reader
+                .with_mut(|reader| reader.flags.insert(ReaderFlags::CLOSE_HANDLE));
+            this_ref.auto_close.set(false);
+        }
+
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);
 
@@ -588,6 +599,17 @@ impl FileResponseStream {
             // gate will run the close check; do it here, after `on_complete`
             // like `end_sendfile`, so the callbacks see a live socket.
             resp.close_if_done_and_marked();
+        }
+
+        if self.mode.get() == Mode::Reader {
+            // An abort can land while the read is parked on a poll that never
+            // fires (a FIFO with an idle writer), or re-entrantly from inside
+            // the read loop, which would re-arm the poll on its way out. The
+            // pause unregisters the poll and blocks that re-arm, so the stream
+            // can be freed without a poll still pointing at it.
+            self.reader_mut().pause();
+            // No reader callback is coming to adopt the in-flight read ref.
+            drop(self.take_read_ref());
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry

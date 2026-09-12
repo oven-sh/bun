@@ -328,6 +328,14 @@ impl PosixBufferedReader {
         // clearAndFree — release capacity, not just length.
         self._buffer = Vec::new();
         self.close_without_reporting();
+        self.release_poll();
+    }
+
+    /// `CLOSE_HANDLE` says who closes the fd. The `FilePoll` is always the
+    /// reader's, so a reader that goes away returns it even when the fd stays
+    /// with the parent.
+    fn release_poll(&mut self) {
+        self.handle.close_without_closing_fd();
     }
 
     fn close_without_reporting(&mut self) {
@@ -979,6 +987,7 @@ impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         self.close_without_reporting();
+        self.release_poll();
     }
 }
 

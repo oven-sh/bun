@@ -1101,9 +1101,8 @@ if (then === "resume") {
   socket.resume();
   await waitForRead("resumed");
 
-  // Stop reading again before the disconnect. A stream that waits for pipe
-  // data when its client disconnects stays allocated while the pipe is open,
-  // and the leak check at exit reports it. A paused stream is freed.
+  // Stop reading again before the disconnect, so the pause after a resume is
+  // covered too and the abort lands on a paused reader as in the other cases.
   socket.pause();
   await waitForStall();
   socket.destroy();
@@ -1147,6 +1146,212 @@ process.exit(0);
     },
   );
 }
+
+// A client that disconnects while the server waits for more pipe data must
+// release the server's reader fd at abort time. The stream held a ref for the
+// read that is parked on the poll, and only a reader callback released it, so
+// the fd and its poll lived until the pipe's writer closed. N disconnected
+// clients pinned N fds.
+for (const source of ["fetch", "route"] as const) {
+  test.concurrent.skipIf(isWindows)(
+    `Bun.file(FIFO) response (${source}) closes its reader fd when the client disconnects`,
+    async () => {
+      using dir = tempDir("serve-fifo-abort-fd", {
+        "fixture.ts": `
+import { connect } from "node:net";
+import { openSync, readdirSync, writeSync } from "node:fs";
+
+const [fifoPath, source, count] = process.argv.slice(2);
+const N = Number(count);
+
+// The writer stays open and idle for the whole run, so the server's reader
+// never sees EOF. Its read parks on the poll after each chunk.
+const writerFd = openSync(fifoPath, "r+");
+
+let aborted = 0;
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  routes: { "/route": Bun.file(fifoPath) },
+  fetch(req) {
+    req.signal.addEventListener("abort", () => aborted++);
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+// Every open fd of this process. A leaked reader shows up as a count that
+// stays above the baseline.
+const openFds = () => readdirSync("/dev/fd").length;
+
+// Gets the response head and the first body chunk (so the server's read is
+// parked on the poll when the disconnect lands), then drops the connection.
+async function requestAndDisconnect(i) {
+  const socket = connect({ port: server.port, host: "127.0.0.1" });
+  socket.on("error", () => {});
+  await new Promise(resolve => socket.once("connect", resolve));
+  const marker = "chunk-" + i;
+  const { promise, resolve } = Promise.withResolvers();
+  let received = "";
+  socket.on("data", d => {
+    received += d.toString("latin1");
+    if (received.includes(marker)) resolve();
+  });
+  socket.write("GET /" + source + " HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+  writeSync(writerFd, marker);
+  await promise;
+  socket.destroy();
+}
+
+const baseline = openFds();
+for (let i = 0; i < N; i++) await requestAndDisconnect(i);
+
+// The abort is reported from the socket close, and the fd close is async;
+// wait for the count to settle with a bound instead of a fixed delay.
+let fds = openFds();
+for (let i = 0; i < 200 && fds > baseline; i++) {
+  await Bun.sleep(10);
+  fds = openFds();
+}
+console.log(JSON.stringify({ leaked: Math.max(0, fds - baseline), aborted: source === "fetch" ? aborted : N }));
+
+server.stop(true);
+process.exit(0);
+`,
+      });
+
+      const fifoPath = join(String(dir), "abort.fifo");
+      mkfifo(fifoPath);
+      const N = 20;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts", fifoPath, source, String(N)],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ leaked: 0, aborted: N });
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
+// The same leak has a second face: the poll of an aborted stream stayed armed,
+// so when the pipe's producer wrote later, the dead streams read the bytes
+// first and a live client got nothing. After the abort the reader must be
+// unregistered before the fd is closed. server.stop(true) aborts the same way,
+// and the process must be able to exit afterwards.
+test.concurrent.skipIf(isWindows)(
+  "Bun.file(FIFO) response: aborted streams do not consume bytes written after the disconnect",
+  async () => {
+    using dir = tempDir("serve-fifo-abort-steal", {
+      "fixture.ts": `
+import { connect } from "node:net";
+import { constants, openSync, readSync, writeSync } from "node:fs";
+
+const [fifoPath] = process.argv.slice(2);
+// Read+write and non-blocking: this fd is the idle producer, and a read from it
+// shows what is still in the pipe (EAGAIN when the pipe is empty).
+const writerFd = openSync(fifoPath, constants.O_RDWR | constants.O_NONBLOCK);
+const LINES = "line-1\\nline-2\\nline-3\\nline-4\\nline-5\\n";
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  fetch(req) {
+    if (new URL(req.url).pathname === "/alive") return new Response("alive");
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+// Sends a request, then \`marker\` into the pipe, and resolves once \`until\`
+// matches what arrived. The head goes to the wire with the first body chunk,
+// so a dead client leaves after its marker, with the server's read parked.
+async function request(until, marker) {
+  const socket = connect({ port: server.port, host: "127.0.0.1" });
+  socket.on("error", () => {});
+  await new Promise(resolve => socket.once("connect", resolve));
+  const { promise, resolve } = Promise.withResolvers();
+  let received = "";
+  socket.on("data", d => {
+    received += d.toString("latin1");
+    if (until.test(received)) resolve(received);
+  });
+  socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+  if (marker) writeSync(writerFd, marker);
+  const out = await promise;
+  socket.destroy();
+  return out;
+}
+
+// A request to this same server makes its event loop poll for I/O, so an
+// aborted stream whose poll is still armed reads the pipe during it.
+async function poll() {
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
+}
+
+for (let i = 0; i < 3; i++) await request(/dead-\\d/, "dead-" + i);
+for (let i = 0; i < 3; i++) await poll();
+
+// The producer writes after the dead clients left. Nothing may read the pipe
+// now, so the bytes are still there when this process looks. A broken build
+// fails here with a message instead of a live client that waits forever.
+writeSync(writerFd, LINES);
+for (let i = 0; i < 3; i++) await poll();
+let pending = 0;
+try {
+  pending = readSync(writerFd, Buffer.alloc(256), 0, 256, null);
+} catch (err) {
+  if (err.code !== "EAGAIN") throw err;
+}
+if (pending !== LINES.length) {
+  console.log("aborted streams consumed the pipe: " + pending + " of " + LINES.length + " bytes left");
+  process.exit(1);
+}
+
+// End to end: a live client gets what the producer writes.
+writeSync(writerFd, LINES);
+const body = (await request(/line-5\\n/)).split("\\r\\n\\r\\n")[1];
+console.log(body.match(/line-\\d/g).join(" "));
+
+// A live stream is aborted by the stop. The process must exit on its own:
+// a stream that still holds its poll keeps the event loop alive.
+const parked = connect({ port: server.port, host: "127.0.0.1" });
+parked.on("error", () => {});
+await new Promise(resolve => parked.once("connect", resolve));
+parked.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+writeSync(writerFd, "parked");
+await new Promise(resolve => parked.once("data", resolve));
+server.stop(true);
+parked.destroy();
+`,
+    });
+
+    const fifoPath = join(String(dir), "steal.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("line-1 line-2 line-3 line-4 line-5");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
 // Content-Length from the stat size and then streaming the pipe to EOF puts

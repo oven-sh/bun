@@ -222,6 +222,7 @@ Directory routes share the response path with file routes:
 - **Range requests** are supported with `Accept-Ranges: bytes` and `Content-Range`.
 - A request that resolves to a directory without a trailing `/` receives a `301` redirect to the trailing-slash URL. With the trailing slash, Bun serves `index.html` from that directory.
 - Missing files return `404`.
+- When `{ dir }` is the whole route value, only `GET` and `HEAD` serve the file. `OPTIONS` returns `204` and every other method returns `405`, both with `Allow: GET, HEAD, OPTIONS`. A method-scoped route (`"/static/*": { GET: { dir: "./public" } }`) serves its configured methods instead, and a `GET` route also answers `HEAD`.
 
 Pass `statCache: false` to disable the per-path `Last-Modified` cache (saves roughly 20 KB per route).
 

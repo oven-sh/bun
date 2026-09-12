@@ -1,6 +1,21 @@
 // This file is merely types only, you (probably) want to put the tests in ./serve-types.test.ts instead
 
+import type { HTMLBundle } from "bun";
 import { expectType } from "./utilities";
+
+// Method-scoped routes accept every static route value the runtime accepts:
+// Response, HTMLBundle, BunFile, and { dir }. `false` disables a route at the
+// top level only.
+declare const appHtml: HTMLBundle;
+Bun.serve({
+  routes: {
+    "/assets/*": { GET: { dir: "./public" } },
+    "/file": { POST: Bun.file("./a.txt"), GET: new Response("ok") },
+    "/app": { GET: appHtml },
+    // @ts-expect-error `false` is only valid as a whole-route value
+    "/nope": { POST: false },
+  },
+});
 
 Bun.serve({
   routes: {

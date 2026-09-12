@@ -3179,10 +3179,9 @@ describe("bundler", () => {
         measure.stderr.text(),
         measure.exited,
       ]);
-      expect(measureErr).toBe("");
+      expect({ stderr: measureErr, exitCode: measureExit }).toEqual({ stderr: "", exitCode: 0 });
       const { maxRSS, ...build } = JSON.parse(measureOut);
       expect(build).toEqual({ stderr: "", exitCode: 0 });
-      expect(measureExit).toBe(0);
 
       await using run = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "out", `e${CHUNKS - 1}.js`)],

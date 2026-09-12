@@ -16,6 +16,16 @@ export function resolveBulkAdvisoryFixture(request: Record<string, string[]>) {
   return undefined;
 }
 
+/** The one bulk response that carries advisories for `packageName`, which `bun audit --json` prints as it is. */
+export function bulkAdvisoryFixtureWith(packageName: string): AuditReport {
+  const matching = fixtures.filter(([, response]) => packageName in response).map(([, response]) => response);
+  const distinct = new Set(matching.map(response => sortedObjectHash(response)));
+  if (distinct.size !== 1) {
+    throw new Error(`${distinct.size} different bulk advisory fixtures have advisories for ${packageName}`);
+  }
+  return matching[0];
+}
+
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key in string]: JsonValue };
 
 function isSameJSON<T extends JsonValue>(a: T, b: T) {

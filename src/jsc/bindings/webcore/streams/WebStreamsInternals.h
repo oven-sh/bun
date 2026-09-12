@@ -721,8 +721,9 @@ void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::Glo
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
 bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*, bool consumed); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
 JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject*, JSC::EncodedJSValue string); // userJS: no
 JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject*, JSC::EncodedJSValue source); // userJS: yes

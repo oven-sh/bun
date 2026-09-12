@@ -1991,18 +1991,22 @@ impl EString {
         }
     }
 
+    /// The string's JS `.length` (UTF-16 code units), or `None` when it is not
+    /// known without transcoding. `len()` / `rope_len` count bytes for UTF-8
+    /// strings, which is only the JS length while every byte (in every rope
+    /// segment) is ASCII.
     pub fn javascript_length(&self) -> Option<u32> {
-        if self.rope_len > 0 {
-            // We only support ascii ropes for now
-            return Some(self.rope_len);
+        if !self.is_utf8() {
+            return Some(self.slice16().len() as u32);
         }
-        if self.is_utf8() {
-            if !strings::is_all_ascii(&self.data) {
+        let mut part: Option<&EString> = Some(self);
+        while let Some(cur) = part {
+            if !strings::is_all_ascii(&cur.data) {
                 return None;
             }
-            return Some(self.data.len() as u32);
+            part = cur.next.as_ref().map(|r| r.get());
         }
-        Some(self.slice16().len() as u32)
+        Some(self.len() as u32)
     }
 
     // `eql`, split by operand type.

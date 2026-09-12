@@ -463,10 +463,15 @@ pub mod fault_inject {
     }
 
     unsafe extern "C" {
-        pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
+        // safe: `rule` is copied; `out`/`clamp` are written in place.
+        pub safe fn us_fault_set(syscall: c_int, rule: &UsFaultRule);
         pub safe fn us_fault_clear_all();
-        pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
-        -> c_int;
+        pub safe fn us_fault_hit(
+            syscall: c_int,
+            fd: c_int,
+            out: &mut isize,
+            clamp: &mut c_int,
+        ) -> c_int;
     }
 }
 pub use socket::{

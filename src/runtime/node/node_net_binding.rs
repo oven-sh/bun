@@ -137,6 +137,8 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
+            io_ref: Cell::new(None),
+            named_pipe_ref: Cell::new(None),
             protos: JsCell::new(None),
             handlers: JsCell::new(None),
             local_binding: JsCell::new(None),
@@ -156,7 +158,8 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
         });
-        socket.get_this_value(global)
+        // The JS wrapper adopts the creation ref.
+        socket.into_this_ptr().get_this_value(global)
     }
 
     Ok(if !is_ssl {

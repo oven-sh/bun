@@ -1234,7 +1234,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::BundleV2PluginLoad => release!(bun_bundler::bundle_v2::api::JSBundler::Load),
         task_tag::ShellYesTask => release!(ShellYesTask),
         task_tag::CppTask => release!(CppTask),
-        task_tag::DuplexUpgradeContext => release!(crate::socket::DuplexUpgradeContext),
+        task_tag::DuplexUpgradeContext => crate::socket::DuplexUpgradeContext::release_unrun(
+            // SAFETY: as `release!`.
+            unsafe { bun_ptr::ThisPtr::new(task.ptr.cast()) },
+        ),
         task_tag::FetchTasklet => release!(FetchTasklet),
         task_tag::FetchTaskletDeinit => release!(crate::webcore::fetch::FetchTaskletDeinitHop),
         task_tag::FetchTaskletPromiseSettle => {

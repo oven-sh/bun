@@ -112,6 +112,8 @@ if (mode === "end" || mode === "destroySoon") {
 
     const raw = net.connect(transport === "refused" ? holder.localPort : peer.port, "127.0.0.1");
     raw.on("error", () => {});
+    // Registered before tls.connect() adds its own, so the transport is gone when that one runs.
+    if (transport === "destroyed on connect") raw.once("connect", () => raw.destroy());
     const client = tls.connect({ socket: raw, rejectUnauthorized: false });
     client.on("error", () => {});
     for (const event of ["finish", "close"]) client.on(event, () => log.push(event));
@@ -122,16 +124,20 @@ if (mode === "end" || mode === "destroySoon") {
     await new Promise(resolve => client.once("close", resolve));
 
     const { writableFinished, readyState, destroyed } = client;
+    const transportDestroyed = raw.destroyed;
     holder.destroy();
     raw.destroy();
     peer.close();
+    // Node runs its shutdown on the closed handle here: 'finish' and an EINVAL follow 'close'.
+    // The report keeps what both runtimes share.
+    if (transport === "destroyed on connect") return { readyState, destroyed, transportDestroyed };
     return { log, writableFinished, readyState, destroyed };
   }
 
   const reports = {};
   await Promise.all(
     ["end", "destroySoon"].flatMap(method =>
-      ["refused", "destroyed"].map(async transport => {
+      ["refused", "destroyed", "destroyed on connect"].map(async transport => {
         reports[`${method} ${transport}`] = await shutDown(method, transport);
       }),
     ),

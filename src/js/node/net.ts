@@ -188,6 +188,11 @@ function onUpgradeWriteClose(callback) {
   callback($ERR_SOCKET_CLOSED());
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
+// The deferred TLS upgrade has assigned `_handle`: resume the _write and the _final that waited for it.
+function upgradeAttached(self) {
+  self[kUpgradePending] = false;
+  self.emit(kUpgradeAttached);
+}
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
@@ -1447,6 +1452,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
+    // A TLS engine that failed before it opened has no connect pending, so afterConnect would drop the failure.
+    if (self[kupgraded]) {
+      if (!self.destroyed) self.destroy(new ExceptionWithHostPort(error.errno, "connect"));
+      return;
+    }
     req!.oncomplete(error.errno, self._handle, req, true, true);
   },
 };
@@ -2130,8 +2140,7 @@ Socket.prototype.connect = function connect(...args) {
               connection.removeListener("close", onClose);
               // The transport is connected. The stream-level engine opens on a later task and emits no 'connect' for _final to wait for.
               this.connecting = false;
-              this[kUpgradePending] = false;
-              this.emit(kUpgradeAttached);
+              upgradeAttached(this);
             };
             // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
             const onClose = () => {
@@ -2432,7 +2441,8 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     return;
   }
   this[kupgraded] = connection;
-  this[kUpgradePending] = true;
+  // Not over a socket that is still connecting: a shutdown of the handle adopted from it underflows the native connection count.
+  this[kUpgradePending] = !connection.connecting;
   process.nextTick(() => {
     if (this.destroyed || connection.destroyed) {
       this.destroy();
@@ -2459,8 +2469,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("close", events[3]);
       destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
-      this[kUpgradePending] = false;
-      this.emit(kUpgradeAttached);
+      upgradeAttached(this);
       return;
     }
     // Bytes that already arrived before the wrap were pulled off the fd into
@@ -2486,8 +2495,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
-    this[kUpgradePending] = false;
-    this.emit(kUpgradeAttached);
+    upgradeAttached(this);
   });
 };
 

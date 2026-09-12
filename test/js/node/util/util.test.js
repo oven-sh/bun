@@ -566,6 +566,32 @@ describe("util", () => {
       }
     });
 
+    it("keeps honoring frameCount after many calls", async () => {
+      // getCallSites assigns Error.stackTraceLimit from one site. Runs in a fresh process so
+      // that the JIT state of that site starts cold.
+      const fixture = `
+        const util = require("node:util");
+        // try/finally keeps each call out of tail position, so every frame stays on the stack.
+        function deep(n, k) { try { return n <= 0 ? util.getCallSites(k).length : deep(n - 1, k); } finally {} }
+        const failures = [];
+        for (let i = 0; i < 400 && failures.length === 0; i++) {
+          const k = 1 + (i % 5);
+          const got = deep(8, k);
+          if (got !== k) failures.push({ call: i, frameCount: k, callSites: got });
+        }
+        process.stdout.write(JSON.stringify(failures));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // Without compiler threads getCallSites reaches the optimizing JIT at a fixed call.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[]");
+      expect(exitCode).toBe(0);
+    });
+
     it("each frame has the node v26 shape", () => {
       const sites = util.getCallSites(3);
       expect(sites.length).toBeGreaterThan(0);

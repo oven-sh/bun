@@ -138,6 +138,70 @@ test("markAsUncloneable and markAsUntransferable markers are private, unforgeabl
   expectDataCloneError(() => structuredClone(unmarkAttempt));
 });
 
+// A WebAssembly GC struct/array reference is an object that cannot take a property. Node returns
+// undefined and leaves it unmarked. It runs in a subprocess because the bug aborted the process.
+test("markAsUntransferable and markAsUncloneable leave WebAssembly GC references unmarked", async () => {
+  const fixture = `
+    // (module
+    //   (type $s (struct (field (mut i32))))
+    //   (type $a (array (mut i32)))
+    //   (func (export "struct") (result (ref null $s)) struct.new_default $s)
+    //   (func (export "array") (result (ref null $a)) i32.const 3 array.new_default $a))
+    const bytes = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      // types: struct, array, () -> (ref null 0), () -> (ref null 1)
+      0x01, 0x12, 0x04, 0x5f, 0x01, 0x7f, 0x01, 0x5e, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00, 0x60, 0x00, 0x01, 0x63, 0x01,
+      // functions
+      0x03, 0x03, 0x02, 0x02, 0x03,
+      // exports: "struct" -> func 0, "array" -> func 1
+      0x07, 0x12, 0x02, 0x06, 0x73, 0x74, 0x72, 0x75, 0x63, 0x74, 0x00, 0x00, 0x05, 0x61, 0x72, 0x72, 0x61, 0x79, 0x00, 0x01,
+      // code: struct.new_default 0 / i32.const 3, array.new_default 1
+      0x0a, 0x0f, 0x02, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b, 0x07, 0x00, 0x41, 0x03, 0xfb, 0x07, 0x01, 0x0b,
+    ]);
+    const { struct, array } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+    const wt = require("node:worker_threads");
+    const errorName = fn => {
+      try {
+        fn();
+        return "no error";
+      } catch (e) {
+        return e.name;
+      }
+    };
+    const result = {};
+    for (const [kind, ref] of [["struct", struct()], ["array", array()]]) {
+      const { port1 } = new wt.MessageChannel();
+      result[kind] = {
+        markAsUntransferable: String(wt.markAsUntransferable(ref)),
+        markAsUncloneable: String(wt.markAsUncloneable(ref)),
+        isMarkedAsUntransferable: wt.isMarkedAsUntransferable(ref),
+        clone: errorName(() => structuredClone(ref)),
+        transfer: errorName(() => port1.postMessage(1, [ref])),
+      };
+      port1.close();
+    }
+    console.log(JSON.stringify(result));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const unmarked = {
+    markAsUntransferable: "undefined",
+    markAsUncloneable: "undefined",
+    isMarkedAsUntransferable: false,
+    clone: "DataCloneError",
+    transfer: "DataCloneError",
+  };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ struct: unmarked, array: unmarked });
+  expect(exitCode).toBe(0);
+});
+
 test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");

@@ -46,6 +46,7 @@ import {
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
+import { createJobserver } from "./build/jobserver.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
@@ -104,8 +105,22 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
-    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+  // One thread-token pool for every rustc ninja runs (what cargo's jobserver used to be); see jobserver.ts.
+  let jobserver: ReturnType<typeof createJobserver>;
+  let jobserverCreated = false;
+  const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
+    if (!jobserverCreated) {
+      jobserverCreated = true; // one pool (or one decision that there is none) for every ninja pass of this run
+      jobserver = createJobserver(cfg.buildDir, cfg.host.os);
+      process.on("exit", () => jobserver?.close());
+    }
+    // BUN_BUILD_DRIVER_PID: rustc processes that outlive their ninja edge (rust/run.ts pipelining) end with this process.
+    const merged: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...env,
+      ...jobserver?.env,
+      BUN_BUILD_DRIVER_PID: String(process.pid),
+    };
     if (cfg.windows && cfg.host.os !== "windows") {
       for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
         delete merged[name];

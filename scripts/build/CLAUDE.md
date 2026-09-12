@@ -24,7 +24,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
-- `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
+- `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
 The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
@@ -144,7 +144,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
-   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
+   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the rustc edges pass `-C linker` themselves); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
@@ -157,7 +157,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
+2. **Rust** — `emitRust(n, cfg, {...})` emits one rustc edge per crate → `libbun_runtime.a` (after resolving the vendored path deps, lolhtml and rust-argon2). cargo plans, ninja executes: the `rust_plan` edge runs `cargo build … --unit-graph` + `cargo metadata` for exactly the arguments `cargoBuildInvocation()` computes and writes `rust/plan.json`; `build.ninja` depends on that file, so a new plan (lockfile/manifest/toolchain change) reconfigures and ninja restarts. `rust/units.ts` turns each unit into a rustc argv/env (cargo's rules, transcribed and diffed against `cargo -vv`), written to `rust/units/<crate>-<hash>.json`; `rust/emit.ts` emits the edges; `rust/run.ts` executes them. Libraries are two edges backed by one rustc process — `rust_meta` returns when the `.rmeta` is announced so dependents start, `rust_codegen` returns when the same rustc exits with the `.rlib` (cargo's pipelining; on this graph it is the difference between an 83 s and a 128 s critical path). Build scripts are a compile edge plus a `rust_build_script` run edge whose parsed directives (`output.json`, restat) feed the package's rustc edges. Codegen and Rust are emitted before the deps on purpose: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order.
 3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
@@ -166,7 +166,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
+Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
 ### Phase 3 — Execute
 
@@ -175,44 +175,50 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ## Module inventory
 
-| File                           | Owns                                                                                                                    |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                                                    |
-| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                      |
-| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                    |
-| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                 |
-| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                      |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                   |
-| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                         |
-| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                 |
-| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                        |
-| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                      |
-| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                |
-| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                 |
-| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |
-| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                  |
-| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                     |
-| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                               |
-| `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                   |
-| `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                          |
-| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                            |
-| `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                  |
-| `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer |
-| `xmlByteClass.ts`              | Generates `xml_byte_class.{h,rs}` — the XML byte classification shared by the SIMD kernels and the Rust scalar indexer  |
-| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                                      |
-| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                 |
-| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                        |
-| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                           |
-| `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
-| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                 |
-| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
-| `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
-| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |
-| `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                |
-| `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                              |
-| `shims/*.c`                    | Platform workaround sources                                                                                             |
+| File                           | Owns                                                                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                                                                |
+| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                  |
+| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                |
+| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                      |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                             |
+| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                  |
+| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                               |
+| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                     |
+| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                             |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                                    |
+| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                                  |
+| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                            |
+| `rust.ts`                      | Rust step entry: target/rustflags/env (`cargoBuildInvocation()`), `emitRust()`, `rustLibPath()`, Windows shim, cross-compile matrix |
+| `rust/plan.ts`                 | `cargo --unit-graph` + `cargo metadata` + `rustc --print` → `rust/plan.json` (build-time CLI and the types configure reads)         |
+| `rust/units.ts`                | Plan → per-unit rustc argv/env/outputs (cargo's command-line rules), unit manifests                                                 |
+| `rust/emit.ts`                 | `rust_plan`/`rust_meta`/`rust_codegen`/`rust_rustc`/`rust_build_script` rules and edges                                             |
+| `rust/run.ts`                  | Build-time driver for one unit: pipelined rustc (meta/codegen handshake), plain rustc, build-script protocol, depfiles              |
+| `rust/toml.ts`                 | TOML reader for the `[lints]` tables cargo's JSON doesn't export                                                                    |
+| `jobserver.ts`                 | The token pool rustc's worker threads share (`CARGO_MAKEFLAGS`), formerly cargo's                                                   |
+| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                             |
+| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                              |
+| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                                 |
+| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                                           |
+| `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                               |
+| `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                                      |
+| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                                        |
+| `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                              |
+| `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer             |
+| `xmlByteClass.ts`              | Generates `xml_byte_class.{h,rs}` — the XML byte classification shared by the SIMD kernels and the Rust scalar indexer              |
+| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                                                  |
+| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                             |
+| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                                    |
+| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                       |
+| `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                                           |
+| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                       |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                             |
+| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                 |
+| `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                |
+| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                            |
+| `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                            |
+| `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                          |
+| `shims/*.c`                    | Platform workaround sources                                                                                                         |
 
 ## Key types
 

@@ -28,6 +28,7 @@ import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
+import { planPath } from "./rust/plan.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
@@ -148,8 +149,17 @@ function configureInputs(cwd: string): string[] {
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
+  // only, but one glob keeps the rule simple).
+  const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  return [
+    ...scripts,
+    ...deps,
+    ...rust,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+  ].sort();
 }
 
 /**
@@ -209,8 +219,16 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    // rust/plan.json: the per-crate Rust edges are generated from it (rust.ts), so a changed plan — new
+    // lockfile, manifest, toolchain — must reconfigure. It is a build output; when it is dirty ninja builds
+    // it first, reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? [planPath(cfg.buildDir)] : [])],
   });
+}
+
+/** Whether this graph compiles bun's Rust crates (and therefore has the `rust/plan.json` edge emitRust registers). */
+function buildsRust(cfg: Config): boolean {
+  return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }
 
 /**

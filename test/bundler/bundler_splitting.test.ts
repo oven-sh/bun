@@ -11,7 +11,38 @@ const env = {
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
 };
 
-describe("bundler", () => {
+// Chunks are named `[name]-[hash].[ext]` with an 8 character hash. The helpers
+// below refer to them as `name-[hash].ext` so a case can pin its whole output
+// directory with one toEqual.
+const unhashed = (file: string) => file.replace(/-[a-z0-9]{8}(?=\.\w+$)/, "-[hash]");
+
+const outputFiles = (api: BundlerTestBundleAPI) => readdirSync(api.outdir).map(unhashed).sort();
+
+function readOutput(api: BundlerTestBundleAPI, file: string) {
+  const matches = readdirSync(api.outdir).filter(f => unhashed(f) === file);
+  expect(matches).toHaveLength(1);
+  return api.readFile("/out/" + matches[0]);
+}
+
+// The import() specifiers in an output file. Each of them must name a file in
+// the output directory: the import() of a module that imports CSS used to be
+// rewritten to the module's CSS output instead of its JS chunk.
+function dynamicImportsIn(api: BundlerTestBundleAPI, file: string) {
+  const specifiers = Array.from(readOutput(api, file).matchAll(/\bimport\("\.\/([^"]+)"\)/g), m => m[1]);
+  for (const specifier of specifiers) api.assertFileExists("/out/" + specifier);
+  return specifiers.map(unhashed);
+}
+
+// The source files bundled into an output CSS file, in order, from the
+// `/* name.css */` comment the bundler prints above each of them.
+const cssSourcesIn = (api: BundlerTestBundleAPI, file: string) =>
+  Array.from(readOutput(api, file).matchAll(/^\/\* (\S+\.css) \*\/$/gm), m => m[1]);
+
+// Every case builds into its own directory under expectBundled's temp root and
+// spawns its own processes, so they can overlap. expectBundled registers the
+// backend: "api" cases with it.serial because that backend chdirs. Each of
+// those waits for the cases declared before it and blocks the ones after it.
+describe.concurrent("bundler", () => {
   itBundled("splitting/DynamicImportCSSFile", {
     files: {
       "/client.tsx": `import('./test')`,
@@ -27,6 +58,13 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // test.ts imports the same CSS as the entry point reaches, so the two
+      // share one CSS output.
+      expect(outputFiles(api)).toEqual(["client.css", "client.js", "test-[hash].js"]);
+      expect(dynamicImportsIn(api, "client.js")).toEqual(["test-[hash].js"]);
+      expect(cssSourcesIn(api, "client.css")).toEqual(["test.css"]);
+    },
     run: {
       file: "/out/client.js",
       env,
@@ -57,6 +95,20 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      expect(outputFiles(api)).toEqual([
+        "entry.css",
+        "entry.js",
+        "module1-[hash].css",
+        "module1-[hash].js",
+        "module2-[hash].css",
+        "module2-[hash].js",
+      ]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["module1-[hash].js", "module2-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["styles1.css", "styles2.css"]);
+      expect(cssSourcesIn(api, "module1-[hash].css")).toEqual(["styles1.css"]);
+      expect(cssSourcesIn(api, "module2-[hash].css")).toEqual(["styles2.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -83,6 +135,12 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      expect(outputFiles(api)).toEqual(["dynamic-[hash].css", "dynamic-[hash].js", "entry.css", "entry.js"]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["dynamic-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["static.css", "dynamic.css"]);
+      expect(cssSourcesIn(api, "dynamic-[hash].css")).toEqual(["dynamic.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -113,6 +171,17 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // level1 reaches the same CSS as the entry point, so it shares entry.css
+      // instead of getting a CSS output of its own. Only the CSS outputs are
+      // pinned: the JS side also has a chunk of unused runtime helpers, whose
+      // presence and name this case does not cover.
+      expect(outputFiles(api).filter(file => file.endsWith(".css"))).toEqual(["entry.css", "level2-[hash].css"]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["level1-[hash].js"]);
+      expect(dynamicImportsIn(api, "level1-[hash].js")).toEqual(["level2-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["level1.css", "level2.css"]);
+      expect(cssSourcesIn(api, "level2-[hash].css")).toEqual(["level2.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -148,6 +217,20 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      expect(outputFiles(api)).toEqual([
+        "entry.css",
+        "entry.js",
+        "moduleA-[hash].css",
+        "moduleA-[hash].js",
+        "moduleB-[hash].css",
+        "moduleB-[hash].js",
+      ]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["moduleA-[hash].js", "moduleB-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["shared.css", "moduleA.css", "moduleB.css"]);
+      expect(cssSourcesIn(api, "moduleA-[hash].css")).toEqual(["shared.css", "moduleA.css"]);
+      expect(cssSourcesIn(api, "moduleB-[hash].css")).toEqual(["shared.css", "moduleB.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -194,6 +277,20 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      expect(outputFiles(api)).toEqual([
+        "chain1-[hash].css",
+        "chain1-[hash].js",
+        "chain2-[hash].css",
+        "chain2-[hash].js",
+        "chain3-[hash].css",
+        "chain3-[hash].js",
+        "entry.css",
+        "entry.js",
+      ]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["chain1-[hash].js", "chain2-[hash].js", "chain3-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["chain1.css", "chain2.css", "chain3.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -228,6 +325,19 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // Both branches get a chunk: `condition` is only folded with minifySyntax.
+      expect(outputFiles(api)).toEqual([
+        "entry.css",
+        "entry.js",
+        "moduleFalse-[hash].css",
+        "moduleFalse-[hash].js",
+        "moduleTrue-[hash].css",
+        "moduleTrue-[hash].js",
+      ]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["moduleTrue-[hash].js", "moduleFalse-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["true.css", "false.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -257,6 +367,13 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // The entry points share no JS, so there is no shared chunk. Each one
+      // gets its own CSS output that starts with the shared stylesheet.
+      expect(outputFiles(api)).toEqual(["entry1.css", "entry1.js", "entry2.css", "entry2.js"]);
+      expect(cssSourcesIn(api, "entry1.css")).toEqual(["shared.css", "entry1.css"]);
+      expect(cssSourcesIn(api, "entry2.css")).toEqual(["shared.css", "entry2.css"]);
+    },
     run: [
       {
         file: "/out/entry1.js",
@@ -284,6 +401,15 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // Current behavior: the stylesheet gets no JS chunk, so the import() is
+      // rewritten to the stylesheet's own CSS output. A build that gives an
+      // import()ed stylesheet a JS chunk has to update these two lists.
+      expect(outputFiles(api)).toEqual(["entry.css", "entry.js", "styles-[hash].css"]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["styles-[hash].css"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["styles.css"]);
+      expect(cssSourcesIn(api, "styles-[hash].css")).toEqual(["styles.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -322,6 +448,20 @@ describe("bundler", () => {
     target: "browser",
     env: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // b reaches a's CSS too. Only the CSS outputs are pinned: a.js itself
+      // moves into a shared chunk, next to a chunk of unused runtime helpers,
+      // and the names of those two chunks are not what this case covers.
+      expect(outputFiles(api).filter(file => file.endsWith(".css"))).toEqual([
+        "a-[hash].css",
+        "b-[hash].css",
+        "entry.css",
+      ]);
+      expect(dynamicImportsIn(api, "entry.js")).toEqual(["a-[hash].js", "b-[hash].js"]);
+      expect(cssSourcesIn(api, "entry.css")).toEqual(["a.css", "b.css"]);
+      expect(cssSourcesIn(api, "a-[hash].css")).toEqual(["a.css"]);
+      expect(cssSourcesIn(api, "b-[hash].css")).toEqual(["b.css", "a.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -3058,79 +3198,68 @@ describe("bundler", () => {
   }
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
-  // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
-  // cap with far fewer files than release, hence the scaled N.
-  test("splitting/ManyCrossChunkExportAliasCollisions", async () => {
-    const N = isDebug || isASAN ? 2500 : 20000;
-    const THRESHOLD_MS = 15000;
+  // (ExportRenamer::next_renamed_name). The O(N^2) renamer that #34529 replaced
+  // needs about 15s for N=2500 in a debug/ASAN build, and in release 17s for
+  // N=20000, so about 39s for N=30000. The O(N) one needs about 1.6s and 0.6s.
+  //
+  // The N modules are passed in memory: creating, reading and deleting N files
+  // costs many times more than the build itself on the macOS and Alpine lanes.
+  // Serial so that the other cases do not run while the build is timed.
+  test.serial(
+    "splitting/ManyCrossChunkExportAliasCollisions",
+    async () => {
+      const N = isDebug || isASAN ? 2500 : 30000;
+      const THRESHOLD_MS = 10_000;
 
-    const files: Record<string, string> = {};
-    let imports = "";
-    let uses = "";
-    for (let i = 0; i < N; i++) {
-      files[`s${i}.js`] = `export const shared = ${i};\n`;
-      imports += `import { shared as s${i} } from "./s${i}.js";\n`;
-      uses += `t += s${i};\n`;
-    }
-    // Flat statement list keeps every import live without building a deep AST.
-    const entryBody = imports + "let t = 0;\n" + uses + `console.log(t, s0, s${N - 1});\n`;
-    files["e1.js"] = entryBody;
-    files["e2.js"] = entryBody;
+      let imports = "";
+      let uses = "";
+      for (let i = 0; i < N; i++) {
+        imports += `import { shared as s${i} } from "./s${i}.js";\n`;
+        uses += `t += s${i};\n`;
+      }
+      // Flat statement list keeps every import live without building a deep AST.
+      // Two identical entry points put all N modules into one shared chunk.
+      const entryBody = imports + "let t = 0;\n" + uses + `console.log(t, s0, s${N - 1});\n`;
+      using dir = tempDir("splitting-export-alias-collisions", { "e1.js": entryBody, "e2.js": entryBody });
+      const root = String(dir);
+      const outDir = join(root, "out");
+      const files: Record<string, string> = {};
+      for (let i = 0; i < N; i++) files[`${root}/s${i}.js`] = `export const shared = ${i};\n`;
 
-    using dir = tempDir("splitting-export-alias-collisions", files);
-    const root = String(dir);
+      const start = performance.now();
+      const build = await Bun.build({
+        entrypoints: [join(root, "e1.js"), join(root, "e2.js")],
+        outdir: outDir,
+        splitting: true,
+        format: "esm",
+        files,
+      });
+      const buildMs = performance.now() - start;
+      expect(build.logs).toBeEmpty();
+      expect(buildMs).toBeLessThan(THRESHOLD_MS);
 
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--splitting", "--format=esm", "--outdir", "out", "./e1.js", "./e2.js"],
-      env: bunEnv,
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: THRESHOLD_MS,
-      killSignal: "SIGKILL",
-    });
-    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    if (build.signalCode !== null) {
-      throw new Error(
-        `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
-          `(signal ${build.signalCode})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
-      );
-    }
-    if (buildExit !== 0) {
-      throw new Error(`bun build exited ${buildExit}\nstdout:\n${buildOut}\nstderr:\n${buildErr}`);
-    }
+      // The shared chunk's export clause hands out `shared`, `shared1`, ... in
+      // module order. Running an entry point checks that its imports use the
+      // same aliases.
+      const outputs = readdirSync(outDir).sort();
+      expect(outputs.map(unhashed)).toEqual(["chunk-[hash].js", "e1.js", "e2.js"]);
+      const clause = readFileSync(join(outDir, outputs[0]), "utf8").match(/export\s*\{([^}]*)\}/)![1];
+      const aliases = clause.split(",").map(item => item.trim().split(" as ").pop());
+      expect(aliases).toEqual(Array.from({ length: N }, (_, i) => (i === 0 ? "shared" : `shared${i}`)));
 
-    // The shared chunk's export clause must hand out a unique alias for every
-    // `shared` symbol; verify by inspecting the generated chunk and by running
-    // the output.
-    const outDir = join(root, "out");
-    const chunkName = readdirSync(outDir).find(f => f !== "e1.js" && f !== "e2.js" && f.endsWith(".js"));
-    expect(chunkName).toBeDefined();
-    const chunk = readFileSync(join(outDir, chunkName!), "utf8");
-    const clause = chunk.match(/export\s*\{([^}]*)\}/)?.[1] ?? "";
-    const aliases = clause
-      .split(",")
-      .map(part => {
-        const bits = part.trim().split(/\s+as\s+/);
-        return bits[bits.length - 1];
-      })
-      .filter(Boolean);
-    expect(aliases.length).toBe(N);
-    expect(new Set(aliases).size).toBe(N);
-    for (const a of aliases) expect(a).toMatch(/^shared\d*$/);
-
-    await using run = Bun.spawn({
-      cmd: [bunExe(), join(outDir, "e1.js")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-    if (runExit !== 0) {
-      throw new Error(`running e1.js exited ${runExit}\nstdout:\n${runOut}\nstderr:\n${runErr}`);
-    }
-    expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
-  }, 60_000);
+      await using run = Bun.spawn({
+        cmd: [bunExe(), join(outDir, "e1.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(stdout).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}\n`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.

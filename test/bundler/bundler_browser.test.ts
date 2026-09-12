@@ -503,6 +503,76 @@ describe("bundler", () => {
     },
   });
 
+  // A "browser" map key with a slash ("pkg/sub", "@scope/pkg") must match the
+  // import specifier on Windows too. The keys used to be stored with native
+  // separators there, so "pkg/sub" became "pkg\sub" and never matched.
+  itBundled("browser/BrowserFieldDisablesPackageSubpath", {
+    files: {
+      "/entry.js": /* js */ `
+        const sub = require("pkg/sub");
+        const scoped = require("@scope/pkg");
+        console.log(typeof sub.value, typeof scoped.value);
+      `,
+      "/package.json": /* json */ `
+        { "name": "app", "browser": { "pkg/sub": false, "@scope/pkg": false } }
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg" }
+      `,
+      "/node_modules/pkg/sub.js": /* js */ `
+        module.exports = { value: "node-only-sub" };
+      `,
+      "/node_modules/@scope/pkg/package.json": /* json */ `
+        { "name": "@scope/pkg" }
+      `,
+      "/node_modules/@scope/pkg/index.js": /* js */ `
+        module.exports = { value: "node-only-scoped" };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("node-only-sub"), 'browser:{"pkg/sub":false} should keep pkg/sub.js out of the bundle');
+      assert(
+        !out.includes("node-only-scoped"),
+        'browser:{"@scope/pkg":false} should keep @scope/pkg out of the bundle',
+      );
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsPackageSubpath", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("pkg/sub").value);
+      `,
+      "/package.json": /* json */ `
+        { "name": "app", "browser": { "pkg/sub": "./sub-shim.js" } }
+      `,
+      "/sub-shim.js": /* js */ `
+        module.exports = { value: "shim" };
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg" }
+      `,
+      "/node_modules/pkg/sub.js": /* js */ `
+        module.exports = { value: "node-only-sub" };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(
+        !out.includes("node-only-sub"),
+        'browser:{"pkg/sub":"./sub-shim.js"} should keep pkg/sub.js out of the bundle',
+      );
+    },
+  });
+
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external
   const bunModules: Record<string, "no-op" | "polyfill" | "error"> = {

@@ -719,7 +719,11 @@ fn lockfile_for<'a>(
     manifest: &[u8],
 ) -> Option<&'a Lockfile> {
     use bun_paths::resolve_path::{join_abs_string_buf, platform};
-    if !strings::contains(manifest, b"workspace:") && !strings::contains(manifest, b"catalog:") {
+    // A JSON escape can spell either protocol, so a manifest with a backslash in it loads the lockfile too.
+    if !strings::contains(manifest, b"workspace:")
+        && !strings::contains(manifest, b"catalog:")
+        && !strings::contains_char(manifest, b'\\')
+    {
         return None;
     }
     let (mut dir_buf, mut buf) = (
@@ -767,6 +771,17 @@ fn lockfile_for<'a>(
     listed.then_some(lockfile)
 }
 
+/// Whether `token`, a JSON string with its quotes, decodes to `value`. `"workspace:\u005e"` reads as `workspace:^`.
+fn json_string_reads_as(token: &[u8], value: &[u8]) -> bool {
+    let bump = Bump::new();
+    bun_parsers::json::parse_utf8(
+        &bun_ast::Source::init_path_string(b"package.json", token),
+        &mut bun_ast::Log::init(),
+        &bump,
+    )
+    .is_ok_and(|string| string.as_utf8_string_literal() == Some(value))
+}
+
 /// `manifest` (a package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as `bun pm pack` publishes them.
 fn with_published_versions(
     manifest: Vec<u8>,
@@ -798,10 +813,10 @@ fn with_published_versions(
             else {
                 continue;
             };
-            // Only a token that reads exactly as the value the parser gave is replaced.
+            // Only a token that reads as the value the parser gave is replaced.
             let token = usize::try_from(version.loc.start).ok().and_then(|at| {
                 let end = bun_parsers::json::skip_string_token(&manifest, at)?;
-                (manifest[at + 1..end - 1] == *spec).then_some((at, end))
+                json_string_reads_as(&manifest[at..end], spec).then_some((at, end))
             });
             if let Some((at, end)) = token {
                 edits.push((at, end, published));

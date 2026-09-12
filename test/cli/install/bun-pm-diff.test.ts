@@ -272,6 +272,7 @@ diffme@1.0.0 → diffme@2.0.0
 
   test("a workspace package's workspace: and catalog: versions are compared as `bun pm pack` publishes them", async () => {
     const manifest = (pkg: object) => JSON.stringify(pkg, null, 2) + "\n";
+    // One version is spelled with a JSON escape: pack resolves what the string decodes to.
     const a = manifest({
       name: "ws-a",
       version: "1.0.0",
@@ -279,7 +280,8 @@ diffme@1.0.0 → diffme@2.0.0
       devDependencies: { "ws-c": "workspace:2.x" },
       peerDependencies: { "ws-b": "workspace:*", diffme: "catalog:legacy" },
       optionalDependencies: { "ws-d": "workspace:~" },
-    });
+    }).replace('"workspace:~"', '"workspace:\\u007e"');
+    expect(a).toContain('"ws-d": "workspace:\\u007e"');
     using dir = tempDir("pm-diff-workspace", {
       "package.json": manifest({
         name: "ws-root",

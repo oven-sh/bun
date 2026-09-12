@@ -729,21 +729,7 @@ impl<'a> Transpiler<'a> {
         );
 
         if auto_jsx {
-            // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir;
-            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
-                }
-            }
+            self.apply_root_tsconfig();
         }
     }
 
@@ -751,6 +737,40 @@ impl<'a> Transpiler<'a> {
     #[inline]
     pub fn configure_linker(&mut self) {
         self.configure_linker_with_auto_jsx(true);
+    }
+
+    /// Root `tsconfig.json`: JSX pragma (unless the options set one), decorators, class fields.
+    fn apply_root_tsconfig(&mut self) {
+        // Most of the time, this will already be cached
+        let top_level_dir = self.fs().top_level_dir;
+        if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+            if let Some(tsconfig) = root_dir.tsconfig_json() {
+                // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                if self.options.transform_options.jsx.is_none() {
+                    self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                }
+                self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                self.options.experimental_decorators = tsconfig.experimental_decorators;
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    self.options.use_define_for_class_fields = v;
+                }
+            }
+        }
+    }
+
+    /// Rebuilds `options` and the resolver's copy from `opts`. Call `configure_defines` after.
+    pub fn reset_transform_options(&mut self, opts: api::TransformOptions) -> crate::Result<()> {
+        // It copied the old options and env loader; the next parse makes a new one.
+        if let Some(ctx) = self.macro_context.take() {
+            ctx.deinit();
+        }
+        // `from_api` leaves this at its default; the VM path applies it.
+        let preserve_symlinks = opts.preserve_symlinks.unwrap_or(false);
+        self.options = options::BundleOptions::from_api(self.fs_mut(), self.log, opts)?;
+        self.options.preserve_symlinks = preserve_symlinks;
+        self.sync_resolver_opts();
+        self.apply_root_tsconfig();
+        Ok(())
     }
 
     /// Load `.env` files into the env loader according to

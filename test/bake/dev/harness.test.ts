@@ -35,6 +35,29 @@ devTest("a write after a fetch of a failing route waits for the reloaded page", 
   },
 });
 
+devTest("a stylesheet link that fails to load does not hold up the page load ack", {
+  files: {
+    "index.html": emptyHtmlFile({
+      // Nothing listens on port 1, and the dev server leaves an absolute URL alone.
+      styles: ["http://127.0.0.1:1/missing.css", "styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("red");
+    // happy-dom never gives the failed link a sheet, so waiting for one would
+    // wait forever. The fixture settles the link on its "error" event instead.
+    expect(await c.js`[...document.querySelectorAll('link[rel="stylesheet"]')].map(link => !!link.sheet)`).toEqual([
+      false,
+      true,
+    ]);
+    await c.hardReload();
+    await c.style("h1").color.expect.toBe("red");
+  },
+});
+
 devTest("expectElemText waits for a DOM update that lands after the ack", {
   files: {
     "index.html": emptyHtmlFile({

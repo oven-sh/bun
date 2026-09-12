@@ -141,12 +141,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
     // no uniqueness assertion are used throughout.
 
-    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
-    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
-    // Request/Response body coercion) which can re-enter this function on the same
-    // socket. Taking the buffer first would leave two owning `Vec`s over the same
-    // `list_ptr`; the inner call's realloc would free the allocation out from under
-    // the outer frame (use-after-free).
+    // Coerce `data` first: it can run JS that re-enters this function on the same socket.
     let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
     } else {
@@ -180,10 +175,9 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         }
     }
 
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
-    // No JS executes between here and the `update()` below, so this owning `Vec` is the
-    // sole owner of `list_ptr` for the remainder of the function.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
+    // SAFETY: the C++ caller keeps `buffer` valid for the call. No JS runs
+    // between here and the `update()` below.
+    let mut stream_buffer = unsafe { &mut *buffer }.take_stream_buffer();
     let mut total_written: usize = 0;
 
     // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`

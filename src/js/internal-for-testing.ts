@@ -116,6 +116,7 @@ export const cssInternals = {
   prefixTest: $newRustFunction("css_internals.rs", "prefixTest", 3),
   _test: $newRustFunction("css_internals.rs", "_test", 3),
   attrTest: $newRustFunction("css_internals.rs", "attrTest", 3),
+  cssModulesTest: $newRustFunction("css_internals.rs", "cssModulesTest", 1),
 };
 
 export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {

@@ -173,20 +173,67 @@ impl<'a> CssModule<'a> {
 
     pub(crate) fn handle_composes(
         &mut self,
-        _dest: &mut css::Printer,
+        dest: &mut css::Printer<'a>,
         selectors: &css::selector::parser::SelectorList,
-        _composes: &css::css_properties::css_modules::Composes,
-        _source_index: u32,
+        composes: &css::css_properties::css_modules::Composes,
+        source_index: u32,
     ) -> css::Maybe<(), css::PrinterErrorKind> {
-        // let bump = dest.arena;
+        use bun_collections::array_hash_map::MapEntry;
+        use css::css_properties::css_modules::Specifier;
+
+        let bump = dest.arena;
         for sel in selectors.v.slice() {
-            if sel.len() == 1
-                && matches!(
-                    sel.components[0],
-                    css::selector::parser::Component::Class(_)
-                )
-            {
-                continue;
+            if sel.len() == 1 {
+                if let css::selector::parser::Component::Class(id) = &sel.components[0] {
+                    let id: &'a [u8] = dest.lookup_ident_or_ref(*id);
+                    for name in composes.names.slice() {
+                        let name_bytes: &'a [u8] = bump.alloc_slice_copy(name.v());
+                        let reference = match &composes.from {
+                            None => CssModuleReference::Local {
+                                name: self.config.pattern.write_to_string(
+                                    bump,
+                                    BumpVec::new_in(bump),
+                                    self.hashes[source_index as usize],
+                                    self.sources[source_index as usize].as_ref(),
+                                    name_bytes,
+                                ),
+                            },
+                            Some(Specifier::Global) => {
+                                CssModuleReference::Global { name: name_bytes }
+                            }
+                            Some(Specifier::ImportRecordIndex(idx)) => {
+                                let Some(import_info) = &dest.import_info else {
+                                    return Err(css::PrinterErrorKind::no_import_records);
+                                };
+                                let path = import_info.import_records[*idx as usize].path.text;
+                                CssModuleReference::Dependency {
+                                    name: name_bytes,
+                                    specifier: bump.alloc_slice_copy(path),
+                                }
+                            }
+                        };
+
+                        let export =
+                            match self.exports_by_source_index[source_index as usize].entry(id) {
+                                MapEntry::Occupied(o) => o.into_mut(),
+                                MapEntry::Vacant(v) => v.insert(CssModuleExport {
+                                    name: self.config.pattern.write_to_string(
+                                        bump,
+                                        BumpVec::new_in(bump),
+                                        self.hashes[source_index as usize],
+                                        self.sources[source_index as usize].as_ref(),
+                                        id,
+                                    ),
+                                    composes: BumpVec::new_in(bump),
+                                    is_referenced: false,
+                                }),
+                            };
+                        if !export.composes.iter().any(|r| r.eql(&reference)) {
+                            export.composes.push(reference);
+                        }
+                    }
+                    continue;
+                }
             }
 
             // The composes property can only be used within a simple class selector.

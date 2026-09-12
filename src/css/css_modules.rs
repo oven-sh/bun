@@ -172,13 +172,9 @@ impl<'a> CssModule<'a> {
     }
 
     pub(crate) fn handle_composes(
-        &mut self,
-        _dest: &mut css::Printer,
+        &self,
         selectors: &css::selector::parser::SelectorList,
-        _composes: &css::css_properties::css_modules::Composes,
-        _source_index: u32,
     ) -> css::Maybe<(), css::PrinterErrorKind> {
-        // let bump = dest.arena;
         for sel in selectors.v.slice() {
             if sel.len() == 1
                 && matches!(

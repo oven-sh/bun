@@ -311,4 +311,57 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // Declarations written after a nested rule stay behind it in the output
+  // (they used to be hoisted into the rule's leading declaration block), while
+  // `composes` in the leading block is still consumed instead of printed.
+  itBundled("css-module/DeclarationsAfterNestedRule", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .base { color: red; }
+        .button {
+          composes: base;
+          &:hover { color: blue; }
+          color: green;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          base: "base_-MSaAA",
+          button: "base_-MSaAA button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .base_-MSaAA {
+          color: red;
+        }
+
+        .button_-MSaAA {
+        }
+
+        .button_-MSaAA:hover {
+          color: #00f;
+        }
+
+        .button_-MSaAA {
+          color: green;
+        }
+        "
+      `);
+    },
+  });
 });

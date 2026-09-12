@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -205,6 +205,29 @@ it("write result is not cumulative", async () => {
   expect(await writer.write("world!")).toBe(6);
   await writer.end();
   await util.promisify(fs.close)(fd);
+});
+
+it("the FileSink constructor has a prototype property, so instanceof works", async () => {
+  using dir = tempDir("filesink-prototype", {});
+  const writer = Bun.file(path.join(String(dir), "out.txt")).writer();
+  // Close the file first: the checks below only look at the prototype chain.
+  await writer.end();
+  const proto = Object.getPrototypeOf(writer);
+  const FileSink = proto.constructor;
+
+  expect(FileSink.name).toBe("FileSink");
+  expect(Object.getOwnPropertyDescriptor(FileSink, "prototype")).toEqual({
+    value: proto,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(typeof FileSink.prototype.end).toBe("function");
+
+  expect(writer instanceof FileSink).toBe(true);
+  // Each sink class gets its own prototype object.
+  expect(writer).not.toBeInstanceOf(Bun.ArrayBufferSink);
+  expect(new Bun.ArrayBufferSink()).not.toBeInstanceOf(FileSink);
 });
 
 // A backpressured write buffers everything `write(2)` would not take, so the

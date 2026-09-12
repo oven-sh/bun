@@ -3160,6 +3160,27 @@ it.concurrent(
   20_000,
 );
 
+it.concurrent(
+  "TLS: reaps every zero-byte pre-handshake connection in a burst",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dirname, "serve-tls-prehandshake-reap-fixture.ts")],
+      env: { ...bunEnv, TLS_CERT: tls.cert, TLS_KEY: tls.key, N: "300", DEADLINE_MS: "22000" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { opened, held } = JSON.parse(stdout.trim());
+    // Windows' accept backlog may drop part of the burst; the invariant is
+    // that every connection that did complete is reaped.
+    expect(opened).toBeGreaterThanOrEqual(100);
+    expect(held).toBe(0);
+    expect(exitCode).toBe(0);
+  },
+  40_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({

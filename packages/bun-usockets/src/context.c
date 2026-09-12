@@ -326,6 +326,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
+        if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = new_s;
         if (!new_s->prev) loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
 

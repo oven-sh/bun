@@ -466,6 +466,86 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toContain("Empty value");
       expect(code).toBe(1);
     });
+
+    // A package.json that is not valid UTF-8 (Latin-1 / Windows-1252 bytes from an old
+    // Windows checkout) must come back as valid UTF-8 JSON: each ill-formed byte sequence
+    // becomes U+FFFD and every neighbouring byte survives, which is what npm writes too.
+    it("rewrites a Latin-1 encoded package.json as valid UTF-8 without eating neighbouring bytes", async () => {
+      using dir = tempDir("pm-pkg-latin1", {
+        "package.json": Buffer.concat([
+          Buffer.from('{\n  "name": "legacy-app",\n  "version": "1.0.0",\n  "author": "Jos'),
+          Buffer.from([0xe9]),
+          Buffer.from(" P"),
+          Buffer.from([0xe9]),
+          Buffer.from('rez <jp@example.com>",\n  "description": "Biblioth'),
+          Buffer.from([0xe8]),
+          Buffer.from("que g"),
+          Buffer.from([0xe9]),
+          Buffer.from("n"),
+          Buffer.from([0xe9]),
+          Buffer.from('rale",\n  "license": "ISC"\n}\n'),
+        ]),
+      });
+      const { error, code } = await runPmPkg(["set", "license=MIT"], dir);
+      expect(error).toBe("");
+      const bytes = await Bun.file(join(String(dir), "package.json")).bytes();
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      expect(text).toBe(
+        '{\n  "name": "legacy-app",\n  "version": "1.0.0",\n  "author": "Jos\uFFFD P\uFFFDrez <jp@example.com>",\n  "description": "Biblioth\uFFFDque g\uFFFDn\uFFFDrale",\n  "license": "MIT"\n}\n',
+      );
+      expect(code).toBe(0);
+    });
+
+    it("decodes ill-formed UTF-8 in string values the way TextDecoder does", async () => {
+      const cases: (number[] | string)[][] = [
+        ["X", [0xe9], " Y"], // lead byte followed by ASCII: the ASCII must survive
+        ["X", [0xc3], "(Y"],
+        ["X", [0xe2, 0x82], " Y"], // truncated 3-byte sequence: one U+FFFD
+        ["X", [0xf0, 0x9f, 0x98], " Y"], // truncated 4-byte sequence: one U+FFFD
+        [[0xc0, 0xaf]], // overlong: one U+FFFD per byte
+        [[0xed, 0xa0, 0x80]], // encoded surrogate: one U+FFFD per byte
+        [[0x80]], // lone continuation byte
+        [[0xfe]],
+        [[0xff], "z"],
+        ["caf", [0xc3, 0xa9], " ", [0xf0, 0x9f, 0x98, 0x80]], // well-formed: unchanged
+        ["tab", [0xe9], "\\t", [0x80], " end"], // ill-formed bytes next to an escape sequence
+      ];
+      const raw = cases.map(parts =>
+        Buffer.concat(parts.map(p => (typeof p === "string" ? Buffer.from(p, "utf8") : Buffer.from(p)))),
+      );
+      using dir = tempDir("pm-pkg-ill-formed", {
+        "package.json": Buffer.concat([
+          Buffer.from('{"name":"x"'),
+          ...raw.flatMap((value, i) => [Buffer.from(`,"k${i}":"`), value, Buffer.from('"')]),
+          Buffer.from("}"),
+        ]),
+      });
+      const { error, code } = await runPmPkg(["set", "x=2"], dir);
+      expect(error).toBe("");
+      const bytes = await Bun.file(join(String(dir), "package.json")).bytes();
+      const written = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      const expected: Record<string, string> = { name: "x", x: "2" };
+      raw.forEach((value, i) => {
+        // What `JSON.parse(fs.readFileSync(path, "utf8"))` gives for the original file.
+        expected[`k${i}`] = JSON.parse('"' + new TextDecoder().decode(value) + '"');
+      });
+      expect(written).toEqual(expected);
+      expect(code).toBe(0);
+    });
+
+    it("writes control characters as JSON escapes, not JavaScript ones", async () => {
+      const original = {
+        name: "x",
+        chars: "nul:\u0000 soh:\u0001 bel:\u0007 bs:\b vt:\u000b ff:\f us:\u001f del:\u007f ls:\u2028 bom:\ufeff",
+        "key\u000b": "lone surrogate: \ud800",
+      };
+      using dir = tempDir("pm-pkg-control", { "package.json": JSON.stringify(original, null, 2) + "\n" });
+      const { error, code } = await runPmPkg(["set", "license=MIT"], dir);
+      expect(error).toBe("");
+      const text = await Bun.file(join(String(dir), "package.json")).text();
+      expect(JSON.parse(text)).toEqual({ ...original, license: "MIT" });
+      expect(code).toBe(0);
+    });
   });
 
   describe("workspace compatibility", () => {

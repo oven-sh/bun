@@ -4384,6 +4384,7 @@ describe("bundler", () => {
         import { fire } from "./registry.js";
         fire();
         export var v = String("V");
+        export const d = "DROPPED";
       `,
     },
     stdout: "undefined",
@@ -4403,6 +4404,7 @@ describe("bundler", () => {
         import { early, late } from "./a.js";
         early();
         export let v = String("V");
+        export const d = "DROPPED";
         console.log(late());
       `,
     },
@@ -4441,6 +4443,7 @@ describe("bundler", () => {
         export const c = String("c");
         export class d { static x = String("d") }
         export function f() {}
+        export const dropped = "DROPPED";
       `,
     },
     stdout: ",,,,function",

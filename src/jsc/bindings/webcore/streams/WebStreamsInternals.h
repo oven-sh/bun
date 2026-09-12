@@ -511,7 +511,7 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 // TransformStreamOperations.cpp
 
 // Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
-// given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
+// given native transformer kind (writable/readable HWM = 1/0, no size algorithms, trivial
 // start). The controller's algorithmContext is `stream` itself.
 void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp

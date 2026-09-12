@@ -1,5 +1,6 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
+import vm from "node:vm";
 import def, * as ns from "util/types";
 const req = require("util/types");
 const types = def;
@@ -123,6 +124,38 @@ test("isBigIntObject/isSymbolObject/isBoxedPrimitive survive structure and proto
       },
     });
   }
+});
+
+// `globalThis` evaluates to the engine's global proxy cell, which is not a Proxy instance.
+test("isProxy is false for a global object", () => {
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  const proxySandbox = new Proxy({}, {});
+  const proxyContext = vm.createContext(proxySandbox);
+
+  expect({
+    globalThis: types.isProxy(globalThis),
+    newContextGlobal: types.isProxy(vm.runInNewContext("globalThis")),
+    contextGlobal: types.isProxy(vm.runInContext("globalThis", vm.createContext({}))),
+    proxySandboxGlobal: types.isProxy(vm.runInContext("globalThis", proxyContext)),
+    calledInsideContext: vm.runInNewContext("isProxy(globalThis)", { isProxy: types.isProxy }),
+    proxySandbox: types.isProxy(proxySandbox),
+    callableProxy: types.isProxy(new Proxy(function () {}, {})),
+    revokedProxy: types.isProxy(revocable.proxy),
+    crossRealmProxy: types.isProxy(vm.runInNewContext("new Proxy({}, {})")),
+    proxyOfGlobal: types.isProxy(new Proxy(globalThis, {})),
+  }).toEqual({
+    globalThis: false,
+    newContextGlobal: false,
+    contextGlobal: false,
+    proxySandboxGlobal: false,
+    calledInsideContext: false,
+    proxySandbox: true,
+    callableProxy: true,
+    revokedProxy: true,
+    crossRealmProxy: true,
+    proxyOfGlobal: true,
+  });
 });
 
 {

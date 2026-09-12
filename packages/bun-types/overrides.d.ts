@@ -348,6 +348,19 @@ declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
+declare module "node:child_process" {
+  interface CommonOptions {
+    /**
+     * Bun only. Let the child process keep running after this process exits,
+     * with a hidden console of its own. Windows only; ignored on other
+     * platforms. Same as `windowsKeepAlive` in {@link Bun.spawn}.
+     *
+     * @default false
+     */
+    windowsKeepAlive?: boolean | undefined;
+  }
+}
+
 declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**

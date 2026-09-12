@@ -83,8 +83,8 @@ impl PluginRunner {
         &specifier[..colon]
     }
 
-    /// Cheap pre-filter that rules
-    /// out `./` / `../` / absolute paths before hitting the resolve hook.
+    /// Cheap pre-filter that rules out extension-less `./` / `../` /
+    /// absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
         if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
@@ -97,8 +97,17 @@ impl PluginRunner {
                 return true;
             }
         }
-        !bun_paths::is_absolute(specifier)
-            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+        if bun_paths::is_absolute(specifier) {
+            return false;
+        }
+        // `namespace:` prefix.
+        if bun_core::strings::contains_char(specifier, b':') {
+            return true;
+        }
+        // A bare specifier (`pkg`, `pkg/subpath`) can match an onResolve
+        // filter even without an extension (#40397). Only extension-less
+        // relative paths (`./x`, `../x`) are ruled out here.
+        !specifier.is_empty() && specifier[0] != b'.'
     }
 }
 

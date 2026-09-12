@@ -264,6 +264,8 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
 }
 function detachSocket(self) {
   if (!self) self = this;
+  const handle = self._handle;
+  if (handle) self[kBytesWritten] = handle.bytesWritten;
   self._handle = null;
 }
 function destroyNT(self, err) {

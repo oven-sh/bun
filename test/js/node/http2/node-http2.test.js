@@ -6345,10 +6345,20 @@ describe("net.Socket bytesWritten through an http2 session", () => {
 
     const raw = net.connect(port, "127.0.0.1");
     const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => raw });
+    const failed = new Promise((_, reject) => {
+      raw.once("error", reject);
+      client.once("error", reject);
+    });
     try {
       const req = client.request({ ":path": "/" });
       req.resume();
-      await new Promise(resolve => req.once("end", resolve));
+      await Promise.race([
+        failed,
+        new Promise((resolve, reject) => {
+          req.once("end", resolve);
+          req.once("error", reject);
+        }),
+      ]);
 
       const proxy = client.socket.bytesWritten;
       expect(proxy).toBeGreaterThan(0);
@@ -6357,7 +6367,7 @@ describe("net.Socket bytesWritten through an http2 session", () => {
 
       const closed = new Promise(resolve => raw.once("close", resolve));
       client.close();
-      await closed;
+      await Promise.race([failed, closed]);
       // The count survives the destroy of the handle.
       expect(raw.bytesWritten).toBeGreaterThanOrEqual(proxy);
       expect(raw._bytesDispatched).toBe(raw.bytesWritten);

@@ -3130,3 +3130,33 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("bytesWritten after the peer resets the connection", () => {
+  // A reset reaches the server socket through the native close handler, which
+  // drops the handle before destroy() runs. The count must survive that.
+  it("keeps the count on a server socket that the client reset", async () => {
+    const { promise: serverClosed, resolve, reject } = Promise.withResolvers<Socket>();
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.on("close", () => resolve(c));
+      c.write("hello", () => c.write("world"));
+    });
+    server.on("error", reject);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect(server.address().port, "127.0.0.1");
+      client.on("error", reject);
+      let received = 0;
+      client.on("data", chunk => {
+        received += chunk.length;
+        if (received === 10) client.resetAndDestroy();
+      });
+      const c = await serverClosed;
+      expect(c._handle).toBeNull();
+      expect(c.bytesWritten).toBe(10);
+      expect(c._bytesDispatched).toBe(10);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+});

@@ -755,6 +755,14 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
+/// `load_preloads` resolves anything but an absolute path or a builtin against the working directory.
+fn preload_needs_cwd(specifier: &[u8]) -> bool {
+    let path = specifier
+        .strip_prefix(b"file://".as_slice())
+        .unwrap_or(specifier);
+    !(bun_paths::is_absolute(path) || path.starts_with(b"node:") || path.starts_with(b"bun:"))
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BunCAStore {
@@ -830,9 +838,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
-    // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
+    // `None` only when the process started inside a deleted directory (see the `getcwd` arm).
+    let cwd: Option<Box<[u8]>> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = bun_paths::path_buffer_pool::get();
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
@@ -858,23 +865,25 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();
-        match bun_core::getcwd(&mut phys) {
+        Some(match bun_core::getcwd(&mut phys) {
             Ok(p) => Box::<[u8]>::from(p.as_bytes()),
             Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
-        }
-    } else if matches!(
-        cmd,
-        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
-    ) {
-        // A deleted cwd must not abort the runtime (Node boots and lets
-        // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+        })
     } else {
-        // Everything else (install/test/build/...) must not silently act on
-        // whatever project happens to live above the executable.
         let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
+        match bun_core::getcwd(&mut temp) {
+            Ok(cwd) => Some(Box::<[u8]>::from(cwd.as_bytes())),
+            // These can still run code without a cwd, like Node; `RunCommand::cwd_or_exe_dir` decides.
+            Err(bun_core::Error::CurrentWorkingDirectoryUnlinked)
+                if matches!(
+                    cmd,
+                    CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+                ) =>
+            {
+                None
+            }
+            Err(err) => return Err(err.into()),
+        }
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -918,7 +927,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         parse_test_command_options(&args, ctx);
     }
 
-    ctx.args.absolute_working_dir = Some(cwd);
+    ctx.args.absolute_working_dir = cwd;
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
@@ -969,14 +978,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+    if let Some(ts) = args.option(b"--tsconfig-override") {
+        let base: &[u8] = match ctx.args.absolute_working_dir.as_deref() {
+            Some(cwd) => cwd,
+            // As with --cwd: an absolute path needs no base.
+            None if bun_paths::is_absolute(ts) => b"/",
+            None => return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into()),
+        };
         let mut spill = Vec::new();
-        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
-            &mut spill,
-            &[ts],
-        ))
-    });
+        let joined = resolve_path::join_abs_string_spill::<platform::Auto>(base, &mut spill, &[ts]);
+        opts.tsconfig_override = Some(Box::from(joined));
+    }
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
@@ -1046,6 +1058,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     all.push(Box::<[u8]>::from(p));
                 }
                 ctx.preloads = all;
+            }
+            // Without a cwd (deleted), only an absolute or builtin preload can be resolved (Node refuses too).
+            if ctx.args.absolute_working_dir.is_none()
+                && ctx.preloads.iter().any(|p| preload_needs_cwd(p))
+            {
+                return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
             }
         }
 

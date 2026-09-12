@@ -264,7 +264,8 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         }
 
         if (!shareEnv) {
-            if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+            // isObject() is true for functions; node's validateObject rejects them.
+            if (envValue && !envValue.isUndefinedOrNull() && (!envValue.isObject() || envValue.isCallable())) {
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
             }
             JSObject* envObject = nullptr;

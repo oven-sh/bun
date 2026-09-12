@@ -334,16 +334,17 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
+      // A debug build with ASAN needs a little more than the default 5 seconds to scan 4 GB.
       test("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
 
       test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         buf[0] = 255;
         expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      }, 30_000);
     });
   });
 

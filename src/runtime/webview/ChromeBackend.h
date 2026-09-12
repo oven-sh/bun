@@ -372,16 +372,16 @@ enum class TransportMode : uint8_t {
 
 class Transport {
 public:
-    // Lazy-spawn Chrome. Returns false on spawn failure; caller throws.
+    // Lazy-spawn Chrome. Returns false on failure; errorOut then holds the reason when the spawner gave one.
     // path overrides auto-detection (BUN_CHROME_PATH > path > app bundles >
     // playwright cache). extraArgv appends after the core flags so user
     // flags can override built-ins. stdoutInherit/stderrInherit route
     // Chrome's output (chatty on stderr — GCM/updater/font-config noise).
     // Spawn args apply only on the FIRST call — subsequent views share the
     // one Chrome, so mismatched args across views get the first-call's.
-    bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
-        const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
-        bool stdoutInherit = false, bool stderrInherit = false);
+    bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir,
+        const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
+        bool stdoutInherit, bool stderrInherit, JSC::JSValue& errorOut);
 
     // Connect to an already-running Chrome's DevTools endpoint. wsUrl is
     // a full ws:// URL (from DevToolsActivePort or user-supplied). Same

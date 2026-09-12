@@ -13,8 +13,11 @@ namespace Bun {
 void setSamplingInterval(int intervalMicroseconds);
 bool isCPUProfilerRunning();
 
-// Start the CPU profiler. collectMarkdown also builds the per-function stats for the markdown report.
-void startCPUProfiler(JSC::VM& vm, bool collectMarkdown = false);
+// Whether profiles on this thread also build the per-function stats for the markdown report.
+void setCollectMarkdown(bool collect);
+
+// Start the CPU profiler
+void startCPUProfiler(JSC::VM& vm);
 
 // Folds pending samples into the profile and releases their GC roots. Called from the event loop tick, at most once per 100ms.
 void drainCPUProfilerIfNeeded(JSC::VM& vm);

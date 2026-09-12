@@ -28,7 +28,7 @@ pub struct CPUProfilerConfig {
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
     /// ABI-identical to a non-null `VM*`.
-    safe fn Bun__startCPUProfiler(vm: &mut VM, collect_markdown: bool);
+    safe fn Bun__startCPUProfiler(vm: &mut VM);
     /// Same `&mut VM` contract as `Bun__startCPUProfiler`.
     safe fn Bun__drainCPUProfilerIfNeeded(vm: &mut VM);
     /// Same `&mut VM` contract as `Bun__startCPUProfiler`.
@@ -43,6 +43,8 @@ unsafe extern "C" {
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// Plain by-value `bool`; sets a thread-local flag.
+    safe fn Bun__setCPUProfilerCollectMarkdown(collect: bool);
 }
 
 pub fn set_sampling_interval(interval: u32) {
@@ -52,8 +54,13 @@ pub fn set_sampling_interval(interval: u32) {
     Bun__setSamplingInterval(clamped as c_int);
 }
 
-pub fn start_cpu_profiler(vm: &mut VM, collect_markdown: bool) {
-    Bun__startCPUProfiler(vm, collect_markdown);
+pub fn start_cpu_profiler(vm: &mut VM) {
+    Bun__startCPUProfiler(vm);
+}
+
+/// Whether profiles on this thread also build the per-function stats for `--cpu-prof-md`.
+pub fn set_collect_markdown(collect: bool) {
+    Bun__setCPUProfilerCollectMarkdown(collect);
 }
 
 /// Stops a profiler that was never stopped (inspector or worker sessions) and frees its data.

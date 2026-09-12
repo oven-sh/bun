@@ -405,6 +405,36 @@ describe("node:inspector", () => {
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
     });
 
+    test("Profiler.stop in a process exit handler still returns the profile", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const inspector = require("node:inspector");
+            const session = new inspector.Session();
+            session.connect();
+            session.post("Profiler.enable");
+            session.post("Profiler.start");
+            let sum = 0;
+            for (let i = 0; i < 100000; i++) sum += i;
+            process.on("exit", () => {
+              const { profile } = session.post("Profiler.stop");
+              console.log(JSON.stringify({ nodes: profile.nodes.length, sum }));
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout);
+      expect(result.nodes).toBeGreaterThanOrEqual(1);
+      expect(exitCode).toBe(0);
+    });
+
     test("disconnect() stops running profiler", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");

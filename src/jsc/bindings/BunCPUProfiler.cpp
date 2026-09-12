@@ -19,15 +19,21 @@
 #include <limits>
 #include <memory>
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm, bool collectMarkdown);
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__drainCPUProfilerIfNeeded(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
+extern "C" void Bun__setCPUProfilerCollectMarkdown(bool collect);
 
 void Bun__setSamplingInterval(int intervalMicroseconds)
 {
     Bun::setSamplingInterval(intervalMicroseconds);
+}
+
+void Bun__setCPUProfilerCollectMarkdown(bool collect)
+{
+    Bun::setCollectMarkdown(collect);
 }
 
 namespace Bun {
@@ -37,10 +43,16 @@ static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
+static thread_local bool s_collectMarkdown = false;
 
 void setSamplingInterval(int intervalMicroseconds)
 {
     s_samplingInterval = intervalMicroseconds;
+}
+
+void setCollectMarkdown(bool collect)
+{
+    s_collectMarkdown = collect;
 }
 
 bool isCPUProfilerRunning()
@@ -280,14 +292,14 @@ static thread_local ProfileData* s_profileData = nullptr;
 static thread_local WTF::MonotonicTime s_lastDrainTime;
 static constexpr WTF::Seconds kDrainInterval = WTF::Seconds::fromMilliseconds(100);
 
-void startCPUProfiler(JSC::VM& vm, bool collectMarkdown)
+void startCPUProfiler(JSC::VM& vm)
 {
     // The profile's startTime.
     s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
     delete s_profileData;
     s_profileData = new ProfileData();
-    s_profileData->collectMarkdown = collectMarkdown;
+    s_profileData->collectMarkdown = s_collectMarkdown;
     s_profileData->lastTime = s_profilingStartTime;
 
     ProfileNode rootNode;
@@ -982,9 +994,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
 } // namespace Bun
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm, bool collectMarkdown)
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
 {
-    Bun::startCPUProfiler(*vm, collectMarkdown);
+    Bun::startCPUProfiler(*vm);
 }
 
 extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm)

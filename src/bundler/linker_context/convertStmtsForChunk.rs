@@ -108,6 +108,14 @@ pub(crate) fn convert_stmts_for_chunk(
                         continue 'stmt_loop;
                     }
 
+                    if crate::linker_context::merge_external_esm_imports::is_redundant_external_import(
+                        chunk,
+                        source_index,
+                        s.import_record_index,
+                    ) {
+                        continue 'stmt_loop;
+                    }
+
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
                         stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);

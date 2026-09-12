@@ -320,6 +320,33 @@ describe("bundler", () => {
       },
       stdout: "function",
     },
+    {
+      // Several files import the same builtins; the linker drops the statements
+      // that add no binding (#8671), so the module record, which is built from
+      // what gets printed, must list each surviving import once, under the kept
+      // statement's names, including the one hoisted out of a __commonJS wrapper.
+      // The debug build cross-checks the record against JSC's own parse of the
+      // chunk and refuses to start the binary when they differ.
+      name: "DedupedExternalImports",
+      files: {
+        "/entry.ts": `
+          import { join } from "node:path";
+          import { a } from "./a.ts";
+          import mixed from "./mixed.js";
+          console.log(typeof join, a, typeof mixed.join);
+        `,
+        "/a.ts": `
+          import { join, sep } from "node:path";
+          import * as path from "node:path";
+          export const a = join("x", "y").length + sep.length + (typeof path.dirname === "function" ? 1 : 0);
+        `,
+        "/mixed.js": `
+          import { join } from "node:path";
+          module.exports = { join };
+        `,
+      },
+      stdout: "function 5 function",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

@@ -158,8 +158,13 @@ pub(crate) fn write_bind<Context: WriterContext>(
         // convert it to the binary representation. This minimizes the room
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
-        // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        // timezone. A string bound to json/jsonb is the JSON text itself:
+        // send it verbatim, like node-postgres, instead of stringifying it
+        // into a JSON string scalar.
+        let effective_tag = if value.is_string()
+            && (tag.is_binary_format_supported()
+                || matches!(tag, types::Tag::json | types::Tag::jsonb))
+        {
             types::Tag::text
         } else {
             tag

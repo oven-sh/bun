@@ -238,6 +238,24 @@ pub unsafe fn is_no_proxy(
     vm.env_loader().is_no_proxy(hostname, host)
 }
 
+// HOST_EXPORT(Bun__getEnvHttpProxy, c)
+/// The `http_proxy` (`is_http`) or `https_proxy` href `fetch()` would use for this host, or empty for direct.
+pub fn get_env_http_proxy(is_http: bool, hostname: &[u8], host: &[u8]) -> BunString {
+    let hostname = (!hostname.is_empty()).then_some(hostname);
+    let host = (!host.is_empty()).then_some(host);
+    match VirtualMachine::get()
+        .env_loader()
+        .get_http_proxy(is_http, hostname, host)
+    {
+        // `HTTPThread::dial` treats a schemeless value (`proxy:3128`) as http (#11343).
+        Some(url) if url.protocol.is_empty() => {
+            BunString::clone_utf8(&[b"http://".as_slice(), url.href].concat())
+        }
+        Some(url) => BunString::clone_utf8(url.href),
+        None => BunString::EMPTY,
+    }
+}
+
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;

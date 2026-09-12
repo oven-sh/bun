@@ -1975,6 +1975,9 @@ interface BunFetchRequestInit extends RequestInit {
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
    *
+   * Pass `null` (or `""`) to connect directly and ignore the environment
+   * variables.
+   *
    * Not part of the Fetch API specification.
    *
    * @example
@@ -1983,6 +1986,9 @@ interface BunFetchRequestInit extends RequestInit {
    * const response = await fetch("http://example.com", {
    *  proxy: "https://username:password@127.0.0.1:8080"
    * });
+   *
+   * // Ignore $HTTP_PROXY / $HTTPS_PROXY for this request
+   * const direct = await fetch("http://example.com", { proxy: null });
    *
    * // Object format with custom headers sent to the proxy
    * const response = await fetch("http://example.com", {
@@ -1999,6 +2005,7 @@ interface BunFetchRequestInit extends RequestInit {
   proxy?:
     | string
     | URL
+    | null
     | {
         /**
          * The proxy URL, as a string or a `URL`.

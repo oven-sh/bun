@@ -2556,10 +2556,13 @@ where
         let body_decides_framing = {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
-            !matches!(
-                body_value,
-                Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
-            )
+            // A used or errored body reaches `error()`, as it does for GET.
+            if matches!(body_value, Body::Value::Used | Body::Value::Error(_)) {
+                let js_err = Self::take_unsendable_body_error(body_value, global_this);
+                this.run_error_handler(js_err);
+                return;
+            }
+            !matches!(body_value, Body::Value::Null | Body::Value::Empty)
         };
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
         // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
@@ -2601,22 +2604,10 @@ where
         // handler-supplied Content-Length / Transfer-Encoding header)
         let body_value = response.get_body_value();
         match body_value {
-            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
-                let size = blob.size();
-                this.render_metadata();
-
-                if size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", size as u64);
-                }
-                this.end_without_body(this.should_close_connection());
-                blob.detach();
-            }
-
-            Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
+            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) | Body::Value::Blob(_) => {
+                if let Body::Value::Blob(blob) = body_value
+                    && shim::blob_is_s3(blob)
+                {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
                     // Ref for the S3 stat; adopted and released by
@@ -2650,18 +2641,31 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
-                // Size the blob *before* `render_metadata()`: it re-fetches the
-                // Response from `response_weakref`, so no borrow of the Response
-                // (here, `blob`) may still be live across it. Nothing is written
-                // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                // `render_metadata` reads `this.blob`; a Blob body stays on the Response.
+                let body = match body_value {
+                    Body::Value::Blob(blob) => AnyBlob::Blob(blob.dupe()),
+                    _ => body_value.use_as_any_blob_allow_non_utf8_string(),
+                };
+                this.blob.set(body);
+                // Same open + fstat as GET; `do_sendfile` ends HEAD after the headers.
+                if this.blob.get().needs_to_read_file() {
+                    this.render_with_blob_from_body_value();
+                    return;
+                }
+                let size = {
+                    let blob = this.blob.get();
+                    if let AnyBlob::Blob(blob) = blob {
+                        blob.resolve_size();
+                    }
+                    blob.size()
+                };
                 this.render_metadata();
+                this.blob.with_mut(|b| b.detach());
 
-                if blob_size == crate::webcore::blob::MAX_SIZE {
+                if size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
-                    resp.write_header_int(b"content-length", blob_size as u64);
+                    resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -2677,7 +2681,8 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+            // `Used` and `Error` went to `error()` above.
+            Body::Value::Null | Body::Value::Empty | Body::Value::Used | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
@@ -3076,6 +3081,27 @@ where
         true
     }
 
+    /// The `error()` argument for an errored or already-used body.
+    fn take_unsendable_body_error(
+        value: &mut Body::Value,
+        global_this: &JSGlobalObject,
+    ) -> JSValue {
+        debug_assert!(matches!(value, Body::Value::Error(_) | Body::Value::Used));
+        if let Body::Value::Error(err_ref) = value {
+            let js_err = err_ref.to_js(global_this);
+            let _ = value.use_();
+            return js_err;
+        }
+        global_this
+            .err(
+                jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!(
+                    "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                ),
+            )
+            .to_js()
+    }
+
     pub(crate) fn do_render_with_body(
         &self,
         value: *mut Body::Value,
@@ -3093,30 +3119,11 @@ where
         value.to_blob_if_possible();
         let global_this = this.server().global_this();
         match value {
-            Body::Value::Error(err_ref) => {
-                let js_err = err_ref.to_js(global_this);
-                let _ = value.use_();
+            Body::Value::Error(_) | Body::Value::Used => {
+                let js_err = Self::take_unsendable_body_error(value, global_this);
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                this.run_error_handler(js_err);
-                return;
-            }
-            // The handler returned a Response whose body was already used,
-            // usually the same Response object returned for a second request.
-            // A disturbed body is an error, not a silent empty 200.
-            Body::Value::Used => {
-                if this.is_aborted_or_ended() {
-                    return;
-                }
-                let js_err = global_this
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!(
-                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
-                        ),
-                    )
-                    .to_js();
                 this.run_error_handler(js_err);
                 return;
             }

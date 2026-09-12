@@ -73,15 +73,6 @@ if [ "$MODE" = "check" ]; then
     # Check mode - verify formatting without modifying files
     FAILED=0
     for file in "${UNIQUE_FILES[@]}"; do
-        # Find the nearest .clang-format file for this source file
-        dir=$(dirname "$file")
-        while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
-            if [ -f "$dir/.clang-format" ]; then
-                break
-            fi
-            dir=$(dirname "$dir")
-        done
-        
         if ! $CLANG_FORMAT --dry-run --Werror "$file" 2>/dev/null; then
             echo "Format check failed: $file"
             FAILED=1

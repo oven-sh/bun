@@ -301,6 +301,43 @@ for (const [name, copy] of impls) {
       });
     });
 
+    test("preserveTimestamps keeps the sub-millisecond part of mtime", async () => {
+      await using basename = tempDir("cp", {
+        "from/f.txt": "x",
+        "single.txt": "y",
+      });
+      // utimes takes seconds as a double, which holds about 0.1µs at this
+      // magnitude. The walker used to hand utimes a Date, so a copy kept whole
+      // milliseconds only and this source time came out ~778µs early.
+      const time = 1614834367.111777555;
+      fs.utimesSync(join(basename, "from", "f.txt"), time, time);
+      fs.utimesSync(join(basename, "single.txt"), time, time);
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true, preserveTimestamps: true });
+      await copy(join(basename, "single.txt"), join(basename, "single-copy.txt"), { preserveTimestamps: true });
+
+      const mtimeNs = (...parts: string[]) => fs.statSync(join(basename, ...parts), { bigint: true }).mtimeNs;
+      expect(Number(mtimeNs("result", "f.txt") - mtimeNs("from", "f.txt"))).toBeWithin(-999, 1000);
+      expect(Number(mtimeNs("single-copy.txt") - mtimeNs("single.txt"))).toBeWithin(-999, 1000);
+    });
+
+    // Skipped on Windows, where fs.stat reads a pre-1970 mtime back as a 2096
+    // date (the seconds wrap at 2^32, same in node), so there is no pre-epoch
+    // source time to copy.
+    test.skipIf(isWindows)("preserveTimestamps keeps a pre-epoch mtime", async () => {
+      await using basename = tempDir("cp", {
+        "from/f.txt": "x",
+      });
+      // A negative number of seconds means "now" to utimes, so a time before
+      // 1970 has to reach it as a Date.
+      const time = new Date("1960-01-02T03:04:05.123Z");
+      fs.utimesSync(join(basename, "from", "f.txt"), time, time);
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true, preserveTimestamps: true });
+
+      expect(fs.statSync(join(basename, "result", "f.txt")).mtime.toISOString()).toBe(time.toISOString());
+    });
+
     test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

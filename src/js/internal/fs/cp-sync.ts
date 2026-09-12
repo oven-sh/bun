@@ -417,8 +417,21 @@ function setDestTimestamps(src, dest) {
   // The initial srcStat.atime cannot be trusted
   // because it is modified by the read(2) system call
   // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = statSync(src);
-  return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
+  const updatedSrcStat = statSync(src, { bigint: true });
+  return utimesSync(dest, utimesTime(updatedSrcStat.atimeNs), utimesTime(updatedSrcStat.mtimeNs));
+}
+
+const kNsPerSec = 1_000_000_000n;
+const kNsPerMs = 1_000_000n;
+
+// A stat time in the most precise form utimes accepts. A Date (what node's JS
+// walker passes) only carries milliseconds, so build the same
+// `tv_sec + tv_nsec / 1e9` seconds node's native cpSync passes:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L3607-L3608
+// utimes maps a negative number to "now", so a pre-epoch time stays a Date.
+function utimesTime(ns) {
+  if (ns < 0n) return new Date(Number(ns / kNsPerMs));
+  return Number(ns / kNsPerSec) + Number(ns % kNsPerSec) / 1e9;
 }
 
 function onDir(srcStat, destStat, src, dest, opts) {
@@ -523,4 +536,5 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  utimesTime,
 };

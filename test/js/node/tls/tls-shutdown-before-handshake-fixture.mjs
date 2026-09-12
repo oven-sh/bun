@@ -138,6 +138,31 @@ if (mode === "end" || mode === "destroySoon") {
   );
   console.log(JSON.stringify(reports));
   process.exit(0);
+} else if (mode === "end-over-connecting-socket") {
+  // The zero-length chunk is parked until the wrapped socket connects. It then
+  // reaches the engine ahead of the handshake, so the close_notify and the FIN
+  // follow the handshake and the server sees a clean end.
+  const serverSawEnd = Promise.withResolvers();
+  const server = tls.createServer({ key: process.env.TLS_KEY, cert: process.env.TLS_CERT }, socket => {
+    socket.on("error", () => {});
+    socket.on("data", () => {});
+    socket.on("end", () => serverSawEnd.resolve());
+  });
+  server.on("tlsClientError", serverSawEnd.reject);
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const raw = net.connect({ port: server.address().port, host: "127.0.0.1" });
+  const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+  for (const event of ["secureConnect", "finish", "close"]) client.on(event, () => log.push(event));
+  client.on("error", error => log.push(`error:${error.code}`));
+  client.on("data", () => {});
+  log.push(`end connecting=${client.connecting}`);
+  client.end("");
+
+  await Promise.all([once(client, "close"), serverSawEnd.promise]);
+
+  server.close();
+  report({ serverSawEnd: true });
 } else if (mode === "server-same-tick") {
   // new TLSSocket(socket, { isServer: true }) shut down in the tick that wraps
   // it. One report per method, each on a server and a connection of its own.

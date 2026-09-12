@@ -2006,6 +2006,35 @@ it("tls.connect({ socket }).end() finishes after a transport with queued plainte
   }
 });
 
+// end() waits for a wrap's native handle only while that handle is still to
+// attach. One that attached and then closed leaves nothing to wait for: the
+// stream ends itself from the close, and that end() has to finish.
+it("a server-side TLSSocket wrap finishes and closes after its native handle was closed", async () => {
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  let wrapped: TLSSocket | undefined;
+  const server = net.createServer(raw => {
+    raw.on("error", () => {});
+    wrapped = new TLSSocket(raw, { isServer: true, ...COMMON_CERT_ });
+    wrapped.on("error", closed.reject);
+    wrapped.on("secure", () => (wrapped as any)._handle.close());
+    for (const event of ["finish", "close"]) wrapped.on(event, () => events.push(event));
+    wrapped.on("close", () => closed.resolve());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    await closed.promise;
+    expect(events).toEqual(["finish", "close"]);
+  } finally {
+    client.destroy();
+    wrapped?.destroy();
+    server.close();
+  }
+});
+
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must
 // still finish its writable side and send the FIN, as node does:
@@ -2086,6 +2115,17 @@ describe.each([
           "end destroyed": closed,
           "destroySoon refused": closed,
           "destroySoon destroyed": closed,
+        });
+      },
+    );
+
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+    it.skipIf(!exe)(
+      "end('') over a tls.connect({ socket }) transport that is still connecting follows the handshake",
+      async () => {
+        expect(await run("end-over-connecting-socket")).toEqual({
+          log: ["end connecting=true", "secureConnect", "finish", "close"],
+          serverSawEnd: true,
         });
       },
     );

@@ -1326,6 +1326,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      // A write parked while the socket this one wraps was connecting reaches the engine here, not through _write.
+      if (self.secureConnecting) self[kPreHandshakeWrite] = true;
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.

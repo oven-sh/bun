@@ -9485,6 +9485,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
         map.ensure_total_capacity(self.top_level_enums.len())?;
         for r#ref in self.top_level_enums.iter() {
+            // Only the newest symbol of a merged `enum E {} enum E {}` is looked up. It has no link.
+            if self.symbols[r#ref.inner_index() as usize].has_link() {
+                continue;
+            }
             let Some(js_ast::ts::Data::Namespace(namespace)) =
                 self.ref_to_ts_namespace_member.get(r#ref)
             else {

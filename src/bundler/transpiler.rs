@@ -145,6 +145,119 @@ pub struct Transpiler<'a> {
     pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
+/// A `Transpiler` for one off-thread transpile job: a bytewise copy of a
+/// long-lived transpiler whose `options` / `resolver` / `fs` / `env` alias the
+/// original's (so it is never dropped as a `Transpiler`), pointed at the job's
+/// own arena and log for the span of each [`for_call`](Self::for_call), with
+/// its own lazily-created macro context (freed on drop). What a job uses
+/// instead of the VM's transpiler itself on the work pool.
+pub struct JobTranspiler(core::mem::ManuallyDrop<Transpiler<'static>>);
+
+impl JobTranspiler {
+    /// Copy `from`'s configuration for a job.
+    ///
+    /// # Safety
+    /// The copy aliases `from`'s `options`, `resolver` (and its caches), `fs`
+    /// and `env`, and is used on a pool thread while `from`'s own thread keeps
+    /// using `from`. So, for as long as the copy exists: everything `from` owns
+    /// or points at must stay alive and must not be reconfigured (no
+    /// `configure_*`, option/define/loader changes, `set_arena`/`set_log` to
+    /// something the copy could observe, or drop); and both sides must stick
+    /// to what tolerates that overlap — the copy only does a non-shared-buffer
+    /// parse and a print, which read the aliased configuration, reach the
+    /// shared `FileSystem`/resolver caches only through their thread-safe
+    /// entry points, and write nothing but the per-call arena, log and the
+    /// copy's own macro context; `from`'s thread may parse/scan/print
+    /// concurrently under the same restriction but must not hand out
+    /// `fs_mut()`/`log_mut()`/`&mut options` borrows that a job could observe.
+    pub unsafe fn new(from: &Transpiler<'static>) -> Self {
+        // SAFETY: fn contract; `ManuallyDrop` keeps the copy from freeing what
+        // `from` owns.
+        let mut copy = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(from) });
+        // `from`'s macro context (if any) points back at `from`; `parse` lazily
+        // creates this copy's own.
+        copy.macro_context = None;
+        Self(copy)
+    }
+
+    /// The copy, aimed at this call's `arena` and `log` until the returned
+    /// guard drops (which points it back at the original's).
+    pub fn for_call<'a>(
+        &'a mut self,
+        arena: &'a Arena,
+        log: &'a mut bun_ast::Log,
+    ) -> JobTranspilerCall<'a> {
+        let home_arena: *const Arena = self.0.arena;
+        let home_log = self.0.log;
+        // SAFETY: lifetime narrowing — `Transpiler<'x>`'s `'x` only constrains
+        // `arena` (and the resolver opts that share it), which is replaced with
+        // one that lives for `'a` right here and restored when the guard drops,
+        // so no borrow at either lifetime is used outside its span.
+        let transpiler: &'a mut Transpiler<'a> =
+            unsafe { &mut *core::ptr::from_mut::<Transpiler<'static>>(&mut self.0).cast() };
+        transpiler.set_arena(arena);
+        transpiler.set_log(log);
+        JobTranspilerCall {
+            transpiler,
+            home_arena,
+            home_log,
+        }
+    }
+
+    /// The copied configuration.
+    #[inline]
+    pub fn options(&self) -> &options::BundleOptions<'_> {
+        &self.0.options
+    }
+
+    /// Free the macro context a parse through this copy created, on the
+    /// thread that ran the parse (its teardown touches that thread's
+    /// per-thread printer). Also runs on drop.
+    pub fn release_macro_context(&mut self) {
+        if let Some(ctx) = self.0.macro_context.take() {
+            ctx.deinit();
+        }
+    }
+}
+
+impl Drop for JobTranspiler {
+    fn drop(&mut self) {
+        self.release_macro_context();
+    }
+}
+
+/// A [`JobTranspiler`] aimed at one call's arena and log; `Deref`s to the
+/// `Transpiler`.
+pub struct JobTranspilerCall<'a> {
+    transpiler: &'a mut Transpiler<'a>,
+    home_arena: *const Arena,
+    home_log: *mut bun_ast::Log,
+}
+
+impl<'a> core::ops::Deref for JobTranspilerCall<'a> {
+    type Target = Transpiler<'a>;
+    #[inline]
+    fn deref(&self) -> &Transpiler<'a> {
+        self.transpiler
+    }
+}
+
+impl<'a> core::ops::DerefMut for JobTranspilerCall<'a> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Transpiler<'a> {
+        self.transpiler
+    }
+}
+
+impl Drop for JobTranspilerCall<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `home_arena` is the original transpiler's arena, alive per
+        // `JobTranspiler::new`'s contract for as long as the copy is.
+        self.transpiler.set_arena(unsafe { &*self.home_arena });
+        self.transpiler.set_log(self.home_log);
+    }
+}
+
 impl<'a> Transpiler<'a> {
     /// Takes `*mut Log` (not `&'a mut`) because the same
     /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
@@ -1472,7 +1585,7 @@ impl<'a> Transpiler<'a> {
             // Thread
             // `this_parse.arena` (the per-call `MimallocArena` from
             // `RuntimeTranspilerStore`) so the source bytes land in the
-            // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
+            // job-scoped heap that the transpile job `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),

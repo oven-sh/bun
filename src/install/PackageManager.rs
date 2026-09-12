@@ -909,7 +909,7 @@ impl PackageManager {
     ) {
         if let Some(ctx) = self.on_wake.context {
             // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
+            // this callback; see `runtime::jsc_hooks`.
             unsafe {
                 (self.on_wake.get_on_dependency_error())(
                     ctx.as_ptr(),

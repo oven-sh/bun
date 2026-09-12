@@ -32,7 +32,17 @@
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
-    "WorkPool::schedule*": 1
+    "unsafe impl Send": [
+      "TranspileWork"
+    ]
+  },
+  "src/jsc/SavedSourceMap.rs": {
+    "unsafe impl Send": [
+      "SavedSourceMap"
+    ],
+    "unsafe impl Sync": [
+      "SavedSourceMap"
+    ]
   },
   "src/jsc/TopExceptionScope.rs": {
     "unsafe impl Send": [

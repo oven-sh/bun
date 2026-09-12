@@ -75,13 +75,10 @@ pub struct ArenaResetGuard(bun_ptr::BackRef<VirtualMachine>);
 impl ArenaResetGuard {
     /// `vm` must be the live per-thread VM (the [`bun_ptr::BackRef`]
     /// invariant). Drop routes through [`VirtualMachine::as_mut`], which
-    /// derives provenance from the thread-local slot, so neither construction
-    /// nor teardown performs a raw deref here.
+    /// derives provenance from the thread-local slot.
     #[inline]
-    pub fn new(vm: *mut VirtualMachine) -> Self {
-        Self(bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(vm).expect("vm non-null"),
-        ))
+    pub fn new(vm: &VirtualMachine) -> Self {
+        Self(bun_ptr::BackRef::new(vm))
     }
 }
 
@@ -107,34 +104,42 @@ impl FetchFlags {
     }
 }
 
-pub struct TranspileArgs<'a> {
+pub struct TranspileArgs<'a, 'b> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
-    pub log: *mut bun_ast::Log,
+    pub log: &'a mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
-    /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
-    pub extra: *mut TranspileExtra,
+    /// The `.wasm` re-entry mutates `loader` / `module_type` and recurses.
+    pub extra: &'a mut TranspileExtra<'b>,
 }
 
-pub struct TranspileExtra {
+pub struct TranspileExtra<'b> {
+    /// `'static` because that is what the parser's `ParseOptions::path` /
+    /// `bun_ast::Source::path` store; the sync transpile only needs it for the
+    /// call.
     pub path: bun_resolver::fs::Path<'static>,
     pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
-    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
-    pub source_code_printer: *mut bun_js_printer::BufferPrinter,
-    /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
-    /// Null forbids async resolution.
-    pub promise_ptr: *mut *mut JSInternalPromise,
+    /// The per-thread shared printer.
+    pub source_code_printer: &'b mut bun_js_printer::BufferPrinter,
+    /// Out-slot for the async-module path: the promise of an `import()` that
+    /// has to wait for a package install is left here. `None` forbids async
+    /// resolution.
+    pub promise_slot: Option<&'b PromiseSlot>,
 }
+
+/// Where [`crate::async_module::Queue::enqueue`] leaves the promise of an
+/// `import()` that is waiting on a package install.
+pub type PromiseSlot = core::cell::Cell<Option<core::ptr::NonNull<JSInternalPromise>>>;
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
-    pub(crate) fn __bun_transpile_source_code(
-        jsc_vm: *mut VirtualMachine,
-        args: &TranspileArgs<'_>,
+    pub(crate) safe fn __bun_transpile_source_code(
+        jsc_vm: &mut VirtualMachine,
+        args: TranspileArgs<'_, '_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
     /// builtin / standalone-graph module.
@@ -145,12 +150,12 @@ unsafe extern "Rust" {
     ) -> Option<ResolvedSource>;
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__fetchBuiltinModule(
+// HOST_EXPORT(Bun__fetchBuiltinModule, c)
+pub fn fetch_builtin_module(
     jsc_vm: &VirtualMachine,
     global_object: &JSGlobalObject,
     specifier: &bun_core::String,
-    ret: &mut ErrorableResolvedSource,
+    ret: &mut crate::ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
     match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
@@ -196,34 +201,28 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
-/// C++ entry point: whether `data[..len]` names a builtin module.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
-    // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
+/// C++ entry point: whether `str` names a builtin module.
+// HOST_EXPORT(ModuleLoader__isBuiltin, c)
+pub fn is_builtin(str: &[u8]) -> bool {
     bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
 }
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias
 /// (`"path"`, `"node:path"`, `"bun:sqlite"`) resolves to, or -1.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize) -> i32 {
-    // SAFETY: C++ guarantees `data[..len]` is a live 8-bit specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
+// HOST_EXPORT(ModuleLoader__builtinAliasIndex, c)
+pub fn builtin_alias_index(str: &[u8]) -> i32 {
     HardcodedModule::Alias::get(str, bun_ast::Target::Bun, Default::default())
         .and_then(|alias| crate::builtin_module_key_index::get(alias.path.as_bytes()))
         .map_or(-1, i32::from)
 }
 
 /// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__getDefaultLoader(
+// HOST_EXPORT(Bun__getDefaultLoader, c)
+pub fn get_default_loader(
     global: &JSGlobalObject,
     str: &bun_core::String,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
-    // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
-    // per-thread VM pointer (never null on this path).
     let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
     let loader = jsc_vm
@@ -238,18 +237,14 @@ extern "C" fn Bun__getDefaultLoader(
 }
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__runVirtualModule(
-    global: &JSGlobalObject,
-    specifier_ptr: *const bun_core::String,
-) -> JSValue {
+// HOST_EXPORT(Bun__runVirtualModule, c)
+pub fn run_virtual_module(global: &JSGlobalObject, specifier: &bun_core::String) -> JSValue {
     jsc::mark_binding();
     if global.bun_vm().plugin_runner.is_none() {
         return JSValue::ZERO;
     }
 
-    // SAFETY: C++ passed a valid `bun.String*`.
-    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
+    let specifier_slice = specifier.to_utf8();
     let specifier = specifier_slice.slice();
 
     if !PluginRunner::could_be_plugin(specifier) {

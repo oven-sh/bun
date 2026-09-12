@@ -742,9 +742,10 @@ impl Drop for PinnedArrayBuffer {
     }
 }
 
-// SAFETY: a pin and GC protection on a heap cell; constructed on the JS thread,
-// and a rooted value is dropped there (a pin-only one may drop with its `Blob` store).
-unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
+// JS-thread state: a pin and GC protection on a heap cell; constructed on the JS
+// thread, and a rooted value is dropped there (a pin-only one may drop with its
+// `Blob` store).
+impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType

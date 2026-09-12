@@ -117,9 +117,10 @@ describe("auto-install", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
-    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1")))).toBe(
-      join(packageDir, ".bun-cache", "is-number@2.0.0@@localhost@@@1"),
-    );
+    const cacheFolder = registry.cacheFolderName(join(packageDir, ".bun-cache"), "is-number", "2.0.0");
+    expect(
+      resolve(await readlink(join(packageDir, ".bun-cache", "is-number", cacheFolder.slice("is-number@".length)))),
+    ).toBe(join(packageDir, ".bun-cache", cacheFolder));
   });
 });
 
@@ -3466,7 +3467,9 @@ test("it should invalid cached package if package.json is missing", async () => 
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(
+        join(packageDir, ".bun-cache", registry.cacheFolderName(join(packageDir, ".bun-cache"), "no-deps", "2.0.0")),
+      ),
     ]),
   ).toEqual([
     ["index.js", "package.json"],
@@ -3483,13 +3486,22 @@ test("it should invalid cached package if package.json is missing", async () => 
   expect(out).not.toContain("+ no-deps@2.0.0");
 
   // with cache package.json deleted, install is a no-op and cache is untouched
-  await rm(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1", "package.json"));
+  await rm(
+    join(
+      packageDir,
+      ".bun-cache",
+      registry.cacheFolderName(join(packageDir, ".bun-cache"), "no-deps", "2.0.0"),
+      "package.json",
+    ),
+  );
   ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
   expect(out).not.toContain("+ no-deps@2.0.0");
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(
+        join(packageDir, ".bun-cache", registry.cacheFolderName(join(packageDir, ".bun-cache"), "no-deps", "2.0.0")),
+      ),
     ]),
   ).toEqual([["index.js", "package.json"], ["index.js"]]);
 
@@ -3501,7 +3513,9 @@ test("it should invalid cached package if package.json is missing", async () => 
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(
+        join(packageDir, ".bun-cache", registry.cacheFolderName(join(packageDir, ".bun-cache"), "no-deps", "2.0.0")),
+      ),
     ]),
   ).toEqual([
     ["index.js", "package.json"],

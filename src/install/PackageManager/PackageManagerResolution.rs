@@ -201,6 +201,7 @@ impl PackageManager {
                     &mut buf,
                     package_name,
                     installed_version,
+                    b"",
                 ) {
                     Ok(p) => p,
                     Err(err) => {

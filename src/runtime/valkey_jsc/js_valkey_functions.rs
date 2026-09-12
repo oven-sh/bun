@@ -70,6 +70,12 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
     }
 
+    if let Some(ab) = value.as_array_buffer(global) {
+        return Ok(Some(JSArgument::StringOrBuffer(
+            crate::node::StringOrBuffer::owned(ab.byte_slice().to_vec()),
+        )));
+    }
+
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
 }
 

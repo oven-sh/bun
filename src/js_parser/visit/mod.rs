@@ -115,6 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
+            func.name.map(|n| n.ref_),
+            func.flags
+                .contains(flags::Function::HasReactHooksSuppression),
+            body_stmts,
+        );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -204,6 +210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -1764,6 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
+            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

@@ -14,7 +14,7 @@
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
 
-const LSQUIC_COMMIT = "3181911301b1aa4f54c1ed690901abc674ee08fb";
+const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
 // gQUIC (Google QUIC, pre-IETF) sources are excluded — Bun only negotiates
 // IETF QUIC. The unconditional engine/global references to gQUIC vtables are
@@ -127,6 +127,10 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // lsquic_prq_destroy() freed only the free list. A stateless reset,
+    // Version Negotiation or Retry whose send failed waits on the returned
+    // list for a retry, so destroying the engine first leaked it.
+    "patches/lsquic/prq-free-returned-conns.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

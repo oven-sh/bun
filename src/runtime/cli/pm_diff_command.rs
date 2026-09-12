@@ -712,7 +712,7 @@ fn read_dir_tree(root: &[u8], as_published: bool) -> Result<Tree, crate::Error> 
     Ok(tree)
 }
 
-/// The lockfile `bun pm pack` reads in `dir`: the first one above it when that lists `dir` as a workspace, else `dir`'s own.
+/// The lockfile `bun pm pack` reads in `dir`: the nearest one above it that lists `dir` as a workspace, else `dir`'s own.
 fn lockfile_for<'a>(
     lockfile: &'a mut Lockfile,
     dir: &[u8],
@@ -747,7 +747,7 @@ fn lockfile_for<'a>(
         &mut dir_buf[..],
         &[b"."],
     ));
-    // A workspace is packed from its project's root, so a lockfile in the workspace's own folder does not count.
+    // A workspace is packed from its project's root, so only a lockfile above `dir` that lists it counts here.
     let mut root = dir;
     let mut is_workspace = false;
     while let Some(parent) = bun_paths::dirname(root)
@@ -755,20 +755,21 @@ fn lockfile_for<'a>(
         .filter(|parent| parent.len() < root.len())
     {
         root = parent;
-        let Some(loaded) = load(lockfile, root) else {
+        if load(lockfile, root) != Some(true) {
             continue;
-        };
+        }
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        is_workspace = loaded
-            && lockfile.packages.items_resolution().iter().any(|res| {
-                res.tag == resolution::Tag::Workspace
-                    && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
-                        root,
-                        &mut buf[..],
-                        &[res.workspace().slice(string_buf)],
-                    )) == dir
-            });
-        break;
+        is_workspace = lockfile.packages.items_resolution().iter().any(|res| {
+            res.tag == resolution::Tag::Workspace
+                && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+                    root,
+                    &mut buf[..],
+                    &[res.workspace().slice(string_buf)],
+                )) == dir
+        });
+        if is_workspace {
+            break;
+        }
     }
     (is_workspace || load(lockfile, dir) == Some(true)).then_some(&*lockfile)
 }

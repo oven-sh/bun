@@ -161,7 +161,9 @@ cowsay "Bun!"
 
 <Accordion title="Configuring global installation behavior">
 
-```toml bunfig.toml icon="settings"
+Set these keys in the global `.bunfig.toml` (`$HOME/.bunfig.toml` or `$XDG_CONFIG_HOME/.bunfig.toml`). Bun ignores them in a project `bunfig.toml`.
+
+```toml ~/.bunfig.toml icon="settings"
 [install]
 # where `bun add --global` installs packages
 globalDir = "~/.bun/install/global"

@@ -545,9 +545,11 @@ dryRun = false
 
 The directory where Bun puts globally installed packages.
 
+Set this in the global `.bunfig.toml` (see [Global vs. local](#global-vs-local)). Bun ignores it in a project `bunfig.toml`, because a project file must not send writes outside the project.
+
 Environment variable: `BUN_INSTALL_GLOBAL_DIR`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where `bun install --global` installs packages
 globalDir = "~/.bun/install/global"
@@ -557,9 +559,11 @@ globalDir = "~/.bun/install/global"
 
 The directory where Bun links the binaries of globally installed packages.
 
+Set this in the global `.bunfig.toml`. Bun ignores it in a project `bunfig.toml`, for the same reason as `globalDir`.
+
 Environment variable: `BUN_INSTALL_BIN`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"

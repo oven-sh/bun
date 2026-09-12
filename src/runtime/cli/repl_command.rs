@@ -51,6 +51,7 @@ impl ReplCommand {
                 Command::Tag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
+                Arguments::ConfigScope::Project,
                 ctx,
             )?;
         }

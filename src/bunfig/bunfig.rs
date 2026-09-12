@@ -27,6 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
+use crate::ConfigScope;
+
 // TODO: replace api.TransformOptions with Bunfig
 pub(crate) struct Bunfig;
 
@@ -150,6 +152,8 @@ struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// Which file this is: the user's own bunfig, or the project's.
+    scope: ConfigScope,
 }
 
 impl<'a> Parser<'a> {
@@ -181,6 +185,17 @@ impl<'a> Parser<'a> {
             },
         );
         Err(crate::Error::InvalidBunfig)
+    }
+
+    /// Report a key that Bun accepts from the user's own bunfig only.
+    fn warn_project_scope_ignored(&mut self, loc: bun_ast::Loc, key: &str, env_var: &str) {
+        self.log.add_warning_fmt(
+            Some(self.source),
+            loc,
+            format_args!(
+                "\"{key}\" is ignored in a project bunfig.toml. Set it in $HOME/.bunfig.toml or in ${env_var}."
+            ),
+        );
     }
 
     fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
@@ -767,7 +782,7 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
-                self.parse_install(&install_obj)?;
+                self.parse_install(cmd, &install_obj)?;
             }
 
             if let Some(run_expr) = json.get(b"run") {
@@ -1096,6 +1111,7 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
+        scope: ConfigScope,
         ctx: &mut ContextData,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
@@ -1168,6 +1184,7 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            scope,
         };
         parser.parse(cmd)
     }
@@ -1255,20 +1272,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
+    fn parse_install(&mut self, cmd: CommandTag, install_obj: &Expr) -> crate::Result<()> {
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
         // out so the install borrow is provably disjoint from `self`, then
         // restore it on every exit path.
         let mut install = self.ctx.install.take().expect("install slot primed");
-        let result = self.parse_install_inner(&mut install, install_obj);
+        let result = self.parse_install_inner(cmd, &mut install, install_obj);
         self.ctx.install = Some(install);
         result
     }
 
     fn parse_install_inner(
         &mut self,
+        cmd: CommandTag,
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
@@ -1424,17 +1442,25 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
             install.save_dev = Some(v);
         }
-        if let Some(v) = install_obj
-            .get(b"globalDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_dir = Some(v.into());
+        // Only the install family reads these two, so nothing else warns.
+        let warn_ignored = cmd.is_npm_related();
+        if let Some(v) = install_obj.get(b"globalDir") {
+            if let Some(path) = v.as_string(self.bump) {
+                if self.scope == ConfigScope::User {
+                    install.global_dir = Some(path.into());
+                } else if warn_ignored {
+                    self.warn_project_scope_ignored(v.loc, "globalDir", "BUN_INSTALL_GLOBAL_DIR");
+                }
+            }
         }
-        if let Some(v) = install_obj
-            .get(b"globalBinDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_bin_dir = Some(v.into());
+        if let Some(v) = install_obj.get(b"globalBinDir") {
+            if let Some(path) = v.as_string(self.bump) {
+                if self.scope == ConfigScope::User {
+                    install.global_bin_dir = Some(path.into());
+                } else if warn_ignored {
+                    self.warn_project_scope_ignored(v.loc, "globalBinDir", "BUN_INSTALL_BIN");
+                }
+            }
         }
 
         if let Some(cache) = install_obj.get(b"cache") {

@@ -47,6 +47,14 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         Output::flush();
     }
 
+    // Nothing later on this path prints the log.
+    if manager.log_mut().has_any() {
+        let _ = manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()));
+        manager.log_mut().reset();
+    }
+
     if manager.options.positionals.len() == 1 {
         // bun unlink
 

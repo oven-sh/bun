@@ -1380,3 +1380,114 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// https://github.com/oven-sh/bun/issues/12430
+describe("--env-file", () => {
+  async function makeLocalBin(dir: string, name: string, script: string) {
+    await mkdir(join(dir, "node_modules", name), { recursive: true });
+    await mkdir(join(dir, "node_modules", ".bin"), { recursive: true });
+    await writeFile(
+      join(dir, "node_modules", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", bin: { [name]: "./cli.js" } }),
+    );
+    await writeFile(join(dir, "node_modules", name, "cli.js"), `#!/usr/bin/env node\n${script}\n`);
+    if (isWindows) {
+      await writeFile(
+        join(dir, "node_modules", ".bin", `${name}.cmd`),
+        `@echo off\r\nnode "%~dp0..\\${name}\\cli.js" %*\r\n`,
+      );
+    } else {
+      await writeFile(join(dir, "node_modules", ".bin", name), `#!/usr/bin/env node\nrequire("../${name}/cli.js");\n`);
+      chmodSync(join(dir, "node_modules", name, "cli.js"), 0o755);
+      chmodSync(join(dir, "node_modules", ".bin", name), 0o755);
+    }
+  }
+
+  async function run(dir: string, testEnv: Record<string, string>, ...args: string[]) {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: testEnv,
+    });
+    return await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  }
+
+  it.concurrent.each(["--env-file .env.custom", "--env-file=.env.custom"])(
+    "loads the file into the spawned process env (%s)",
+    async spelling => {
+      const { x_dir, env } = setup();
+      delete env.BUNX_TEST_VAR;
+      await makeLocalBin(x_dir, "print-env-var", `console.log("BUNX_TEST_VAR=" + (process.env.BUNX_TEST_VAR ?? ""));`);
+      await writeFile(join(x_dir, ".env.custom"), "BUNX_TEST_VAR=from-env-file\n");
+
+      const [err, out, exited] = await run(x_dir, env, ...spelling.split(" "), "print-env-var");
+
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("unrecognised dependency format");
+      expect(out.trim()).toBe("BUNX_TEST_VAR=from-env-file");
+      expect(exited).toBe(0);
+    },
+  );
+
+  it.concurrent("supports multiple --env-file flags (later wins)", async () => {
+    const { x_dir, env } = setup();
+    delete env.BUNX_TEST_A;
+    delete env.BUNX_TEST_B;
+    await makeLocalBin(
+      x_dir,
+      "print-env-ab",
+      `console.log("A=" + (process.env.BUNX_TEST_A ?? "") + " B=" + (process.env.BUNX_TEST_B ?? ""));`,
+    );
+    await writeFile(join(x_dir, ".env.a"), "BUNX_TEST_A=1\nBUNX_TEST_B=from-a\n");
+    await writeFile(join(x_dir, ".env.b"), "BUNX_TEST_B=from-b\n");
+
+    const [err, out, exited] = await run(x_dir, env, "--env-file", ".env.a", "--env-file=.env.b", "print-env-ab");
+
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("A=1 B=from-b");
+    expect(exited).toBe(0);
+  });
+
+  it.concurrent("does not treat the file path after --env-file as the package name", async () => {
+    const { x_dir, env } = setup();
+    await writeFile(join(x_dir, ".env.custom"), "X=1\n");
+
+    const [err, out, exited] = await run(x_dir, env, "--no-install", "--env-file", ".env.custom", "definitely-absent");
+
+    expect(err).not.toContain("unrecognised dependency format");
+    expect(err).not.toContain("@.env.custom");
+    expect(err).toContain("Could not find an existing 'definitely-absent' binary to run.");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  });
+
+  it.concurrent("errors when --env-file is given without a path", async () => {
+    const { x_dir, env } = setup();
+
+    const [err, out, exited] = await run(x_dir, env, "--env-file");
+
+    expect(err).toContain("--env-file requires a file path");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  });
+
+  it.concurrent("--env-file after the package name is passed through, not consumed by bunx", async () => {
+    const { x_dir, env } = setup();
+    delete env.BUNX_SHOULD_NOT_LOAD;
+    await writeFile(join(x_dir, ".env.passthrough"), "BUNX_SHOULD_NOT_LOAD=wrongly-consumed\n");
+    await makeLocalBin(
+      x_dir,
+      "print-passthrough",
+      `console.log(JSON.stringify([process.env.BUNX_SHOULD_NOT_LOAD ?? "unset", ...process.argv.slice(2)]));`,
+    );
+
+    const [err, out, exited] = await run(x_dir, env, "print-passthrough", "--env-file", ".env.passthrough");
+
+    expect(err).not.toContain("error:");
+    expect(JSON.parse(out)).toEqual(["unset", "--env-file", ".env.passthrough"]);
+    expect(exited).toBe(0);
+  });
+});

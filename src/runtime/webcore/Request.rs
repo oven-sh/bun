@@ -1077,8 +1077,10 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
+            // The last candidate is `input`; the rest is the `RequestInit` dictionary (no `url` member).
+            let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
@@ -1086,13 +1088,9 @@ impl Request {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
-                    if values_to_try.len() == 1 {
-                        match Request::clone_into(
-                            request,
-                            &mut req,
-                            global_this,
-                            fields.contains(Fields::Url),
-                        ) {
+                    // Wholesale clone for `new Request(request)` only; a Request `init` takes the per-field path.
+                    if is_input && values_to_try.len() == 1 {
+                        match Request::clone_into(request, &mut req, global_this) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
@@ -1172,7 +1170,7 @@ impl Request {
                         }
                     }
 
-                    if !fields.contains(Fields::Url) {
+                    if is_input && !fields.contains(Fields::Url) {
                         let url = response.url();
                         if !url.is_empty() {
                             req.url.set(url.clone());
@@ -1231,7 +1229,7 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Url) {
+            if is_input && !fields.contains(Fields::Url) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Url) {
                     Ok(Some(url)) => {
                         match BunString::from_js(url, global_this) {
@@ -1241,30 +1239,20 @@ impl Request {
                         if !req.url.get().is_empty() {
                             fields.insert(Fields::Url);
                         }
-
-                        // first value
                     }
                     Ok(None) => {
-                        // Short-circuit ordering: only probe
-                        // `implementsToString` (which performs JS property
-                        // lookup with observable side effects) when the first
-                        // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
-                            let implements = match value.implements_to_string(global_this) {
-                                Ok(b) => b,
+                        let implements = match value.implements_to_string(global_this) {
+                            Ok(b) => b,
+                            Err(e) => bail!(Err(e)),
+                        };
+                        if implements {
+                            let str = match BunString::from_js(value, global_this) {
+                                Ok(s) => s,
                                 Err(e) => bail!(Err(e)),
                             };
-                            if implements {
-                                let str = match BunString::from_js(value, global_this) {
-                                    Ok(s) => s,
-                                    Err(e) => bail!(Err(e)),
-                                };
-                                req.url.set(str);
-                                if !req.url.get().is_empty() {
-                                    fields.insert(Fields::Url);
-                                }
+                            req.url.set(str);
+                            if !req.url.get().is_empty() {
+                                fields.insert(Fields::Url);
                             }
                         }
                     }
@@ -1462,7 +1450,6 @@ impl Request {
         &self,
         req: &mut Request,
         global_this: &JSGlobalObject,
-        preserve_url: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
@@ -1472,11 +1459,7 @@ impl Request {
         // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(global_this)?;
-        let url = if preserve_url {
-            req.url.take()
-        } else {
-            self.url.get().clone()
-        };
+        debug_assert!(req.url.get().is_empty());
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
         // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
@@ -1484,15 +1467,14 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // `req.url` is empty (asserted above); the other incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
             core::ptr::write(
                 req,
                 Request {
-                    url: JsCell::new(url),
+                    url: JsCell::new(self.url.get().clone()),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1536,7 +1518,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this)?;
         Ok(req)
     }
 }

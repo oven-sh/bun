@@ -2354,7 +2354,7 @@ where
         {
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
-            // sentinel and calls `clone_into(.., preserve_url=false)`.
+            // sentinel and calls `clone_into`.
             unsafe { (*request_).clone(ctx)? }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);

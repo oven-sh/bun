@@ -351,6 +351,55 @@ impl WorkspaceGraph {
         graph
     }
 
+    /// Candidate indices, each after the candidates it depends on. A cycle is broken at one of its members.
+    pub fn dependency_order(&self) -> Vec<u32> {
+        let n = self.dependencies.len();
+        let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();
+        let mut order: Vec<u32> = Vec::with_capacity(n);
+        let mut queued = bitset(n);
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for i in 0..n {
+            if remaining[i] == 0 {
+                queued.set(i);
+                queue.push_back(i as u32);
+            }
+        }
+
+        loop {
+            while let Some(u) = queue.pop_front() {
+                order.push(u);
+                for &v in &self.dependents[u as usize] {
+                    if queued.is_set(v as usize) {
+                        continue;
+                    }
+                    remaining[v as usize] -= 1;
+                    if remaining[v as usize] == 0 {
+                        queued.set(v as usize);
+                        queue.push_back(v);
+                    }
+                }
+            }
+            if order.len() == n {
+                return order;
+            }
+            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
+            let mut on_walk = bitset(n);
+            let mut cur = (0..n)
+                .find(|&i| !queued.is_set(i))
+                .expect("order.len() < n");
+            while !on_walk.is_set(cur) {
+                on_walk.set(cur);
+                cur = self.dependencies[cur]
+                    .iter()
+                    .map(|&d| d as usize)
+                    .find(|&d| !queued.is_set(d))
+                    .expect("remaining[cur] > 0");
+            }
+            queued.set(cur);
+            queue.push_back(cur as u32);
+        }
+    }
+
     pub fn from_dependency_names<D, I>(names: &[&[u8]], mut dependency_names: D) -> WorkspaceGraph
     where
         D: FnMut(usize) -> I,
@@ -463,6 +512,24 @@ pub fn select_lockfile_workspaces(
         ids,
         unmatched_patterns,
     }
+}
+
+/// `ids` (root and workspace packages) reordered so each one comes after the selected workspaces it depends on.
+pub fn order_lockfile_workspaces(lockfile: &Lockfile, ids: &[PackageID]) -> Vec<PackageID> {
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    let name_hashes = lockfile.packages.items_name_hash();
+    let hashes: Vec<Option<PackageNameHash>> = ids
+        .iter()
+        .map(|&pkg_id| {
+            (pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Root)
+                .then(|| name_hashes[pkg_id as usize])
+        })
+        .collect();
+    WorkspaceGraph::from_lockfile(lockfile, &hashes)
+        .dependency_order()
+        .into_iter()
+        .map(|i| ids[i as usize])
+        .collect()
 }
 
 pub fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {

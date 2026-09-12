@@ -295,6 +295,7 @@ impl PackCommand {
                     );
                     Global::crash();
                 }
+                PackError::ScriptFailed(code) => Global::exit(code),
                 // for_publish-only variants — unreachable when FOR_PUBLISH=false.
                 PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
             }
@@ -326,6 +327,9 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     RestrictedUnscopedPackage,
     #[error("PrivatePackage")]
     PrivatePackage,
+    /// A lifecycle script exited with this non-zero code. The error line is already printed.
+    #[error("ScriptFailed")]
+    ScriptFailed(u32),
 }
 
 impl<const FOR_PUBLISH: bool> From<AllocError> for PackError<FOR_PUBLISH> {
@@ -2042,6 +2046,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     };
 
     if FOR_PUBLISH {
+        if let Some(private) = json.root.get(b"private") {
+            if let Some(is_private) = private.as_bool() {
+                if is_private {
+                    return Err(PackError::PrivatePackage);
+                }
+            }
+        }
+
         if let Some(config) = json.root.get(b"publishConfig") {
             if ctx.manager.options.publish_config.tag.is_empty() {
                 if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
@@ -2097,16 +2109,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         .ok_or(PackError::InvalidPackageVersion)?;
     if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
         return Err(PackError::InvalidPackageVersion);
-    }
-
-    if FOR_PUBLISH {
-        if let Some(private) = json.root.get(b"private") {
-            if let Some(is_private) = private.as_bool() {
-                if is_private {
-                    return Err(PackError::PrivatePackage);
-                }
-            }
-        }
     }
 
     // Note: `Transpiler` has no `Default`;
@@ -2877,6 +2879,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             ctx.manager,
+            abs_workspace_path,
             package_name,
             package_version,
             &mut root_full,
@@ -2962,7 +2965,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     let use_system_shell = command_ctx.debug.use_system_shell;
-    match RunCommand::run_package_script_foreground(
+    match RunCommand::run_package_script_foreground_status(
         command_ctx,
         script,
         name,
@@ -2971,8 +2974,12 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
         &[],
         silent,
         use_system_shell,
+        None,
     ) {
-        Ok(_) => Ok(()),
+        Ok(status) => match status.exit_code() {
+            0 => Ok(()),
+            code => Err(PackError::ScriptFailed(code)),
+        },
         Err(err) => {
             if matches!(err, crate::Error::MissingShell) {
                 Output::err_generic(

@@ -1131,7 +1131,8 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("file: specs into a registry package's folder (B4)", async () => {
-    using dir = fixture("external-link-dep");
+    // cli-750's package.json declares a folder dependency that its lockfile entry never had, which --frozen-lockfile rejects.
+    using dir = fixture("external-link-dep", { "../cli-750/package.json": JSON.stringify({ name: "monorepo" }) });
     const { text, lock } = await migrate(dir);
     for (const key of ["aaaaaa", "abbrev", "zzzzzz"]) {
       expect(lock.packages[key][0]).toBe("abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz");
@@ -1184,7 +1185,7 @@ describe("package-lock.json migration fixes", () => {
     expect(text).not.toContain("../m/node_modules/p");
     expect(text).not.toContain("../a/node_modules/b");
     expect(exitCode).toBe(0);
-    await frozen(dir);
+    await expectNextInstallToResolveSkippedDependency(dir, "p");
   });
 
   test.concurrent("optional peer that is present keeps optionalPeers (B8)", async () => {
@@ -1590,40 +1591,52 @@ describe("package-lock.json migration fixes", () => {
   });
 
   // Folder dep `o` gets `p` from the node_modules beside it; `m` sits next to the project (external-link--root shape) or inside it.
-  function folderLinkProject(name: string, opts: { outOfTree: boolean; directP?: boolean }) {
+  function folderLinkProject(
+    name: string,
+    opts: { outOfTree: boolean; directP?: boolean; p?: string; registry?: string },
+  ) {
     const m = opts.outOfTree ? "../m" : "m";
     const project = opts.outOfTree ? "root" : ".";
+    const p = opts.p ?? "p";
     const dependencies: Record<string, string> = { o: `file:${m}/node_modules/n/o` };
-    if (opts.directP) dependencies.p = `file:${m}/node_modules/p`;
+    if (opts.directP) dependencies[p] = `file:${m}/node_modules/${p}`;
     const copy = tempDir(name, {
       [`${project}/${m}/node_modules/n/o/package.json`]: JSON.stringify({
         name: "o",
         version: "1.0.0",
-        dependencies: { p: "" },
+        dependencies: { [p]: "" },
       }),
-      [`${project}/${m}/node_modules/n/o/index.js`]: `module.exports = require("p/package.json").name;`,
-      [`${project}/${m}/node_modules/p/package.json`]: JSON.stringify({ name: "p", version: "1.0.0" }),
+      [`${project}/${m}/node_modules/n/o/index.js`]: `module.exports = require("${p}/package.json").name;`,
+      [`${project}/${m}/node_modules/${p}/package.json`]: JSON.stringify({ name: p, version: "1.0.0" }),
       [`${project}/package.json`]: JSON.stringify({ name: "root", dependencies }),
       [`${project}/package-lock.json`]: npmLock("root", {
         "": { name: "root", dependencies },
         [m]: {},
-        [`${m}/node_modules/n/o`]: { version: "1.0.0", dependencies: { p: "" } },
-        [`${m}/node_modules/p`]: {},
+        [`${m}/node_modules/n/o`]: { version: "1.0.0", dependencies: { [p]: "" } },
+        [`${m}/node_modules/${p}`]: {},
         "node_modules/o": { resolved: `${m}/node_modules/n/o`, link: true },
-        ...(opts.directP ? { "node_modules/p": { resolved: `${m}/node_modules/p`, link: true } } : {}),
+        ...(opts.directP ? { [`node_modules/${p}`]: { resolved: `${m}/node_modules/${p}`, link: true } } : {}),
       }),
     });
     const dir = join(String(copy), project);
-    writeExtra(dir, {});
+    writeExtra(dir, {}, opts.registry);
     return {
       dir,
       o: `o@file:${m}/node_modules/n/o`,
-      p: `p@file:${m}/node_modules/p`,
+      p: `${p}@file:${m}/node_modules/${p}`,
       oSource: join(dir, m, "node_modules", "n", "o"),
       [Symbol.dispose]() {
         copy[Symbol.dispose]();
       },
     };
+  }
+
+  // The migration cannot keep an out-of-tree `p`, but `o`'s package.json still declares it, so the
+  // next install reads that package.json again and resolves `p` from the (offline) registry.
+  async function expectNextInstallToResolveSkippedDependency(dir: string, name: string) {
+    const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(stderr).toContain(`downloading package manifest ${name}`);
+    expect(exitCode).toBe(1);
   }
 
   async function expectFolderLinkInstalled(project: ReturnType<typeof folderLinkProject>, linker: string) {
@@ -1654,7 +1667,7 @@ describe("package-lock.json migration fixes", () => {
         o: [project.o, {}],
         p: [project.p, {}],
       });
-      await frozen(project.dir);
+      await expectNextInstallToResolveSkippedDependency(project.dir, "p");
     },
   );
 
@@ -1669,24 +1682,37 @@ describe("package-lock.json migration fixes", () => {
     await expectFolderLinkInstalled(project, linker);
   });
 
-  // A transitive folder target outside the project is skipped with a warning, so both linkers install the same lockfile.
+  // A transitive folder target outside the project is skipped with a warning. `o`'s package.json still declares it,
+  // so the next install reads it again and resolves the dependency from the registry, with either linker.
   test.concurrent.each(linkers)("out-of-tree link target and its node_modules install (%s)", async linker => {
-    using project = folderLinkProject(`npm-migrate-folder-link-out-of-tree-${linker}`, { outOfTree: true });
+    using registry = localRegistry();
+    using project = folderLinkProject(`npm-migrate-folder-link-out-of-tree-${linker}`, {
+      outOfTree: true,
+      p: "no-deps",
+      registry: registry.url,
+    });
     const { stderr, exitCode, text, lock } = await migrate(project.dir);
-    expect(stderr).toContain("../m/node_modules/p");
+    expect(stderr).toContain("../m/node_modules/no-deps");
     expect(stderr).toContain("outside");
     expect(exitCode).toBe(0);
     expect(Object.keys(lock.packages)).toStrictEqual(["o"]);
     expect(lock.packages.o[0]).toBe(project.o);
-    expect(text).not.toContain("../m/node_modules/p");
+    expect(text).not.toContain("../m/node_modules/no-deps");
+    expect(registry.requests).toStrictEqual([]);
 
     const install = await run(project.dir, "install", "--linker", linker);
     expect(install.stderr).not.toContain("error");
+    expect(install.stderr).toContain("Saved lockfile");
     expect(install.exitCode).toBe(0);
+    expect((await readLock(project.dir)).lock.packages).toStrictEqual({
+      o: [project.o, { dependencies: { "no-deps": "" } }],
+      "no-deps": ["no-deps@2.0.0", registry.tarball("no-deps", "2.0.0"), {}, registry.integrity("no-deps", "2.0.0")],
+    });
     expect(await Bun.file(join(project.dir, "node_modules", "o", "package.json")).json()).toHaveProperty("name", "o");
-    expect(fs.existsSync(join(project.dir, "node_modules", "o", "node_modules", "p"))).toBeFalse();
     expect(fs.existsSync(join(project.oSource, "node_modules"))).toBeFalse();
-    expect(storeEntries(project.dir)).toStrictEqual(linker === "isolated" ? [project.o.replaceAll(/[/:]/g, "+")] : []);
+    expect(storeEntries(project.dir)).toStrictEqual(
+      linker === "isolated" ? ["no-deps@2.0.0", project.o.replaceAll(/[/:]/g, "+")] : [],
+    );
   });
 
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {

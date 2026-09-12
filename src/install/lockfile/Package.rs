@@ -916,6 +916,8 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
+    /// A `file:` package's `bin` changed in place (`Lockfile::eql` cannot see it); fails `--frozen-lockfile`.
+    pub(crate) bins_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -978,6 +980,73 @@ impl Diff {
         )
     }
 
+    /// Diffs the package.json of the `file:` directory a root or workspace dependency is locked to, like a workspace.
+    fn generate_folder_dependency(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        from: &Package,
+        from_package_id: PackageID,
+        update_requests: Option<&[UpdateRequest]>,
+        removed_names: &mut Vec<PackageNameHash>,
+    ) -> crate::Result<Option<DiffSummary>> {
+        if !matches!(
+            from.resolution.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        ) || from_package_id as usize >= from_lockfile.packages.len()
+        {
+            return Ok(None);
+        }
+        let resolution = from_lockfile.packages.items_resolution()[from_package_id as usize];
+        if resolution.tag != ResolutionTag::Folder {
+            return Ok(None);
+        }
+        // Relative to the top level directory, or absolute.
+        let folder_path: Box<[u8]> = Box::from(
+            resolution
+                .folder()
+                .slice(from_lockfile.buffers.string_bytes.as_slice()),
+        );
+
+        let folder_pkg = match crate::_folder_resolver::parse_folder_dependency_package_json(
+            to_lockfile,
+            pm,
+            log,
+            &folder_path,
+        ) {
+            Ok(pkg) => pkg,
+            // Not on disk (or unreadable): nothing to compare, the locked entry stands like any other.
+            Err(crate::Error::Sys(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        let from_pkg = from_lockfile.packages.get(from_package_id as usize);
+        let diff = Self::generate_inner(
+            pm,
+            log,
+            from_lockfile,
+            to_lockfile,
+            &from_pkg,
+            &folder_pkg,
+            update_requests,
+            None,
+            removed_names,
+        )?;
+
+        if pm.options.log_level.is_verbose() && (diff.add + diff.remove + diff.update) > 0 {
+            bun_core::pretty_errorln!(
+                "Package \"file:{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
+                bstr::BStr::new(&folder_path),
+                diff.add,
+                diff.remove,
+                diff.update,
+            );
+        }
+
+        Ok(Some(diff))
+    }
+
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
     fn generate_inner(
         pm: &mut PackageManager,
@@ -1002,13 +1071,7 @@ impl Diff {
                 ),
             _ => true,
         };
-        // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
-        // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
-        // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
-        // (sort, recursive `generate`) don't conflict with these read views; the
-        // recursive call only sorts `overrides`/`catalogs` and never reallocates
-        // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
-        // pointers remain valid for the loop body.
+        // Raw fat pointer so the `&mut to_lockfile` reborrows below don't conflict; re-derived after every parse.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1026,8 +1089,7 @@ impl Diff {
             .resolutions
             .get(from_lockfile.buffers.resolutions.as_slice())
             .into();
-        // See note above — `from_lockfile.buffers` is not reallocated for
-        // the lifetime of these references.
+        // Nothing below grows `from_lockfile.buffers`, so these stay valid for the whole loop.
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
@@ -1461,9 +1523,33 @@ impl Diff {
                     }
                 }
 
+                let folder_diff = Self::generate_folder_dependency(
+                    pm,
+                    log,
+                    from_lockfile,
+                    to_lockfile,
+                    from,
+                    from_resolutions[i],
+                    update_requests,
+                    removed_names,
+                )?;
+                if let Some(diff) = &folder_diff {
+                    // re-derive the slice, `to_lockfile.buffers.dependencies` may have grown.
+                    to_deps = to
+                        .dependencies
+                        .get(to_lockfile.buffers.dependencies.as_slice())
+                        .into();
+                    summary.bins_changed |= diff.bins_changed;
+                }
+
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let mut workspace_hooks_only = false;
                     let update_mapping = 'update_mapping: {
+                        if let Some(diff) = &folder_diff {
+                            workspace_hooks_only = !diff.changes_dependencies();
+                            break 'update_mapping !diff.changes_resolutions();
+                        }
+
                         if !is_root || !from_dep.behavior.is_workspace() {
                             break 'update_mapping true;
                         }
@@ -1522,12 +1608,6 @@ impl Diff {
                             Features::WORKSPACE,
                         )?;
 
-                        // `parse_with_json` may have grown `to_lockfile.buffers
-                        // .dependencies` — re-derive the slice.
-                        to_deps = to
-                            .dependencies
-                            .get(to_lockfile.buffers.dependencies.as_slice())
-                            .into();
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
@@ -1542,6 +1622,11 @@ impl Diff {
                             None,
                             removed_names,
                         )?;
+                        // Both calls above may have grown `to_lockfile.buffers.dependencies`.
+                        to_deps = to
+                            .dependencies
+                            .get(to_lockfile.buffers.dependencies.as_slice())
+                            .into();
 
                         if pm.options.log_level.is_verbose()
                             && (diff.add + diff.remove + diff.update) > 0
@@ -1558,6 +1643,7 @@ impl Diff {
                             );
                         }
 
+                        summary.bins_changed |= diff.bins_changed;
                         workspace_hooks_only = !diff.changes_dependencies();
                         !diff.changes_resolutions()
                     };
@@ -1570,7 +1656,14 @@ impl Diff {
                         summary.script_only_updates += 1;
                     }
                 } else {
-                    continue;
+                    match &folder_diff {
+                        Some(diff) if diff.changes_resolutions() => {
+                            if !diff.changes_dependencies() {
+                                summary.script_only_updates += 1;
+                            }
+                        }
+                        _ => continue,
+                    }
                 }
             }
 
@@ -1662,7 +1755,13 @@ impl Diff {
             );
         }
 
-        if from.resolution.tag != ResolutionTag::Root {
+        // bun.lock records no scripts; a `file:` package's are read from its package.json at install.
+        let compare_scripts = match from.resolution.tag {
+            ResolutionTag::Root => false,
+            ResolutionTag::Folder => from.scripts.filled,
+            _ => true,
+        };
+        if compare_scripts {
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,
@@ -1675,6 +1774,21 @@ impl Diff {
                     summary.script_only_updates += 1;
                 }
             }
+        }
+
+        // Not workspaces: `turbo prune` writes bun.lock without their `bin` and must pass --frozen-lockfile.
+        if from.resolution.tag == ResolutionTag::Folder
+            && !Bin::eql(
+                &to.bin,
+                &from.bin,
+                to_lockfile.buffers.string_bytes.as_slice(),
+                to_lockfile.buffers.extern_strings.as_slice(),
+                from_lockfile.buffers.string_bytes.as_slice(),
+                from_lockfile.buffers.extern_strings.as_slice(),
+            )
+        {
+            summary.update += 1;
+            summary.bins_changed = true;
         }
 
         Ok(summary)

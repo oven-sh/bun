@@ -36,39 +36,41 @@ test("dag", () => {
 });
 `;
 
-  test.each([
+  describe.each([
     ["received", "expect(o).toEqual(1)"],
     ["expected", "expect(1).toEqual(o)"],
     // An asymmetric matcher prints its payload through another entry point of
     // the same formatter. The cap and the stop of the walk apply there too.
     ["asymmetric matcher", "expect({}).toEqual(expect.objectContaining(o))"],
-  ])("truncates the %s side of a shared-reference object graph", async (_side, assertion) => {
-    using dir = tempDir("diff-output-cap", {
-      "dag.test.ts": dagFixture(assertion),
+  ])("%s side", (_side, assertion) => {
+    test("truncates a shared-reference object graph", async () => {
+      using dir = tempDir("diff-output-cap", {
+        "dag.test.ts": dagFixture(assertion),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "dag.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The cap is 1 MB per side and one leaf prints about 1 KB, so the walk
+      // reaches the leaf about 1,000 times. A cap that only discards the output
+      // and lets the walk continue reaches it 65,536 times.
+      const line = stdout.split("\n").find(l => l.startsWith('{"visits"'));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line!).visits).toBeLessThan(5_000);
+
+      // 1 MB per side plus the frame of the diff. The formatter emits 64 MB
+      // per side for this graph without the cap.
+      expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+      expect(stderr).toContain("expect(received).toEqual(expected)");
+      expect(stderr).toContain("[value too large, output truncated]");
+      expect(exitCode).toBe(1);
     });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "dag.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // The cap is 1 MB per side and one leaf prints about 1 KB, so the walk
-    // reaches the leaf about 1,000 times. A cap that only discards the output
-    // and lets the walk continue reaches it 65,536 times.
-    const line = stdout.split("\n").find(l => l.startsWith('{"visits"'));
-    expect(line).toBeDefined();
-    expect(JSON.parse(line!).visits).toBeLessThan(5_000);
-
-    // 1 MB per side plus the frame of the diff. The formatter emits 64 MB
-    // per side for this graph without the cap.
-    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
-    expect(stderr).toContain("expect(received).toEqual(expected)");
-    expect(stderr).toContain("[value too large, output truncated]");
-    expect(exitCode).toBe(1);
   });
 });

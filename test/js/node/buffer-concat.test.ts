@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("Buffer.concat throws RangeError for too large buffers", () => {
   const bufferToUse = Buffer.allocUnsafe(1024 * 1024 * 64);
@@ -189,4 +190,84 @@ describe("does not leak uninitialized memory when a getter mutates input buffers
     expect(out.length).toBe(16);
     expect(out.every(b => b === 0xbb)).toBe(true);
   });
+});
+
+describe("rejects the first invalid element without reading the rest of the list", () => {
+  // A list can report a length far larger than its contents: a Proxy with a
+  // lying `length` trap, or a sparse array. Node validates each element as it
+  // reads it and throws at the first one that is not a Uint8Array. Reading
+  // all 2^32 - 1 indices first would take minutes, or never finish.
+
+  const listTwoError = {
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "list[2]" argument must be an instance of Buffer or Uint8Array. Received undefined',
+  };
+
+  test("Buffer.concat with a Proxy whose length trap lies", async () => {
+    // The child runs the concat. If it is still reading indices after the
+    // timeout, the kill makes the assertions below fail.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const real = [Buffer.from("aa"), Buffer.from("bb")];
+        const px = new Proxy(real, {
+          get(target, prop, receiver) {
+            return prop === "length" ? 4294967295 : Reflect.get(target, prop, receiver);
+          },
+        });
+        for (const args of [[px], [px, 4]]) {
+          try {
+            Buffer.concat(...args);
+            console.log("no throw");
+          } catch (e) {
+            console.log(e.code, e.message);
+          }
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = `${listTwoError.code} ${listTwoError.message}\n`;
+    expect(stdout).toBe(line + line);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Buffer.concat with a Proxy that does not lie still works", () => {
+    const real = [Buffer.from("aa"), Buffer.from("bb")];
+    const px = new Proxy(real, {});
+    expect(Buffer.concat(px).toString()).toBe("aabb");
+    expect(Buffer.concat(px, 3).toString()).toBe("aab");
+  });
+
+  test("Buffer.concat with a sparse array of length 2^32 - 1", () => {
+    const list = [Buffer.from("aa"), Buffer.from("bb")];
+    list.length = 4294967295;
+    for (const args of [[list], [list, 4]] as const) {
+      const { code, message } = catchError(() => Buffer.concat(...args));
+      expect({ code, message }).toEqual(listTwoError);
+    }
+  });
+
+  test("Bun.concatArrayBuffers with a sparse array of length 2^32 - 1", () => {
+    const list = [new Uint8Array(2), new ArrayBuffer(2)];
+    list.length = 4294967295;
+    expect(() => Bun.concatArrayBuffers(list)).toThrow("Expected TypedArray");
+  });
+
+  function catchError(fn: () => unknown): any {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected the call to throw");
+  }
 });

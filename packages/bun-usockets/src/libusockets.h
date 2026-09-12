@@ -434,6 +434,8 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
 int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
+/* 1 iff the SNI-selected context for this connection requests a client certificate. */
+int us_socket_server_name_request_cert(us_socket_r s);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -555,6 +557,7 @@ void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
 /* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
 int us_socket_alpn_is_h2(us_socket_r s);
+void us_internal_ssl_ctx_clear_sni_userdata(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */

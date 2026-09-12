@@ -40,6 +40,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kSNIContexts = Symbol("sniContexts");
 
 // node:_http_server registers its pipelined-response machinery here at module
 // initialization, letting internal/http1_server_fallback drive the same
@@ -528,6 +529,7 @@ export {
   kProxyConfig,
   kRealListen,
   kRequest,
+  kSNIContexts,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

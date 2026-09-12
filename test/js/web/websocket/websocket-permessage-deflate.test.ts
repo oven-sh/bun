@@ -1,5 +1,7 @@
 import { serve, type ServerWebSocket } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import path from "node:path";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
   let serverReceivedExtensions = "";
@@ -539,4 +541,88 @@ test("server enforces maxPayloadLength on compressed messages inflated through t
   expect(events[1]).toBe("close");
 
   expect(serverReceived).toEqual([900]);
+});
+
+test("every ServerWebSocket send method delivers the bytes of a SharedArrayBuffer view", async () => {
+  const shared = new SharedArrayBuffer(4000);
+  const payload = new Uint8Array(shared);
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 7) & 0xff;
+  // A control frame carries at most 125 bytes.
+  const control = new Uint8Array(shared, 100, 125);
+
+  using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      // The one client is also the one subscriber, so it has to see its own publishes.
+      publishToSelf: true,
+      open(ws) {
+        ws.subscribe("topic");
+        ws.send(payload, true);
+        ws.sendBinary(payload, true);
+        ws.publish("topic", payload, true);
+        ws.publishBinary("topic", payload, true);
+        server.publish("topic", payload, true);
+        ws.ping(control);
+        ws.pong(control);
+      },
+      message() {},
+    },
+  });
+
+  const received = { message: [] as Buffer[], ping: [] as Buffer[], pong: [] as Buffer[] };
+  const all = Promise.withResolvers<void>();
+  const client = new WebSocket(`ws://localhost:${server.port}`);
+  try {
+    for (const kind of ["message", "ping", "pong"] as const) {
+      client.addEventListener(kind, ({ data }) => {
+        received[kind].push(data);
+        if (received.message.length === 5 && received.ping.length === 1 && received.pong.length === 1) all.resolve();
+      });
+    }
+    client.addEventListener("error", all.reject);
+    client.addEventListener("close", all.reject);
+
+    await all.promise;
+    expect(client.extensions).toContain("permessage-deflate");
+    expect(received).toEqual({
+      message: Array(5).fill(Buffer.from(payload)),
+      ping: [Buffer.from(control)],
+      pong: [Buffer.from(control)],
+    });
+  } finally {
+    client.close();
+  }
+});
+
+// The fixture explains the race. Only a sanitizer sees the stray write. "mmap" is a
+// plain Uint8Array over a MAP_SHARED region: a SharedArrayBuffer is not the only racing input.
+describe.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => {
+  test.skipIf(!isASAN)(
+    "does not overrun the deflate buffer",
+    async () => {
+      using dir = tempDir("ws-deflate-race", { "bytes.bin": Buffer.alloc(4000) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "websocket-shared-buffer-deflate-fixture.ts")],
+        env: {
+          ...bunEnv,
+          MODE: mode,
+          FILE: path.join(String(dir), "bytes.bin"),
+          // symbolize=0: symbolizing a sanitizer report takes longer than the test may run.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+    },
+    // A debug sanitizer build needs about 3s to boot the worker, before the race starts.
+    20_000,
+  );
 });

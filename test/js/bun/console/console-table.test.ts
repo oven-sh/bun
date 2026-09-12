@@ -363,3 +363,60 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// Reading a cell runs user code (getters, Proxy traps, custom inspect). An
+// exception thrown there must surface from console.table itself, exactly as
+// it does from Bun.inspect.table, rather than being swallowed by the printer.
+describe("console.table propagates exceptions thrown while reading cells", () => {
+  test("a throwing getter on a row", () => {
+    const boom = new Error("getter boom");
+    const row = {};
+    Object.defineProperty(row, "x", {
+      get() {
+        throw boom;
+      },
+      enumerable: true,
+    });
+    expect(() => console.table([row])).toThrow(boom);
+  });
+
+  test("a throwing Proxy trap on the tabular data", () => {
+    const boom = new Error("proxy boom");
+    const data = new Proxy(
+      { a: 1 },
+      {
+        ownKeys() {
+          throw boom;
+        },
+      },
+    );
+    expect(() => console.table(data)).toThrow(boom);
+  });
+
+  test("a throwing custom inspect in a cell", () => {
+    const boom = new Error("inspect boom");
+    const cell = {
+      [Bun.inspect.custom]() {
+        throw boom;
+      },
+    };
+    expect(() => console.table([{ x: cell }])).toThrow(boom);
+  });
+
+  test("nothing is printed and the error is uncaught in a script", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.table([{ get x() { throw new Error("table getter boom"); } }]);
+console.log("unreachable");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("table getter boom");
+    expect(exitCode).toBe(1);
+  });
+});

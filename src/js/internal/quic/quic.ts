@@ -166,8 +166,8 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
 
-const kClientHttp = Symbol("kClientHttp");
-const kNoteClientHttp = Symbol("kNoteClientHttp");
+const kClientEngineKey = Symbol("kClientEngineKey");
+const kNoteClientEngine = Symbol("kNoteClientEngine");
 
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
 Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
@@ -3887,7 +3887,7 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    clientHttp: undefined,
+    clientEngineKey: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
@@ -4363,12 +4363,12 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  get [kClientHttp]() {
-    return this.#inner.clientHttp;
+  get [kClientEngineKey]() {
+    return this.#inner.clientEngineKey;
   }
 
-  [kNoteClientHttp](wantHttp) {
-    this.#inner.clientHttp ??= wantHttp;
+  [kNoteClientEngine](key) {
+    this.#inner.clientEngineKey ??= key;
   }
 
   /** @type {boolean} */
@@ -4575,11 +4575,38 @@ function alpnWantsHttp(alpn) {
   return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
 }
 
-function findSuitableEndpoint(wantHttp) {
+/**
+ * Every option `build_engine` (src/runtime/node/quic/endpoint.rs) bakes into
+ * lsquic's per-engine settings. Only keepAlive and preferredAddressPolicy are
+ * applied per conn there and so stay out of this key.
+ */
+function clientEngineKey(wantHttp, handshakeTimeout, cc, tp, app) {
+  return (
+    `${wantHttp ? "h" : "r"}` +
+    `|${handshakeTimeout}` +
+    `|${cc}` +
+    `|${tp.initialMaxStreamDataBidiLocal}` +
+    `|${tp.initialMaxStreamDataBidiRemote}` +
+    `|${tp.initialMaxStreamDataUni}` +
+    `|${tp.initialMaxData}` +
+    `|${tp.initialMaxStreamsBidi}` +
+    `|${tp.initialMaxStreamsUni}` +
+    `|${tp.maxIdleTimeout}` +
+    `|${tp.maxUdpPayloadSize}` +
+    `|${tp.disableActiveMigration}` +
+    `|${tp.maxDatagramFrameSize}` +
+    `|${app.maxHeaderPairs}` +
+    `|${app.maxHeaderLength}` +
+    `|${app.enableConnectProtocol}` +
+    `|${app.enableDatagrams}`
+  );
+}
+
+function findSuitableEndpoint(engineKey) {
   for (const endpoint of endpointRegistry) {
     if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
-      const mode = endpoint[kClientHttp];
-      if (mode !== undefined && mode !== wantHttp) {
+      const key = endpoint[kClientEngineKey];
+      if (key !== undefined && key !== engineKey) {
         continue;
       }
       if (endpoint.listening) {
@@ -4597,7 +4624,7 @@ function findSuitableEndpoint(wantHttp) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true) {
+function processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey) {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -4605,7 +4632,7 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
     return new QuicEndpoint(endpoint);
   }
   if (reuseEndpoint && !forServer) {
-    const existing = findSuitableEndpoint(wantHttp);
+    const existing = findSuitableEndpoint(engineKey);
     if (existing !== undefined) return existing;
   }
   return new QuicEndpoint();
@@ -4997,9 +5024,6 @@ function processSessionOptions(options, config = kEmptyObject) {
     }
   }
 
-  const wantHttp = forServer || alpnWantsHttp(options.alpn);
-  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, wantHttp);
-
   // Normalize into the shape Node stores and returns from `session.applicationOptions`.
   const {
     maxHeaderPairs = 128n,
@@ -5011,6 +5035,23 @@ function processSessionOptions(options, config = kEmptyObject) {
     enableConnectProtocol = false,
     enableDatagrams = true,
   } = application;
+  const normalizedApplication = {
+    __proto__: null,
+    maxHeaderPairs: BigInt(maxHeaderPairs),
+    maxHeaderLength: BigInt(maxHeaderLength),
+    maxFieldSectionSize: BigInt(maxFieldSectionSize),
+    qpackMaxDtableCapacity: BigInt(qpackMaxDTableCapacity),
+    qpackEncoderMaxDtableCapacity: BigInt(qpackEncoderMaxDTableCapacity),
+    qpackBlockedStreams: BigInt(qpackBlockedStreams),
+    enableConnectProtocol: !!enableConnectProtocol,
+    enableDatagrams: !!enableDatagrams,
+  };
+
+  const engineKey = forServer
+    ? undefined
+    : clientEngineKey(alpnWantsHttp(options.alpn), handshakeTimeout, cc, transportParams, normalizedApplication);
+  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey);
+
   if (sessionTicket !== undefined) {
     if (!isArrayBufferView(sessionTicket)) {
       throw new ERR_INVALID_ARG_TYPE("options.sessionTicket", ["ArrayBufferView"], sessionTicket);
@@ -5030,21 +5071,10 @@ function processSessionOptions(options, config = kEmptyObject) {
     }
   }
 
-  const normalizedApplication = {
-    __proto__: null,
-    maxHeaderPairs: BigInt(maxHeaderPairs),
-    maxHeaderLength: BigInt(maxHeaderLength),
-    maxFieldSectionSize: BigInt(maxFieldSectionSize),
-    qpackMaxDtableCapacity: BigInt(qpackMaxDTableCapacity),
-    qpackEncoderMaxDtableCapacity: BigInt(qpackEncoderMaxDTableCapacity),
-    qpackBlockedStreams: BigInt(qpackBlockedStreams),
-    enableConnectProtocol: !!enableConnectProtocol,
-    enableDatagrams: !!enableDatagrams,
-  };
-
   return {
     __proto__: null,
     endpoint: actualEndpoint,
+    engineKey,
     version,
     minVersion,
     preferredAddressPolicy: getPreferredAddressPolicy(preferredAddressPolicy),
@@ -5103,7 +5133,7 @@ function processSessionOptions(options, config = kEmptyObject) {
  */
 async function listen(callback, options = kEmptyObject) {
   validateFunction(callback, "callback");
-  const { endpoint, ...sessionOptions } = processSessionOptions(options, { forServer: true });
+  const { endpoint, engineKey: _, ...sessionOptions } = processSessionOptions(options, { forServer: true });
   endpoint[kListen](callback, sessionOptions);
 
   if (onEndpointListeningChannel.hasSubscribers) {
@@ -5134,7 +5164,7 @@ async function connect(address, options = kEmptyObject) {
     address = new SocketAddress(address);
   }
 
-  const { endpoint, ...rest } = processSessionOptions(options);
+  const { endpoint, engineKey, ...rest } = processSessionOptions(options);
 
   if (onEndpointConnectChannel.hasSubscribers) {
     onEndpointConnectChannel.publish({
@@ -5145,9 +5175,10 @@ async function connect(address, options = kEmptyObject) {
     });
   }
 
-  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
+  // Before kConnect: build_engine may run and then throw, leaving a baked engine whose key must already be set.
+  endpoint[kNoteClientEngine](engineKey);
 
-  endpoint[kNoteClientHttp](alpnWantsHttp(options.alpn));
+  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({

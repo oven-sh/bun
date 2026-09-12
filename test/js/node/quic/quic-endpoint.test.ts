@@ -172,6 +172,72 @@ describe("node:quic under --isolate", () => {
   }, 30000);
 });
 
+// lsquic also bakes application/transport-param settings into the per-engine
+// config at build_engine time, so a shared client endpoint whose engine was
+// built for one connect()'s options cannot honour a later connect()'s. Node
+// applies these per session, so default reuse must be keyed on them too; a
+// subprocess keeps the endpoint registry clean of this file's other tests.
+describe("default connect() endpoint reuse", () => {
+  test("per-session engine options apply on a later connect() with different values", async () => {
+    const fixture = `
+      import { connect, listen } from "node:quic";
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+      const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+      const server = await listen(async s => { await s.closed.catch(() => {}); }, {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 3 },
+      });
+      async function dial(opts) {
+        const c = await connect(server.address, {
+          servername: "localhost", verifyPeer: "manual",
+          transportParams: { maxIdleTimeout: 3 }, ...opts,
+        });
+        c.closed.catch(() => {});
+        await c.opened;
+        const tp = c.localTransportParams;
+        const ep = c.endpoint;
+        c.close();
+        return { tp, ep };
+      }
+      const a = await dial({ transportParams: { maxIdleTimeout: 3, initialMaxStreamsBidi: 10 } });
+      const b = await dial({ transportParams: { maxIdleTimeout: 3, initialMaxStreamsBidi: 50 } });
+      const c = await dial({ transportParams: { maxIdleTimeout: 3, initialMaxStreamsBidi: 50 } });
+      const d = await dial({ application: { maxHeaderPairs: 1024 } });
+      const e = await dial({});
+      const f = await dial({ cc: "bbr" });
+      console.log(JSON.stringify({
+        a_eq_b: a.ep === b.ep,
+        b_eq_c: b.ep === c.ep,
+        d_eq_e: d.ep === e.ep,
+        e_eq_f: e.ep === f.ep,
+        a_streams: String(a.tp.initialMaxStreamsBidi),
+        b_streams: String(b.tp.initialMaxStreamsBidi),
+      }));
+      server.destroy();
+      for (const x of [a, b, d, e, f]) await x.ep?.close?.();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.includes("ERR_") ? stderr : "").toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      a_eq_b: false,
+      b_eq_c: true,
+      d_eq_e: false,
+      e_eq_f: false,
+      a_streams: "10",
+      b_streams: "50",
+    });
+    expect(exitCode).toBe(0);
+  }, 30000);
+});
+
 // An endpoint that both listens and dials keeps two lsquic engines on one
 // socket. A 1-RTT packet for the client leg that also reaches the server
 // engine misses its conns_hash, and the server engine answers unknown packets

@@ -253,9 +253,26 @@ fn check_option_usage(
     global: &JSGlobalObject,
     options: &[OptionDefinition],
     allow_positionals: bool,
+    allow_negative: bool,
     token: &OptionToken,
 ) -> JsResult<()> {
-    if let Some(option_idx) = token.option_idx {
+    let mut option_idx = token.option_idx;
+    let mut option_name = token.name;
+
+    if option_idx.is_none() && allow_negative && !token.negative {
+        let name = token.name.as_bun_string(global)?;
+        if name.has_prefix_comptime(b"no-") {
+            let stripped = name.substring(3);
+            if let Some(idx) = find_option_by_long_name(stripped, options) {
+                if options[idx].r#type == OptionValueType::Boolean {
+                    option_idx = Some(idx);
+                    option_name = ValueRef::Bunstr(stripped);
+                }
+            }
+        }
+    }
+
+    if let Some(option_idx) = option_idx {
         let option = &options[option_idx];
         match option.r#type {
             OptionValueType::String => {
@@ -288,7 +305,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global)?,
+                            option_name.as_bun_string(global)?,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -311,7 +328,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global)?,
+                            option_name.as_bun_string(global)?,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -782,7 +799,13 @@ impl<'a> ParseArgsState<'a> {
         match &token_generic {
             Token::Option(token) => {
                 if self.strict {
-                    check_option_usage(global, self.option_defs, self.allow_positionals, token)?;
+                    check_option_usage(
+                        global,
+                        self.option_defs,
+                        self.allow_positionals,
+                        self.allow_negative,
+                        token,
+                    )?;
                     check_option_like_value(global, token)?;
                 }
                 store_option(

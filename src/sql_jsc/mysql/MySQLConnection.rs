@@ -1416,6 +1416,11 @@ impl MySQLConnection {
         last_insert_id: u64,
         affected_rows: u64,
     ) {
+        // The mode this result's statement was lexed with is the one in
+        // effect before it ran, so read it before taking the new flags.
+        let backslash_escapes = !self
+            .status_flags
+            .has(StatusFlag::SERVER_STATUS_NO_BACKSLASH_ESCAPES);
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
         debug!(
@@ -1432,8 +1437,17 @@ impl MySQLConnection {
         }
 
         // Short-lived borrow via the audited accessor; dropped before the
-        // re-entrant `on_query_result` call below.
-        let result_count = request.get_statement().map_or(0, |s| s.result_count);
+        // re-entrant `on_query_result` call below. Without a result set
+        // (no HEADER_RECEIVED) the OK packet's affected rows are the count.
+        let count = request.get_statement().map_or(affected_rows, |s| {
+            if s.execution_flags
+                .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED)
+            {
+                s.result_count
+            } else {
+                affected_rows
+            }
+        });
         // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
         // audited container_of accessor. The `&JSMySQLConnection` lives only for
         // this call (same footprint as the prior `(*ptr).on_query_result()`
@@ -1443,10 +1457,11 @@ impl MySQLConnection {
         self.js_connection_ref().on_query_result(
             request,
             &MySQLQueryResult {
-                result_count,
+                count,
                 last_insert_id,
                 affected_rows,
                 is_last_result,
+                backslash_escapes,
             },
         );
 

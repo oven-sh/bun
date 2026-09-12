@@ -1410,6 +1410,8 @@ console.log(result.lastInsertRowid); // MySQL's LAST_INSERT_ID()
 // Handling affected rows
 const updated = await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
 console.log(updated.affectedRows); // Number of rows updated
+console.log(updated.count); // Same number; `count` is the rows affected on every adapter
+console.log(updated.command); // "UPDATE"
 
 // Using MySQL-specific functions
 const now = await mysql`SELECT NOW() as current_time`;

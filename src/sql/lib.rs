@@ -43,6 +43,8 @@ pub mod mysql {
     pub mod mysql_types;
     #[path = "SSLMode.rs"]
     pub mod ssl_mode;
+    #[path = "StatementKeyword.rs"]
+    pub mod statement_keyword;
     #[path = "StatusFlags.rs"]
     pub mod status_flags;
     #[path = "TLSStatus.rs"]

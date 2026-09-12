@@ -844,6 +844,67 @@ impl PackageManager {
         }
     }
 
+    /// Trust comes from package.json (root and workspaces). Returns the set `bun.lock` last saved.
+    pub fn load_trusted_dependencies_from_package_json(
+        &mut self,
+    ) -> Result<Option<lockfile::TrustedDependenciesSet>, Error> {
+        use self::workspace_package_json_cache::{GetJSONOptions, GetResult};
+
+        let mut paths: Vec<Box<[u8]>> =
+            Vec::with_capacity(1 + self.lockfile.workspace_paths.count());
+        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written once in `init` on this
+        // thread and only read after.
+        paths.push(Box::from(
+            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+        ));
+        let string_bytes = self.lockfile.buffers.string_bytes.as_slice();
+        for workspace_path in self.lockfile.workspace_paths.values() {
+            let mut path = bun_paths::AutoAbsPath::init_top_level_dir();
+            path.append(workspace_path.slice(string_bytes))?;
+            path.append(b"package.json")?;
+            paths.push(Box::from(path.slice()));
+        }
+
+        let log = self.log_mut();
+        let bump = bun_alloc::Arena::new();
+        let mut trusted: Option<lockfile::TrustedDependenciesSet> = None;
+        for (i, path) in paths.iter().enumerate() {
+            let failed = match self.workspace_package_json_cache.get_with_path(
+                log,
+                path,
+                GetJSONOptions::default(),
+            ) {
+                GetResult::Entry(entry) => match Package::append_trusted_dependencies(
+                    &mut trusted,
+                    &bump,
+                    log,
+                    &entry.source,
+                    &entry.root,
+                ) {
+                    Ok(()) => continue,
+                    // `log` carries the message.
+                    Err(_) => None,
+                },
+                // The installer also skips a lockfile workspace that is missing on disk.
+                GetResult::ReadErr(Error::Sys(
+                    bun_errno::SystemErrno::ENOENT | bun_errno::SystemErrno::ENOTDIR,
+                )) if i > 0 => continue,
+                GetResult::ReadErr(err) => Some(("read", err)),
+                GetResult::ParseErr(err) => Some(("parse", err)),
+            };
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            if let Some((verb, err)) = failed {
+                Output::err(err, "failed to {} '{}'", (verb, bstr::BStr::new(&**path)));
+            }
+            Global::exit(1);
+        }
+
+        Ok(core::mem::replace(
+            &mut self.lockfile.trusted_dependencies,
+            trusted,
+        ))
+    }
+
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from

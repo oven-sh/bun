@@ -6,7 +6,7 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
-    LoadResult, Lockfile,
+    LoadResult, Lockfile, TrustedDependenciesSet,
     package::PackageColumns as _,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
     tree,
@@ -24,6 +24,18 @@ use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
+
+/// Blocked unless both package.json (now) and `bun.lock` (as of its last save) trust it.
+fn scripts_blocked(
+    lockfile: &Lockfile,
+    recorded: &Option<TrustedDependenciesSet>,
+    alias: &[u8],
+    pkg_name: &[u8],
+    resolution: &Resolution,
+) -> bool {
+    !lockfile.has_trusted_dependency(alias, pkg_name, resolution)
+        || !lockfile.has_trusted_dependency_in(recorded.as_ref(), alias, pkg_name, resolution)
+}
 
 pub(crate) struct DefaultTrustedCommand;
 
@@ -75,6 +87,7 @@ impl UntrustedCommand {
         // only path to the singleton for the rest of this fn (same as the
         // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
+        let recorded = pm.load_trusted_dependencies_from_package_json()?;
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -97,7 +110,7 @@ impl UntrustedCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked(lockfile, &recorded, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -272,6 +285,9 @@ impl TrustCommand {
                 meta.set_has_install_script(false);
             }
         }
+        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced
+        // while this runs.
+        let recorded = unsafe { (*pm_raw).load_trusted_dependencies_from_package_json()? };
 
         let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
         for arg in &args[2..] {
@@ -318,7 +334,7 @@ impl TrustCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked(lockfile, &recorded, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -399,7 +415,9 @@ impl TrustCommand {
 
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
+                                && scripts_blocked(
+                                    lockfile,
+                                    &recorded,
                                     alias,
                                     packages.items_name()[package_id as usize].slice(buf),
                                     resolution,
@@ -576,12 +594,10 @@ impl TrustCommand {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
 
-        // could be null if these are the first packages to be trusted
+        // Record only what bun.lock had plus the scripts that just ran.
         // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
         unsafe {
-            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-            }
+            (*pm_raw).lockfile.trusted_dependencies = Some(recorded.unwrap_or_default());
         }
 
         let mut total_scripts_ran: usize = 0;

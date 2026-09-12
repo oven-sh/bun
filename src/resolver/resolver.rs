@@ -6421,6 +6421,19 @@ impl<'a> Resolver<'a> {
                         }
                     }
                 }
+                if let Some(found) = tsconfig_path {
+                    if is_shared_scratch_dir(fd) {
+                        let _ = self.log_mut().add_debug_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Ignoring {} because its directory is writable by every user on the system. Pass --tsconfig-override to load it anyway.",
+                                bun_core::fmt::quote(found)
+                            ),
+                        );
+                        tsconfig_path = None;
+                    }
+                }
             } else if parent.is_none() {
                 // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
                 // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
@@ -6722,6 +6735,23 @@ fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(windows)]
     {
         path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
+    }
+}
+
+/// Mode `1777` like `/tmp` (any user can create a file in it), or a mode that cannot be read.
+fn is_shared_scratch_dir(dir: FD) -> bool {
+    #[cfg(unix)]
+    {
+        const SHARED: libc::mode_t = libc::S_ISVTX | libc::S_IWOTH;
+        if !dir.is_valid() {
+            return true;
+        }
+        bun_sys::fstat(dir).map_or(true, |st| (st.st_mode & SHARED) == SHARED)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        false
     }
 }
 

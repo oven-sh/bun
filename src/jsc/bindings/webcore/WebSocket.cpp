@@ -64,13 +64,42 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
 
+// The URL as it appears in script-visible error messages: the userinfo
+// password (`scheme://user:PASSWORD@host`) is replaced by "***" so that a
+// logged ErrorEvent or SyntaxError does not leak it. This works on the raw
+// string so that an invalid URL is masked too.
+static String urlForErrorMessage(const String& url)
+{
+    size_t schemeEnd = url.find("://"_s);
+    if (schemeEnd == notFound)
+        return url;
+    size_t authorityStart = schemeEnd + 3;
+    size_t authorityEnd = url.find([](char16_t c) { return c == '/' || c == '?' || c == '#'; }, authorityStart);
+    if (authorityEnd == notFound)
+        authorityEnd = url.length();
+    size_t at = url.reverseFind('@', authorityEnd);
+    if (at == notFound || at < authorityStart)
+        return url;
+    size_t colon = url.find(':', authorityStart);
+    if (colon == notFound || colon + 1 >= at)
+        return url;
+    return makeString(StringView(url).left(colon + 1), "***"_s, StringView(url).substring(at));
+}
+
+static String urlForErrorMessage(const URL& url)
+{
+    // Mask first, then shorten, so that the ellipsis cannot cut the userinfo
+    // and leave part of the password behind.
+    return URL { urlForErrorMessage(url.string()) }.stringCenterEllipsizedToLength();
+}
+
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
     ErrorEvent::Init eventInit = {};
     if (reason.isEmpty()) {
-        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed"_s);
+        eventInit.message = makeString("WebSocket connection to '"_s, urlForErrorMessage(webSocket.url()), "' failed"_s);
     } else {
-        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed: "_s, reason);
+        eventInit.message = makeString("WebSocket connection to '"_s, urlForErrorMessage(webSocket.url()), "' failed: "_s, reason);
     }
     eventInit.filename = String();
     eventInit.bubbles = false;
@@ -216,7 +245,7 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
 
     URL url { proxyUrl };
     if (!url.isValid())
-        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, urlForErrorMessage(proxyUrl)) };
 
     // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
     // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
@@ -420,7 +449,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     if (!m_url.isValid()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, urlForErrorMessage(m_url)) };
     }
 
     bool is_unix = m_url.protocolIs("ws+unix"_s) || m_url.protocolIs("wss+unix"_s);
@@ -429,12 +458,12 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, urlForErrorMessage(m_url)) };
     }
     if (m_url.hasFragmentIdentifier()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { SyntaxError, makeString("URL has fragment component "_s, urlForErrorMessage(m_url)) };
     }
 
     // FIXME: There is a disagreement about restriction of subprotocols between WebSocket API and hybi-10 protocol
@@ -479,7 +508,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         auto pathname = m_url.path();
         if (pathname.isEmpty()) {
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, urlForErrorMessage(m_url), " (missing unix socket path)"_s) };
         }
         size_t colon = pathname.find(':');
         if (colon == notFound) {
@@ -499,7 +528,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         }
         if (unixSocketPathString.isEmpty()) {
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, urlForErrorMessage(m_url), " (missing unix socket path)"_s) };
         }
         // Host header defaults to "localhost" over a unix socket, matching
         // Node's http.request({ socketPath }) and the npm `ws` package.

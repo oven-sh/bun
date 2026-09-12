@@ -1601,7 +1601,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(concurrency) = args.option(b"--concurrent-scripts") {
-            cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
+            // 0 means the default, like `[install] concurrentScripts = 0` in bunfig.toml.
+            // With a limit of 0 no script can start and the wait loops spin.
+            cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10)
+                .ok()
+                .filter(|&n| n != 0);
         }
 
         if let Some(cwd_) = args.option(b"--cwd") {

@@ -504,6 +504,33 @@ describe("Bun.JSONL", () => {
           }
         });
 
+        test("a Uint8Array that ends inside the UTF-8 byte order mark", () => {
+          const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('{"a":1}\n{"b":2}\n')]);
+          const incomplete = { values: [], read: 0, done: false, error: null };
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 1))).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 2))).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes, 0, 2)).toEqual(incomplete);
+          expect(Bun.JSONL.parseChunk(bytes.subarray(0, 3))).toEqual({ values: [], read: 3, done: true, error: null });
+          expect(Bun.JSONL.parse(bytes.subarray(0, 2))).toEqual([]);
+
+          // The streaming loop from the docs, one byte at a time.
+          const received: unknown[] = [];
+          const errors: string[] = [];
+          let buffer: Uint8Array = new Uint8Array(0);
+          for (let offset = 0; offset < bytes.length; offset++) {
+            buffer = Buffer.concat([buffer, bytes.subarray(offset, offset + 1)]);
+            const { values, read, error } = Bun.JSONL.parseChunk(buffer);
+            if (error) errors.push(`offset ${offset}: ${error.message}`);
+            received.push(...values);
+            buffer = buffer.subarray(read);
+          }
+          expect({ errors, received }).toEqual({ errors: [], received: [{ a: 1 }, { b: 2 }] });
+
+          // EF 41 is not a prefix of the mark, and the mark is only skipped at the start of the buffer.
+          expect(Bun.JSONL.parseChunk(new Uint8Array([0xef, 0x41])).error).toBeInstanceOf(SyntaxError);
+          expect(Bun.JSONL.parseChunk(bytes, 1, 2).error).toBeInstanceOf(SyntaxError);
+        });
+
         test("an escape or an exponent with its bad character in the input is still an error", () => {
           const malformed = [
             '"\\uz',

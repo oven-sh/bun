@@ -434,6 +434,21 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
+// How the UTF-8 byte order mark (EF BB BF) matches the start of the input. Partial: the input
+// ends inside the mark, so it is incomplete and not malformed.
+enum class UTF8BOMMatch : uint8_t { None,
+    Partial,
+    Full };
+
+static UTF8BOMMatch matchUTF8BOM(const uint8_t* data, size_t length)
+{
+    static constexpr uint8_t bom[] = { 0xEF, 0xBB, 0xBF };
+    size_t compared = std::min(length, sizeof(bom));
+    if (!compared || memcmp(data, bom, compared))
+        return UTF8BOMMatch::None;
+    return compared == sizeof(bom) ? UTF8BOMMatch::Full : UTF8BOMMatch::Partial;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -458,12 +473,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
         size_t length = view->byteLength();
 
         // Skip UTF-8 BOM if present
-        if (length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
+        auto bom = matchUTF8BOM(data, length);
+        if (bom == UTF8BOMMatch::Full) {
             data += 3;
             length -= 3;
         }
 
-        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
+        if (bom == UTF8BOMMatch::Partial) {
+            result = { 0, JSC::StreamingJSONParseResult::Status::NeedMoreData };
+        } else if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
             auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
             result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
         } else {
@@ -554,13 +572,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
 
         // Skip UTF-8 BOM if present at the start of the slice
         size_t bomOffset = 0;
-        if (start == 0 && sliceLen >= 3 && sliceData[0] == 0xEF && sliceData[1] == 0xBB && sliceData[2] == 0xBF) {
+        auto bom = start == 0 ? matchUTF8BOM(sliceData, sliceLen) : UTF8BOMMatch::None;
+        if (bom == UTF8BOMMatch::Full) {
             sliceData += 3;
             sliceLen -= 3;
             bomOffset = 3;
         }
 
-        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
+        if (bom == UTF8BOMMatch::Partial) {
+            // The chunk ends inside the BOM. Nothing is consumed until the rest of it arrives.
+            result = { 0, JSC::StreamingJSONParseResult::Status::NeedMoreData };
+        } else if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
             auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
             result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
             // For ASCII, byte offset = character offset

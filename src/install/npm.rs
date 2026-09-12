@@ -1527,6 +1527,40 @@ impl PackageManifest {
         self.pkg.releases.keys.get(&self.versions)
     }
 
+    /// Published prerelease versions, oldest first, as sorted at serialization time.
+    pub fn prerelease_versions(&self) -> &[Semver::Version] {
+        self.pkg.prereleases.keys.get(&self.versions)
+    }
+
+    /// Resolves the spec of `name@spec` like `npm view`: an exact dist-tag name wins, else the best range match.
+    pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
+        use crate::dependency::{Tag, TagExt as _};
+        let spec = if spec.is_empty() { b"latest" } else { spec };
+        // Checked before classifying because published tag names like `v12-lts` read as a range.
+        if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
+            return self.find_by_version(version).ok_or(Error::DistTagNotFound);
+        }
+        match Tag::infer(spec) {
+            Tag::DistTag => Err(Error::DistTagNotFound),
+            Tag::Npm => {
+                // `v1.2.3` -> `1.2.3`, as `dependency::parse_with_tag` does.
+                let range = if spec.len() > 1 && spec[0] == b'v' {
+                    &spec[1..]
+                } else {
+                    spec
+                };
+                let query = Semver::query::parse(range, SlicedString::init(range, range))?;
+                // Only unknown words (e.g. `npm:x@1`): the lenient parser produced a match-all group.
+                if query.is_empty() {
+                    return Err(Error::NoMatchingVersion);
+                }
+                self.find_best_version(&query, range)
+                    .ok_or(Error::NoMatchingVersion)
+            }
+            _ => Err(Error::NoMatchingVersion),
+        }
+    }
+
     /// `(tag, version)` pairs of the dist-tags.
     pub fn dist_tags(&self) -> impl Iterator<Item = (&[u8], Semver::Version)> + '_ {
         let versions = self.pkg.dist_tags.versions.get(&self.versions);

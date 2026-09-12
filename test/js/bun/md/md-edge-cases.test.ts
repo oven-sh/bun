@@ -1000,23 +1000,32 @@ describe("permissive autolinks and emphasis delimiters", () => {
     expect(bad).toEqual([]);
   });
 
-  test("a flood of links that are cut at emphasis delimiters renders in linear time", async () => {
-    // Each "www." link runs to the end of the token, over the openers of the
-    // links after it. Every one of those openers closes outside of the token.
+  test("floods of links next to emphasis delimiters render in linear time", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const count = (html, tag) => html.split(tag).length - 1;
         const n = 20000;
-        const html = Bun.markdown.html(fill(n, "*www.a.bc/") + "x" + fill(n, " y*"), { autolinks: true });
-        const count = tag => html.split(tag).length - 1;
-        if (count("<em>") !== n || count("</em>") !== n) {
-          throw new Error("unbalanced: " + count("<em>") + " <em>, " + count("</em>") + " </em>");
+
+        // Each "www." link runs to the end of the token, over the openers of
+        // the links after it. Every one of those openers closes outside of the
+        // token, so the first link is cut and the rest of the token is text.
+        const cut = Bun.markdown.html(fill(n, "*www.a.bc/") + "x" + fill(n, " y*"), { autolinks: true });
+        if (count(cut, "<em>") !== n || count(cut, "</em>") !== n) {
+          throw new Error("unbalanced: " + count(cut, "<em>") + " <em>, " + count(cut, "</em>") + " </em>");
         }
-        if (!html.startsWith('<p><em><a href="http://www.a.bc/">www.a.bc/</a><em>www.a.bc/<em>')) {
-          throw new Error("unexpected output: " + JSON.stringify(html.slice(0, 120)));
+        if (!cut.startsWith('<p><em><a href="http://www.a.bc/">www.a.bc/</a><em>www.a.bc/<em>')) {
+          throw new Error("unexpected output: " + JSON.stringify(cut.slice(0, 120)));
+        }
+
+        // The closers lie in a link between plain boundaries, so the openers
+        // stay literal. A literal "*" is no boundary: no link starts after it.
+        const literal = Bun.markdown.html(fill(n, "*www.a.bc/") + " www.x.y/" + fill(n, "a*.") + "a", { autolinks: true });
+        if (count(literal, "<em>") !== 0 || count(literal, "<a ") !== 1) {
+          throw new Error("unexpected output: " + JSON.stringify(literal.slice(0, 120)));
         }
         console.log("DONE");
         `,

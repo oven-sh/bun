@@ -17,13 +17,9 @@ pub struct Autolink {
 
 pub(crate) type AutolinkResult = Option<Autolink>;
 
-/// An emphasis char next to a permissive autolink is a boundary only if its
-/// delimiter run was paired as an opener or closer. `resolved` is sorted by
-/// position.
-fn is_emph_boundary_resolved(content: &[u8], at: usize, resolved: &[EmphDelim]) -> bool {
-    if !EMPH_DELIMS.contains(content[at]) {
-        return true;
-    }
+/// True if the emphasis char at `at` lies in a delimiter run that was paired as
+/// an opener or closer. `resolved` is sorted by position.
+fn is_paired_delimiter(resolved: &[EmphDelim], at: usize) -> bool {
     let idx = resolved.partition_point(|d| d.pos + d.count <= at);
     resolved
         .get(idx)
@@ -146,23 +142,27 @@ const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
 const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
 
 /// Check left boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `emph`, an emphasis delimiter (*_~) is a boundary too if its run in
+/// `emph` (the delimiter runs of `content`) was paired.
+fn check_left_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos == 0 {
         return true;
     }
     let c = content[pos - 1];
-    LEFT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    LEFT_BOUNDARY.contains(c)
+        || (EMPH_DELIMS.contains(c) && emph.is_some_and(|runs| is_paired_delimiter(runs, pos - 1)))
 }
 
 /// Check right boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `emph`, an emphasis delimiter (*_~) is a boundary too if its run in
+/// `emph` (the delimiter runs of `content`) was paired.
+fn check_right_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos >= content.len() {
         return true;
     }
     let c = content[pos];
-    RIGHT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    RIGHT_BOUNDARY.contains(c)
+        || (EMPH_DELIMS.contains(c) && emph.is_some_and(|runs| is_paired_delimiter(runs, pos)))
 }
 
 struct Scheme {
@@ -187,29 +187,24 @@ pub(crate) fn find_permissive_autolink(
     resolved: &[EmphDelim],
     cut_end: &mut usize,
 ) -> AutolinkResult {
-    let mut al = scan_permissive_autolink(content, pos, allow_emph, content.len())?;
-    if allow_emph && al.beg > 0 && !is_emph_boundary_resolved(content, al.beg - 1, resolved) {
-        return None;
-    }
+    let emph = allow_emph.then_some(resolved);
+    let al = scan_permissive_autolink(content, pos, emph, content.len())?;
     // No paired run lies between the start of a link and its trigger
     // character, so only the runs after `pos` matter.
     let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
-    if let Some(limit) = split_pair_limit(runs, al.end) {
-        *cut_end = al.end;
-        al = scan_permissive_autolink(content, pos, allow_emph, limit)?;
-        debug_assert!(split_pair_limit(runs, al.end).is_none());
-    }
-    if allow_emph && al.end < content.len() && !is_emph_boundary_resolved(content, al.end, resolved)
-    {
-        return None;
-    }
+    let Some(limit) = split_pair_limit(runs, al.end) else {
+        return Some(al);
+    };
+    *cut_end = al.end;
+    let al = scan_permissive_autolink(content, pos, emph, limit)?;
+    debug_assert!(split_pair_limit(runs, al.end).is_none());
     Some(al)
 }
 
 /// A permissive autolink whose boundaries do not depend on how the emphasis
 /// delimiters around it resolve.
 pub(crate) fn find_strict_permissive_autolink(content: &[u8], pos: usize) -> AutolinkResult {
-    scan_permissive_autolink(content, pos, false, content.len())
+    scan_permissive_autolink(content, pos, None, content.len())
 }
 
 /// Returns where a link that covers the `runs` before `end` has to stop so
@@ -238,7 +233,7 @@ fn split_pair_limit(runs: &[EmphDelim], end: usize) -> Option<usize> {
 fn scan_permissive_autolink(
     content: &[u8],
     pos: usize,
-    allow_emph: bool,
+    emph: Option<&[EmphDelim]>,
     limit: usize,
 ) -> AutolinkResult {
     if pos >= content.len() {
@@ -271,7 +266,7 @@ fn scan_permissive_autolink(
                     && &content[pos + 1..pos + 1 + suflen] == scheme.suffix
                 {
                     let beg = pos - slen;
-                    if !check_left_boundary(content, beg, allow_emph) {
+                    if !check_left_boundary(content, beg, emph) {
                         continue;
                     }
 
@@ -296,7 +291,7 @@ fn scan_permissive_autolink(
 
                     end = post_process_autolink_end(content, beg, end);
 
-                    if !check_right_boundary(content, end, allow_emph) {
+                    if !check_right_boundary(content, end, emph) {
                         continue;
                     }
 
@@ -331,7 +326,7 @@ fn scan_permissive_autolink(
             return None; // empty username
         }
 
-        if !check_left_boundary(content, beg, allow_emph) {
+        if !check_left_boundary(content, beg, emph) {
             return None;
         }
 
@@ -342,7 +337,7 @@ fn scan_permissive_autolink(
         }
         let end = host.end;
 
-        if !check_right_boundary(content, end, allow_emph) {
+        if !check_right_boundary(content, end, emph) {
             return None;
         }
 
@@ -357,7 +352,7 @@ fn scan_permissive_autolink(
         }
 
         let beg = pos - 3;
-        if !check_left_boundary(content, beg, allow_emph) {
+        if !check_left_boundary(content, beg, emph) {
             return None;
         }
 
@@ -380,7 +375,7 @@ fn scan_permissive_autolink(
 
         end = post_process_autolink_end(content, beg, end);
 
-        if !check_right_boundary(content, end, allow_emph) {
+        if !check_right_boundary(content, end, emph) {
             return None;
         }
 

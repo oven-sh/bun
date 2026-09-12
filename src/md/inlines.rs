@@ -9,8 +9,8 @@ pub(crate) const MAX_EMPH_MATCHES: usize = 6;
 
 /// Snapshot of an enclosing slice's walk state while one of its link/image/
 /// wikilink labels is rendered. `base..end` locate the enclosing slice
-/// within the block's inline content; `i`/`text_start`/`delim_cursor`/
-/// `no_autolink_before` are local to that slice. See `process_inline_content`.
+/// within the block's inline content; `i`/`text_start`/`delim_cursor` are
+/// local to that slice. See `process_inline_content`.
 pub(crate) struct LabelFrame {
     base: usize,
     end: usize,
@@ -222,7 +222,7 @@ impl Parser<'_> {
         let mut i: usize = 0;
         let mut text_start: usize = 0;
         let mut delim_cursor: usize = 0;
-        // End of the last permissive autolink candidate that was cut short.
+        // No permissive autolink starts before this offset: a cut candidate already scanned these bytes.
         let mut no_autolink_before: usize = 0;
 
         // Enter the label of a just-parsed link/image/wikilink: snapshot the
@@ -586,8 +586,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// True if `c` can be the trigger character of a permissive autolink here.
-    /// Explicit links suppress them to avoid double-wrapping (md4c issue #152).
+    /// True if `c` can trigger a permissive autolink here; explicit links suppress them (md4c issue #152).
     fn is_permissive_autolink_trigger(&self, c: u8) -> bool {
         let enabled = match c {
             b':' => self.flags.permissive_url_autolinks,
@@ -747,9 +746,7 @@ impl Parser<'_> {
                     continue;
                 }
             }
-            // Skip permissive autolinks that do not need an emphasis delimiter
-            // as a boundary. They are links whatever the delimiters resolve
-            // to, so `*`, `_` and `~` in them belong to the URL (as in GFM).
+            // A permissive autolink with plain boundaries is a link however emphasis resolves: its `*_~` are URL bytes.
             if self.is_permissive_autolink_trigger(c) {
                 if let Some(al) = find_strict_permissive_autolink(content, i) {
                     i = al.end;

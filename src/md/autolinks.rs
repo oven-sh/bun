@@ -17,8 +17,7 @@ pub struct Autolink {
 
 pub(crate) type AutolinkResult = Option<Autolink>;
 
-/// True if the emphasis char at `at` lies in a delimiter run that was paired as
-/// an opener or closer. `resolved` is sorted by position.
+/// True if `at` lies in a delimiter run of `resolved` (sorted by position) that was paired.
 fn is_paired_delimiter(resolved: &[EmphDelim], at: usize) -> bool {
     let idx = resolved.partition_point(|d| d.pos + d.count <= at);
     resolved
@@ -33,8 +32,7 @@ pub(crate) struct ScanResult {
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
-/// The component ends at `limit` at the latest. Bytes at and after `limit`
-/// still count as the neighbors of the bytes before it.
+/// It ends at `limit` at the latest. Bytes from `limit` on still count as neighbors.
 fn scan_url_component(
     content: &[u8],
     limit: usize,
@@ -142,8 +140,7 @@ const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
 const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
 
 /// Check left boundary for permissive autolinks.
-/// With `emph`, an emphasis delimiter (*_~) is a boundary too if its run in
-/// `emph` (the delimiter runs of `content`) was paired.
+/// With `emph`, an emphasis delimiter (*_~) whose run in `emph` was paired is a boundary too.
 fn check_left_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos == 0 {
         return true;
@@ -154,8 +151,7 @@ fn check_left_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -
 }
 
 /// Check right boundary for permissive autolinks.
-/// With `emph`, an emphasis delimiter (*_~) is a boundary too if its run in
-/// `emph` (the delimiter runs of `content`) was paired.
+/// With `emph`, an emphasis delimiter (*_~) whose run in `emph` was paired is a boundary too.
 fn check_right_boundary(content: &[u8], pos: usize, emph: Option<&[EmphDelim]>) -> bool {
     if pos >= content.len() {
         return true;
@@ -172,14 +168,7 @@ struct Scheme {
 
 /// Detect permissive autolinks at the given position in content.
 /// `pos` is the position of the trigger character ('@', ':', or '.').
-/// With `allow_emph`, an emphasis char is a boundary too if its run in
-/// `resolved` (the delimiter runs of `content`, sorted by position) was paired.
-///
-/// The inline walk jumps over a link and emits emphasis tags only for the
-/// delimiter runs it lands on, so a link that covers one run of a pair and not
-/// the other leaves a tag unmatched. Such a candidate is cut: it ends before
-/// the first run it may not cover, and `cut_end` receives its uncut end. The
-/// walk starts no autolink before `cut_end`, so no byte is scanned twice.
+/// A candidate that covers one run of a pair of `resolved` is cut before that run; `cut_end` gets its uncut end.
 pub(crate) fn find_permissive_autolink(
     content: &[u8],
     pos: usize,
@@ -189,8 +178,7 @@ pub(crate) fn find_permissive_autolink(
 ) -> AutolinkResult {
     let emph = allow_emph.then_some(resolved);
     let al = scan_permissive_autolink(content, pos, emph, content.len())?;
-    // No paired run lies between the start of a link and its trigger
-    // character, so only the runs after `pos` matter.
+    // No paired run lies between the start of a link and `pos`.
     let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
     let Some(limit) = split_pair_limit(runs, al.end) else {
         return Some(al);
@@ -201,14 +189,12 @@ pub(crate) fn find_permissive_autolink(
     Some(al)
 }
 
-/// A permissive autolink whose boundaries do not depend on how the emphasis
-/// delimiters around it resolve.
+/// A permissive autolink whose boundaries do not depend on emphasis resolution.
 pub(crate) fn find_strict_permissive_autolink(content: &[u8], pos: usize) -> AutolinkResult {
     scan_permissive_autolink(content, pos, None, content.len())
 }
 
-/// Returns where a link that covers the `runs` before `end` has to stop so
-/// that it covers whole emphasis pairs only, or `None` if it already does.
+/// Where to cut a link that ends at `end` so that it covers only whole pairs of `runs`; `None` if it does.
 fn split_pair_limit(runs: &[EmphDelim], end: usize) -> Option<usize> {
     // Delimiter chars opened inside the link and not closed yet.
     let mut depth: usize = 0;

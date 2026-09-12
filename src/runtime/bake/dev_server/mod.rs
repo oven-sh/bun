@@ -676,7 +676,7 @@ impl HotReloadEvent {
 
         match &mut dev_ref.testing_batch_events {
             TestingBatchEvents::Disabled => {}
-            TestingBatchEvents::Enabled(ev) => {
+            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
                 bun_core::handle_oom(ev.append(&entry_points));
                 dev_ref.publish(
                     HmrTopic::TestingWatchSynchronization,

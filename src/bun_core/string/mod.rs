@@ -585,6 +585,39 @@ impl String {
         }
         debug_assert!(self.is_thread_shareable());
     }
+    /// WebIDL `USVString` conversion: every unpaired surrogate becomes
+    /// U+FFFD. Returns `self` as is when it has none, and `OUT_OF_MEMORY`
+    /// when WTF could not allocate the replacement. Only UTF-16 is checked:
+    /// Latin-1 cannot hold a surrogate, and JSC decodes an encoded surrogate
+    /// in UTF-8 to U+FFFD.
+    pub fn into_well_formed(self) -> Self {
+        if !self.is_utf16() {
+            return self;
+        }
+        let units = self.utf16();
+        if strings::is_valid_utf16(units) {
+            return self;
+        }
+        // An unpaired surrogate and U+FFFD are one unit each, so the length
+        // does not change.
+        let (out, buf) = Self::create_uninitialized_utf16(units.len());
+        if out.is_dead() {
+            return out;
+        }
+        let mut i = 0;
+        while i < units.len() {
+            let (cp, adv) = strings::decode_utf16_with_fffd(&units[i..]);
+            let adv = usize::from(adv);
+            if adv == 2 {
+                buf[i..i + 2].copy_from_slice(&units[i..i + 2]);
+            } else {
+                // One unit: a BMP code unit, or U+FFFD for an unpaired surrogate.
+                buf[i] = cp as u16;
+            }
+            i += adv;
+        }
+        out
+    }
     /// What [`thread_isolated_copy`] yields: no thread-affine state (not an
     /// atom, symbol or substring), so the value may be handed to one other
     /// thread. Non-WTF tags are inert and always qualify.

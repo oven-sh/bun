@@ -2066,7 +2066,8 @@ describe("bundler", () => {
         export function Resolve({ flag }) {
           useEffect(() => {});
           const resolved = flag ? require.resolve("node:path") : require.resolve("node:util");
-          return resolved;
+          // A bundle for this target resolves these to "path" and "util".
+          return resolved.replace("node:", "");
         }
         export function RequireOrModule({ flag }) {
           useEffect(() => {});

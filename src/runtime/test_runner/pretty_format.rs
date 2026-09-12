@@ -1747,9 +1747,8 @@ impl<'a> Formatter<'a> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each_with_limit(
+                        let result = value.for_each(
                             global,
-                            u32::try_from(length).unwrap_or(0),
                             (&raw mut iter).cast::<c_void>(),
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
@@ -1795,9 +1794,8 @@ impl<'a> Formatter<'a> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each_with_limit(
+                        let result = value.for_each(
                             global,
-                            u32::try_from(length).unwrap_or(0),
                             (&raw mut iter).cast::<c_void>(),
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );

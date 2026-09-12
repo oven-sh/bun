@@ -3845,6 +3845,19 @@ describe("expect()", () => {
       expect(seen).toEqual({ steps: 1, closed: isBun ? 1 : 0 });
     });
 
+    test("a Map iterator keeps the entries after the first", () => {
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
+      ]).entries();
+      expect(entries).not.toBeEmpty();
+      expect([...entries]).toEqual([
+        ["b", 2],
+        ["c", 3],
+      ]);
+    });
+
     if (isBun) {
       test("a generator runs its finally block", () => {
         const seen = { steps: 0, cleanedUp: false };

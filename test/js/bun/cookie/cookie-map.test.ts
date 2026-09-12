@@ -150,6 +150,76 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.expires).toEqual(new Date("Thu, 02 Jan 2031 00:00:00 GMT"));
   });
 
+  // RFC 6265 section 5.2.2: Max-Age is ["-"]1*DIGIT. A user agent ignores any other value,
+  // so "Max-Age=1.5" is a session cookie in a browser, not one that lives for 1 second.
+  test("Cookie.parse ignores a Max-Age that is not an integer", () => {
+    for (const value of ["1.5", "60.7", "+60", "60abc", "0x10", "1e3", "", "-", "--1", " ", "six"]) {
+      const cookie = Bun.Cookie.parse(`a=b; Max-Age=${value}; Secure`);
+      expect(cookie.maxAge).toBeUndefined();
+      expect(cookie.secure).toBe(true);
+      expect(cookie.isExpired()).toBe(false);
+    }
+    // An ignored Max-Age leaves an earlier valid one, and Expires, in place.
+    const cookie = Bun.Cookie.parse("a=b; Max-Age=60; Expires=Tue, 01 Jun 2027 00:00:00 GMT; Max-Age=60.7");
+    expect(cookie.maxAge).toBe(60);
+    expect(cookie.expires).toEqual(new Date("Tue, 01 Jun 2027 00:00:00 GMT"));
+
+    for (const [value, expected] of [
+      ["0", 0],
+      ["-1", -1],
+      ["007", 7],
+      ["34560000", 34560000],
+    ] as const) {
+      expect(Bun.Cookie.parse(`a=b; Max-Age=${value}`).maxAge).toBe(expected);
+    }
+    expect(Bun.Cookie.parse("a=b; Max-Age=-0").isExpired()).toBe(true);
+  });
+
+  // A user agent clamps a Max-Age it cannot represent instead of ignoring it, so a huge
+  // value is a long-lived cookie, not a session cookie.
+  test("Cookie.parse clamps an out-of-range Max-Age", () => {
+    const huge = Bun.Cookie.parse("a=b; Max-Age=99999999999999999999");
+    expect(huge.maxAge).toBe(Number.MAX_SAFE_INTEGER);
+    expect(huge.isExpired()).toBe(false);
+    expect(huge.serialize()).toBe("a=b; Path=/; Max-Age=9007199254740991; SameSite=Lax");
+    expect(Bun.Cookie.parse("a=b; Max-Age=9007199254740992").maxAge).toBe(Number.MAX_SAFE_INTEGER);
+    expect(Bun.Cookie.parse("a=b; Max-Age=9007199254740991").maxAge).toBe(Number.MAX_SAFE_INTEGER);
+
+    const negative = Bun.Cookie.parse("a=b; Max-Age=-99999999999999999999");
+    expect(negative.maxAge).toBe(-Number.MAX_SAFE_INTEGER);
+    expect(negative.isExpired()).toBe(true);
+  });
+
+  // RFC 6265bis section 5.6: a user agent ignores a cookie attribute whose value is longer
+  // than 1024 octets, so a browser stores such a cookie with the default Path / host-only.
+  test("Cookie.parse ignores an attribute value longer than 1024 characters", () => {
+    const path1024 = "/" + Buffer.alloc(1023, "p").toString();
+    const path1025 = path1024 + "p";
+    // 16 labels of 63 characters, each with a dot in front, is exactly 1024.
+    const labels = Array.from({ length: 16 }, () => Buffer.alloc(63, "d").toString()).join(".");
+    const domain1024 = "." + labels;
+    const domain1025 = "d." + labels;
+
+    const kept = Bun.Cookie.parse(`a=b; Path=${path1024}; Domain=${domain1024}`);
+    expect(kept.path).toBe(path1024);
+    expect(kept.domain).toBe(domain1024);
+
+    expect(Bun.Cookie.parse(`a=b; Path=${path1025}; Domain=${domain1025}; Secure`).toJSON()).toEqual({
+      name: "a",
+      value: "b",
+      path: "/",
+      secure: true,
+      sameSite: "lax",
+      httpOnly: false,
+      partitioned: false,
+    });
+    // An earlier value of the same attribute is kept, a later one still wins.
+    expect(Bun.Cookie.parse(`a=b; Path=/short; Path=${path1025}`).path).toBe("/short");
+    expect(Bun.Cookie.parse(`a=b; Path=${path1025}; Path=/short`).path).toBe("/short");
+    expect(Bun.Cookie.parse(`a=b; Domain=example.com; Domain=${domain1025}`).domain).toBe("example.com");
+    expect(Bun.Cookie.parse(`a=b; Max-Age=${Buffer.alloc(1025, "9")}`).maxAge).toBeUndefined();
+  });
+
   test("Cookie.parse reads every attribute in any order", () => {
     const attributes = [
       "Max-Age=3600",

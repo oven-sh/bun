@@ -419,6 +419,14 @@ public:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
+        /* Only the socket onData is parsing right now may redirect the parser.
+         * Any other socket's request can be upgraded inside that window too (a
+         * handler upgrading a request it parked earlier, or a drained microtask
+         * finishing an async upgrade); to the parser that is an "async"
+         * upgrade and must leave the parsed socket alone. Decided before the
+         * adoption below, which may move this socket. */
+        const bool upgradingParsedSocket = httpContextData->parsingSocket == (us_socket_t *) this;
+
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
          * place (and as the copy length when it cannot be). The base size is
@@ -442,9 +450,8 @@ public:
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }
 
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
-            /* We need to tell the Http parser that we changed socket */
+        /* We need to tell the Http parser that we changed socket */
+        if (upgradingParsedSocket) {
             httpContextData->upgradedWebSocket = webSocket;
         }
 

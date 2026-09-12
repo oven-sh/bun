@@ -29,7 +29,6 @@ struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
@@ -70,11 +69,14 @@ private:
     HttpRouter<RouterData> *currentRouter = &router;
 
     /* The socket onData is currently parsing, nullptr outside a parse. The
-     * close gates in internalEnd need the per-socket identity: a DIFFERENT
-     * socket's response can complete inside this window (a microtask drained
-     * during a request dispatch), and the context-wide isParsingHttp bit
-     * alone would wrongly defer its close to a post-parse gate that only
-     * checks the parsed socket. */
+     * close gates in internalEnd and the upgradedWebSocket hand-over in
+     * upgrade() need the per-socket identity: a DIFFERENT socket's response
+     * can complete, or be upgraded, inside this window (a microtask drained
+     * during a request dispatch, a handler upgrading a request it parked
+     * earlier), and a context-wide "parsing" bit would attribute that to the
+     * parsed socket: deferring its close to a post-parse gate that only checks
+     * the parsed socket, or making onData hand the parsed socket's read over
+     * to the other connection's WebSocket. */
     struct us_socket_t *parsingSocket = nullptr;
 
     /* This is the default router for default SNI or non-SSL */

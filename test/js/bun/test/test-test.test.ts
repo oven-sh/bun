@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -748,4 +748,225 @@ test("my-test", () => {
       expect(output).toContain("Ran 1 test across 1 file");
     });
   }
+});
+
+// A test or hook callback that returns a thenable is awaited the way `await`
+// awaits it: through the value's own `then()`. A `Promise` subclass that starts
+// its work inside `then()` (Bun.$'s ShellPromise, Bun.SQL's Query) never settles
+// if only its internal state is watched, and the test times out. A plain thenable
+// is not a promise at all and used to be treated as a synchronous return.
+describe.concurrent("thenable test callbacks", () => {
+  // The shape of Bun.SQL's Query: a Promise subclass that does nothing until then() is called.
+  const lazyPromiseClass = /* ts */ `
+    class LazyPromise<T> extends Promise<T> {
+      #start: () => void;
+      #started = false;
+      constructor(start: (resolve: (value: T) => void, reject: (error: unknown) => void) => void) {
+        let resolve!: (value: T) => void;
+        let reject!: (error: unknown) => void;
+        super((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        this.#start = () => start(resolve, reject);
+      }
+      then(onfulfilled?: any, onrejected?: any): any {
+        if (!this.#started) {
+          this.#started = true;
+          this.#start();
+        }
+        return super.then(onfulfilled, onrejected);
+      }
+      static get [Symbol.species]() {
+        return Promise;
+      }
+    }
+  `;
+
+  test("a lazy promise subclass or a thenable is awaited", async () => {
+    using dir = tempDir("thenable-await", {
+      "thenable.test.ts": `
+        import { SQL } from "bun";
+        import { beforeEach, expect, test } from "bun:test";
+        ${lazyPromiseClass}
+
+        const order: string[] = [];
+        const sql = new SQL("sqlite://:memory:");
+
+        beforeEach(() => new LazyPromise<void>(resolve => {
+          setImmediate(() => {
+            order.push("beforeEach");
+            resolve();
+          });
+        }));
+
+        test("a lazy promise subclass is started and awaited", () => new LazyPromise<void>(resolve => {
+          setImmediate(() => {
+            order.push("subclass");
+            resolve();
+          });
+        }));
+
+        test("a Bun.SQL query is run and awaited", () => sql\`select 1 as x\`.then(rows => {
+          order.push("sql");
+          expect(rows).toEqual([{ x: 1 }]);
+        }));
+
+        test("a Bun.SQL query returned directly is run and awaited", () => sql\`select 1 as x\`);
+
+        test("a Bun.$ shell promise returned directly is run and awaited", () => Bun.$\`echo shell\`.quiet());
+
+        test("a plain thenable is awaited", () => ({
+          // Reading \`then\` is observable: the runner reads it exactly once, as Promise.resolve() does.
+          get then() {
+            order.push("then read");
+            return (resolve: () => void) => {
+              setImmediate(() => {
+                order.push("thenable");
+                resolve();
+              });
+            };
+          },
+        }));
+
+        // setImmediate does not run between two synchronous tests, so "done" is
+        // only in the order if the runner waited for the done callback.
+        test("a non-thenable object does not complete the test", done => {
+          setImmediate(() => {
+            order.push("done");
+            done();
+          });
+          return { then: null };
+        });
+
+        // A native promise is awaited the way \`await\` awaits it: without a then()
+        // call, even while Promise.prototype.then is replaced (the WPT streams
+        // suite does this inside a test body).
+        test("a plain promise is awaited without calling a patched then()", async () => {
+          const then = Promise.prototype.then;
+          Promise.prototype.then = () => {
+            throw new Error("patched then() called");
+          };
+          try {
+            await new Promise(resolve => setImmediate(resolve));
+            order.push("patched");
+          } finally {
+            Promise.prototype.then = then;
+          }
+        });
+
+        test("every value settled before the next test started", () => {
+          expect(order).toEqual([
+            "beforeEach", "subclass",
+            "beforeEach", "sql",
+            "beforeEach",
+            "beforeEach",
+            "beforeEach", "then read", "thenable",
+            "beforeEach", "done",
+            "beforeEach", "patched",
+            "beforeEach",
+          ]);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "thenable.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: normalizeBunSnapshot(stdout, String(dir)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    }).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "thenable.test.ts:
+      (pass) a lazy promise subclass is started and awaited
+      (pass) a Bun.SQL query is run and awaited
+      (pass) a Bun.SQL query returned directly is run and awaited
+      (pass) a Bun.$ shell promise returned directly is run and awaited
+      (pass) a plain thenable is awaited
+      (pass) a non-thenable object does not complete the test
+      (pass) a plain promise is awaited without calling a patched then()
+      (pass) every value settled before the next test started
+
+       8 pass
+       0 fail
+       2 expect() calls
+      Ran 8 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test("a rejected lazy promise subclass or thenable fails the test", async () => {
+    using dir = tempDir("thenable-reject", {
+      "thenable.test.ts": `
+        import { beforeEach, describe, test } from "bun:test";
+        ${lazyPromiseClass}
+
+        test("a rejected lazy promise subclass fails", () => new LazyPromise<void>((_resolve, reject) => {
+          setImmediate(() => reject(new Error("rejected subclass")));
+        }));
+
+        test("a rejected thenable fails", () => ({
+          then(_resolve: () => void, reject: (error: unknown) => void) {
+            reject(new Error("rejected thenable"));
+          },
+        }));
+
+        test("a throwing then fails", () => ({
+          then(): void {
+            throw new Error("throwing then");
+          },
+        }));
+
+        test("a throwing then getter fails", () => ({
+          get then(): never {
+            throw new Error("throwing then getter");
+          },
+        }));
+
+        describe("rejected hook", () => {
+          beforeEach(() => ({
+            then(_resolve: () => void, reject: (error: unknown) => void) {
+              reject(new Error("rejected hook"));
+            },
+          }));
+
+          test("never runs", () => {
+            console.log("THIS TEST SHOULD NOT RUN");
+          });
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "thenable.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("error: rejected subclass");
+    expect(stderr).toContain("error: rejected thenable");
+    expect(stderr).toContain("error: throwing then\n");
+    expect(stderr).toContain("error: throwing then getter");
+    expect(stderr).toContain("error: rejected hook");
+    expect(stderr).toContain(" 0 pass");
+    expect(stderr).toContain(" 5 fail");
+    expect(stderr).not.toContain("Unhandled error between tests");
+    expect(stdout).not.toContain("THIS TEST SHOULD NOT RUN");
+    expect(exitCode).toBe(1);
+  });
 });

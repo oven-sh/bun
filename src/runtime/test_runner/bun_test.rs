@@ -1137,7 +1137,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let mut result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1176,6 +1176,21 @@ impl BunTest {
             }
         }
 
+        // Await a lazy `Promise` subclass (Bun.SQL's `Query`) or a thenable through its own `then()`.
+        let mut awaited: Option<&mut bun_jsc::JSPromise> = None;
+        if !result.is_empty() {
+            match bun_jsc::JSPromise::awaitable(global_this, result) {
+                Ok(promise) => awaited = promise,
+                Err(_) => {
+                    global_this.clear_termination_exception();
+                    // SAFETY: re-derive after the `constructor`/`then` getter ran JS; no outer `&mut` was held across it.
+                    unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                    bun_core::scoped_log!(bun_test_group, "callTestCallback -> thenable adoption threw");
+                    result = JSValue::ZERO;
+                }
+            }
+        }
+
         // `dcb_ref` is a raw observer alias, NOT a
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
@@ -1203,56 +1218,52 @@ impl BunTest {
             }
         }
 
-        if !result.is_empty() {
-            if let Some(promise) = result.as_promise() {
-                let _keep = bun_jsc::EnsureStillAlive(result); // because sometimes we use promise without result
+        if let Some(promise) = awaited {
+            let _keep = bun_jsc::EnsureStillAlive(result); // because sometimes we use promise without result
 
-                bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
+            bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
-                // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-                match bun_jsc::JSPromise::opaque_mut(promise).status() {
-                    PromiseStatus::Pending => {
-                        // not immediately resolved; register 'then' to handle the result when it becomes available
-                        let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
-                            // SAFETY: `dcb_ref_value` aliases the live RefData
-                            // owned by `dcb_data.r#ref` (set just above; GC
-                            // roots `done_callback` for this frame). Bump the
-                            // refcount 1→2.
-                            unsafe { RefPtr::init_ref(dcb_ref_value.as_ptr()) }
-                        } else {
-                            Self::ref_(this_strong, cfg_data)
-                        };
-                        // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
-                        this_strong
-                            .bun_test_root
-                            .get()
-                            .pending_then_refs
-                            .borrow_mut()
-                            .push(raw_ref.cast_const());
-                        let _ = result.then(
-                            global_this,
-                            raw_ref,
-                            Bun__TestScope__Describe2__bunTestThen,
-                            Bun__TestScope__Describe2__bunTestCatch,
-                        );
-                        // TODO: properly propagate exception upwards
-                        return None;
-                    }
-                    PromiseStatus::Fulfilled => {
-                        // Do not register a then callback when it's already fulfilled.
-                        return Some(cfg_data);
-                    }
-                    PromiseStatus::Rejected => {
-                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
-                        // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
-                        // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
+            match promise.status() {
+                PromiseStatus::Pending => {
+                    // not immediately resolved; register 'then' to handle the result when it becomes available
+                    let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
+                        // SAFETY: `dcb_ref_value` aliases the live RefData
+                        // owned by `dcb_data.r#ref` (set just above; GC
+                        // roots `done_callback` for this frame). Bump the
+                        // refcount 1→2.
+                        unsafe { RefPtr::init_ref(dcb_ref_value.as_ptr()) }
+                    } else {
+                        Self::ref_(this_strong, cfg_data)
+                    };
+                    // Track the `+1` handed to `Promise.then()` in case the promise never settles.
+                    let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
+                    this_strong
+                        .bun_test_root
+                        .get()
+                        .pending_then_refs
+                        .borrow_mut()
+                        .push(raw_ref.cast_const());
+                    promise.to_js().then(
+                        global_this,
+                        raw_ref,
+                        Bun__TestScope__Describe2__bunTestThen,
+                        Bun__TestScope__Describe2__bunTestCatch,
+                    );
+                    return None;
+                }
+                PromiseStatus::Fulfilled => {
+                    // Do not register a then callback when it's already fulfilled.
+                    return Some(cfg_data);
+                }
+                PromiseStatus::Rejected => {
+                    let value = promise.result(global_this.vm());
+                    // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
+                    // drain above; sole `&mut` at this point.
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
 
-                        // We previously marked it as handled above.
+                    // We previously marked it as handled above.
 
-                        return Some(cfg_data);
-                    }
+                    return Some(cfg_data);
                 }
             }
         }

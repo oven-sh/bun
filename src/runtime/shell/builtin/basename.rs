@@ -22,14 +22,21 @@ impl Basename {
         let buf = {
             let bltn = Builtin::of(interp, cmd);
             let argc = bltn.args_slice().len();
-            if argc == 0 {
+            // POSIX: `basename string [suffix]`.
+            if argc == 0 || argc > 2 {
                 return Self::fail(interp, cmd, Kind::Basename.usage_string());
             }
-            let mut buf = Vec::new();
-            for i in 0..argc {
-                buf.extend_from_slice(bun_paths::resolve_path::basename(bltn.arg_bytes(i)));
-                buf.push(b'\n');
+            let mut name = bun_paths::resolve_path::basename(bltn.arg_bytes(0));
+            if argc == 2 {
+                let suffix = bltn.arg_bytes(1);
+                // Strip only a proper suffix: `basename .txt .txt` stays `.txt`.
+                if name.len() > suffix.len() && bun_core::strings::ends_with(name, suffix) {
+                    name = &name[..name.len() - suffix.len()];
+                }
             }
+            let mut buf = Vec::with_capacity(name.len() + 1);
+            buf.extend_from_slice(name);
+            buf.push(b'\n');
             buf
         };
 

@@ -77,29 +77,55 @@ function assertOpenSSLSecurityLevelsUnsupported() {
 }
 
 /**
- * Node's multi-key tests rely on OpenSSL accepting an array of private keys and
- * matching them with an array of certificates. BoringSSL rejects this mixed
- * EC/RSA identity configuration while configuring the certificate chain, before
- * a client can negotiate either identity.
+ * A server built from the array form of `key`/`cert` serves each identity to
+ * the clients that can use it, as it does on OpenSSL. Two details of the
+ * original test still differ, so its assertions are bypassed: BoringSSL reports
+ * the cipher's own version (`TLSv1/SSLv3`) where OpenSSL reports `TLSv1.2`, and
+ * the certificates bundled beside a PKCS#12 private key are added to the trust
+ * store rather than sent as the chain, so the test's `pfx` cases cannot reach
+ * their intermediate.
  */
-function assertMultiKeyUnsupported() {
-  assert.throws(() => {
-    tls.createServer({
-      key: [
-        fixtures.readKey('ec10-key.pem'),
-        fixtures.readKey('agent1-key.pem'),
-      ],
-      cert: [
-        fixtures.readKey('agent1-cert.pem'),
-        fixtures.readKey('ec10-cert.pem'),
-      ],
+function testMultiKeySelection() {
+  const clientTrustRoots = [
+    fixtures.readKey('ca5-cert.pem'),
+    fixtures.readKey('ca1-cert.pem'),
+  ];
+  // Key is ordered as ec, rsa, cert is ordered as rsa, ec: the two arrays pair
+  // up by key algorithm, not by index.
+  const server = tls.createServer({
+    key: [
+      fixtures.readKey('ec10-key.pem'),
+      fixtures.readKey('agent1-key.pem'),
+    ],
+    cert: [
+      fixtures.readKey('agent1-cert.pem'),
+      fixtures.readKey('ec10-cert.pem'),
+    ],
+  }, common.mustCallAtLeast((conn) => conn.end('ok'), 2));
+
+  function connect(ciphers, expectedCN, onSecure) {
+    const socket = tls.connect(server.address().port, {
+      ciphers,
+      maxVersion: 'TLSv1.2',
+      rejectUnauthorized: true,
+      ca: clientTrustRoots,
+      checkServerIdentity: common.mustCall(
+        (_, cert) => assert.strictEqual(cert.subject.CN, expectedCN)),
+    }, common.mustCall(() => {
+      assert.strictEqual(socket.getCipher().name, ciphers);
+      assert.strictEqual(socket.getCipher().version, 'TLSv1/SSLv3');
+      assert.strictEqual(socket.getPeerCertificate().subject.CN, expectedCN);
+      socket.end();
+      onSecure();
+    }));
+    socket.on('error', common.mustNotCall());
+  }
+
+  server.listen(0, common.mustCall(() => {
+    connect('ECDHE-ECDSA-AES256-GCM-SHA384', 'agent10.example.com', () => {
+      connect('ECDHE-RSA-AES256-GCM-SHA384', 'agent1', () => server.close());
     });
-  }, {
-    code: 'ERR_OSSL_X509_KEY_TYPE_MISMATCH',
-    library: 'X.509 certificate routines',
-    function: 'OPENSSL_internal',
-    reason: 'KEY_TYPE_MISMATCH',
-  });
+  }));
 }
 
 /**
@@ -198,49 +224,6 @@ function testLegacyProtocolUnsupported() {
 }
 
 /**
- * BoringSSL can load a multi-PFX option well enough to serve the ECDSA
- * identity, but it does not provide the same OpenSSL multi-identity selection
- * behavior. After the ECDSA handshake succeeds, an RSA-only client fails with
- * no shared cipher instead of selecting the RSA identity from the same PFX list.
- */
-function testMultiPfxSelectionDifference() {
-  const server = tls.createServer({
-    pfx: [
-      {
-        buf: fixtures.readKey('agent1.pfx'),
-        passphrase: 'sample',
-      },
-      fixtures.readKey('ec.pfx'),
-    ],
-  }, common.mustCallAtLeast((socket) => socket.end(), 1));
-
-  server.listen(0, common.mustCall(() => {
-    const ecdsa = tls.connect(server.address().port, {
-      ciphers: 'ECDHE-ECDSA-AES256-GCM-SHA384',
-      maxVersion: 'TLSv1.2',
-      rejectUnauthorized: false,
-    }, common.mustCall(() => {
-      assert.strictEqual(ecdsa.getCipher().name,
-                         'ECDHE-ECDSA-AES256-GCM-SHA384');
-      ecdsa.end();
-
-      server.once('tlsClientError', common.mustCall((err) => {
-        assert.strictEqual(err.code, 'ERR_SSL_NO_SHARED_CIPHER');
-      }));
-      const rsa = tls.connect(server.address().port, {
-        ciphers: 'ECDHE-RSA-AES256-GCM-SHA384',
-        maxVersion: 'TLSv1.2',
-        rejectUnauthorized: false,
-      }, common.mustNotCall());
-      rsa.on('error', common.mustCall((err) => {
-        assert.strictEqual(err.code, 'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE');
-        server.close();
-      }));
-    }));
-  }));
-}
-
-/**
  * PSK works for TLS 1.2 in BoringSSL, but Node's PSK tests also cover the
  * default TLS 1.3 path. In that path BoringSSL does not complete a certificate-
  * less PSK-only handshake through Node's current server setup: the server
@@ -334,12 +317,11 @@ function testTls13SessionTicketSemanticsDiffer() {
 
 module.exports = {
   assertFiniteFieldDheUnsupported,
-  assertMultiKeyUnsupported,
   assertNoCipherMatch,
   assertOpenSSLSecurityLevelsUnsupported,
   testEphemeralKeyInfoUnsupported,
   testLegacyProtocolUnsupported,
-  testMultiPfxSelectionDifference,
+  testMultiKeySelection,
   testPskTls13Unsupported,
   testRenegotiationUnsupported,
   testTls13SessionTicketSemanticsDiffer,

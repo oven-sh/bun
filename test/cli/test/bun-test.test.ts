@@ -1499,6 +1499,20 @@ describe("bun test", () => {
     `);
   });
 
+  test.each([".*", "", "^$"])("-t %p selects a test whose name is the empty string", pattern => {
+    const stderr = runTest({
+      args: ["-t", pattern],
+      input: `
+        import { test, expect } from "bun:test";
+        test("named", () => { expect(1).toBe(1); });
+        test("", () => { console.error("EMPTY-NAMED RAN"); expect(1).toBe(1); });
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("EMPTY-NAMED RAN");
+    expect(stderr).toContain(pattern === "^$" ? "1 pass" : "2 pass");
+  });
+
   test("--tsconfig-override works", () => {
     using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `

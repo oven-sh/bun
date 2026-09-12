@@ -5,15 +5,16 @@ use crate::VirtualMachineRef as VirtualMachine;
 use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
-use bun_threading::SignalRing;
+use bun_threading::PendingSignals;
 
-const BUFFER_SIZE: usize = 8192;
+/// Cap on JS listener calls per signal number per loop tick.
+const MAX_TASKS_PER_SIGNAL: u32 = 8192;
 
 /// Signal numbers queued by signal handlers on any thread for the main loop.
 #[derive(Default)]
 pub struct PosixSignalHandle {
     #[allow(dead_code)]
-    ring: SignalRing<BUFFER_SIZE>,
+    pending: PendingSignals,
 }
 
 impl PosixSignalHandle {
@@ -23,29 +24,30 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
+    /// Async-signal-safe and never full.
     #[allow(dead_code)]
-    pub(crate) fn enqueue(&self, signal: u8) -> bool {
-        self.ring.enqueue(signal)
+    pub(crate) fn enqueue(&self, signal: u8) {
+        self.pending.add(signal);
     }
 
-    /// Drain as many signals as possible and enqueue them as tasks in the event loop.
-    /// Called by the main thread, the ring's single consumer.
+    /// Main thread: enqueue one task per pending arrival, lowest number first.
     #[allow(dead_code)]
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
-        while let Some(signal) = self.ring.dequeue() {
-            // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
-            // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
-                <PosixSignalTask as Taskable>::TAG,
-                signal as usize as *mut (),
-            );
-            event_loop.enqueue_task(task);
-        }
+        self.pending.take(|signal, count| {
+            for _ in 0..count.min(MAX_TASKS_PER_SIGNAL) {
+                // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
+                // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
+                let task = Task::new(
+                    <PosixSignalTask as Taskable>::TAG,
+                    signal as usize as *mut (),
+                );
+                event_loop.enqueue_task(task);
+            }
+        });
     }
 }
 
-/// This is the signal handler entry point. Calls enqueue on the ring buffer.
+/// This is the signal handler entry point. Counts the signal as pending.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__onPosixSignal(number: i32) {
@@ -76,11 +78,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
                 return;
             };
-            if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
-            }
+            handler.enqueue(signal);
+            // SAFETY: same process-lifetime event loop as above; `wakeup`
+            // is one async-signal-safe write to the loop's wakeup fd.
+            unsafe { (*(*vm).event_loop()).wakeup() };
         }
     }
     #[cfg(not(unix))]

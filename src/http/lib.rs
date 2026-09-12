@@ -1400,20 +1400,7 @@ pub(crate) fn print_request(
         bun_core::fmt::redacted_npm_url(url),
     );
     for header in request.headers {
-        let name = header.name();
-        if strings::eql_case_insensitive_ascii(name, b"authorization", true)
-            || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
-        {
-            let value = header.value();
-            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
-            bun_core::pretty_errorln!(
-                "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
-                BStr::new(name),
-                BStr::new(&value[..scheme_len]),
-            );
-        } else {
-            bun_core::pretty_errorln!("> {}", header);
-        }
+        bun_core::pretty_errorln!("> {}", header);
     }
     Output::flush();
 }

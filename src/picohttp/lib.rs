@@ -153,6 +153,40 @@ impl Header {
     pub(crate) fn curl(&self) -> HeaderCurlFormatter<'_> {
         HeaderCurlFormatter { header: self }
     }
+
+    /// The value for the `BUN_CONFIG_VERBOSE_FETCH` trace: credentials print as `[redacted]`.
+    pub fn logged_value(&self) -> LoggedHeaderValue<'_> {
+        LoggedHeaderValue { header: self }
+    }
+}
+
+pub struct LoggedHeaderValue<'a> {
+    header: &'a Header,
+}
+
+impl LoggedHeaderValue<'_> {
+    /// `Authorization: <scheme> <credentials>`: the scheme is kept.
+    const SCHEME_HEADERS: [&[u8]; 2] = [b"authorization", b"proxy-authorization"];
+    /// The whole value is a secret.
+    const SECRET_HEADERS: [&[u8]; 3] = [b"cookie", b"set-cookie", b"x-amz-security-token"];
+}
+
+impl fmt::Display for LoggedHeaderValue<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = self.header.name();
+        let value = self.header.value();
+        if strings::eql_any_case_insensitive_ascii(name, &Self::SCHEME_HEADERS) {
+            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
+            write!(f, "{}[redacted]", BStr::new(&value[..scheme_len]))
+        } else if self.header.is_multiline()
+            || strings::eql_any_case_insensitive_ascii(name, &Self::SECRET_HEADERS)
+        {
+            // A folded continuation line has no name: the header it continues is unknown here.
+            f.write_str("[redacted]")
+        } else {
+            write!(f, "{}", BStr::new(value))
+        }
+    }
 }
 
 impl fmt::Display for Header {
@@ -161,28 +195,24 @@ impl fmt::Display for Header {
         // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
-                write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
+                write!(f, pretty_fmt!("<r><cyan>{}", true), self.logged_value())
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
                     BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    self.logged_value(),
                 )
             }
         } else {
             if self.is_multiline() {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}", false),
-                    BStr::new(self.value())
-                )
+                write!(f, pretty_fmt!("<r><cyan>{}", false), self.logged_value())
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
                     BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    self.logged_value(),
                 )
             }
         }
@@ -204,7 +234,7 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
                 f,
                 "-H \"{}: {}\"",
                 BStr::new(header.name()),
-                BStr::new(header.value())
+                header.logged_value()
             )
         } else {
             write!(f, "-H \"{}\"", BStr::new(header.name()))
@@ -348,10 +378,14 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                bun_core::fmt::redacted_npm_url(request.path),
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(
+                f,
+                "curl --http1.1 \"{}\"",
+                bun_core::fmt::redacted_npm_url(request.path)
+            )?;
         }
 
         if request.method != b"GET" {

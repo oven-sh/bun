@@ -1285,6 +1285,47 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   });
 });
 
+describe.skipIf(!isPosix)("piped stdio first touched after the child exits", () => {
+  // The child writes nothing to stderr and nobody reads it. The pipe closes
+  // before JS touches child.stderr, so the native side has no handle left.
+  // The exit path constructs the stream then, and must not assert.
+  it("reaches 'close' when the unread pipe closed empty", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn } = require("child_process");
+        const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
+        c.stdout.on("data", d => process.stdout.write("OUT:" + d));
+        c.on("close", () => {
+          c.stderr.unref();
+          c.stderr.ref();
+          console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("OUT:hello\nclosed true true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("child.stderr ends and closes like an empty pipe", async () => {
+    const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["ignore", "pipe", "pipe"], env: bunEnv });
+    c.stdout!.resume();
+    await once(c, "close");
+    const stderr = c.stderr!;
+    expect({
+      ended: stderr.readableEnded,
+      destroyed: stderr.destroyed,
+      errored: stderr.errored,
+      exitCode: c.exitCode,
+    }).toEqual({ ended: true, destroyed: true, errored: null, exitCode: 0 });
+  });
+});
+
 // child.stdout.pause() must stop the native reader so the kernel pipe fills
 // and the child blocks on write. Previously, once the stream had flowed even
 // once the native FileReader kept the poll armed (or uv_read_start active on

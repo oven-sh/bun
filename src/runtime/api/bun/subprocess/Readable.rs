@@ -145,9 +145,8 @@ impl Readable {
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
-            // ReadableStream is handled separately
-            Stdio::ReadableStream(..) => Readable::Ignore,
-            // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
+            // Both rejected for stdout/stderr in Stdio::extract().
+            Stdio::ReadableStream(..) => unreachable!("ReadableStream at stdout/stderr"),
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }

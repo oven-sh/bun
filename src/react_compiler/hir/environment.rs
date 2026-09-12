@@ -76,12 +76,6 @@ pub struct Environment {
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
 
-    // Node IDs of identifiers that are actual references to bindings.
-    // Used by codegen to filter type annotation renames — only rename identifiers
-    // whose node_id is in this set (type labels like ObjectTypeIndexer params
-    // are NOT in this set and should keep their original names).
-    pub reference_node_ids: HashSet<u32>,
-
     // Hoisted identifiers: tracks which bindings have already been hoisted
     // via DeclareContext to avoid duplicate hoisting.
     // Uses u32 to avoid depending on react_compiler_ast types.
@@ -190,7 +184,6 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
-            reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,

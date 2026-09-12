@@ -279,7 +279,6 @@ pub struct HirFunction {
     pub name_hint: Option<StoreStr>,
     pub fn_type: ReactFunctionType,
     pub params: HirVec<ParamPattern>,
-    pub return_type_annotation: Option<StoreStr>,
     pub returns: Place,
     pub context: HirVec<Place>,
     pub body: HIR,

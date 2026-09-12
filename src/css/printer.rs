@@ -112,7 +112,6 @@ impl<'a> ImportInfo<'a> {
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub struct Printer<'a> {
-    // #[cfg(feature = "sourcemap")]
     pub(crate) sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub(crate) loc: Location,

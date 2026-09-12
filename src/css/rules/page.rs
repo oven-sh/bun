@@ -88,9 +88,6 @@ pub struct PageMarginRule {
 
 impl PageMarginRule {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_char(b'@')?;
         self.margin_box.to_css(dest)?;
         super::decl_block_to_css(&self.declarations, dest)
@@ -122,8 +119,6 @@ pub struct PageRule {
 
 impl PageRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
         dest.write_str("@page")?;
         if self.selectors.len() >= 1 {
             let firstsel = &self.selectors[0];

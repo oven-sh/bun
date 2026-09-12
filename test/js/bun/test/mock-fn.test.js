@@ -1154,6 +1154,26 @@ describe("spyOn", () => {
     spy.mockRestore();
   });
 
+  test("a non-configurable own property can be spied on while it is writable", () => {
+    const obj = {};
+    Object.defineProperty(obj, "fn", { value: () => 1, writable: true, enumerable: true, configurable: false });
+    const spy = spyOn(obj, "fn");
+    expect(obj.fn()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+    expect(Object.getOwnPropertyDescriptor(obj, "fn")).toEqual({
+      value: expect.any(Function),
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
+
+    // A spy on a value that is not a function is an accessor, and only a configurable property can become one.
+    Object.defineProperty(obj, "value", { value: 1, writable: true, enumerable: true, configurable: false });
+    expect(() => spyOn(obj, "value")).toThrow(/configurable/i);
+    expect(obj.value).toBe(1);
+  });
+
   test("spyOn twice works", () => {
     var obj = {
       original() {

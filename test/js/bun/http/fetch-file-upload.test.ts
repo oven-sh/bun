@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -221,6 +221,44 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
   });
 });
+
+// The streaming file body path resumes from its own offset after every partial
+// write: sendfile(2) on Linux and FreeBSD, a pread + send copy loop on macOS.
+// BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE selects the copy loop everywhere, so
+// both get the same check on every POSIX lane. The fixture's reader keeps
+// falling behind to force many resumes from an unaligned slice start.
+describe.concurrent(
+  "large Bun.file().slice() upload arrives intact when the server reads slower than the client writes",
+  () => {
+    for (const [label, env] of [
+      ["sendfile(2) where available", {}],
+      ["userspace copy", { BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE: "1" }],
+    ] as const) {
+      test(label, async () => {
+        using dir = tempDir("fetch-file-slice-backpressure", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(import.meta.dir, "fetch-file-upload-backpressure-fixture.ts")],
+          env: { ...bunEnv, ...env },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const lastLine = stdout.trim().split("\n").at(-1) || JSON.stringify({ stdout, stderr });
+        const result = JSON.parse(lastLine);
+        expect(result).toEqual({
+          status: 200,
+          contentLength: String(result.expectedLength),
+          received: result.expectedLength,
+          hash: result.expected,
+          expected: result.expected,
+          expectedLength: 16 * 1024 * 1024 - 123_457,
+        });
+        expect(exitCode).toBe(0);
+      });
+    }
+  },
+);
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

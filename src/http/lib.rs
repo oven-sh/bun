@@ -1048,7 +1048,7 @@ bun_core::comptime_string_map! {
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
-// All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
+// All of these are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
 // is the alias-safe static cell per docs/PORTING.md §Global mutable state.
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
@@ -1095,6 +1095,16 @@ mod scratch {
     pub(crate) fn temp_hostname() -> &'static mut [u8; 8192] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *TEMP_HOSTNAME.get() }
+    }
+    #[cfg(unix)]
+    pub(crate) const FILE_BODY_COPY_BUFFER_SIZE: usize = 256 * 1024;
+    /// Scratch for `SendFile::write_copy`, drained before the next `pread`. Zero-initialised so it stays in .bss.
+    #[cfg(unix)]
+    pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; FILE_BODY_COPY_BUFFER_SIZE] {
+        static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; FILE_BODY_COPY_BUFFER_SIZE]> =
+            bun_core::RacyCell::new([0; FILE_BODY_COPY_BUFFER_SIZE]);
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *FILE_BODY_COPY_BUFFER.get() }
     }
 }
 pub(crate) use scratch::temp_hostname;
@@ -3357,8 +3367,8 @@ impl<'a> HTTPClient<'a> {
                             );
                         }
 
-                        // sendfile.write() takes the raw fd, not the socket handle.
-                        match sendfile.write(socket.fd()) {
+                        let send = |chunk: &[u8]| write_to_socket::<IS_SSL>(socket, chunk);
+                        match sendfile.write(socket.fd(), send) {
                             #[cfg(not(windows))]
                             crate::send_file::Status::Done => {
                                 self.state.request_stage = RequestStage::Done;

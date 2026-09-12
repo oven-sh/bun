@@ -4805,20 +4805,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.

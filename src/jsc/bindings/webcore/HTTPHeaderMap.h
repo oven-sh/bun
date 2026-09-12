@@ -28,6 +28,8 @@
 
 #include "HTTPHeaderNames.h"
 #include <utility>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -41,25 +43,96 @@ namespace WebCore {
 // behavior.
 String lowercaseHeaderName(const String&);
 
+// One header's value, in one word: a StringImpl*, or past builderThreshold a StringBuilder* tagged in bit 0, so N appends copy O(N) bytes.
+class HeaderValue {
+public:
+    HeaderValue() = default;
+    HeaderValue(const String& value)
+        : HeaderValue(String { value })
+    {
+    }
+    HeaderValue(String&& value)
+        : m_bits(reinterpret_cast<uintptr_t>(value.releaseImpl().leakRef()))
+    {
+    }
+    HeaderValue(const HeaderValue& other)
+        : HeaderValue(other.string())
+    {
+    }
+    HeaderValue(HeaderValue&& other)
+        : m_bits(std::exchange(other.m_bits, 0))
+    {
+    }
+    HeaderValue& operator=(const HeaderValue& other) { return *this = HeaderValue(other); }
+    HeaderValue& operator=(HeaderValue&& other)
+    {
+        HeaderValue moved { WTF::move(other) };
+        std::swap(m_bits, moved.m_bits);
+        return *this;
+    }
+    ALWAYS_INLINE ~HeaderValue()
+    {
+        if (m_bits & builderTag) [[unlikely]]
+            deleteBuilder();
+        else if (auto* impl = reinterpret_cast<StringImpl*>(m_bits))
+            impl->deref();
+    }
+
+    ALWAYS_INLINE String string() const
+    {
+        if (m_bits & builderTag) [[unlikely]]
+            return builderString();
+        return reinterpret_cast<StringImpl*>(m_bits);
+    }
+
+    // False, with nothing stored, when the combined value would pass String::MaxLength.
+    ALWAYS_INLINE bool append(ASCIILiteral delimiter, const String& value)
+    {
+        if (!(m_bits & builderTag)) [[likely]] {
+            String current { reinterpret_cast<StringImpl*>(m_bits) };
+            if (static_cast<uint64_t>(current.length()) + delimiter.length() + value.length() < builderThreshold) {
+                *this = HeaderValue(makeString(WTF::move(current), delimiter, value));
+                return true;
+            }
+        }
+        return appendToBuilder(delimiter, value);
+    }
+    size_t memoryCost() const;
+
+    bool operator==(const HeaderValue& other) const { return string() == other.string(); }
+
+private:
+    // Below this length a join is one exact-fit makeString, as before, so a short value never pays for a builder.
+    static constexpr unsigned builderThreshold = 4096;
+    static constexpr uintptr_t builderTag = 1;
+    static_assert(alignof(StringImpl) > builderTag && alignof(StringBuilder) > builderTag);
+
+    explicit HeaderValue(std::unique_ptr<StringBuilder>&& builder)
+        : m_bits(reinterpret_cast<uintptr_t>(builder.release()) | builderTag)
+    {
+    }
+
+    StringBuilder* builder() const { return (m_bits & builderTag) ? reinterpret_cast<StringBuilder*>(m_bits & ~builderTag) : nullptr; }
+    NEVER_INLINE void deleteBuilder();
+    NEVER_INLINE String builderString() const;
+    NEVER_INLINE bool appendToBuilder(ASCIILiteral delimiter, const String& value);
+
+    uintptr_t m_bits { 0 };
+};
+static_assert(sizeof(HeaderValue) == sizeof(String), "an entry of HTTPHeaderMap must not grow");
+
 class HTTPHeaderMap {
 public:
     struct CommonHeader {
         HTTPHeaderName key;
-        String value;
+        HeaderValue value;
 
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
     };
 
-    struct HeaderIndex {
-        size_t index;
-        bool isCommon;
-
-        bool isValid() const { return index != notFound; }
-    };
-
     struct UncommonHeader {
         String key;
-        String value;
+        HeaderValue value;
 
         bool operator==(const UncommonHeader& other) const { return key == other.key && value == other.value; }
     };
@@ -138,7 +211,7 @@ public:
                 return false;
             m_keyValue.key = httpHeaderNameString(it->key).toStringWithoutCopying();
             m_keyValue.keyAsHTTPHeaderName = it->key;
-            m_keyValue.value = it->value;
+            m_keyValue.value = it->value.string();
             return true;
         }
         bool updateKeyValue(UncommonHeadersVector::const_iterator it)
@@ -147,7 +220,7 @@ public:
                 return false;
             m_keyValue.key = it->key;
             m_keyValue.keyAsHTTPHeaderName = std::nullopt;
-            m_keyValue.value = it->value;
+            m_keyValue.value = it->value.string();
             return true;
         }
 
@@ -165,20 +238,20 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    WEBCORE_EXPORT void add(const String& name, const String& value);
+    // ValueTooLong: the combined value would pass String::MaxLength, and nothing is stored.
+    enum class AddResult : uint8_t {
+        Stored,
+        ValueTooLong,
+    };
+    WEBCORE_EXPORT AddResult add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
     WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
-    WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
-    WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String& value);
-    HeaderIndex indexOf(const String& name) const;
-    HeaderIndex indexOf(HTTPHeaderName name) const;
-
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
     void set(HTTPHeaderName, const String& value);
-    void add(HTTPHeaderName, const String& value);
+    AddResult add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -207,7 +280,7 @@ public:
             return false;
 
         for (auto& commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != commonHeader.value)
+            if (b.get(commonHeader.key) != commonHeader.value.string())
                 return false;
         }
 
@@ -217,7 +290,7 @@ public:
         }
 
         for (auto& uncommonHeader : a.m_uncommonHeaders) {
-            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
+            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value.string())
                 return false;
         }
 
@@ -230,8 +303,8 @@ public:
     }
 
     void setUncommonHeader(const String& name, const String& value);
-    void addUncommonHeader(const String& name, const String& value);
-    void addUncommonHeaderCloneName(const StringView name, const String& value);
+    AddResult addUncommonHeader(const String& name, const String& value);
+    AddResult addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;

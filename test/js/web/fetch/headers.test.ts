@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { jscDescribe } from "bun:jsc";
+import { isDebug, withoutAggressiveGC } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -255,6 +257,146 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.append("expires")).toThrow(TypeError);
+    });
+
+    // Appending to a name that already has a value used to rebuild the whole
+    // combined value with makeString(), so N appends copied O(N^2) bytes:
+    // 200,000 appends took 1.8s and 400,000 took 9.4s on a release build, where
+    // Node takes 0.5s for 400,000. A combined value under 4 KB is still one
+    // exact-fit string. Past that it moves into a builder that grows in place.
+    // Every case below runs in both states, and the last one measures the cost.
+    describe("with a name that repeats", () => {
+      const COUNT = 100;
+      describe.each([
+        ["under 4 KB", "v"],
+        ["past 4 KB", Buffer.alloc(100, "v").toString()],
+      ])("combined value %s", (_, unit) => {
+        const valueAt = (i: number) => `${unit}${i}`;
+        const joined = (count: number, delimiter = ", ") =>
+          Array.from({ length: count }, (_, i) => valueAt(i)).join(delimiter);
+        const filled = (name = "x-repeated") => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) headers.append(name, valueAt(i));
+          return headers;
+        };
+
+        describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
+          const delimiter = name === "cookie" ? "; " : ", ";
+
+          test("appends join in order", () => {
+            expect(filled(name).get(name)).toBe(joined(COUNT, delimiter));
+          });
+
+          test("reading between appends does not change the result", () => {
+            const headers = new Headers();
+            const snapshots: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              headers.append(name, valueAt(i));
+              // Each read hands out the combined value so far. A later append
+              // must not edit a string that was already handed out.
+              snapshots.push(headers.get(name)!);
+            }
+            expect(snapshots).toEqual(Array.from({ length: COUNT }, (_, i) => joined(i + 1, delimiter)));
+          });
+        });
+
+        test("set() after appends replaces the combined value", () => {
+          const headers = filled();
+          headers.set("x-repeated", "only");
+          expect(headers.get("x-repeated")).toBe("only");
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe("only, next");
+        });
+
+        test("delete() after appends drops the header", () => {
+          const headers = filled();
+          headers.delete("x-repeated");
+          expect(headers.has("x-repeated")).toBe(false);
+          expect(headers.get("x-repeated")).toBeNull();
+        });
+
+        test("a copy does not change when the original keeps appending", () => {
+          const original = filled();
+          const copy = new Headers(original);
+          original.append("x-repeated", "c");
+          expect(copy.get("x-repeated")).toBe(joined(COUNT));
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+          copy.append("x-repeated", "d");
+          expect(copy.get("x-repeated")).toBe(`${joined(COUNT)}, d`);
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+        });
+
+        test("iteration and toJSON report the combined value", () => {
+          const headers = filled();
+          expect([...headers]).toEqual([["x-repeated", joined(COUNT)]]);
+          expect(headers.toJSON()).toEqual({ "x-repeated": joined(COUNT) });
+        });
+
+        // A Latin-1 value can arrive in a 16-bit string. A UTF-16 round trip
+        // forces that storage, and the first assertion proves that it did.
+        test("values in 16-bit strings combine with values in 8-bit strings", () => {
+          const wide = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+          expect(jscDescribe(wide(`${unit}caf\u00e9`))).toContain("8Bit:(0)");
+          for (const wideFirst of [false, true]) {
+            const headers = new Headers();
+            const values: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              const value = `${unit}caf\u00e9${i}`;
+              values.push(value);
+              headers.append("x-repeated", (i % 2 === 0) === wideFirst ? wide(value) : value);
+            }
+            expect(headers.get("x-repeated")).toBe(values.join(", "));
+          }
+        });
+      });
+
+      // set() is the baseline. It makes the same number of calls with the same
+      // name and the same value, so it pays the same conversion, validation and
+      // lookup cost per call, and it never combines. The ratio of the two is
+      // what combining costs. With the quadratic join that ratio grows with the
+      // call count: measured 10 on debug+ASAN and 107 on release at 1000 calls.
+      // With the builder it is a small constant: 1.3 on debug+ASAN and 2.6 on
+      // release. The release bound is the looser one because a release set()
+      // call is 20x cheaper, so the bytes each append copies are a bigger share
+      // of it.
+      //
+      // Back-to-back runs in one process cancel machine speed out of each
+      // ratio, and the median over the repetitions discards a repetition that
+      // another process disturbed.
+      test("append costs about as much per call as set", () => {
+        const VALUE = Buffer.alloc(8192, "x").toString();
+        const CALLS = 1000;
+        const repetitions = isDebug ? 3 : 5;
+
+        function timeAppend() {
+          const headers = new Headers();
+          const started = performance.now();
+          for (let i = 0; i < CALLS; i++) headers.append("x-repeated", VALUE);
+          const elapsed = performance.now() - started;
+          expect(headers.get("x-repeated")!.length).toBe(CALLS * VALUE.length + (CALLS - 1) * 2);
+          return elapsed;
+        }
+
+        function timeSet() {
+          const headers = new Headers();
+          const started = performance.now();
+          for (let i = 0; i < CALLS; i++) headers.set("x-repeated", VALUE);
+          const elapsed = performance.now() - started;
+          expect(headers.get("x-repeated")!.length).toBe(VALUE.length);
+          return elapsed;
+        }
+
+        const ratios = withoutAggressiveGC(() => {
+          timeSet();
+          timeAppend();
+          const measured: number[] = [];
+          for (let i = 0; i < repetitions; i++) measured.push(timeAppend() / timeSet());
+          return measured;
+        }) as number[];
+
+        ratios.sort((a, b) => a - b);
+        expect(ratios[ratios.length >> 1]).toBeLessThan(isDebug ? 4 : 8);
+      });
     });
   });
   describe("set()", () => {

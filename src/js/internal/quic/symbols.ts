@@ -1,6 +1,19 @@
 // Ported from Node.js lib/internal/quic/symbols.js (v26.3.0).
 
+const NumberIsFinite = Number.isFinite;
+const MathMin = Math.min;
+
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
+
+// endpoint <-> session <-> stream [kInspect] each other through fresh
+// wrappers; cap the remaining depth so the cycle bottoms out in one pass.
+function inspectChildOptions(depth, options) {
+  return {
+    __proto__: null,
+    ...options,
+    depth: MathMin(NumberIsFinite(depth) ? depth : 6, 6) - 1,
+  };
+}
 
 const kAttachFileHandle = Symbol("kAttachFileHandle");
 const kBlocked = Symbol("kBlocked");
@@ -49,6 +62,7 @@ export default {
   kVerifyPeer,
   kHeaders,
   kInspect,
+  inspectChildOptions,
   kKeylog,
   kListen,
   kNewSession,

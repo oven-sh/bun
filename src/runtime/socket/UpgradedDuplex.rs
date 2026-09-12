@@ -64,6 +64,9 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
+    /// The transport closed before the TLS engine existed (same window as
+    /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
+    pub pending_close: Cell<bool>,
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
     pub transport_eof: Cell<bool>,
@@ -408,6 +411,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
+            pending_close: Cell::new(false),
             transport_eof: Cell::new(false),
         }
     }
@@ -542,9 +546,12 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
-        if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(true);
-        }
+        let Some(w) = self.wrapper_ref() else {
+            // `start_tls` is still queued: no SSL, and no close callback yet.
+            self.pending_close.set(true);
+            return;
+        };
+        let _ = w.shutdown(true);
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
@@ -679,6 +686,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
+        self.pending_close.set(false);
         self.transport_eof.set(false);
     }
 }

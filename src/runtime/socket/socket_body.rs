@@ -4399,6 +4399,12 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
+                // The transport closed while this task was queued: an engine
+                // started now could never handshake, and nothing would free it.
+                if this.upgrade.pending_close.replace(false) {
+                    Self::on_close(this);
+                    return;
+                }
                 log!(
                     "DuplexUpgradeContext.startTLS mode={}",
                     <&'static str>::from(this.mode)

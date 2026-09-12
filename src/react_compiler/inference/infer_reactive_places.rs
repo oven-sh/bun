@@ -247,7 +247,7 @@ pub(crate) fn infer_reactive_places(
                 reactive_map.is_reactive(op.identifier);
             }
 
-            // See `ReactiveThrows`.
+            // A block throws reactively if it reads a reactive value or only runs under a reactive test.
             let throws_reactively = throws_to_handler(&block.terminal)
                 && (block_has_reactive_input || has_reactive_control);
             if throws_reactively || reactive_throws.controls(*block_id) {
@@ -462,9 +462,7 @@ fn is_reactive_controlled_block(
         || reactive_throws.controls(block_id)
 }
 
-// =============================================================================
 // Reactive throws (not in upstream)
-// =============================================================================
 
 fn throws_to_handler(terminal: &Terminal) -> bool {
     matches!(
@@ -476,44 +474,20 @@ fn throws_to_handler(terminal: &Terminal) -> bool {
     )
 }
 
-/// Reactive control flow through `try` / `catch`. Upstream's
-/// ControlDominators.ts only looks at `if` / `branch` / `switch` terminals, so
-/// it memoizes a value that is assigned in a `catch` with no dependency.
-///
-/// A `MaybeThrow` terminal with a handler is a branch as well: control goes to
-/// the handler when an instruction of the block throws. It has no test operand
-/// to look up in the `ReactivityMap`, so the block itself is recorded. It
-/// throws reactively when one of its instructions has a reactive input, or
-/// when the block itself is reactive-controlled: then whether it runs at all,
-/// and so whether it throws, can change between renders.
-///
-/// In a `try` block every instruction ends its block with a `MaybeThrow`, so
-/// the frontier of a block is mostly just the block before it. One level of
-/// control dependence, which is all upstream reads, then loses what is further
-/// back: an earlier reactive throw, or a reactive `if` around the blocks. So
-/// control dependence on a reactive throw is transitive here. It passes
-/// through every block that only runs depending on one.
+/// `try` / `catch` control flow: a `MaybeThrow` with a handler is a branch that has no test operand.
 #[derive(Default)]
 struct ReactiveThrows {
-    /// For a block, the blocks on its post-dominator frontier. Only filled in
-    /// for a function that has a `MaybeThrow` with a handler.
+    /// Post-dominator frontier of each block, recorded only when the function has a handler.
     frontiers: IdMap<BlockId, Vec<BlockId>>,
-    /// The `MaybeThrow` blocks that throw reactively and the blocks that only
-    /// run depending on one of them, as far as the fixpoint got.
+    /// Blocks that throw reactively, plus every block that only runs depending on one of them.
     blocks: HashSet<BlockId>,
-    /// The handler bindings whose handler a reactive throw controls: the
-    /// caught value comes from the instruction that threw. The binding is
-    /// declared before the `try` statement but only bound in the `catch`
-    /// clause. Marking it reactive would make a scope around the statement
-    /// depend on it, out of scope. Reading it counts as a reactive input
-    /// instead, which makes the `catch` parameter reactive.
+    /// Reactive handler bindings. Only reads count: a binding is declared before its `try`, out of scope.
     caught_values: HashSet<IdentifierId>,
     has_changes: bool,
 }
 
 impl ReactiveThrows {
-    /// Whether a reactive throw decides, directly or through the branches in
-    /// between, if control reaches `block_id`.
+    /// Transitive, because in a `try` the frontier of a block is mostly just the block before it.
     fn controls(&self, block_id: BlockId) -> bool {
         self.frontiers
             .get(block_id)

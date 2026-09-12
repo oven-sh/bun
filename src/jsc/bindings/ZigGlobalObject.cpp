@@ -152,6 +152,8 @@
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
 #include "JSWebSocket.h"
 #include "JSWorker.h"
+#include "VMInterrupts.h"
+#include "JavaScriptCore/JSCConfig.h"
 #include "streams/JSWritableStream.h"
 #include "streams/JSWritableStreamDefaultController.h"
 #include "streams/JSWritableStreamDefaultWriter.h"
@@ -379,6 +381,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
+
+        // Before the first VM's constructor freezes g_jscConfig.
+        g_jscConfig.shellTimeoutCheckCallback = Bun::VMInterrupts::serviceTrap;
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
         // JSC::initialize() registered unwind info + a language-specific SEH

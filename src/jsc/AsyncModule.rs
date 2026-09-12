@@ -3,8 +3,7 @@ use core::ffi::c_void;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{EncodedSlice, String as BunString};
-use bun_install::dependency::Dependency;
-use bun_install::{DependencyID, Resolution};
+use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
@@ -73,11 +72,10 @@ pub struct Queue {
     pub(crate) scheduled: u32,
 }
 
-/// What the resolver's `WakeHandler` carries as its opaque context: the
-/// module queue (for the JS-thread dependency-error callback) and the VM's
-/// weak handle (for wake-ups from the process-wide install / HTTP threads,
-/// which outlive any one VM). Allocated once per VM at registration and kept
-/// for the VM's lifetime.
+/// The resolver `WakeHandler`'s opaque context: the module queue plus the
+/// VM's weak handle the process-wide install / HTTP threads (which outlive
+/// any one VM) post the poll task through. Allocated once per VM at
+/// registration and kept for the VM's lifetime.
 pub struct WakeContext {
     pub queue: *mut Queue,
     pub handle: crate::VmHandle,
@@ -262,57 +260,6 @@ impl Queue {
         self.vm().package_manager().drain_dependency_list();
     }
 
-    /// # Safety
-    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
-    /// registered in `runtime::jsc_hooks`).
-    pub unsafe fn on_dependency_error(
-        ctx: *mut c_void,
-        dependency: &Dependency,
-        root_dependency_id: DependencyID,
-        err: &'static str,
-    ) {
-        // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
-        bun_core::scoped_log!(
-            AsyncModule,
-            "onDependencyError: {}",
-            bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
-        );
-
-        // retain_mut lets Drop free removed modules.
-        this.map.retain_mut(|module| {
-            for pending in module.parse_result.pending_imports.iter() {
-                if pending.root_dependency_id != root_dependency_id {
-                    continue;
-                }
-                let import_record_id = pending.import_record_id;
-                // S017: per-thread VM singleton (safe accessor) instead of
-                // `container_of`-derived `*mut`; provenance is the original
-                // allocation, disjoint from the `&mut module` borrow above.
-                let vm = VirtualMachine::get().as_mut();
-                // reshaped for borrowck — `lockfile.str()` ties the
-                // returned slice to `&vm`, which conflicts with passing
-                // `&mut vm` to `resolve_error`. The lockfile string buffer is
-                // stable across `resolve_error` (no realloc on the error
-                // path); detach the borrow via raw ptr.
-                let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
-                module.resolve_error(
-                    vm,
-                    import_record_id,
-                    &PackageResolveError {
-                        name: name.slice(),
-                        err,
-                        url: b"",
-                        version: dependency.version.clone(),
-                    },
-                );
-                return false; // continue :outer — drop this module
-            }
-            true
-        });
-    }
-
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
     /// (`PackageManager::wake_raw`). `ctx` is the [`WakeContext`] registered in
     /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.
@@ -328,17 +275,15 @@ impl Queue {
         }
     }
 
-    /// `WakeHandler::on_dependency_error` context accessor — JS thread.
-    ///
-    /// # Safety
-    /// `ctx` is the leaked `WakeContext` registered in `runtime/jsc_hooks.rs`.
-    pub unsafe fn queue_from_wake_context(ctx: *mut c_void) -> *mut Queue {
-        // SAFETY: fn contract.
-        unsafe { (*ctx.cast::<WakeContext>()).queue }
-    }
-
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
+        if self.map.is_empty() {
+            // Wakes also fire for tasks a synchronous auto-install
+            // (`enqueue_dependency_to_root`) is blocked on. That waiter drains
+            // them itself; draining here would drop their failures (no module
+            // to deliver them to).
+            return;
+        }
         self.run_tasks();
         self.poll_modules();
     }

@@ -182,9 +182,8 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    Dependency, DependencyID, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
-    initialize_store,
+    DependencyID, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
+    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -282,7 +281,6 @@ pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -629,7 +627,7 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-// MOVE_DOWN: data struct + accessors live in `bun_install_types::WakeHandler`
+// MOVE_DOWN: the data struct lives in `bun_install_types::WakeHandler`
 // (single definition the resolver also stores). The `handler` second arg is
 // erased to `*mut c_void` there because that crate cannot name
 // `PackageManager`; `wake_raw()` casts it back at the call site.
@@ -901,26 +899,6 @@ impl PackageManager {
         self.env().get_tls_reject_unauthorized()
     }
 
-    pub(crate) fn fail_root_resolution(
-        &mut self,
-        dependency: &Dependency,
-        dependency_id: DependencyID,
-        err: Error,
-    ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
-            unsafe {
-                (self.on_wake.get_on_dependency_error())(
-                    ctx.as_ptr(),
-                    dependency,
-                    dependency_id,
-                    err.name(),
-                );
-            }
-        }
-    }
-
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
@@ -937,12 +915,10 @@ impl PackageManager {
         // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
-            let on_wake = &*core::ptr::addr_of!((*this).on_wake);
-            if let Some(ctx) = on_wake.context {
-                // `WakeHandler.handler`'s second arg is the erased
-                // `*mut PackageManager` (`bun_install_types` cannot name this
-                // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+            if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
+                // `handler`'s second arg is the erased `*mut PackageManager`
+                // (`bun_install_types` cannot name this type).
+                (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }

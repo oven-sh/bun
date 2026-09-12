@@ -215,10 +215,7 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
-// The host functions below read C++ fields off the receiver. The builtins in BundlerPlugin.ts call
-// them with the plugin object, and the object is a gcProtect'ed cell that bun:jsc's
-// getProtectedObjects() hands to JS, so the receiver is checked: any other type would be read as a
-// plugin. Returns nullptr with an exception pending.
+// nullptr means it threw. Checked, not assumed: bun:jsc's getProtectedObjects() hands this cell to JS.
 static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto* thisObject = dynamicDowncast<JSBundlerPlugin>(callFrame->thisValue());
@@ -543,8 +540,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
-    // Every property the builtins in BundlerPlugin.ts read off this object exists from the start, so
-    // a read before the first write finds an own property instead of walking the prototype chain.
+    // Every name the builtins in BundlerPlugin.ts read off this object is an own property from here.
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
@@ -632,9 +628,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         JSBundlerPlugin::createStructure(
             globalObject->vm(),
             globalObject,
-            // The prototype is null. The builtins in BundlerPlugin.ts read properties off this object
-            // by name. With Object.prototype in the chain, a user accessor planted under one of those
-            // names runs with this private object as its receiver, which hands the object to user code.
+            // Null prototype: an accessor on Object.prototype would otherwise receive this object.
             jsNull()),
         nullptr,
         target);
@@ -686,8 +680,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
-    // The setup function is any callable the user gave, not always a JSFunction: a callable Proxy
-    // and a native function are objects of another class.
+    // setup() is any callable, and a callable Proxy is not a JSFunction.
     auto* setupObject = JSValue::decode(encodedSetupFunction).getObject();
     auto* lexicalGlobalObject = setupObject ? setupObject->globalObject() : plugin->globalObject();
 

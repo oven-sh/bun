@@ -366,6 +366,20 @@ Bun broadcasts each `console.log` or `console.error` call to the terminal that s
 
 Internally, Bun reuses the existing WebSocket connection from hot module replacement (HMR) to send the logs.
 
+## Reach the dev server by another name
+
+The dev server only answers requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `--host` you passed. Any other `Host` gets a `403 Forbidden` response. This protects your bundled source code from DNS rebinding attacks.
+
+To open the dev server through an mDNS name (`mybox.local`), a tunnel (ngrok, cloudflared), or an entry in `/etc/hosts`, list that name in `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+# Hostnames without a port. A leading "." also allows every subdomain.
+allowedHosts = ["mybox.local", ".ngrok-free.app"]
+```
+
+`allowedHosts = true` turns the check off. This removes the DNS rebinding protection, so prefer an explicit list. In a `Bun.serve()` call, the same option is `development.allowedHosts`. See [Allowed hosts](/bundler/fullstack#allowed-hosts).
+
 ## Edit files in the browser
 
 Bun's frontend dev server supports Automatic Workspace Folders in Chrome DevTools, so you can save edits to files from the browser.

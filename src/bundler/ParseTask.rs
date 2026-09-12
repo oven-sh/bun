@@ -2914,7 +2914,8 @@ pub mod parse_worker {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
                 // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
                 unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                    bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                        &raw const **mini,
                         result,
                         on_complete_mini,
                         offset_of!(Result, task),

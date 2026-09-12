@@ -18,6 +18,7 @@
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/DOMAttributeGetterSetter.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -36,6 +37,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked);
+static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_nodeWritable);
+static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_nodeErrored);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_constructor);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom);
 
@@ -195,6 +198,12 @@ void JSWritableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
+
+    const auto nodeStreamStateAttributes = JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly;
+    const auto nodeStreamStateAnnotation = DOMAttributeAnnotation { JSWritableStream::info(), nullptr };
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.writable"_s)), DOMAttributeGetterSetter::create(vm, jsWritableStreamPrototypeGetter_nodeWritable, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.errored"_s)), DOMAttributeGetterSetter::create(vm, jsWritableStreamPrototypeGetter_nodeErrored, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+
     Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamPrototype_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
@@ -324,6 +333,26 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked, (JSGlobalObject
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
     return JSValue::encode(jsBoolean(isWritableStreamLocked(stream)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_nodeWritable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSWritableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == WritableStreamState::Writable));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_nodeErrored, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSWritableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == WritableStreamState::Errored));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -811,6 +811,7 @@ export function buildAllowedNodeEnvironmentFlags() {
     "--max-http-header-size",
     "--no-addons",
     "--no-deprecation",
+    "--no-use-system-ca",
     "--no-warnings",
     "--pending-deprecation",
     "--perf-basic-prof",

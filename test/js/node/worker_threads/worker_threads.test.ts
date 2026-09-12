@@ -38,6 +38,63 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+test("online fires before the entry point finishes", async () => {
+  const sab = new SharedArrayBuffer(4);
+  const signal = new Int32Array(sab);
+  const worker = new Worker(
+    `const { workerData } = require("worker_threads");
+     Atomics.wait(new Int32Array(workerData), 0, 0);`,
+    { eval: true, workerData: sab },
+  );
+  try {
+    await once(worker, "online");
+    Atomics.store(signal, 0, 1);
+    Atomics.notify(signal, 0);
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+// Node reads all of these off one process-wide clock, so a stamp the worker takes
+// between the parent's send and receive lands between the parent's two stamps.
+// An origin restarted per VM puts every worker stamp behind the parent's by the
+// worker's spawn delay.
+test("hrtime, uptime, Bun.nanoseconds and performance share the parent's origin", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.once("message", () => {
+       const [sec, nsec] = process.hrtime();
+       parentPort.postMessage({
+         hrtime: sec * 1e9 + nsec,
+         hrtimeBigint: Number(process.hrtime.bigint()),
+         uptime: Math.round(process.uptime() * 1e9),
+         nanoseconds: Bun.nanoseconds(),
+         performanceNow: Math.round(performance.now() * 1e6),
+         timeOrigin: performance.timeOrigin,
+       });
+     });
+     parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  try {
+    await once(worker, "message");
+    const sent = Number(process.hrtime.bigint());
+    worker.postMessage("ping");
+    const [{ timeOrigin, ...stamps }] = await once(worker, "message");
+    const received = Number(process.hrtime.bigint());
+
+    const outsideWindow = Object.fromEntries(
+      Object.entries(stamps as Record<string, number>).filter(([, ns]) => ns < sent || ns > received),
+    );
+    expect({ sent, received, outsideWindow }).toEqual({ sent, received, outsideWindow: {} });
+    expect(timeOrigin).toBe(performance.timeOrigin);
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -1254,6 +1311,24 @@ test("off() removes only the listener it names, per event and per port", () => {
     b.port1.close();
     b.port2.close();
   }
+});
+
+test("MessagePort listeners receive the port as `this` for on() and once()", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: unknown[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  port1.on("message", function () {
+    seen.push(this);
+  });
+  port1.once("message", function () {
+    seen.push(this);
+    resolve();
+  });
+  port2.postMessage("x");
+  await promise;
+  expect(seen).toEqual([port1, port1]);
+  port1.close();
+  port2.close();
 });
 
 // bun collects entangled ports; node never does. A worker that drops its transferred

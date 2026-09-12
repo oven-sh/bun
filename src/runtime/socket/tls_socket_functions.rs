@@ -252,7 +252,7 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
-        pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub(crate) fn us_get_shared_default_ca_store(use_system_ca: i32) -> *mut X509_STORE;
         pub(crate) fn us_ssl_ctx_has_user_ca(ctx: *mut SSL_CTX) -> c_int;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
@@ -559,7 +559,9 @@ pub(super) fn get_peer_certificate(
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
         let ssl_ctx = ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr));
         if store.is_null() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
-            shared_store = ffi::us_get_shared_default_ca_store();
+            shared_store = ffi::us_get_shared_default_ca_store(i32::from(
+                bun_jsc::virtual_machine::VirtualMachine::get().tls_use_system_ca(),
+            ));
             if !shared_store.is_null() {
                 store = shared_store;
             }

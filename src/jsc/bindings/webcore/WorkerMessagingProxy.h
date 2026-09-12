@@ -85,6 +85,10 @@ public:
     // Queued while Pending, posted while Running, refused (false) once Closing.
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
     void setKeepAlive(bool);
+    // Whether the thread keeps the parent's loop alive; nullopt once the thread is released
+    // (node: the handle is gone and hasRef() reads back undefined).
+    std::optional<bool> hasRef() const;
+    bool eventLoopUtilization(double& elapsedMs, double& idleMs);
     void workerObjectDestroyed();
     // The parent context is exiting: the thread has been asked to stop; wait for it and release what
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
@@ -126,7 +130,7 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message);
+    void postMessageErrorToWorkerObject(String&& message, String&& code);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
     // Parent thread only.

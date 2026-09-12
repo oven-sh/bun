@@ -1,9 +1,8 @@
 const CONCURRENCY = 10;
 const RUN_COUNT = 5;
 
-import { Worker, isMainThread, workerData } from "worker_threads";
+import { Worker, isMainThread, workerData, parentPort } from "worker_threads";
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
@@ -69,12 +68,10 @@ if (isMainThread) {
       const { promise, resolve, reject } = Promise.withResolvers();
       promises.push(promise);
 
-      worker.on("online", () => {
-        sleep(1)
-          .then(() => {
-            return worker.terminate();
-          })
-          .finally(resolve);
+      // Terminate once the worker reports its action started, so terminate()
+      // lands with the I/O in flight rather than racing module loading.
+      worker.once("message", () => {
+        worker.terminate().finally(resolve);
       });
       worker.on("error", e => reject(e));
     }
@@ -87,5 +84,7 @@ if (isMainThread) {
 } else {
   Bun.gc(true);
   const { action, port } = workerData;
-  await actions[action](port);
+  const pending = actions[action](port);
+  parentPort!.postMessage("started");
+  await pending;
 }

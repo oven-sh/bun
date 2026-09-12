@@ -382,6 +382,13 @@ describe("web worker", () => {
       await once(worker, "close");
       expect(order).toEqual(["open", "error"]);
     });
+
+    test("is fired for a worker whose entry never returns", async () => {
+      const worker = new Worker("data:text/javascript,for(;;){}");
+      await once(worker, "open");
+      worker.terminate();
+      await once(worker, "close");
+    });
   });
 
   describe("error event", () => {

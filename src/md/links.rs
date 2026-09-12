@@ -50,6 +50,14 @@ pub(crate) enum LabelLeave {
     Wikilink,
 }
 
+/// Result of `match_wiki_link`; the construct ends at `inner_end + 2`.
+pub(crate) struct WikiLinkMatch {
+    pub(crate) inner_start: usize,
+    pub(crate) pipe_pos: Option<usize>,
+    /// Position of the first closing `]`.
+    pub(crate) inner_end: usize,
+}
+
 /// Result of `find_autolink`.
 pub(crate) struct Autolink {
     pub(crate) end_pos: usize,
@@ -845,12 +853,9 @@ impl Parser<'_> {
         false
     }
 
-    /// Process wiki link: [[destination]] or [[destination|label]]
-    pub(crate) fn process_wiki_link(
-        &mut self,
-        content: &[u8],
-        start: usize,
-    ) -> Result<Option<LabelParse>, parser::Error> {
+    /// Lookahead-only match of `[[destination]]` / `[[destination|label]]`,
+    /// shared by rendering and emphasis collection so they agree.
+    pub(crate) fn match_wiki_link(&self, content: &[u8], start: usize) -> Option<WikiLinkMatch> {
         // start points at first '[', next char is also '['
         let mut pos = start + 2;
 
@@ -861,12 +866,12 @@ impl Parser<'_> {
 
         while pos < content.len() {
             if content[pos] == b'\n' || content[pos] == b'\r' {
-                return Ok(None);
+                return None;
             }
             if content[pos] == b'[' {
                 bracket_depth += 1;
                 if bracket_depth > MAX_WIKI_BRACKET_DEPTH {
-                    return Ok(None);
+                    return None;
                 }
             } else if content[pos] == b']' {
                 if bracket_depth > 0 {
@@ -875,7 +880,7 @@ impl Parser<'_> {
                     break;
                 } else {
                     // Single ] without matching [, not a valid close
-                    return Ok(None);
+                    return None;
                 }
             } else if content[pos] == b'|' && pipe_pos.is_none() && bracket_depth == 0 {
                 pipe_pos = Some(pos);
@@ -885,22 +890,35 @@ impl Parser<'_> {
 
         // Must end with ]]
         if pos >= content.len() || content[pos] != b']' {
-            return Ok(None);
+            return None;
         }
 
         let inner_end = pos;
 
-        // Determine the target
-        let target = if let Some(pp) = pipe_pos {
-            &content[inner_start..pp]
-        } else {
-            &content[inner_start..inner_end]
+        // Target must not exceed 100 characters
+        let target_end = pipe_pos.unwrap_or(inner_end);
+        if target_end - inner_start > 100 {
+            return None;
+        }
+
+        Some(WikiLinkMatch {
+            inner_start,
+            pipe_pos,
+            inner_end,
+        })
+    }
+
+    /// Process wiki link: [[destination]] or [[destination|label]]
+    pub(crate) fn process_wiki_link(
+        &mut self,
+        content: &[u8],
+        start: usize,
+    ) -> Result<Option<LabelParse>, parser::Error> {
+        let Some(m) = self.match_wiki_link(content, start) else {
+            return Ok(None);
         };
 
-        // Target must not exceed 100 characters
-        if target.len() > 100 {
-            return Ok(None);
-        }
+        let target = &content[m.inner_start..m.pipe_pos.unwrap_or(m.inner_end)];
 
         // Render the wikilink
         self.renderer.enter_span(
@@ -910,15 +928,14 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
-        let label_start = if let Some(pp) = pipe_pos {
-            pp + 1
-        } else {
-            inner_start
+        let label_start = match m.pipe_pos {
+            Some(pp) => pp + 1,
+            None => m.inner_start,
         };
         Ok(Some(LabelParse {
             label_start,
-            label_end: inner_end,
-            link_end: pos + 2, // skip both ']'
+            label_end: m.inner_end,
+            link_end: m.inner_end + 2, // skip both ']'
             leave: LabelLeave::Wikilink,
         }))
     }

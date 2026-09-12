@@ -2682,7 +2682,11 @@ pub mod parse_worker {
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
-            } else if module_type == options::ModuleType::Esm {
+            } else if loader == Loader::Json {
+                // `JSON.parse("")` throws, and so does the runtime's `.json` loader.
+                let _ = log.add_error(Some(source), Loc::EMPTY, b"Unexpected end of file in JSON");
+                Err(AnyError::ParserError)
+            } else if loader.is_javascript_like() && module_type == options::ModuleType::Esm {
                 get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {
                 get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)

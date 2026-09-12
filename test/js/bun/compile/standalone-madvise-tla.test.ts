@@ -156,7 +156,16 @@ test.concurrent.skipIf(!isLinux)("standalone madvise hint keeps source text that
       import { dlopen, FFIType } from "bun:ffi";
       import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 
-      const PAGE = 4096;
+      const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+        getpagesize: { args: [], returns: FFIType.i32 },
+        mmap: {
+          args: [FFIType.ptr, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64],
+          returns: FFIType.ptr,
+        },
+        memcpy: { args: [FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.ptr },
+        mremap: { args: [FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
+      }).symbols;
+      const PAGE = libc.getpagesize();
 
       function readAt(fd: number, offset: number, length: number): Buffer {
         const buf = Buffer.alloc(length);
@@ -230,23 +239,15 @@ test.concurrent.skipIf(!isLinux)("standalone madvise hint keeps source text that
       export function makePayloadAnonymous(): void {
         const [start, end] = payloadRange();
         const len = end - start;
-        const { symbols } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
-          mmap: {
-            args: [FFIType.ptr, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64],
-            returns: FFIType.ptr,
-          },
-          memcpy: { args: [FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.ptr },
-          mremap: { args: [FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
-        });
         const PROT_READ = 1, PROT_WRITE = 2;
         const MAP_PRIVATE = 2, MAP_ANONYMOUS = 0x20;
         const MREMAP_MAYMOVE = 1, MREMAP_FIXED = 2;
 
-        const copy = symbols.mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        const copy = libc.mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (!copy || Number(copy) === -1) throw new Error("mmap failed");
-        symbols.memcpy(copy, start, len);
+        libc.memcpy(copy, start, len);
         // MREMAP_FIXED replaces the file-backed payload mapping in one step.
-        if (Number(symbols.mremap(copy, len, len, MREMAP_MAYMOVE | MREMAP_FIXED, start)) !== start) {
+        if (Number(libc.mremap(copy, len, len, MREMAP_MAYMOVE | MREMAP_FIXED, start)) !== start) {
           throw new Error("mremap failed");
         }
       }

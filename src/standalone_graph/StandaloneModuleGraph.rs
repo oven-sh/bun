@@ -651,15 +651,22 @@ mod elf {
     /// memory instead, and `MADV_DONTNEED` on an anonymous private page makes
     /// the next read return zeros rather than the bytes the file holds
     /// (#42509). A range that cannot be read or parsed counts as not backed.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn is_file_backed(lo: usize, hi: usize) -> bool {
-        let Ok(maps) = bun_sys::File::open(
+        let Ok(file) = bun_sys::File::open(
             bun_core::zstr!("/proc/self/maps"),
             bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
             0,
-        )
-        .and_then(|file| file.read_to_end_small()) else {
+        ) else {
             return false;
         };
+        // `fstat` reports size 0 for procfs, so presize for the typical
+        // process instead and read sequentially: the kernel builds the
+        // listing incrementally across `read` calls.
+        let mut maps = Vec::new();
+        if maps.try_reserve(16 * 1024).is_err() || file.read_to_end_into(&mut maps).is_err() {
+            return false;
+        }
         // One mapping per line, sorted by address:
         // `start-end perms offset dev inode [path]`. Anonymous mappings have
         // inode 0, whatever their path field says.

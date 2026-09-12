@@ -299,3 +299,34 @@ test.todoIf(isCI && !isWindows)("Bun.secrets handles concurrent operations", asy
 
   await Promise.all(promises);
 });
+
+test.todoIf(isCI && !isWindows)("Bun.secrets applies every concurrent set and delete", async () => {
+  const service = `bun-concurrent-applied-${Date.now()}-${Math.random()}`;
+  const names = Array.from({ length: 8 }, (_, i) => `name-${i}`);
+  const options = shouldUseUnrestrictedAccess() ? { allowUnrestrictedAccess: true } : {};
+
+  // Reads one entry at a time, so that the check is not part of the race.
+  const readAll = async () => {
+    const values: (string | null)[] = [];
+    for (const name of names) values.push(await Bun.secrets.get({ service, name }));
+    return values;
+  };
+
+  try {
+    for (let round = 0; round < 5; round++) {
+      await Promise.all(names.map(name => Bun.secrets.set({ service, name, value: `${name}-${round}`, ...options })));
+      expect(await readAll()).toEqual(names.map(name => `${name}-${round}`));
+
+      // The reads run next to the deletes: on Windows, one concurrent read is enough to make
+      // Credential Manager report a delete as done and keep the entry.
+      const [deleted] = await Promise.all([
+        Promise.all(names.map(name => Bun.secrets.delete({ service, name }))),
+        Promise.all(names.map(name => Bun.secrets.get({ service, name }))),
+      ]);
+      expect(deleted).toEqual(names.map(() => true));
+      expect(await readAll()).toEqual(names.map(() => null));
+    }
+  } finally {
+    for (const name of names) await Bun.secrets.delete({ service, name });
+  }
+});

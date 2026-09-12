@@ -449,6 +449,27 @@ describe("bun", () => {
       expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
     });
+
+    test("bun pm with no subcommand or an unknown one prints the same help as bun pm --help", async () => {
+      using dir = tempDir("pm-help", { "package.json": `{"name":"proj"}` });
+      const pm = async (...args: string[]) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), "pm", ...args], cwd: String(dir), env, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode };
+      };
+      const [help, bare, unknown] = await Promise.all([pm("--help"), pm(), pm("no-such-subcommand")]);
+
+      expect(help.stdout).toMatch(/^ {2}bun pm diff /m);
+      expect(help.stdout).toMatch(/^ {2}bun pm default-trusted /m);
+      expect(bare.stdout).toBe(help.stdout);
+      expect(unknown.stdout).toBe(help.stdout);
+      expect(help.stdout).toMatch(/^ {2}Run package manager utilities\.\n\nCommands:\n/m);
+
+      expect(help.stderr).toBe("");
+      expect(bare.stderr).toBe("");
+      expect(unknown.stderr).toContain('"no-such-subcommand" unknown command');
+      expect([help.exitCode, bare.exitCode, unknown.exitCode]).toEqual([0, 0, 1]);
+    });
   });
 
   describe("test command line arguments", () => {

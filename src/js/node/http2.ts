@@ -3927,17 +3927,15 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
     try {
       origin = new URL(origin).origin;
     } catch (e) {
-      if (isAltSvc) {
-        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
-      } else {
-        throw $ERR_INVALID_URL(origin);
-      }
+      throw $ERR_INVALID_URL(origin);
     }
   } else if (origin != null && typeof origin === "object") {
     origin = origin.origin;
   }
   validateString(origin, "origin");
-  if (!origin || origin === "null") {
+  // Only "null" is rejected. origin() sends an empty string as a zero-length entry.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1779-L1786
+  if (origin === "null") {
     if (isAltSvc) {
       throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
     } else {
@@ -4408,6 +4406,12 @@ class ServerHttp2Session extends Http2Session {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1760
     if (origin.length + alt.length > MAX_LENGTH) {
       throw $ERR_HTTP2_ALTSVC_LENGTH();
+    }
+    // altsvc(alt) names neither an origin nor a stream. RFC 7838 section 4 makes that frame
+    // invalid. Node gives no error to match: it aborts the process on a CHECK.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3227-L3229
+    if (stream === 0 && origin === "") {
+      throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
     }
     parser.altsvc(origin, alt, stream);
   }

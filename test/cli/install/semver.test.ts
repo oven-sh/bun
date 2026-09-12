@@ -806,6 +806,44 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  test("invalid versions never satisfy any range", () => {
+    // node-semver: an unparseable version never satisfies anything. The version
+    // argument used to be silently truncated ("1.2.3.4" -> 1.2.3) or coerced
+    // ("" -> 0.0.0) and then matched against the range anyway.
+    const invalid: [version: string, range: string][] = [
+      ["1.2.3.4", "1.2.3"],
+      ["1.2.3.4", "*"],
+      ["1.2.3.4", ">=1.0.0"],
+      ["", "*"],
+      ["", ">=0.0.0"],
+      ["", "0.x"],
+      ["1.2.3 junk", "1.2.3"],
+      ["1.2.3 || 1.2.4", "1.2.3"],
+      ["1.2.3,", "1.2.3"],
+      ["1.2.3-beta x", "1.2.3-beta"],
+    ];
+    expect(invalid.map(([version, range]) => ({ version, range, satisfies: satisfies(version, range) }))).toEqual(
+      invalid.map(([version, range]) => ({ version, range, satisfies: false })),
+    );
+
+    // Versions node-semver accepts (leading "v", surrounding whitespace, build
+    // metadata) and the deliberate "1.0.0rc1" npm-ism must keep matching.
+    const valid: [version: string, range: string][] = [
+      ["1.2.3", "1.2.3"],
+      ["v1.2.3", "1.2.3"],
+      [" 1.2.3 ", "1.2.3"],
+      ["1.2.3\n", "1.2.3"],
+      ["\t1.2.3", "^1.0.0"],
+      ["1.2.3-beta.1", "1.2.3-beta.1"],
+      ["1.2.3-beta.1+build.5", "1.2.3-beta.1"],
+      ["1.2.3+build", ">=1.2.3"],
+      ["1.0.0rc1", "1.0.0-rc1"],
+    ];
+    expect(valid.map(([version, range]) => ({ version, range, satisfies: satisfies(version, range) }))).toEqual(
+      valid.map(([version, range]) => ({ version, range, satisfies: true })),
+    );
+  });
+
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
@@ -831,6 +869,7 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   // already been parsed, crashing the process.
   const fuzzed = "> > > > > > > `{" + "`${".repeat(34) + "- - - 1e-323-alpha.1";
   const cases = [
+    // "" is not a valid version, so it never satisfies anything
     ["", fuzzed],
     ["1.0.0", fuzzed],
     ["", "1 || -"],
@@ -852,7 +891,7 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true, true]);
+  expect(JSON.parse(stdout)).toEqual([false, true, false, true, false, true, true]);
   expect(exitCode).toBe(0);
 });
 

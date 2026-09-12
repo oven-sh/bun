@@ -3497,6 +3497,23 @@ describe("expect()", () => {
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
       expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
+      // a global RegExp matches regardless of lastIndex and does not advance it
+      const sticky = /wor/g;
+      sticky.lastIndex = 9;
+      expect("hello world").toMatch(sticky);
+      expect("hello world").toMatch(sticky);
+      expect(sticky.lastIndex).toBe(9);
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(sticky) });
+      expect(sticky.lastIndex).toBe(9);
+      // a sticky RegExp is matched from index 0, as Jest's `new RegExp(regex)` copy is, whatever lastIndex says
+      const anchored = /wor/y;
+      anchored.lastIndex = 6;
+      expect("hello world").not.toMatch(anchored);
+      expect("world").toMatch(anchored);
+      expect(anchored.lastIndex).toBe(6);
+      expect({ a: "world" }).toMatchObject({ a: expect.stringMatching(anchored) });
+      expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(anchored) });
+      expect(anchored.lastIndex).toBe(6);
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
       expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
       expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });

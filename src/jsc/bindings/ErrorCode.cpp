@@ -12,6 +12,8 @@
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/FunctionExecutable.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
@@ -320,6 +322,81 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
     }
 }
 
+// util.inspect's rendering of a function (getFunctionBase / getClassBase in
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js, without the trailing
+// own-property listing): the kind comes from how the function was defined and the name is an
+// ordinary `.name` read, so a bound function is "[Function: bound f]", an async function
+// "[AsyncFunction: f]" and a class "[class Foo extends Base]". Bun.inspect intentionally differs here
+// ("[Function]" for an anonymous function, "[class Array]" for a native constructor), so callables
+// cannot share the Bun__inspect_singleline fallback that other objects take.
+static void appendFunctionLikeInspect(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSObject* function)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool isClass = false;
+    ASCIILiteral kind = "Function"_s;
+    auto* jsFunction = dynamicDowncast<JSC::JSFunction>(function);
+    if (jsFunction && !jsFunction->isHostFunction()) {
+        auto* executable = jsFunction->jsExecutable();
+        isClass = executable->isClassConstructorFunction();
+        bool isGenerator = executable->isGenerator() || executable->isAsyncGenerator();
+        if (JSC::isAsyncFunctionParseMode(executable->parseMode()))
+            kind = isGenerator ? "AsyncGeneratorFunction"_s : "AsyncFunction"_s;
+        else if (isGenerator)
+            kind = "GeneratorFunction"_s;
+    }
+
+    JSValue nameValue = function->get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, );
+    // A name that was redefined to a non-string (Object.defineProperty(f, "name", { value: 42 }))
+    // is inspected, like node's formatValue does: "[Function: 42]".
+    WTF::String name = nameValue.isString()
+        ? nameValue.toWTFString(globalObject)
+        : Bun__inspect_singleline(globalObject, nameValue).transferToWTFString();
+    RETURN_IF_EXCEPTION(scope, );
+
+    // A JSFunction or InternalFunction is an ordinary object (a callable Proxy has its own JSType and
+    // never gets here), so reading its [[Prototype]] directly is unobservable.
+    JSValue prototype = function->getPrototypeDirect();
+
+    if (!isClass) {
+        builder.append('[');
+        builder.append(kind);
+        if (prototype.isNull())
+            builder.append(" (null prototype)"_s);
+        if (name.isEmpty()) {
+            builder.append(" (anonymous)"_s);
+        } else {
+            builder.append(": "_s);
+            builder.append(name);
+        }
+        builder.append(']');
+        return;
+    }
+
+    builder.append("[class "_s);
+    if (name.isEmpty())
+        builder.append("(anonymous)"_s);
+    else
+        builder.append(name);
+    if (prototype.isNull()) {
+        builder.append(" extends [null prototype]"_s);
+    } else {
+        JSValue superNameValue = prototype.get(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (superNameValue.isString()) {
+            WTF::String superName = superNameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!superName.isEmpty()) {
+                builder.append(" extends "_s);
+                builder.append(superName);
+            }
+        }
+    }
+    builder.append(']');
+}
+
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
@@ -362,19 +439,9 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         return;
     }
     case JSC::JSType::InternalFunctionType:
-    case JSC::JSType::JSFunctionType: {
-        auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
-
-        if (!name.isEmpty()) {
-            builder.append("[Function: "_s);
-            builder.append(name);
-            builder.append(']');
-        } else {
-            builder.append("[Function (anonymous)]"_s);
-        }
+    case JSC::JSType::JSFunctionType:
+        appendFunctionLikeInspect(globalObject, builder, cell->getObject());
         return;
-    }
 
     default: {
         break;

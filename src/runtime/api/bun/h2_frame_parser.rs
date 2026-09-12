@@ -3513,6 +3513,24 @@ impl H2FrameParser {
         JSValue::UNDEFINED
     }
 
+    /// Ids rooted in `sctx` with no `streams` entry: the streams a server pushed to this client.
+    /// PUSH_PROMISE reserves them in the engine and the JS `streamPush` handler roots them through
+    /// setStreamContext, but nothing creates a legacy `Stream`, so a fan-out over `streams` alone
+    /// misses them. A snapshot, like `StreamResumableIterator`: the JS a caller runs between ids
+    /// can close streams, so each id is looked up again.
+    fn sctx_only_stream_ids(&self) -> Vec<u32> {
+        if self.is_server.get() {
+            return Vec::new();
+        }
+        let streams = self.streams.get();
+        self.sctx
+            .get()
+            .keys()
+            .copied()
+            .filter(|id| !streams.contains_key(id))
+            .collect()
+    }
+
     /// Record outbound DATA the legacy encoder wrote so the engine's send windows track reality.
     /// Buffered in cells and applied in rewrite_read: inbound WINDOW_UPDATE handling always goes
     /// through rewrite_read first, so the windows are in sync before any overflow check runs.
@@ -4126,6 +4144,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             }
         }
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        if effective == 7 {
+            // Release the per-stream JS context root so it can be collected (also done by
+            // free_resources, but a stream may have no legacy entry). Before the dispatch: such
+            // a stream has no CLOSED state, so a present root is what makes an
+            // emitErrorToAllStreams that the JS below re-enters treat it as open.
+            self.sctx.with_mut(|m| {
+                m.remove(&stream_id);
+            });
+        }
         self.dispatch_with_extra(
             JSH2FrameParser::Gc::onStreamEnd,
             stream_ctx,
@@ -4140,11 +4167,6 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*stream).free_resources::<false>(self) };
             }
-            // Release the per-stream JS context root so it can be collected (also done by
-            // free_resources, but a stream may have no legacy entry).
-            self.sctx.with_mut(|m| {
-                m.remove(&stream_id);
-            });
         }
     }
 
@@ -4185,6 +4207,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             }
         }
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        // Unrooted before the dispatch, for the same reason as in on_stream_end.
+        self.sctx.with_mut(|m| {
+            m.remove(&stream_id);
+        });
         if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
             // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
             // rstCode 8 without an 'error' event).
@@ -4201,15 +4227,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(code as f64),
             );
         }
-        // The reset closes the stream; free the legacy slot (queueing the engine eviction)
-        // and release its JS context root, mirroring the on_stream_end full-close path.
+        // The reset closes the stream; free the legacy slot (queueing the engine eviction),
+        // mirroring the on_stream_end full-close path.
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).free_resources::<false>(self) };
         }
-        self.sctx.with_mut(|m| {
-            m.remove(&stream_id);
-        });
     }
 }
 
@@ -6501,20 +6524,26 @@ impl H2FrameParser {
         } else {
             JSValue::UNDEFINED
         };
-        let mut _count: u32 = 0;
-        let mut it = StreamResumableIterator::init(this);
-        while let Some(stream) = it.next() {
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            let Some(value) = (unsafe { (*stream).js_context.get() }) else {
-                continue;
-            };
+        let visit = |value: JSValue| {
             this.handlers.get().vm.event_loop_mut().run_callback(
                 callback,
                 global_object,
                 this_value,
                 &[value],
             );
-            _count += 1;
+        };
+        let mut it = StreamResumableIterator::init(this);
+        while let Some(stream) = it.next() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            let Some(value) = (unsafe { (*stream).js_context.get() }) else {
+                continue;
+            };
+            visit(value);
+        }
+        for id in this.sctx_only_stream_ids() {
+            if let Some(value) = this.sctx.get().get(&id).and_then(|s| s.get()) {
+                visit(value);
+            }
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -6591,6 +6620,18 @@ impl H2FrameParser {
                 stream.free_resources::<false>(this);
                 this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, error_arg);
             }
+        }
+        for id in this.sctx_only_stream_ids() {
+            // No `Stream` to mark CLOSED here: a present root is what says the peer has not
+            // closed this one (on_stream_end / on_stream_reset drop it before they dispatch).
+            let Some(identifier) = this
+                .sctx
+                .with_mut(|m| m.remove(&id))
+                .and_then(|root| root.get())
+            else {
+                continue;
+            };
+            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, error_arg);
         }
         Ok(JSValue::UNDEFINED)
     }

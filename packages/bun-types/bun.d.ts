@@ -5451,16 +5451,15 @@ declare module "bun" {
     function setJITPolicy(scale: number): void;
 
     /**
-     * Accurate per-process memory footprint in bytes.
+     * Per-process memory footprint in bytes: the memory that only this
+     * process keeps the machine from reusing.
      *
-     * Unlike `process.memoryUsage.rss()`, this excludes pages already
-     * returned to the OS that the kernel keeps mapped lazily (Darwin's
-     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
-     *
-     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
-     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
-     * Returns `undefined` on platforms with no accurate accessor; callers
-     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on macOS (the same
+     * number `process.memoryUsage.rss()` reports there), `Pss:` from
+     * `/proc/self/smaps_rollup` on Linux (shared pages are split between the
+     * processes that map them), and `PrivateUsage` on Windows (this process's
+     * commit charge). Returns `undefined` on platforms with no such accessor;
+     * callers should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
   }

@@ -58,6 +58,7 @@
 #include "BunClientData.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
+#include "helpers.h"
 
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
@@ -136,10 +137,29 @@ static bool isValidProtocolString(StringView protocol)
     return true;
 }
 
+// Script supplies the values that the error messages here quote back. An
+// unbounded quote builds a message past String::MaxLength, and both
+// makeString() and StringBuilder abort the process on overflow. 1024 is the
+// bound URL::stringCenterEllipsizedToLength() already applies to the URLs.
+static constexpr unsigned maximumQuotedValueLength = 1024;
+
+static String quoteForErrorMessage(StringView value)
+{
+    if (value.length() <= maximumQuotedValueLength)
+        return value.toString();
+    return makeString(value.left(maximumQuotedValueLength), "..."_s);
+}
+
+// The escape expands one code unit to six characters, so bound the output and
+// not the input.
 static String encodeProtocolString(const String& protocol)
 {
     StringBuilder builder;
     for (size_t i = 0; i < protocol.length(); i++) {
+        if (builder.length() >= maximumQuotedValueLength) {
+            builder.append("..."_s);
+            break;
+        }
         if (protocol[i] < 0x20 || protocol[i] > 0x7E)
             builder.append("\\u"_s, hex(protocol[i], 4));
         else if (protocol[i] == 0x5c)
@@ -150,14 +170,29 @@ static String encodeProtocolString(const String& protocol)
     return builder.toString();
 }
 
+// The joined value becomes the Sec-WebSocket-Protocol header, so it cannot be
+// truncated. Returns a null String when the result does not fit in one string.
 static String joinStrings(const Vector<String>& strings, ASCIILiteral separator)
 {
-    StringBuilder builder;
+    size_t maximumLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength));
+    size_t totalLength = 0;
+    for (size_t i = 0; i < strings.size(); ++i) {
+        if (i)
+            totalLength += separator.length();
+        totalLength += strings[i].length();
+        if (totalLength > maximumLength)
+            return String();
+    }
+
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    builder.reserveCapacity(static_cast<unsigned>(totalLength));
     for (size_t i = 0; i < strings.size(); ++i) {
         if (i)
             builder.append(separator);
         builder.append(strings[i]);
     }
+    if (builder.hasOverflowed())
+        return String();
     return builder.toString();
 }
 
@@ -216,13 +251,13 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
 
     URL url { proxyUrl };
     if (!url.isValid())
-        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, url.stringCenterEllipsizedToLength()) };
 
     // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
     // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
     // fetch()'s UnsupportedProxyProtocol behaviour.
     if (!url.protocolIsInHTTPFamily())
-        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
+        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, quoteForErrorMessage(url.protocol()), "\" (expected \"http\" or \"https\")"_s) };
 
     ProxyConfig config;
     config.host = url.host().toString();
@@ -456,13 +491,18 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         if (!visited.add(protocol).isNewEntry) {
             // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
+            return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates: '"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
 
     String protocolString;
-    if (!protocols.isEmpty())
+    if (!protocols.isEmpty()) {
         protocolString = joinStrings(protocols, subprotocolSeparator());
+        if (protocolString.isNull()) {
+            m_state = CLOSED;
+            return Exception { OutOfMemoryError };
+        }
+    }
 
     // `Bun::toString(WTF::String&)` borrows the impl, so materialize the
     // `m_url` views into `WTF::String`s that outlive the connect call.
@@ -1187,7 +1227,7 @@ ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
         return {};
     }
     // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged.");
-    return Exception { SyntaxError, makeString("'"_s, binaryType, "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
+    return Exception { SyntaxError, makeString("'"_s, quoteForErrorMessage(binaryType), "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
 }
 
 EventTargetInterface WebSocket::eventTargetInterface() const

@@ -1498,9 +1498,7 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
-                // Pending with an empty outgoing buffer is a Windows uv_write in
-                // flight, not backpressure: a stream source keeps flowing, a
-                // direct caller gets the promise so it can await the bytes.
+                // An in-flight Windows uv_write is not backpressure for a stream source.
                 if !self.writer.get().is_backed_up()
                     && !matches!(self.source.get(), streams::SourceHandle::None)
                 {

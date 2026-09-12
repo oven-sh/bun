@@ -7,6 +7,7 @@
 #include "ContextDestructionObserver.h"
 #include "ScriptWrappable.h"
 #include <memory>
+#include <optional>
 #include <variant>
 #include <wtf/Forward.h>
 
@@ -69,9 +70,13 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
-    unsigned getMaxListeners() const { return m_maxListeners; };
+    unsigned getMaxListeners() const { return m_maxListeners.value_or(m_defaultMaxListeners); }
 
     void setMaxListeners(unsigned count);
+    void setDefaultMaxListeners(unsigned count) { m_defaultMaxListeners = count; }
+
+    // True on the first overflow of an event type, like node's `existing.warned`.
+    bool markMaxListenersWarned(const Identifier& eventType);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
@@ -103,9 +108,12 @@ private:
     }
 
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    void clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType);
 
     EventEmitterData m_eventTargetData;
-    unsigned m_maxListeners { 10 };
+    std::optional<unsigned> m_maxListeners;
+    unsigned m_defaultMaxListeners { 10 };
+    Vector<Identifier, 1> m_maxListenersWarned;
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };

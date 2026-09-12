@@ -65,12 +65,30 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
 
     if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
+        clearMaxListenersWarnedIfBelowLimit(eventType);
 
         if (this->onDidChangeListener)
             this->onDidChangeListener(*this, eventType, false);
         return true;
     }
     return false;
+}
+
+bool EventEmitter::markMaxListenersWarned(const Identifier& eventType)
+{
+    if (m_maxListenersWarned.contains(eventType))
+        return false;
+    m_maxListenersWarned.append(eventType);
+    return true;
+}
+
+// Node clears `warned` once a type is back to one listener.
+void EventEmitter::clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType)
+{
+    if (m_maxListenersWarned.isEmpty())
+        return;
+    if (listenerCount(eventType) <= 1)
+        m_maxListenersWarned.removeFirst(eventType);
 }
 
 void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
@@ -90,6 +108,7 @@ bool EventEmitter::removeAllListeners()
     // refs, listener-count mirrors) observes the post-removal zero counts.
     Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
+    m_maxListenersWarned.clear();
     this->m_thisObject.clear();
     if (any) {
         eventListenersDidChange();
@@ -109,6 +128,7 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
 
     if (data->eventListenerMap.removeAll(eventType)) {
         eventListenersDidChange();
+        clearMaxListenersWarnedIfBelowLimit(eventType);
         if (this->onDidChangeListener)
             this->onDidChangeListener(*this, eventType, false);
         return true;

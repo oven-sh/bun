@@ -319,10 +319,8 @@ static bool hasIncompleteRequestImpl(us_socket_t* socket)
 
 bool JSNodeHTTPServerSocket::hasIncompleteRequest() const
 {
-    /* Shut down: a handler that ends a `Connection: close` response
-     * synchronously makes the parser stop before the fin chunk that clears
-     * lastMessageStartMs, so the stamp stays set on a connection that will
-     * not carry another request. */
+    /* Shut down: no further request is parsed, and lastMessageStartMs can be
+     * stale (a sync `Connection: close` response stops the parser before fin). */
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }

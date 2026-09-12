@@ -1896,6 +1896,16 @@ struct ExecveCloexecRestorer {
             fcntl(entry.first, F_SETFD, entry.second);
     }
 };
+
+// `String::utf8()` asserts that the conversion worked. It fails when the UTF-8 form can pass 2^31 - 1 bytes: a Latin-1 string of 2^30 characters or more.
+static bool appendUTF8(WTF::Vector<WTF::CString>& storage, const WTF::String& string)
+{
+    auto utf8 = string.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return false;
+    storage.append(WTF::move(utf8.value()));
+    return true;
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((minsize)), (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1973,7 +1983,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("args["_s, i, "]"_s),
                 item, "must be a string without null bytes"_s);
         }
-        argvStorage.append(str.utf8());
+        if (!appendUTF8(argvStorage, str)) [[unlikely]] {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
 
     // Node declares env = process.env as the default, so an omitted env
@@ -2016,11 +2029,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
                 return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "env"_s,
                     envValue, "must be an object with string keys and values without null bytes"_s);
             }
-            envStorage.append(makeString(keyStr, '=', valueStr).utf8());
+            // The key and the value come from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+            WTF::String entry = tryMakeString(keyStr, '=', valueStr);
+            if (entry.isNull() || !appendUTF8(envStorage, entry)) [[unlikely]] {
+                JSC::throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
         }
     }
 
-    CString execPathUtf8 = execPath.utf8();
+    auto execPathConversion = execPath.tryGetUTF8();
+    if (!execPathConversion) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    CString execPathUtf8 = WTF::move(execPathConversion.value());
 
     // Build the null-terminated argv/envp pointer arrays only after the
     // backing storage is fully populated so there is no risk of pointers

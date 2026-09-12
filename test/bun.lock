@@ -79,6 +79,7 @@
         "reflect-metadata": "0.2.2",
         "rollup": "4.4.1",
         "sass": "1.79.4",
+        "semver": "7.7.4",
         "sharp": "0.34.5",
         "sinon": "6.0.0",
         "socket.io": "4.7.1",

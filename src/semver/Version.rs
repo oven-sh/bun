@@ -528,23 +528,24 @@ impl<T: VersionInt> VersionType<T> {
 
                     last_char_i = i;
 
-                    match part_i {
-                        0 => {
-                            result.version.major =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 1;
+                    if part_i < 3 {
+                        let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
+                        if number.is_none() {
+                            result.valid = false;
+                            // A number after a wildcard has no effect on a range, so
+                            // the range parser still needs the rest of this token read.
+                            if result.wildcard == Wildcard::None {
+                                result.overflow = true;
+                                is_done = true;
+                                break;
+                            }
                         }
-                        1 => {
-                            result.version.minor =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 2;
+                        match part_i {
+                            0 => result.version.major = number,
+                            1 => result.version.minor = number,
+                            _ => result.version.patch = number,
                         }
-                        2 => {
-                            result.version.patch =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 3;
-                        }
-                        _ => {}
+                        part_i += 1;
                     }
 
                     if i < input.len()
@@ -652,11 +653,12 @@ impl<T: VersionInt> VersionType<T> {
         result
     }
 
+    /// `None` when the number is above `T::MAX`.
     fn parse_version_number(input: &[u8]) -> Option<T> {
         // Callers slice `input` from the first digit to the first non-digit,
         // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
         debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
-        Some(T::parse_ascii(input).unwrap_or(T::ZERO))
+        T::parse_ascii(input)
     }
 }
 
@@ -1191,6 +1193,10 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
+    /// A major, minor or patch number before any wildcard is above `T::MAX`. The
+    /// range parser ignores `valid`, so it reads this to tell that number apart
+    /// from text it can skip.
+    pub(crate) overflow: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,
 }
@@ -1200,6 +1206,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
+            overflow: false,
             version: Partial::default(),
             len: 0,
         }

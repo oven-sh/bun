@@ -1,8 +1,9 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use crate::Version;
 use crate::query::token::Wildcard;
+use crate::version::Tag;
+use crate::{SlicedString, Version};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -183,6 +184,21 @@ pub struct Comparator {
 }
 
 impl Comparator {
+    /// `<0.0.0-0`, the comparator node-semver uses for the empty set. `0.0.0-0`
+    /// is the lowest version, so no version satisfies it.
+    pub(crate) fn null_set() -> Comparator {
+        Comparator {
+            op: Op::Lt,
+            version: Version {
+                tag: Tag {
+                    pre: SlicedString::init(b"0", b"0").external(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        }
+    }
+
     /// `< {major+1}.0.0`, or `<= u64::MAX.u64::MAX.u64::MAX` when `major+1`
     /// would overflow so the desugared range stays non-empty at the ceiling.
     pub(crate) fn lt_next_major(major: u64) -> Comparator {

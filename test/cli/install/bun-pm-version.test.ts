@@ -274,6 +274,66 @@ describe.concurrent("bun pm version", () => {
       expect(code5).toBe(0);
     });
 
+    it("rejects a version number above u64::MAX like npm", async () => {
+      // The parser used to read such a number as 0, so `patch` on "1.0.18446744073709551616" printed v1.0.1.
+      const u64Max = "18446744073709551615";
+      const aboveU64Max = "18446744073709551616";
+
+      const bump = async (version: string, arg: string) => {
+        await using testDir = tempDir(`version-${i++}`, {
+          "package.json": JSON.stringify({ name: "test", version }, null, 2),
+        });
+        const { output, error, code } = await runCommand(
+          [bunExe(), "pm", "version", arg, "--no-git-tag-version"],
+          testDir,
+          false,
+        );
+        const after = (await Bun.file(join(String(testDir), "package.json")).json()).version;
+        return { output, error, code, after };
+      };
+
+      const results = await Promise.all([
+        bump(`1.0.${aboveU64Max}`, "patch"),
+        bump(`1.0.${aboveU64Max}`, "minor"),
+        bump("1.0.99999999999999999999", "patch"),
+        bump("1.0.0", `1.0.${aboveU64Max}`),
+        // u64::MAX itself still fits.
+        bump(`1.0.${u64Max}`, "minor"),
+        bump("1.0.0", `1.0.${u64Max}`),
+      ]);
+
+      expect(results).toEqual([
+        {
+          output: "",
+          error: `error: Current version "1.0.${aboveU64Max}" is not a valid semver\n`,
+          code: 1,
+          after: `1.0.${aboveU64Max}`,
+        },
+        {
+          output: "",
+          error: `error: Current version "1.0.${aboveU64Max}" is not a valid semver\n`,
+          code: 1,
+          after: `1.0.${aboveU64Max}`,
+        },
+        {
+          output: "",
+          error: `error: Current version "1.0.99999999999999999999" is not a valid semver\n`,
+          code: 1,
+          after: "1.0.99999999999999999999",
+        },
+        {
+          output: "",
+          error:
+            `error: Invalid version argument: "1.0.${aboveU64Max}"\n` +
+            "note: Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version\n",
+          code: 1,
+          after: "1.0.0",
+        },
+        { output: "v1.1.0\n", error: "", code: 0, after: "1.1.0" },
+        { output: `v1.0.${u64Max}\n`, error: "", code: 0, after: `1.0.${u64Max}` },
+      ]);
+    });
+
     it("handles missing package.json like npm", async () => {
       await using testDir = tempDir(`version-${i++}`, {
         "README.md": "# Test project",

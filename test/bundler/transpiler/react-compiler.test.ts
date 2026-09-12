@@ -2063,6 +2063,7 @@ describe("bundler", () => {
     DoWhileInsideScopeOfSibling ["v1",{}] ["v1",{}]* ["v2",{}]
     SpreadInsideLoopsInsideScopeOfSibling [{"q":1},{}] [{"q":1},{}]* ["init",{}]
     LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
+    ClosureReassigns [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]] ["flagged",[]]
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
@@ -2366,6 +2367,19 @@ describe("bundler", () => {
             return <div label={v} list={w} />;
           }
 
+          // Right on 1.4.3 too. A local that a closure assigns is not in SSA form.
+          // Its declaration is part of the same memo block as the call.
+          function ClosureReassigns(p) {
+            let label = p.count;
+            const set = () => {
+              label = "flagged";
+            };
+            const list = [];
+            if (p.flag) set();
+            else list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
           function run(Component, ...renders) {
             let previous;
             const results = renders.map(args => {
@@ -2502,6 +2516,14 @@ describe("bundler", () => {
           run(DoWhileInsideScopeOfSibling, nested1, nested1, nested2);
           run(SpreadInsideLoopsInsideScopeOfSibling, nested1, nested1, nested2);
           run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
+          run(
+            ClosureReassigns,
+            { count: 1, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 3, flag: true, b: "x" },
+            { count: 4, flag: true, b: "x" },
+          );
         `,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `

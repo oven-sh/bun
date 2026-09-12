@@ -45,9 +45,9 @@ the porting reference for the AST-boundary files.
    whole-crate section, apply it to the corresponding `src/react_compiler/<dir>/`
    file. The only systematic edit is import paths (`react_compiler_hir::` →
    `crate::hir::`, etc.); everything else lands verbatim. A few sites fix
-   miscompiles that upstream still has. They carry a "Not in upstream" comment
-   and are listed in DESIGN.md under "Behaviour that differs from upstream".
-   Keep them.
+   miscompiles that upstream still has. They carry a "Not in upstream" comment,
+   and the script lists them at the end of its output. DESIGN.md says why each
+   exists, under "Behaviour that differs from upstream". Keep them.
 
 3. **Re-port AST-boundary diffs by hand.** For each hunk under the
    AST-boundary section, re-port it into the named Bun file using the
@@ -57,7 +57,8 @@ the porting reference for the AST-boundary files.
    `react_compiler_ast::statements::Statement::Foo { … }`, the Bun port calls
    `Stmt::alloc(S::Foo { … }, loc)`. Keep control flow, pass ordering,
    variable names, and comments 1:1 with upstream — only the AST reads/writes
-   change.
+   change. The "Not in upstream" rule from step 2 applies here too: `codegen.rs`
+   has such a site (`codegen_reactive_scope`). Keep it.
 
    For large diffs, fan out one agent per file with the upstream diff + the Bun
    port + DESIGN.md as context, then adversarially review each port.

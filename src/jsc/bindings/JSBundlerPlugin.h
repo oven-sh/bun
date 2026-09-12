@@ -145,6 +145,8 @@ public:
     // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
     // and whatever its JS side delivers later is dropped.
     void tombstone();
+    // `config` is set as a build takes this plugin to the bundle thread, which reads the filter lists unlocked.
+    bool filtersAreFrozen() const { return config; }
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)

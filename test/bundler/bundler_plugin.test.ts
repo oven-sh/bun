@@ -1959,26 +1959,30 @@ describe("bundler", () => {
   });
 
   // The private plugin object is a gcProtect'ed cell, so bun:jsc.getProtectedObjects() returns it.
-  // Its native methods read C++ fields off the receiver. They used to cast any receiver to a plugin,
-  // which segfaults at 0x132 on a release build.
+  const findPluginSource = /* js */ `
+    const { getProtectedObjects } = require("bun:jsc");
+    const hasOwn = Object.prototype.hasOwnProperty;
+    function findPlugin() {
+      for (const object of getProtectedObjects()) {
+        // The list holds raw protected cells. Some of them are internal and reject a property
+        // lookup, so skip whatever throws.
+        try {
+          if (object && typeof object === "object" && hasOwn.call(object, "addFilter") && hasOwn.call(object, "generateDeferPromise")) {
+            return object;
+          }
+        } catch {}
+      }
+      return undefined;
+    }
+  `;
+
+  // The plugin object's native methods read C++ fields off the receiver. They used to cast any
+  // receiver to a plugin, which segfaults at 0x132 on a release build.
   test.concurrent("plugin/the private plugin object refuses a receiver that is not a plugin", async () => {
     using dir = tempDir("plugin-foreign-receiver", {
       "entry.js": `export default 1;`,
       "receiver-fixture.mjs": /* js */ `
-        const { getProtectedObjects } = require("bun:jsc");
-        const hasOwn = Object.prototype.hasOwnProperty;
-        function findPlugin() {
-          for (const object of getProtectedObjects()) {
-            // The list holds raw protected cells. Some of them are internal and reject a property
-            // lookup, so skip whatever throws.
-            try {
-              if (object && typeof object === "object" && hasOwn.call(object, "addFilter") && hasOwn.call(object, "generateDeferPromise")) {
-                return object;
-              }
-            } catch {}
-          }
-          return undefined;
-        }
+        ${findPluginSource}
         let plugin;
         await Bun.build({
           entrypoints: ["./entry.js"],
@@ -2040,6 +2044,62 @@ describe("bundler", () => {
         onBeforeParse: "ERR_INVALID_THIS",
         generateDeferPromise: "ERR_INVALID_THIS",
       },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Once a build is on the bundle thread, that thread reads the filter lists with no lock. A late
+  // addFilter with the genuine plugin as the receiver used to append to them anyway, which
+  // segfaults the bundle thread under load.
+  test.concurrent("plugin/the private plugin object refuses a new filter once the build runs", async () => {
+    using dir = tempDir("plugin-late-filter", {
+      "entry.js": `export default 1;`,
+      "late-filter-fixture.mjs": /* js */ `
+        ${findPluginSource}
+        let plugin;
+        function addFilter() {
+          try {
+            plugin.addFilter(/never-matches/, "probe", 1);
+            return "accepted";
+          } catch (e) {
+            return e.code ?? e.name;
+          }
+        }
+        const outcomes = {};
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              setup(build) {
+                plugin = findPlugin();
+                outcomes.duringSetup = addFilter();
+                build.onLoad({ filter: /entry/ }, () => {
+                  outcomes.duringBuild = addFilter();
+                  return undefined;
+                });
+              },
+            },
+          ],
+        });
+        console.log(JSON.stringify({ success: result.success, outcomes }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "late-filter-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
     });
     expect(exitCode).toBe(0);
   });

@@ -252,6 +252,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Checked after the last conversion that can run user code, so nothing runs between this and the append.
+    if (thisObject->plugin.filtersAreFrozen()) [[unlikely]]
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "addFilter() called after the build started"_s);
+
     unsigned index = 0;
     if (isOnLoad) {
         thisObject->plugin.onLoad.append(vm, regExp->regExp(), namespaceStr, index);
@@ -428,8 +432,14 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
-        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
     }
+
+    // Checked after the last conversion that can run user code, so nothing runs between this and the appends.
+    if (thisObject->plugin.filtersAreFrozen()) [[unlikely]]
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "onBeforeParse() called after the build started"_s);
+
+    if (externalPtr)
+        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
 
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 

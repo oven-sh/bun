@@ -87,4 +87,4 @@ for (const [name, run] of cases) {
   }
   lines.push(name.padEnd(44) + " " + result);
 }
-process.stdout.write(lines.join("\n") + "\n");
+console.log(lines.join("\n"));

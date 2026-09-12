@@ -9,9 +9,6 @@ import vm from "node:vm";
 
 const BufferModule = await import("buffer");
 
-beforeEach(() => gc());
-afterEach(() => gc());
-
 /***
  *
  * So, Node.js doesn't have tests for utf8Write, asciiWrite, latin1Write, base64Write, base64urlWrite, ucs2Write, utf16leWrite, utf16beWrite, etc.
@@ -241,9 +238,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           b[i] = i;
         }
 
-        for (let i = 0; i < 1024; i++) {
-          expect(i % 256).toBe(b[i]);
-        }
+        expect(Array.from(b)).toEqual(Array.from({ length: 1024 }, (_, i) => i % 256));
       });
 
       it("Buffer.allocUnsafe()", () => {
@@ -292,16 +287,19 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("create 0-length buffers", () => {
-        Buffer.from("");
-        Buffer.from("", "ascii");
-        Buffer.from("", "latin1");
-        Buffer.alloc(0);
-        Buffer.allocUnsafe(0);
-        new Buffer("");
-        new Buffer("", "ascii");
-        new Buffer("", "latin1");
-        new Buffer("", "binary");
-        Buffer(0);
+        const empties = [
+          Buffer.from(""),
+          Buffer.from("", "ascii"),
+          Buffer.from("", "latin1"),
+          Buffer.alloc(0),
+          Buffer.allocUnsafe(0),
+          new Buffer(""),
+          new Buffer("", "ascii"),
+          new Buffer("", "latin1"),
+          new Buffer("", "binary"),
+          Buffer(0),
+        ];
+        expect(empties.map(b => [Buffer.isBuffer(b), b.length])).toEqual(empties.map(() => [true, 0]));
       });
 
       it("write() beyond end of buffer", () => {
@@ -316,7 +314,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => b.write("a", -1)).toThrow(RangeError);
         // Offset points to the end of the buffer and does not throw.
         // (see https://github.com/nodejs/node/issues/8127).
-        Buffer.alloc(1).write("", 1, 0);
+        expect(Buffer.alloc(1).write("", 1, 0)).toBe(0);
       });
 
       it("write BigInt beyond 64-bit range", () => {
@@ -449,10 +447,10 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("copy() beyond end of buffer", () => {
         const b = Buffer.allocUnsafe(64);
         // Try to copy 0 bytes worth of data into an empty buffer
-        b.copy(Buffer.alloc(0), 0, 0, 0);
+        expect(b.copy(Buffer.alloc(0), 0, 0, 0)).toBe(0);
         // Try to copy 0 bytes past the end of the target buffer
-        b.copy(Buffer.alloc(0), 1, 1, 1);
-        b.copy(Buffer.alloc(1), 1, 1, 1);
+        expect(b.copy(Buffer.alloc(0), 1, 1, 1)).toBe(0);
+        expect(b.copy(Buffer.alloc(1), 1, 1, 1)).toBe(0);
       });
 
       it("smart defaults and ability to pass string values as offset", () => {
@@ -506,9 +504,8 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         const slice1 = buf.slice(offset, offset + str.length);
         const slice2 = buf.slice(offset, offset + str.length);
-        for (let i = 0; i < str.length; i++) {
-          expect(slice1[i]).toBe(slice2[i]);
-        }
+        expect(slice1).toStrictEqual(slice2);
+        expect(slice1).toStrictEqual(Buffer.from(str, "ascii"));
       });
 
       it("UTF-8 slice", () => {
@@ -524,15 +521,12 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         const sliceA = b.slice(offset, offset + Buffer.byteLength(utf8String));
         const sliceB = b.slice(offset, offset + Buffer.byteLength(utf8String));
-        for (let i = 0; i < Buffer.byteLength(utf8String); i++) {
-          expect(sliceA[i]).toBe(sliceB[i]);
-        }
+        expect(sliceA).toStrictEqual(sliceB);
+        expect(sliceA).toStrictEqual(Buffer.from(utf8String, "utf8"));
 
         const slice = b.slice(100, 150);
         expect(slice.length).toBe(50);
-        for (let i = 0; i < 50; i++) {
-          expect(b[100 + i]).toBe(slice[i]);
-        }
+        expect(slice).toStrictEqual(b.subarray(100, 150));
       });
 
       it("only top level parent propagates from allocPool", () => {
@@ -869,7 +863,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Regression test for https://github.com/nodejs/node/issues/13657.
         expect(Buffer.from(" YWJvcnVtLg", "base64")).toStrictEqual(Buffer.from("YWJvcnVtLg", "base64"));
         // issue GH-3416
-        Buffer.from(Buffer.allocUnsafe(0), 0, 0);
+        expect(Buffer.from(Buffer.allocUnsafe(0), 0, 0).length).toBe(0);
         // Regression test for https://github.com/nodejs/node-v0.x-archive/issues/5482:
         // should throw but not assert in C++ land.
         expect(() => Buffer.from("", "buffer")).toThrow(/encoding/);
@@ -972,9 +966,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         const s = "h".repeat(l);
         const b = Buffer.from(s);
 
-        for (let i = 0; i < l; i++) {
-          expect(b[i]).toBe("h".charCodeAt(0));
-        }
+        expect(b.length).toBe(l);
+        expect(b).toStrictEqual(Buffer.alloc(l, "h".charCodeAt(0)));
 
         const sb = b.toString();
         expect(sb.length).toBe(s.length);
@@ -1024,9 +1017,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         );
 
         const hexb2 = Buffer.from(hexStr, "hex");
-        for (let i = 0; i < 256; i++) {
-          expect(hexb2[i]).toBe(hexb[i]);
-        }
+        expect(hexb2).toStrictEqual(hexb);
       });
 
       it("single hex character is discarded", () => {
@@ -1127,36 +1118,43 @@ for (let withOverridenBufferWrite of [false, true]) {
         // keeps only ASCII hex characters but forces two-byte string storage
         const toUTF16 = s => (s + "\u0100").slice(0, -1);
 
+        // `str` with the code unit at `pos` replaced by `ch`
+        const replaceAt = (str, pos, ch) => str.slice(0, pos) + ch + str.slice(pos + 1);
+
         it("decodes valid input at every length around the vector widths", () => {
-          for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
-            for (const extraChar of ["", "a"]) {
-              // `extraChar` leaves a trailing lone digit that must be ignored
-              const hex = patternHex(pairs) + extraChar;
-              const expected = referenceHexDecode(hex);
-              expect(expected.length).toBe(pairs);
+          withoutAggressiveGC(() => {
+            for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
+              const base = patternHex(pairs);
+              for (const extraChar of ["", "a"]) {
+                // `extraChar` leaves a trailing lone digit that must be ignored
+                const hex = base + extraChar;
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(pairs);
 
-              const fromLatin1 = Buffer.from(hex, "hex");
-              expect(fromLatin1).toEqual(expected);
+                const fromLatin1 = Buffer.from(hex, "hex");
+                expect(fromLatin1).toEqual(expected);
 
-              const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
-              expect(fromUTF16).toEqual(expected);
+                const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
+                expect(fromUTF16).toEqual(expected);
+              }
             }
-          }
+          });
         });
 
         it("stops at an invalid character at any position", () => {
-          const pairs = 80; // several vector blocks on every target
-          for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
-            for (let pos = 0; pos < pairs * 2; pos += 7) {
-              const chars = patternHex(pairs).split("");
-              chars[pos] = bad;
-              const hex = chars.join("");
-              const expected = referenceHexDecode(hex);
-              expect(expected.length).toBe(Math.floor(pos / 2));
-              expect(Buffer.from(hex, "hex")).toEqual(expected);
-              expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+          withoutAggressiveGC(() => {
+            const pairs = 80; // several vector blocks on every target
+            const base = patternHex(pairs);
+            for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
+              for (let pos = 0; pos < pairs * 2; pos += 7) {
+                const hex = replaceAt(base, pos, bad);
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(Math.floor(pos / 2));
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
+                expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+              }
             }
-          }
+          });
         });
 
         // 75 pairs: on every target the input spans whole vector blocks (pairs
@@ -1167,47 +1165,48 @@ for (let withOverridenBufferWrite of [false, true]) {
         const wideUnitPositions = [0, 1, 31, 32, 63, 64, 127, 128, 143, 144, 149];
 
         it("decodes UTF-16 code units above 0xFF from their low byte, like Node", () => {
-          // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
-          const pairs = wideUnitPairs;
-          for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
-            const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
-            for (const pos of wideUnitPositions) {
-              const chars = patternHex(pairs).split("");
-              chars[pos] = wide;
-              const hex = chars.join("");
-              chars[pos] = narrow;
-              const expected = Buffer.from(chars.join(""), "hex");
-              expect(expected.length).toBe(pairs);
-              expect(expected).toEqual(referenceHexDecode(hex));
+          withoutAggressiveGC(() => {
+            // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
+            const pairs = wideUnitPairs;
+            const base = patternHex(pairs);
+            for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+              const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
+              for (const pos of wideUnitPositions) {
+                const hex = replaceAt(base, pos, wide);
+                const expected = Buffer.from(replaceAt(base, pos, narrow), "hex");
+                expect(expected.length).toBe(pairs);
+                expect(expected).toEqual(referenceHexDecode(hex));
 
-              expect(Buffer.from(hex, "hex")).toEqual(expected);
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
 
-              const target = Buffer.alloc(pairs);
-              expect(target.write(hex, "hex")).toBe(pairs);
-              expect(target).toEqual(expected);
+                const target = Buffer.alloc(pairs);
+                expect(target.write(hex, "hex")).toBe(pairs);
+                expect(target).toEqual(expected);
+              }
             }
-          }
+          });
         });
 
         it("stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit", () => {
-          // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
-          const pairs = wideUnitPairs;
-          for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
-            for (const pos of wideUnitPositions) {
-              const chars = patternHex(pairs).split("");
-              chars[pos] = bad;
-              const hex = chars.join("");
-              const expected = referenceHexDecode(hex);
-              expect(expected.length).toBe(Math.floor(pos / 2));
+          withoutAggressiveGC(() => {
+            // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
+            const pairs = wideUnitPairs;
+            const base = patternHex(pairs);
+            for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
+              for (const pos of wideUnitPositions) {
+                const hex = replaceAt(base, pos, bad);
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(Math.floor(pos / 2));
 
-              expect(Buffer.from(hex, "hex")).toEqual(expected);
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
 
-              const target = Buffer.alloc(pairs, 0xaa);
-              expect(target.write(hex, "hex")).toBe(expected.length);
-              expect(target.subarray(0, expected.length)).toEqual(expected);
-              expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
+                const target = Buffer.alloc(pairs, 0xaa);
+                expect(target.write(hex, "hex")).toBe(expected.length);
+                expect(target.subarray(0, expected.length)).toEqual(expected);
+                expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
+              }
             }
-          }
+          });
         });
 
         it("buf.write() with long hex input respects the destination length", () => {
@@ -1541,9 +1540,9 @@ for (let withOverridenBufferWrite of [false, true]) {
       // https://github.com/joyent/node/issues/1758
       it("check for fractional length args, junk length args, etc.", () => {
         // Call .fill() first, stops valgrind warning about uninitialized memory reads.
-        Buffer.allocUnsafe(3.3).fill().toString();
+        expect(Buffer.allocUnsafe(3.3).fill().toString()).toBe("\0\0\0");
         // Throws bad argument error in commit 43cb4ec
-        Buffer.alloc(3.3).fill().toString();
+        expect(Buffer.alloc(3.3).fill().toString()).toBe("\0\0\0");
         expect(Buffer.allocUnsafe(3.3).length).toBe(3);
         expect(Buffer.from({ length: 3.3 }).length).toBe(3);
         expect(Buffer.from({ length: "BAM" }).length).toBe(0);
@@ -1672,13 +1671,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         const a = [...Array(128).keys()]; // [0, 1, 2, 3, ... 126, 127]
         const b = Buffer.from(a);
         const c = Buffer.from(b);
-        expect(b.length).toBe(a.length);
-        expect(c.length).toBe(a.length);
-        for (let i = 0, k = a.length; i < k; ++i) {
-          expect(a[i]).toBe(i);
-          expect(b[i]).toBe(i);
-          expect(c[i]).toBe(i);
-        }
+        const expected = Array.from({ length: 128 }, (_, i) => i);
+        expect([a, Array.from(b), Array.from(c)]).toEqual([expected, expected, expected]);
       });
 
       it("truncation after decode", () => {
@@ -1715,7 +1709,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(Buffer.from({ length: -100 })).toStrictEqual(Buffer.from(""));
 
         // Check pool offset after that by trying to write string into the pool.
-        Buffer.from("abc");
+        expect(Buffer.from("abc").toString()).toBe("abc");
       });
 
       it("ParseArrayIndex() should handle full uint32", () => {
@@ -1730,13 +1724,13 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       it("unpooled buffer (replaces SlowBuffer)", () => {
         const ubuf = Buffer.allocUnsafeSlow(10);
-        expect(ubuf).toBeTruthy();
-        expect(ubuf.buffer).toBeTruthy();
+        expect(ubuf).toBeInstanceOf(Buffer);
+        expect(ubuf.buffer).toBeInstanceOf(ArrayBuffer);
         expect(ubuf.buffer.byteLength).toBe(10);
       });
 
       it("verify that an empty ArrayBuffer does not throw", () => {
-        Buffer.from(new ArrayBuffer());
+        expect(Buffer.from(new ArrayBuffer()).length).toBe(0);
       });
 
       it("alloc() should throw on non-numeric size", () => {
@@ -2285,23 +2279,16 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       // this is for checking the simd code path
       it("write long utf16 string works", () => {
-        const long = "😀😃😄😁😆😅😂🤣☺️😊😊😇".repeat(200);
+        // every glyph is two UTF-16 code units (4 bytes), "☺️" included (U+263A U+FE0F)
+        const glyphs = ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "☺️", "😊", "😊", "😇"];
+        const long = glyphs.join("").repeat(200);
         const buf = Buffer.alloc(long.length * 2);
-        buf.write(long, 0, "utf16le");
+        expect(buf.write(long, 0, "utf16le")).toBe(buf.length);
         expect(buf.toString("utf16le")).toBe(long);
-        for (let offset = 0; offset < long.length; offset += 48) {
-          expect(buf.toString("utf16le", offset, offset + 4)).toBe("😀");
-          expect(buf.toString("utf16le", offset, offset + 8)).toBe("😀😃");
-          expect(buf.toString("utf16le", offset, offset + 12)).toBe("😀😃😄");
-          expect(buf.toString("utf16le", offset, offset + 16)).toBe("😀😃😄😁");
-          expect(buf.toString("utf16le", offset, offset + 20)).toBe("😀😃😄😁😆");
-          expect(buf.toString("utf16le", offset, offset + 24)).toBe("😀😃😄😁😆😅");
-          expect(buf.toString("utf16le", offset, offset + 28)).toBe("😀😃😄😁😆😅😂");
-          expect(buf.toString("utf16le", offset, offset + 32)).toBe("😀😃😄😁😆😅😂🤣");
-          expect(buf.toString("utf16le", offset, offset + 36)).toBe("😀😃😄😁😆😅😂🤣☺️");
-          expect(buf.toString("utf16le", offset, offset + 40)).toBe("😀😃😄😁😆😅😂🤣☺️😊");
-          expect(buf.toString("utf16le", offset, offset + 44)).toBe("😀😃😄😁😆😅😂🤣☺️😊😊");
-          expect(buf.toString("utf16le", offset, offset + 48)).toBe("😀😃😄😁😆😅😂🤣☺️😊😊😇");
+        // decode every prefix of the pattern from the byte offset of every repetition
+        const prefixes = glyphs.map((_, i) => glyphs.slice(0, i + 1).join(""));
+        for (let offset = 0; offset < buf.length; offset += 48) {
+          expect(prefixes.map((_, i) => buf.toString("utf16le", offset, offset + 4 * (i + 1)))).toEqual(prefixes);
         }
       });
 
@@ -2806,19 +2793,28 @@ for (let withOverridenBufferWrite of [false, true]) {
           const lengths = [];
           for (let n = 0; n <= 288; n += elemSize) lengths.push(n);
           lengths.push(4096 - elemSize, 4096, 4096 + elemSize, 65536 + 3 * elemSize);
+          // One entry per failing (len, byteOffset) pair, so a regression lists every shape it breaks.
+          const failures = [];
           for (const len of lengths) {
             for (const byteOffset of [0, 1, 3]) {
               const backing = new Uint8Array(len + byteOffset + 1);
               for (let i = 0; i < backing.length; i++) backing[i] = (i * 37 + 11) & 0xff;
               const buf = Buffer.from(backing.buffer, byteOffset, len);
               const expected = reference(Uint8Array.prototype.slice.call(buf), elemSize);
-              expect(buf[method]()).toBe(buf);
-              expect(buf.equals(expected), `${method} len=${len} byteOffset=${byteOffset}`).toBe(true);
-              // Neighbouring bytes are untouched.
-              if (byteOffset > 0) expect(backing[byteOffset - 1]).toBe(((byteOffset - 1) * 37 + 11) & 0xff);
-              expect(backing[byteOffset + len]).toBe(((byteOffset + len) * 37 + 11) & 0xff);
+              const result = {
+                returnsSelf: buf[method]() === buf,
+                bytesMatch: buf.equals(expected),
+                // Neighbouring bytes are untouched.
+                neighboursIntact:
+                  (byteOffset === 0 || backing[byteOffset - 1] === (((byteOffset - 1) * 37 + 11) & 0xff)) &&
+                  backing[byteOffset + len] === (((byteOffset + len) * 37 + 11) & 0xff),
+              };
+              if (!result.returnsSelf || !result.bytesMatch || !result.neighboursIntact) {
+                failures.push({ len, byteOffset, ...result });
+              }
             }
           }
+          expect(failures).toEqual([]);
         },
       );
 
@@ -2874,15 +2870,16 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         const buf = MockBuffer();
 
-        expect(() => {
-          buf.write("hello world");
-          buf.writeUint16BE(0);
-          buf.writeUint32BE(0);
-          buf.writeBigInt64BE(0);
-          buf.writeBigUInt64BE(0);
-          buf.writeBigInt64LE(0);
-          buf.writeBigUInt64LE(0);
-        }).not.toThrow();
+        // Every call lands on the noop own property (undefined), not on the native method.
+        expect([
+          buf.write("hello world"),
+          buf.writeUint16BE(0),
+          buf.writeUint32BE(0),
+          buf.writeBigInt64BE(0),
+          buf.writeBigUInt64BE(0),
+          buf.writeBigInt64LE(0),
+          buf.writeBigUInt64LE(0),
+        ]).toEqual(Array(7).fill(undefined));
       });
 
       it("constants", () => {
@@ -3005,8 +3002,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(() => Buffer.from(input, "hex")).toThrow();
         });
 
-        expect(() => Buffer.allocUnsafe(10)).not.toThrow(); // Should not throw.
-        expect(() => Buffer.from("deadbeaf", "hex")).not.toThrow(); // Should not throw.
+        expect(Buffer.allocUnsafe(10).length).toBe(10);
+        expect(Buffer.from("deadbeaf", "hex")).toStrictEqual(Buffer.from([0xde, 0xad, 0xbe, 0xaf]));
       });
 
       it("new Buffer() (Node.js test/test-buffer-new.js)", () => {
@@ -3018,7 +3015,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.from(ab);
 
         expect(buf instanceof Buffer).toBe(true);
-        expect(buf.parent, buf.buffer);
+        expect(buf.parent).toBe(buf.buffer);
         expect(buf.buffer).toBe(ab);
         expect(buf.length).toBe(ab.byteLength);
 
@@ -3396,32 +3393,31 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("fill() should not hang indefinitely", () => {
-        // Make sure this doesn't hang indefinitely.
-        Buffer.allocUnsafe(8).fill("");
-        Buffer.alloc(8, "");
+        // Make sure this doesn't hang indefinitely; an empty pattern zero-fills.
+        expect(Buffer.allocUnsafe(8).fill("")).toStrictEqual(Buffer.alloc(8));
+        expect(Buffer.alloc(8, "")).toStrictEqual(Buffer.alloc(8));
       });
 
       it("fill() repeat byte", () => {
+        const bytes = (...runs) => runs.flatMap(([value, count]) => Array(count).fill(value));
+
         const buf = Buffer.alloc(64, 10);
-        for (let i = 0; i < buf.length; i++) expect(buf[i]).toBe(10);
+        expect(Array.from(buf)).toEqual(bytes([10, 64]));
 
         buf.fill(11, 0, buf.length >> 1);
-        for (let i = 0; i < buf.length >> 1; i++) expect(buf[i]).toBe(11);
-        for (let i = (buf.length >> 1) + 1; i < buf.length; i++) expect(buf[i]).toBe(10);
+        expect(Array.from(buf)).toEqual(bytes([11, 32], [10, 32]));
 
         buf.fill("h");
-        for (let i = 0; i < buf.length; i++) expect(buf[i]).toBe("h".charCodeAt(0));
+        expect(Array.from(buf)).toEqual(bytes(["h".charCodeAt(0), 64]));
 
         buf.fill(0);
-        for (let i = 0; i < buf.length; i++) expect(buf[i]).toBe(0);
+        expect(Array.from(buf)).toEqual(bytes([0, 64]));
 
         buf.fill(null);
-        for (let i = 0; i < buf.length; i++) expect(buf[i]).toBe(0);
+        expect(Array.from(buf)).toEqual(bytes([0, 64]));
 
         buf.fill(1, 16, 32);
-        for (let i = 0; i < 16; i++) expect(buf[i]).toBe(0);
-        for (let i = 16; i < 32; i++) expect(buf[i]).toBe(1);
-        for (let i = 32; i < buf.length; i++) expect(buf[i]).toBe(0);
+        expect(Array.from(buf)).toEqual(bytes([0, 16], [1, 16], [0, 32]));
       });
 
       it("alloc() repeat pattern", () => {
@@ -4216,36 +4212,40 @@ describe("Buffer.fill offset/end argument handling", () => {
   // Differential test: the fixture enumerates every fill() argument shape and
   // prints the resulting bytes or the thrown error class + code. Running it
   // under Node.js and under Bun must produce byte-identical output.
-  it.skipIf(!nodeExe())("every fill() argument shape produces the same output in Node.js and Bun", async () => {
-    const fixture = join(import.meta.dir, "buffer-fill-args-fixture.js");
-    async function run(exe) {
-      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return { stdout, exitCode };
-    }
-    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
-    expect(nodeRun.stdout).toContain("fill(");
-    expect(bunRun.stdout).toBe(nodeRun.stdout);
-    expect(nodeRun.exitCode).toBe(0);
-    expect(bunRun.exitCode).toBe(0);
-  });
+  it.concurrent.skipIf(!nodeExe())(
+    "every fill() argument shape produces the same output in Node.js and Bun",
+    async () => {
+      const fixture = join(import.meta.dir, "buffer-fill-args-fixture.js");
+      async function run(exe) {
+        await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+      const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+      // One line per case; the count pins the fixture, so a case silently dropped from it fails here.
+      expect(nodeRun.stdout.split("\n").filter(line => line.startsWith("fill(")).length).toBe(48);
+      expect(nodeRun.exitCode).toBe(0);
+      expect(bunRun).toEqual({ stdout: nodeRun.stdout, stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.
   // This matches Node.js behavior where V8's IntegerValue converts NaN to 0.
-  const writeMethods = [
-    "utf8Write",
-    "utf16leWrite",
-    "latin1Write",
-    "asciiWrite",
-    "base64Write",
-    "base64urlWrite",
-    "hexWrite",
-  ];
+  // 43 x "A" decoded by each encoding, cut to the 6 bytes of "string" (values match Node).
+  const writeMethods = {
+    utf8Write: "414141414141",
+    utf16leWrite: "410041004100",
+    latin1Write: "414141414141",
+    asciiWrite: "414141414141",
+    base64Write: "000000000000",
+    base64urlWrite: "000000000000",
+    hexWrite: "aaaaaaaaaaaa",
+  };
 
-  for (const method of writeMethods) {
+  for (const [method, hex] of Object.entries(writeMethods)) {
     it(`${method} should handle NaN offset and custom length via ToNumber coercion`, () => {
       // F1 is a function - ToNumber(F1) returns NaN, which should be treated as 0
       function F1() {
@@ -4261,9 +4261,8 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       const buf = Buffer.from("string");
       // F1 as offset -> NaN -> 0, C3 as length -> 215 -> clamped to buf.length
       // This should NOT crash, and should write to the buffer starting at offset 0
-      const result = buf[method]("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", F1, C3);
-      // Result should be clamped to buffer size
-      expect(result).toBeLessThanOrEqual(buf.length);
+      const written = buf[method]("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", F1, C3);
+      expect({ written, hex: buf.toString("hex") }).toEqual({ written: 6, hex });
     });
   }
 
@@ -4281,11 +4280,20 @@ describe("*Write methods with NaN/invalid offset and length", () => {
     });
   }
 
-  for (const method of ["utf16leWrite", "ucs2Write", "base64Write", "base64urlWrite", "hexWrite"]) {
+  // "testtest..." decoded by each encoding, cut to the 6 bytes of "string" (values match Node).
+  // "t" is not a hex digit, so hexWrite decodes nothing and leaves "string" in place.
+  const clampingMethods = {
+    utf16leWrite: { written: 6, hex: "740065007300" },
+    ucs2Write: { written: 6, hex: "740065007300" },
+    base64Write: { written: 6, hex: "b5eb2db5eb2d" },
+    base64urlWrite: { written: 6, hex: "b5eb2db5eb2d" },
+    hexWrite: { written: 0, hex: "737472696e67" },
+  };
+  for (const [method, expected] of Object.entries(clampingMethods)) {
     it(`${method} should clamp length larger than available buffer space`, () => {
       const buf = Buffer.from("string");
       const written = buf[method]("test".repeat(100), 0, 1000);
-      expect(written).toBeLessThanOrEqual(buf.length);
+      expect({ written, hex: buf.toString("hex") }).toEqual(expected);
     });
   }
 });
@@ -4300,7 +4308,7 @@ describe("utf8 write of a string ending in a lone high surrogate", () => {
     }
   }
 
-  it("leaves bytes past the target range untouched for every SIMD block alignment", async () => {
+  it.concurrent("leaves bytes past the target range untouched for every SIMD block alignment", async () => {
     const src = `
       const lines = [];
       for (let k = 0; k < 16; k++) {
@@ -4335,8 +4343,11 @@ describe("utf8 write of a string ending in a lone high surrogate", () => {
       ]).toString("hex");
       expected.push([k, 29, 29, 29, hex, hex, hex, hex].join(" "));
     }
-    expect(stdout.trim()).toBe(expected.join("\n"));
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expected.join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
@@ -4412,7 +4423,7 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
     // Both <enc>Slice and toString() read byteLength before coercing their indexes, so a
     // valueOf() that shrinks a resizable buffer leaves the range stale. Spawned because an
     // unclamped range aborts a debug build rather than throwing.
-    it.each(["hexSlice", "toString"])("%s clamps the range when valueOf() shrinks the buffer", async method => {
+    it.concurrent.each(["hexSlice", "toString"])("%s clamps the range if valueOf() shrank the buffer", async method => {
       const read = method === "toString" ? `buf.toString("hex", 0, shrink)` : `buf.hexSlice(0, shrink)`;
       await using proc = Bun.spawn({
         cmd: [
@@ -4536,7 +4547,7 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
 
     // A detaching valueOf on the offset or length argument is the one case that runs user JS;
     // the binding re-checks detachment there and must not write into freed memory.
-    it.each(["offset", "length"])("%s throws when a detaching valueOf runs mid-coercion", async which => {
+    it.concurrent.each(["offset", "length"])("%s throws when a detaching valueOf runs mid-coercion", async which => {
       const args = which === "offset" ? `detach, 5` : `0, detach`;
       await using proc = Bun.spawn({
         cmd: [
@@ -4558,7 +4569,7 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       });
     });
 
-    it("clamps when a length valueOf shrinks a resizable buffer", async () => {
+    it.concurrent("clamps when a length valueOf shrinks a resizable buffer", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -4643,7 +4654,7 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       // A detached view hands the native encoder a null destination pointer with length 0.
       // Run the 16-bit string cases in a child process so a native abort in the encoder
       // shows up as a non-zero exit code instead of taking down the test run.
-      it("write() and <enc>Write of a 16-bit string exit cleanly", async () => {
+      it.concurrent("write() and <enc>Write of a 16-bit string exit cleanly", async () => {
         await using proc = Bun.spawn({
           cmd: [
             bunExe(),
@@ -5294,13 +5305,29 @@ describe("read*/write* after JIT tier-up", () => {
   it("keeps working with other ArrayBufferView receivers via .call", () => {
     const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const dv8 = new DataView(u8.buffer);
-    for (let i = 0; i < 1500; i++) {
-      expect(Buffer.prototype.readInt32LE.call(u8, 0)).toBe(dv8.getInt32(0, true));
-      expect(Buffer.prototype.readUInt16BE.call(u8, 6)).toBe(dv8.getUint16(6, false));
-      expect(Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7)).toBe(8);
-      expect(u8[7]).toBe(i & 0xff);
-      expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
-    }
+    // One counter per check, and the .call sites live in a function that is invoked per
+    // iteration so they tier up like the readers in the sibling tests.
+    const mismatches = { readInt32LE: 0, readUInt16BE: 0, writeUInt8: 0, writeUInt8Stored: 0, wrongReceiver: 0 };
+    const step = i => {
+      if (Buffer.prototype.readInt32LE.call(u8, 0) !== dv8.getInt32(0, true)) mismatches.readInt32LE++;
+      if (Buffer.prototype.readUInt16BE.call(u8, 6) !== dv8.getUint16(6, false)) mismatches.readUInt16BE++;
+      if (Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7) !== 8) mismatches.writeUInt8++;
+      if (u8[7] !== (i & 0xff)) mismatches.writeUInt8Stored++;
+      try {
+        Buffer.prototype.readInt32LE.call({}, 0);
+        mismatches.wrongReceiver++;
+      } catch (e) {
+        if (!(e instanceof TypeError)) mismatches.wrongReceiver++;
+      }
+    };
+    for (let i = 0; i < 1500; i++) step(i);
+    expect(mismatches).toEqual({
+      readInt32LE: 0,
+      readUInt16BE: 0,
+      writeUInt8: 0,
+      writeUInt8Stored: 0,
+      wrongReceiver: 0,
+    });
     // The bound is the receiver's element count (this.length), as in lib/internal/buffer.js, not
     // its byteLength: on a wider-element view these throw even though the bytes would fit.
     const u16 = new Uint16Array(4);
@@ -5377,14 +5404,14 @@ describe("read*/write* after JIT tier-up", () => {
     }
     expect(mismatches).toBe(0);
     const scratch = Buffer.alloc(16);
+    let roundTripMismatches = 0;
     for (let i = 0; i < 1500; i++) {
       const l = 1 + (i % 6);
       const v = i % 100;
-      expect(scratch.writeUIntLE(v, 0, l)).toBe(l);
-      expect(scratch.readUIntLE(0, l)).toBe(v);
-      expect(scratch.writeIntBE(-v, 8, l)).toBe(8 + l);
-      expect(scratch.readIntBE(8, l)).toBe(-v | 0);
+      if (scratch.writeUIntLE(v, 0, l) !== l || scratch.readUIntLE(0, l) !== v) roundTripMismatches++;
+      if (scratch.writeIntBE(-v, 8, l) !== 8 + l || scratch.readIntBE(8, l) !== (-v | 0)) roundTripMismatches++;
     }
+    expect(roundTripMismatches).toBe(0);
     let codes = [];
     for (let i = 0; i < 1000; i++) {
       codes = [

@@ -224,6 +224,20 @@ impl Tag {
             Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
         )
     }
+
+    /// Runtime-internal timers that fire forever or on the runtime's own behalf, so they never settle a program's promise.
+    pub fn is_housekeeping(self) -> bool {
+        matches!(
+            self,
+            Tag::WTFTimer
+                | Tag::DevServerSweepSourceMaps
+                | Tag::DevServerMemoryVisualizerTick
+                | Tag::DateHeaderTimer
+                | Tag::BunTest
+                | Tag::EventLoopDelayMonitor
+                | Tag::GcRepeating
+        )
+    }
 }
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per

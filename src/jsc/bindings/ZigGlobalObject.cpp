@@ -738,6 +738,31 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
+// '\n'-joined specifiers of the modules suspended on their own top-level await (empty if none).
+extern "C" BunString Bun__findStalledTopLevelAwait(JSC::JSGlobalObject* globalObject)
+{
+    StringBuilder builder;
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first || !entry)
+            continue;
+        auto* record = entry->record();
+        if (!record || !record->hasTLA())
+            continue;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            continue;
+        // Waiting on a dependency: the dependency is the stalled one.
+        if (auto pending = record->pendingAsyncDependencies(); pending && *pending > 0)
+            continue;
+        if (!builder.isEmpty())
+            builder.append('\n');
+        builder.append(String { key.first });
+    }
+    if (builder.isEmpty())
+        return BunStringEmpty;
+    return Bun::toStringRef(builder.toString());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

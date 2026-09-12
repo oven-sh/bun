@@ -139,6 +139,8 @@ impl Drop for Process {
     /// The allocation itself is freed by the `heap::take` in `destructor`
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
+        #[cfg(unix)]
+        self.release_waiter_registration();
         self.poller.deinit();
     }
 }
@@ -205,6 +207,32 @@ impl ProcessHandle {
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
         self.process_mut().detach();
+    }
+}
+
+#[cfg(unix)]
+impl Process {
+    /// Hand the child to the waiter thread, counting it as registered with the loop (like a poll) until it is reaped or closed.
+    fn arm_waiter_poller(&mut self) {
+        if !matches!(self.poller, Poller::WaiterThread(_)) {
+            self.poller = Poller::WaiterThread(KeepAlive::default());
+            // SAFETY: the owning loop outlives every process it watches; balanced by `release_waiter_registration`.
+            unsafe { (*self.event_loop.platform_event_loop()).inc() };
+        }
+        let ctx = self.event_loop_ctx();
+        if let Poller::WaiterThread(w) = &mut self.poller {
+            w.ref_(ctx);
+        }
+        self.ref_();
+        WaiterThread::append(self);
+    }
+
+    /// Balances [`Self::arm_waiter_poller`]; a no-op unless the waiter thread currently holds this child.
+    fn release_waiter_registration(&self) {
+        if matches!(self.poller, Poller::WaiterThread(_)) {
+            // SAFETY: see `arm_waiter_poller`.
+            unsafe { (*self.event_loop.platform_event_loop()).dec() };
+        }
     }
 }
 
@@ -349,6 +377,7 @@ impl Process {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
                 let ctx = event_loop_handle_to_ctx((*this).event_loop);
                 waiter.unref(ctx);
+                (*this).release_waiter_registration();
                 (*this).poller = Poller::Detached;
             }
         }
@@ -440,16 +469,11 @@ impl Process {
 
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
-                self.poller = Poller::WaiterThread(KeepAlive::default());
-                if let Poller::WaiterThread(w) = &mut self.poller {
-                    w.ref_(ctx);
-                }
-                self.ref_();
-                WaiterThread::append(self);
+                self.arm_waiter_poller();
                 return Ok(());
             }
+            let ctx = self.event_loop_ctx();
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let watchfd = self.pidfd;
@@ -505,16 +529,8 @@ impl Process {
 
     #[cfg(unix)]
     pub(crate) fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
-        let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
-            if !matches!(self.poller, Poller::WaiterThread(_)) {
-                self.poller = Poller::WaiterThread(KeepAlive::default());
-            }
-            if let Poller::WaiterThread(w) = &mut self.poller {
-                w.ref_(ctx);
-            }
-            self.ref_();
-            WaiterThread::append(self);
+            self.arm_waiter_poller();
             return Ok(());
         }
 
@@ -635,6 +651,7 @@ impl Process {
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
                 waiter.disable();
+                self.release_waiter_registration();
             }
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {

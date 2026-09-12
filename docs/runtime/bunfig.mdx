@@ -87,6 +87,8 @@ Configure how Bun maps file extensions to [loaders](/bundler/loaders). Use this 
 [loader]
 # when a .bagel file is imported, treat it like a tsx file
 ".bagel" = "tsx"
+# the empty extension maps files that have none (default: tsx)
+"" = "js"
 ```
 
 Bun supports the following loaders:

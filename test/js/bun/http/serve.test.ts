@@ -4446,16 +4446,21 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
 });
 
 // A client that half-closes its write side right after the request (the raw
-// socket.end(request) pattern) must receive every response byte already handed
-// to uWS, not just what the kernel accepted on the first send. No
-// Connection: close on the request: the post-drain shutdown is driven by the
-// HTTP_NODE_RECEIVED_FIN clause of shouldCloseConnection(), not by
-// HTTP_CONNECTION_CLOSE.
+// socket.end(request) pattern) must receive the whole of a response whose
+// length is already settled: a body handed to uWS up front, or a file body the
+// runtime streams itself under a Content-Length it has already sent. Not just
+// what the kernel accepted on the first send. No Connection: close on the
+// request: the post-drain shutdown is driven by the HTTP_NODE_RECEIVED_FIN
+// clause of shouldCloseConnection(), not by HTTP_CONNECTION_CLOSE.
 describe("a client half-close after the request does not truncate a large response body", () => {
   const BODY = 8 * 1024 * 1024;
 
+  // The advertised Content-Length, the body bytes actually delivered, and
+  // whether the server closed cleanly (FIN rather than a reset).
+  const WHOLE_RESPONSE = { contentLength: BODY, body: BODY, ended: true };
+
   function countBody(socket: net.Socket | nodeTls.TLSSocket) {
-    const out = { body: 0, ended: false };
+    const out = { contentLength: -1, body: 0, ended: false };
     let head = "";
     let gotHead = false;
     socket.on("data", chunk => {
@@ -4464,6 +4469,7 @@ describe("a client half-close after the request does not truncate a large respon
         const i = head.indexOf("\r\n\r\n");
         if (i >= 0) {
           gotHead = true;
+          out.contentLength = Number(/^content-length:\s*(\d+)/im.exec(head.slice(0, i))?.[1] ?? -1);
           out.body = Buffer.byteLength(head.slice(i + 4), "latin1");
         }
       } else {
@@ -4475,14 +4481,20 @@ describe("a client half-close after the request does not truncate a large respon
     return out;
   }
 
-  async function halfCloseRequest(port: number): Promise<{ body: number; ended: boolean }> {
-    const socket = connect(port, "127.0.0.1");
+  async function halfCloseRequest(port: number, secure = false): Promise<typeof WHOLE_RESPONSE> {
+    const socket = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : connect(port, "127.0.0.1");
     const out = countBody(socket);
     const closed = new Promise<void>(r => socket.once("close", () => r()));
-    await new Promise<void>(r => socket.once("connect", () => r()));
+    await new Promise<void>(r => socket.once(secure ? "secureConnect" : "connect", () => r()));
     socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
     await closed;
     return out;
+  }
+
+  function bigFile(prefix: string) {
+    return tempDir(prefix, { "big.bin": Buffer.alloc(BODY, "a") });
   }
 
   it("fetch handler (tryEnd tail)", async () => {
@@ -4490,7 +4502,7 @@ describe("a client half-close after the request does not truncate a large respon
       port: 0,
       fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("static route (tryEnd tail)", async () => {
@@ -4501,7 +4513,7 @@ describe("a client half-close after the request does not truncate a large respon
       },
       fetch: () => new Response("miss", { status: 404 }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
   });
 
   it("https fetch handler (tryEnd tail)", async () => {
@@ -4510,13 +4522,36 @@ describe("a client half-close after the request does not truncate a large respon
       tls,
       fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
     });
-    const socket = nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
-    const out = countBody(socket);
-    const closed = new Promise<void>(r => socket.once("close", () => r()));
-    await new Promise<void>(r => socket.once("secureConnect", () => r()));
-    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    await closed;
-    expect(out).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port, true)).toEqual(WHOLE_RESPONSE);
+  });
+
+  // A file body is not handed to uWS up front: FileResponseStream writes the
+  // Content-Length, then moves the bytes itself (sendfile() on Linux over plain
+  // TCP, read()+write() chunks over TLS and on the other platforms), so uWS
+  // only knows the response is settled because the stream marks it as such
+  // (HTTP_FIXED_LENGTH_FILE_BODY). Without that mark the FIN closed the socket
+  // mid-transfer: a 200 with Content-Length: 8388608 followed by a few MiB and
+  // then the server's FIN.
+  it("fetch handler returning Bun.file() (file body)", async () => {
+    using dir = bigFile("half-close-file");
+    using server = serve({ port: 0, fetch: () => new Response(file(join(String(dir), "big.bin"))) });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
+  });
+
+  it("Bun.file() route (file body)", async () => {
+    using dir = bigFile("half-close-file-route");
+    using server = serve({
+      port: 0,
+      routes: { "/": file(join(String(dir), "big.bin")) },
+      fetch: () => new Response("miss", { status: 404 }),
+    });
+    expect(await halfCloseRequest(server.port)).toEqual(WHOLE_RESPONSE);
+  });
+
+  it("https fetch handler returning Bun.file() (file body)", async () => {
+    using dir = bigFile("half-close-file-tls");
+    using server = serve({ port: 0, tls, fetch: () => new Response(file(join(String(dir), "big.bin"))) });
+    expect(await halfCloseRequest(server.port, true)).toEqual(WHOLE_RESPONSE);
   });
 
   // The deferred connection must close promptly, not spin the writable
@@ -4548,9 +4583,38 @@ describe("a client half-close after the request does not truncate a large respon
     expect(server.pendingRequests).toBe(0);
   });
 
+  // Same for a deferred file body. It is not covered by onWritable's
+  // zero-progress check (its progress never shows up in the uWS write offset,
+  // which is why that check is scoped to tryEnd tails): the peer's reset is
+  // reported by the kernel, or the next sendfile()/write() fails and the
+  // stream tears the request down itself. Either way the request must not sit
+  // there until idleTimeout.
+  it("a file body closes without spinning when the peer goes away mid-transfer", async () => {
+    using dir = bigFile("half-close-file-peer-gone");
+    const dispatched = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      idleTimeout: 60,
+      fetch() {
+        dispatched.resolve();
+        return new Response(file(join(String(dir), "big.bin")));
+      },
+    });
+    const socket = connect(server.port, "127.0.0.1");
+    socket.on("error", () => {});
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    socket.once("data", () => socket.destroy());
+    await dispatched.promise;
+    const deadline = Date.now() + 4000;
+    while (server.pendingRequests > 0 && Date.now() < deadline) await Bun.sleep(5);
+    expect(server.pendingRequests).toBe(0);
+  });
+
   // The defer in onEnd is gated on the response being fully determined
-  // (HTTP_END_CALLED). A streaming body the handler is still producing must
-  // close on client FIN so onAborted / request.signal fires.
+  // (HTTP_END_CALLED or HTTP_FIXED_LENGTH_FILE_BODY). A streaming body the
+  // handler is still producing must close on client FIN so onAborted /
+  // request.signal fires.
   it("request.signal still fires on client FIN for a streaming body", async () => {
     const aborted = Promise.withResolvers<void>();
     using server = serve({

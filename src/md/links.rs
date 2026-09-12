@@ -174,7 +174,7 @@ impl Parser<'_> {
                 // Code spans take precedence over brackets (CommonMark §6.3)
                 b'`' => {
                     let count = inlines::count_backticks(content, pos);
-                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
+                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count, 0) {
                         pos = end_pos + count;
                     } else {
                         pos += count;
@@ -245,14 +245,14 @@ impl Parser<'_> {
                 })
             }
             BracketLookup::Unmatched => None,
-            _ => self.scan_bracket_close(content, start),
+            _ => self.scan_bracket_close(content, start, base),
         }
     }
 
     /// Forward scan for the `]` matching the `[` at `start`, skipping code
     /// spans, HTML tags/autolinks and backslash escapes. Only used when the
     /// opener is missing from the precomputed bracket map.
-    fn scan_bracket_close(&self, content: &[u8], start: usize) -> Option<BracketScan> {
+    fn scan_bracket_close(&self, content: &[u8], start: usize, base: usize) -> Option<BracketScan> {
         let mut pos = start + 1;
         let mut bracket_depth: u32 = 1;
         let mut has_inner_bracket = false;
@@ -264,7 +264,7 @@ impl Parser<'_> {
             // Skip code spans — they take precedence over brackets (CommonMark §6.3)
             if content[pos] == b'`' {
                 let count = inlines::count_backticks(content, pos);
-                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
+                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count, base) {
                     pos = end_pos + count;
                 } else {
                     pos += count;
@@ -806,7 +806,7 @@ impl Parser<'_> {
             // Skip code spans
             if label[pos] == b'`' {
                 let count = inlines::count_backticks(label, pos);
-                if let Some(end_pos) = self.find_code_span_end(label, pos + count, count) {
+                if let Some(end_pos) = self.find_code_span_end(label, pos + count, count, base) {
                     pos = end_pos + count;
                 } else {
                     // No closer: skip the whole run so it isn't re-counted per

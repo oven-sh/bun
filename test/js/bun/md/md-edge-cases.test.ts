@@ -1219,6 +1219,180 @@ describe("pathological autolink opener inputs", () => {
   }, 90_000);
 });
 
+// ============================================================================
+// Pathological inputs: backtick runs of pairwise different lengths (cmark's
+// pathological_tests.py "backticks"). No run has a closer, and every opener
+// used to walk to the end of the block looking for one, in each pass that
+// tokenizes the block, so R runs cost O(R x bytes): an 8 MB paragraph took
+// 14 s in a release build. The first walk that finds no closer now indexes
+// the backtick runs of the slice it walked, and later openers look their
+// closer up there. The child process is killed after 30s so a regression
+// fails fast instead of hanging the test runner.
+// ============================================================================
+
+describe("pathological code span inputs", () => {
+  test("backtick runs of pairwise different lengths render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // "e" + a run of "first" backticks, "e" + a run of "first + 1" backticks, ... (n runs)
+        const runs = (n, first) => {
+          let total = 0;
+          for (let k = first; k < first + n; k++) total += k + 1;
+          const buf = Buffer.alloc(total, "\`");
+          let p = 0;
+          for (let k = first; k < first + n; k++) {
+            buf[p] = 0x65;
+            p += k + 1;
+          }
+          return buf.toString("latin1");
+        };
+        const r = runs(4000, 1);
+        const r2 = runs(4000, 2);
+        const cases = [
+          ["paragraph", r, {}, "<p>" + r + "</p>\\n"],
+          ["paragraph with a bracket pair", "[x] " + r, {}, "<p>[x] " + r + "</p>\\n"],
+          ["link label", "[" + r + "](u)", {}, '<p><a href="u">' + r + "</a></p>\\n"],
+          ["image label", "![" + r + "](u)", {}, '<p><img src="u" alt="' + r + '" /></p>\\n'],
+          ["wiki link label", "[[t|" + r + "]]", { wikiLinks: true }, '<p><x-wikilink data-target="t">' + r + "</x-wikilink></p>\\n"],
+          // Every run in the label has a run of its length after the label, which must not close it.
+          ["wiki link label, then the same runs", "[[t|" + r + "]] " + r, { wikiLinks: true }, '<p><x-wikilink data-target="t">' + r + "</x-wikilink> " + r + "</p>\\n"],
+          ["table cell", "| h |\\n|---|\\n| " + r + " |\\n", { tables: true }, "<table>\\n<thead>\\n<tr><th>h</th></tr>\\n</thead>\\n<tbody>\\n<tr><td>" + r + "</td></tr>\\n</tbody>\\n</table>\\n"],
+          // The bracket map reads the destination's backtick as a code span up to
+          // the last backtick, so the link parser scans for this "]" itself.
+          ["brackets inside a code span of the bracket map", "[x](\`y) [" + r2 + "] \`", {}, '<p><a href="%60y">x</a> [' + r2 + "] \`</p>\\n"],
+        ];
+        for (const [name, input, options, expected] of cases) {
+          if (Bun.markdown.html(input, options) !== expected) throw new Error("unexpected html for " + name);
+          console.log("OK " + name);
+        }
+        if (Bun.markdown.render(r, {}) !== r) throw new Error("unexpected render() output");
+        console.log("OK render");
+        if (Bun.markdown.react(r).props.children[0].props.children.join("") !== r) throw new Error("unexpected react() output");
+        console.log("OK react");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: [
+        "OK paragraph",
+        "OK paragraph with a bracket pair",
+        "OK link label",
+        "OK image label",
+        "OK wiki link label",
+        "OK wiki link label, then the same runs",
+        "OK table cell",
+        "OK brackets inside a code span of the bracket map",
+        "OK render",
+        "OK react",
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 90_000);
+
+  test("a code span closes at the first later run of the same length", () => {
+    expect(Markdown.html("`` a ` b ``` c `` d\n")).toBe("<p><code>a ` b ``` c</code> d</p>\n");
+    expect(Markdown.html("`a` `b` `c\n")).toBe("<p><code>a</code> <code>b</code> `c</p>\n");
+    // The ``` run has no closer and stays text. The `` run after it still closes.
+    expect(Markdown.html("``` a `` b ` c `` d\n")).toBe("<p>``` a <code>b ` c</code> d</p>\n");
+  });
+
+  test("backtick runs of pairwise different lengths stay text", () => {
+    expect(Markdown.html("`a ``b ```c\n")).toBe("<p>`a ``b ```c</p>\n");
+    expect(Markdown.html("e`e``e```e````\n")).toBe("<p>e`e``e```e````</p>\n");
+  });
+
+  test("a backslash-escaped backtick shortens the opener but not the closer", () => {
+    expect(Markdown.html("\\```a``\n")).toBe("<p>`<code>a</code></p>\n");
+    expect(Markdown.html("``a\\```\n")).toBe("<p>``a```</p>\n");
+  });
+
+  test("code spans in link, image and wiki link labels close inside the label", () => {
+    expect(Markdown.html("x `y` [`` ` `` z](u) `w`\n")).toBe(
+      '<p>x <code>y</code> <a href="u"><code>`</code> z</a> <code>w</code></p>\n',
+    );
+    expect(Markdown.html("[a `b`](u) [c ``d](v) ``e\n")).toBe(
+      '<p><a href="u">a <code>b</code></a> [c <code>d](v) </code>e</p>\n',
+    );
+    expect(Markdown.html("![`a` ``b](u) ``c\n")).toBe("<p>![<code>a</code> <code>b](u) </code>c</p>\n");
+    expect(Markdown.html("[x ![`a` ``b](u) `c](v) ``d\n")).toBe(
+      "<p>[x ![<code>a</code> <code>b](u) `c](v) </code>d</p>\n",
+    );
+    // A wiki link is found before code spans are. The `` run in its label
+    // does not close at the `` run after the label.
+    expect(Markdown.html("[[t|`a` ``b]] ``c\n", { wikiLinks: true })).toBe(
+      '<p><x-wikilink data-target="t"><code>a</code> ``b</x-wikilink> ``c</p>\n',
+    );
+  });
+
+  test("a code span that starts in a link label and ends after it wins over the link", () => {
+    expect(Markdown.html("[`a](u) `b\n")).toBe("<p>[<code>a](u) </code>b</p>\n");
+    expect(Markdown.html("[``a](u) `b` ``\n")).toBe("<p>[<code>a](u) `b` </code></p>\n");
+    expect(Markdown.html('[x](u) [`a](v "t") `b\n')).toBe(
+      '<p><a href="u">x</a> [<code>a](v &quot;t&quot;) </code>b</p>\n',
+    );
+  });
+
+  test("consecutive paragraphs and table cells do not share backtick runs", () => {
+    // Both paragraphs merge to 6-byte inline slices in the same recycled buffer.
+    expect(Markdown.html("`a bcd\n\n`a` bc\n")).toBe("<p>`a bcd</p>\n<p><code>a</code> bc</p>\n");
+    expect(Markdown.html("`a` bc\n\n`a bcd\n")).toBe("<p><code>a</code> bc</p>\n<p>`a bcd</p>\n");
+    expect(Markdown.html("| a | b |\n|---|---|\n| `x | y` |\n| ``p`` | `q |\n", { tables: true })).toBe(
+      "<table>\n<thead>\n<tr><th>a</th><th>b</th></tr>\n</thead>\n<tbody>\n" +
+        "<tr><td>`x</td><td>y`</td></tr>\n<tr><td><code>p</code></td><td>`q</td></tr>\n</tbody>\n</table>\n",
+    );
+    expect(Markdown.html("| a |\n|---|\n| `x \\| y` |\n", { tables: true })).toBe(
+      "<table>\n<thead>\n<tr><th>a</th></tr>\n</thead>\n<tbody>\n<tr><td><code>x | y</code></td></tr>\n</tbody>\n</table>\n",
+    );
+  });
+
+  test("brackets inside a code span of the bracket map still form links", () => {
+    expect(Markdown.html("[x](`y) [``a] ```b [c](d) `\n")).toBe(
+      '<p><a href="%60y">x</a> [``a] ```b <a href="d">c</a> `</p>\n',
+    );
+  });
+
+  test("code spans after a run with no closer, in the block and in labels inside it", () => {
+    // The ```` run has no closer, so the runs of the whole block are indexed
+    // before the label is rendered.
+    expect(Markdown.html("```` x [a `b` ``c`` d](u) `e` ``f\n")).toBe(
+      '<p>```` x <a href="u">a <code>b</code> <code>c</code> d</a> <code>e</code> ``f</p>\n',
+    );
+    expect(Markdown.html("``` x ![a `b` [c ``d``](v)](u) `e\n")).toBe(
+      '<p>``` x <img src="u" alt="a b c d" /> `e</p>\n',
+    );
+    // The `` run in the label does not close at the `` run after the label.
+    expect(Markdown.html("```x [[t|`a` ``b]] ``c\n", { wikiLinks: true })).toBe(
+      '<p>```x <x-wikilink data-target="t"><code>a</code> ``b</x-wikilink> ``c</p>\n',
+    );
+  });
+
+  test("code spans after a run with no closer in a wiki link label", () => {
+    // The label's runs are indexed first. The block after the label is not
+    // part of that index.
+    expect(Markdown.html("[[t|`a ``b]] `c` ``d ```e\n", { wikiLinks: true })).toBe(
+      '<p><x-wikilink data-target="t">`a ``b</x-wikilink> <code>c</code> ``d ```e</p>\n',
+    );
+    expect(Markdown.html("[[t|`a]] x [[u|``b]] `c ``d\n", { wikiLinks: true })).toBe(
+      '<p><x-wikilink data-target="t">`a</x-wikilink> x <x-wikilink data-target="u">``b</x-wikilink> `c ``d</p>\n',
+    );
+    expect(Markdown.html("[[t|``a ![`b` ```c](u) `d]] ``e` ```\n", { wikiLinks: true })).toBe(
+      '<p><x-wikilink data-target="t">``a <img src="u" alt="b ```c" /> `d</x-wikilink> ``e` ```</p>\n',
+    );
+  });
+});
+
 describe("inputs the parser cannot address", () => {
   // The parser addresses its input with u32 offsets and probes up to 9 bytes
   // past an offset (the `<![CDATA[` check), so everything longer than

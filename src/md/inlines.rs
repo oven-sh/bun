@@ -1,8 +1,10 @@
+use core::cell::{Cell, RefCell};
+
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
-use crate::types::{SpanType, TextType, VerbatimLine};
+use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub(crate) const MAX_EMPH_MATCHES: usize = 6;
@@ -123,6 +125,61 @@ impl HtmlScanMemo {
     }
 }
 
+/// Backtick runs in `from..to` of the block's inline slice, sorted by `(length, start)`.
+pub(crate) struct BacktickRuns {
+    // `Cell`s: the range check in every `find_code_span_end` call must not borrow `runs`.
+    from: Cell<usize>,
+    to: Cell<usize>,
+    runs: RefCell<Vec<(OFF, OFF)>>,
+}
+
+impl BacktickRuns {
+    pub(crate) const fn new() -> BacktickRuns {
+        BacktickRuns {
+            from: Cell::new(0),
+            to: Cell::new(0),
+            runs: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn clear(&self) {
+        self.from.set(0);
+        self.to.set(0);
+    }
+
+    fn covers(&self, from: usize, to: usize) -> bool {
+        to <= self.to.get() && self.from.get() <= from
+    }
+
+    /// Index `content`, which starts at offset `base` of the block's inline slice.
+    #[cold]
+    fn index(&self, content: &[u8], base: usize) {
+        debug_assert!(base + content.len() <= OFF::MAX as usize);
+        let mut runs = self.runs.borrow_mut();
+        runs.clear();
+        let mut pos: usize = 0;
+        while let Some(run_start) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
+            let len = count_backticks(content, run_start);
+            runs.push((len as OFF, (base + run_start) as OFF));
+            pos = run_start + len;
+        }
+        runs.sort_unstable();
+        self.from.set(base);
+        self.to.set(base + content.len());
+    }
+
+    /// Start of the first run of exactly `count` backticks within `from..to`, which the index covers.
+    #[cold]
+    fn first_run(&self, count: usize, from: usize, to: usize) -> Option<usize> {
+        let runs = self.runs.borrow();
+        let key = (count as OFF, from as OFF);
+        let idx = runs.partition_point(|&run| run < key);
+        let &(len, pos) = runs.get(idx)?;
+        // `to` is the end of the block or the `]` that ends a link label, so it never splits a run.
+        (len as usize == count && pos as usize + count <= to).then_some(pos as usize)
+    }
+}
+
 impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
@@ -182,6 +239,8 @@ impl Parser<'_> {
         // Label frames below are subslices of `content`, so the memo stays
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
+
+        self.backtick_runs.clear();
 
         // Bracket-pair map for the whole slice: link processing looks up the
         // ']' matching a '[' here instead of rescanning the rest of the slice
@@ -315,7 +374,8 @@ impl Parser<'_> {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
                     let count = count_backticks(content, i);
-                    if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
+                    if let Some(end_pos) = self.find_code_span_end(content, i + count, count, base)
+                    {
                         self.enter_span(SpanType::Code)?;
                         let code_content =
                             self.normalize_code_span_content(&content[i + count..end_pos]);
@@ -640,12 +700,22 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
+    /// `start` is the end of the opening run, `base` the offset of `content` in the block's inline slice.
     pub(crate) fn find_code_span_end(
         &self,
         content: &[u8],
         start: usize,
         count: usize,
+        base: usize,
     ) -> Option<usize> {
+        debug_assert!(content.get(start) != Some(&b'`'));
+        let end = base + content.len();
+        if self.backtick_runs.covers(base, end) {
+            return self
+                .backtick_runs
+                .first_run(count, base + start, end)
+                .map(|pos| pos - base);
+        }
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -656,6 +726,8 @@ impl Parser<'_> {
                 return Some(backtick_pos);
             }
         }
+        // R openers with no closer would walk R x bytes: index the slice so the rest binary-search.
+        self.backtick_runs.index(content, base);
         None
     }
 
@@ -697,7 +769,7 @@ impl Parser<'_> {
             // Skip code spans
             if c == b'`' {
                 let count = count_backticks(content, i);
-                if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
+                if let Some(end_pos) = self.find_code_span_end(content, i + count, count, base) {
                     i = end_pos + count;
                 } else {
                     i += count;

@@ -24,7 +24,7 @@ class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -67,9 +67,8 @@ public:
         return WebCore::subspaceForImpl<ImportMetaObject, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForImportMeta, m_subspaceForImportMeta));
     }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 
     WTF::String url;
     LazyProperty<JSObject, JSCell> requireProperty;

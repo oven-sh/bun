@@ -5439,11 +5439,26 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
-                global_ref.clear_exception();
+            // `errors` is user-assigned, so its iterator can be endless.
+            const UNSIZED_ERRORS_BUDGET: u32 = 100;
+            match crate::console_object::for_each_limited(
+                errors,
+                global_ref,
+                UNSIZED_ERRORS_BUDGET,
+                None,
+                (&raw mut ctx).cast(),
+                agg_iter,
+            ) {
+                Ok(true) => {
+                    let marker = if allow_ansi_color {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", true)
+                    } else {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", false)
+                    };
+                    let _ = writer.write_all(marker.as_bytes());
+                }
+                Ok(false) => {}
+                Err(_) => global_ref.clear_exception(),
             }
             if ctx.printed_member {
                 return;

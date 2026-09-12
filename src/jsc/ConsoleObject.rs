@@ -85,6 +85,13 @@ bun_opaque::opaque_ffi! {
 /// Only `--console-depth` CLI flag and `console.depth` bunfig option should modify this.
 const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
+/// `--console-depth`, bunfig `console.depth`, or the default.
+pub(crate) fn console_depth() -> u16 {
+    bun_options_types::context::try_get()
+        .and_then(|ctx| ctx.runtime_options.console_depth)
+        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH)
+}
+
 type Counter = HashMap<u64, u32>;
 
 pub struct ConsoleObject {
@@ -468,17 +475,13 @@ fn message_with_type_and_level_(
     }
 
     let mut print_length = len;
-    // Get console depth from CLI options or bunfig, fallback to default.
-    let console_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
 
     let mut print_options = FormatOptions {
         enable_colors,
         add_newline: true,
         flush: true,
         default_indent,
-        max_depth: console_depth,
+        max_depth: console_depth(),
         error_display_level: match level {
             MessageLevel::Error => ErrorDisplayLevel::Full,
             MessageLevel::Warning => ErrorDisplayLevel::Warn,
@@ -1639,6 +1642,13 @@ pub mod formatter {
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
             }
+        }
+
+        /// The error handler prints at the console depth, as `console.error` does.
+        pub fn for_error_handler(global_this: &'a JSGlobalObject) -> Self {
+            let mut formatter = Self::new(global_this);
+            formatter.max_depth = console_depth();
+            formatter
         }
 
         /// `Formatter` has a `Drop` impl and owns `map`/`map_node`,
@@ -5845,9 +5855,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
-    fmt.max_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+    fmt.max_depth = console_depth();
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     let console = vm_console(global);

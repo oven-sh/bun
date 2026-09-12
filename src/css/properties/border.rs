@@ -1431,7 +1431,10 @@ mod border_handler_body {
                         self.flush(dest, context);
                         self.flush_unparsed(val, dest, context);
                     } else {
-                        if self.border_image_handler.will_flush(property) {
+                        if self
+                            .border_image_handler
+                            .will_flush(property, &context.targets)
+                        {
                             self.flush(dest, context);
                         }
                         return self
@@ -1443,7 +1446,10 @@ mod border_handler_body {
                     }
                 }
                 _ => {
-                    if self.border_image_handler.will_flush(property) {
+                    if self
+                        .border_image_handler
+                        .will_flush(property, &context.targets)
+                    {
                         self.flush(dest, context);
                     }
                     return self

@@ -227,9 +227,14 @@ impl Error {
     }
 
     pub fn name(&self) -> &'static [u8] {
+        self.tag_name().as_bytes()
+    }
+
+    /// The `SystemErrno` tag (`"ENOENT"`), or `"UNKNOWN"` when `errno` has no tag.
+    pub fn tag_name(&self) -> &'static str {
         self.get_error_code_tag_name()
-            .map(|(n, _)| n.as_bytes())
-            .unwrap_or(b"UNKNOWN")
+            .map(|(n, _)| n)
+            .unwrap_or("UNKNOWN")
     }
 
     pub fn to_zig_err(&self) -> SystemErrno {
@@ -428,8 +433,7 @@ impl bun_core::output::ErrName for Error {
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         Some(bun_core::output::SysErrInfo {
-            tag_name: Error::name(self),
-            errno: i32::from(self.errno),
+            tag_name: self.tag_name(),
             syscall: <&'static str>::from(self.syscall),
         })
     }

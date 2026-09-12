@@ -1,7 +1,18 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isCaseSensitiveFileSystem,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1939,6 +1950,118 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The resolver looks every directory up for package.json / tsconfig.json /
+// jsconfig.json in a listing keyed by lowercased name, then opens the
+// lowercase spelling. A differently-cased file on disk used to satisfy the
+// lookup and fail the open.
+describe.concurrent("differently-cased package.json / tsconfig.json in a directory", () => {
+  const aliasFixture = {
+    "src/x.ts": `export const x = "via-alias";`,
+    "decoy/x.ts": `export const x = "via-decoy";`,
+    "entry.ts": `import { x } from "@alias/x"; console.log(x);`,
+  };
+  const aliasConfig = (target: string) =>
+    JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@alias/*": [`./${target}/*`] } } });
+
+  async function bunBuild(dir: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", entry],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe.skipIf(!isCaseSensitiveFileSystem())("on a case-sensitive filesystem it is an unrelated file", () => {
+    // Before: `error: Cannot read file ".../": ENOENT` (Package.json) or
+    // `error: Cannot find tsconfig file ".../tsconfig.json"` on every run.
+    it.each(["Package.json", "Tsconfig.json", "Jsconfig.json"])("%s next to the entry point is ignored", async name => {
+      using dir = tempDir("resolve-cased-dir-scan", {
+        [name]: "{}",
+        "entry.js": `console.log("ran");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ran\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("bun build succeeds next to a Package.json", async () => {
+      using dir = tempDir("resolve-cased-dir-scan-build", {
+        "Package.json": JSON.stringify({ name: "not-a-manifest-here" }),
+        "entry.js": `console.log("ran");`,
+      });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.js");
+      expect(stderr).toBe("");
+      expect(stdout).toContain("ran");
+      expect(exitCode).toBe(0);
+    });
+
+    it.each(["Tsconfig.json", "Jsconfig.json"])("%s does not configure the directory", async name => {
+      using dir = tempDir("resolve-cased-config-ignored", { ...aliasFixture, [name]: aliasConfig("src") });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
+      expect(stderr).toContain('Could not resolve: "@alias/x"');
+      expect(stderr).not.toContain("Cannot find tsconfig file");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    // Whichever of the two files the lowercased listing ends up holding, the
+    // lowercase one is the configuration that applies.
+    it.each([
+      ["tsconfig.json", "Tsconfig.json"],
+      ["jsconfig.json", "Jsconfig.json"],
+    ])("%s is used when a %s with other contents sits next to it", async (lower, other) => {
+      using dir = tempDir("resolve-cased-config-both", {
+        ...aliasFixture,
+        [other]: aliasConfig("decoy"),
+        [lower]: aliasConfig("src"),
+      });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      expect(stdout).toContain("via-alias");
+      expect(stdout).not.toContain("via-decoy");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.skipIf(isCaseSensitiveFileSystem())("on a case-insensitive filesystem it is the configuration file", () => {
+    it.each(["Tsconfig.json", "Jsconfig.json"])("%s configures the directory", async name => {
+      using dir = tempDir("resolve-cased-config-folded", { ...aliasFixture, [name]: aliasConfig("src") });
+      const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.ts");
+      expect(stderr).toBe("");
+      expect(stdout).toContain("via-alias");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.skipIf(isWindows)("a package.json that cannot be read is reported under its own path", async () => {
+    using dir = tempDir("resolve-unreadable-package-json", { "entry.js": `console.log("ran");` });
+    symlinkSync("does-not-exist.json", join(String(dir), "package.json"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Cannot read file "${join(String(dir), "package.json")}": ENOENT`);
+    expect(stdout).toBe("ran\n");
     expect(exitCode).toBe(0);
   });
 });

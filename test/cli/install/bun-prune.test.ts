@@ -2158,6 +2158,29 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   },
 );
 
+// `bun install --omit=peer` links a workspace's peer when the root provides it. `bun prune --omit=peer` keeps that link.
+test.concurrent.each([false, true])(
+  "isolated (globalStore: %p): --omit=peer keeps a workspace peer link the root provides",
+  async globalStore => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+    });
+    await writeWorkspaces(dir, packageJson, {
+      root: { dependencies: { "no-deps": "1.0.0" } },
+      packages: { a: { peerDependencies: { "no-deps": "^1.0.0" } } },
+    });
+    await install(dir, "--omit=peer", "--linker", "isolated");
+    const peerLink = join(dir, "packages", "a", "node_modules", "no-deps", "package.json");
+    expect(existsSync(peerLink)).toBeTrue();
+
+    const { stdout, exitCode } = await prune(dir, "--omit=peer", "--linker", "isolated");
+    expect(out(stdout)).toEndWith(NOTHING(3, 3));
+    expect(exitCode).toBe(0);
+    expect(existsSync(peerLink)).toBeTrue();
+    expect(await install(dir, "--omit=peer", "--linker", "isolated")).toContain("no changes");
+  },
+);
+
 // The peer edge survives --production, so `bun install --production` still installs the peer into the store; only the root's dev link goes.
 test.concurrent.each(["peer-deps-fixed", "optional-peer-deps"])(
   "isolated: --production keeps %s's peer-hash entry and the peer a devDependency pulled in, removes the dev link",

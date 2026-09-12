@@ -1098,8 +1098,13 @@ impl<'a> Resolver<'a> {
             if let Some((_, resolved)) = self.phis.get(&operands.as_ptr()) {
                 return resolved.clone();
             }
-            let resolved = Type::Phi {
-                operands: operands.iter().map(|o| self.get(o)).collect(),
+            let new_operands: Vec<Type> = operands.iter().map(|o| self.get(o)).collect();
+            let resolved = if are_unchanged(&new_operands, operands) {
+                ty.clone()
+            } else {
+                Type::Phi {
+                    operands: new_operands.into(),
+                }
             };
             self.phis
                 .insert(operands.as_ptr(), (Arc::clone(operands), resolved.clone()));
@@ -1121,6 +1126,31 @@ impl<'a> Resolver<'a> {
 
         ty.clone()
     }
+}
+
+/// True when `new`, the result of `get` or `try_resolve_type` on `old`, is `old` itself, so the caller can keep `old`'s list.
+fn is_unchanged(new: &Type, old: &Type) -> bool {
+    match (new, old) {
+        (Type::TypeVar { id: new }, Type::TypeVar { id: old }) => new == old,
+        (Type::Phi { operands: new }, Type::Phi { operands: old }) => Arc::ptr_eq(new, old),
+        (
+            Type::Function {
+                return_type: new, ..
+            },
+            Type::Function {
+                return_type: old, ..
+            },
+        ) => is_unchanged(new, old),
+        (
+            _,
+            Type::TypeVar { .. } | Type::Phi { .. } | Type::Function { .. } | Type::Property { .. },
+        ) => false,
+        (_, Type::Primitive | Type::Object { .. } | Type::Poly | Type::ObjectMethod) => true,
+    }
+}
+
+fn are_unchanged(new: &[Type], old: &[Type]) -> bool {
+    new.len() == old.len() && new.iter().zip(old).all(|(new, old)| is_unchanged(new, old))
 }
 
 #[cold]
@@ -1398,8 +1428,12 @@ impl Unifier {
                     let resolved = self.try_resolve_type(v, operand, stripped)?;
                     new_operands.push(resolved);
                 }
-                let resolved = Type::Phi {
-                    operands: new_operands.into(),
+                let resolved = if are_unchanged(&new_operands, operands) {
+                    ty.clone()
+                } else {
+                    Type::Phi {
+                        operands: new_operands.into(),
+                    }
                 };
                 stripped
                     .phis

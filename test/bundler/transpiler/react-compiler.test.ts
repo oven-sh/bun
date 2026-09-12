@@ -100,15 +100,16 @@ describe("react-compiler InferTypes", () => {
   });
 
   // The memos make a walk linear in the number of distinct type nodes, but
-  // that number still grows 3.7 times per rotated local, because a phi has a
+  // that number still doubles with each rotated local, because a phi has a
   // different resolved type under each variable that reaches it through a
-  // cycle. Past half a million steps InferTypes gives the function up, and it
-  // is left as written. A debug build takes 8 seconds to count that far.
+  // cycle. Twelve locals compile. Past half a million steps InferTypes gives
+  // the function up, and it is left as written. A debug build takes 3 seconds
+  // to count that far.
   test.skipIf(isDebug || isASAN)(
     "leaves a function as written when its phi types take too long to resolve",
     async () => {
       using dir = tempDir("react-compiler-phi-budget", {
-        "rotation.jsx": rotation(12),
+        "rotation.jsx": rotation(20),
       });
       expect(await build(String(dir), "rotation.jsx")).toEqual({ memoized: false, peakMB: expect.any(Number) });
     },

@@ -109,6 +109,42 @@ test.each([
   },
 );
 
+test("tls.connect({ socket, onread }) over a still connecting net.Socket reads until the peer ends", async () => {
+  // The wrapped socket has not connected yet, so the constructor does not start
+  // the reads. The open of the TLS handle has to start them instead, or the
+  // onread callback stops after its first buffer and the FIN never arrives.
+  const server = tls.createServer(certs, socket => {
+    socket.on("error", () => {});
+    socket.end("abcdefgh");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    raw.on("error", () => {});
+    let bytes = 0;
+    const tlsSocket = tls.connect({
+      socket: raw,
+      ca: certs.cert,
+      servername: "localhost",
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number) {
+          bytes += n;
+        },
+      },
+    });
+    tlsSocket.on("data", data => (bytes += data.length));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    tlsSocket.on("error", reject);
+    tlsSocket.on("close", () => reject(new Error(`closed before end after ${bytes} bytes`)));
+    tlsSocket.on("end", resolve);
+    await promise;
+    expect(bytes).toBe(8);
+  } finally {
+    server.close();
+  }
+});
+
 // Both peers keep their plaintext 'data' listener across the upgrade.
 test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrapped sockets (#32239)", async () => {
   const saw: string[] = [];

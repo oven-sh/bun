@@ -166,6 +166,10 @@ const edgeAsLocalSystem =
   /\\config\\systemprofile$/i.test(homedir());
 const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 
+// Chrome refuses to start as root unless its sandbox is disabled
+// (crbug.com/638180), which is how this file runs inside containers.
+const chromeArgv: string[] = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote
 // debugging?" dialog on every test, and create visible tabs. The
@@ -174,7 +178,9 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+const chrome = { type: "chrome" as const, url: false as const, argv: chromeArgv };
+// Same backend for the subprocess-isolated tests below, inlined into their -e scripts.
+const chromeJson = JSON.stringify(chrome);
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -571,7 +577,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: ${chromeJson}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -748,7 +754,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: ${chromeJson}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -788,7 +794,11 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({
+    backend: { type: "chrome", path: chromePath, argv: chromeArgv },
+    width: 200,
+    height: 200,
+  });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -803,7 +813,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: ${JSON.stringify([...chromeArgv, "--user-agent=BunWebViewTest/1.0"])} },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -951,6 +961,116 @@ it("chrome: scrollTo with block: start aligns top", async () => {
   // block: start → target's top aligns with viewport top.
   const top = await view.evaluate("document.getElementById('t').getBoundingClientRect().top");
   expect(Math.abs(top)).toBeLessThan(2);
+});
+
+// --- Viewport size ---------------------------------------------------------
+// The constructor's width/height are applied with Emulation.setDeviceMetrics-
+// Override while the first navigate() attaches to the page, the same way
+// resize() applies a new size. They used to be passed to Target.createTarget
+// instead, which sizes the window: chrome-headless-shell gives the page the
+// whole window, but full Chrome's headless mode (what CI installs) keeps
+// ~87px of it for its invisible browser UI, so until the first resize() the
+// page and its screenshots were that much shorter than requested. These
+// tests only tell the two apart on full Chrome; on headless-shell both
+// approaches happen to agree.
+
+// PNG: 8-byte signature, then the IHDR chunk (4-byte length, "IHDR",
+// big-endian width, big-endian height).
+async function pngDimensions(blob: Blob) {
+  const png = Buffer.from(await blob.arrayBuffer());
+  expect(png.toString("latin1", 12, 16)).toBe("IHDR");
+  return { w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
+}
+
+const viewportJs = "({w: innerWidth, h: innerHeight})";
+
+it("chrome: the page viewport is the constructor width/height before any resize()", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 320, height: 240 });
+  await view.navigate(html("<body></body>"));
+  expect(await view.evaluate(viewportJs)).toEqual({ w: 320, h: 240 });
+  expect(await pngDimensions(await view.screenshot())).toEqual({ w: 320, h: 240 });
+  // The override is session state, so later navigations keep the size.
+  await view.navigate(html("<body>second</body>"));
+  expect(await view.evaluate(viewportJs)).toEqual({ w: 320, h: 240 });
+});
+
+it("chrome: the url constructor option sizes the viewport like navigate() does", async () => {
+  // Subprocess: the constructor's own navigate() promise is internal, and
+  // close()-ing the view before its load event settles it rejects that
+  // promise with nothing to catch it. Exiting the process instead skips
+  // close(). onNavigated (Page.frameNavigated) is the earliest point at
+  // which the session exists for evaluate().
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({ backend: ${chromeJson}, width: 320, height: 240, url: "data:text/html,<body></body>" });
+        const { promise, resolve } = Promise.withResolvers();
+        view.onNavigated = resolve;
+        await promise;
+        console.log(JSON.stringify(await view.evaluate(${JSON.stringify(viewportJs)})));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: '{"w":320,"h":240}', stderr: "", exitCode: 0 });
+});
+
+it("chrome: views attached to the same Chrome each get their own size", async () => {
+  await using a = new Bun.WebView({ backend: chrome, width: 320, height: 240 });
+  await using b = new Bun.WebView({ backend: chrome, width: 480, height: 160 });
+  await Promise.all([a.navigate(html("<body>a</body>")), b.navigate(html("<body>b</body>"))]);
+  expect(await Promise.all([a.evaluate(viewportJs), b.evaluate(viewportJs)])).toEqual([
+    { w: 320, h: 240 },
+    { w: 480, h: 160 },
+  ]);
+});
+
+it("chrome: a view shorter than Chrome's minimum window height renders and scrolls", async () => {
+  // Sizing the window to this used to leave full Chrome with a page that
+  // was 0px tall or hidden outright (no frames, so rAF never fired and
+  // screenshots hung). scroll() fires its wheel event at (width / 2,
+  // height / 2) of the constructor size, which then had no page under it.
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 60 });
+  await view.navigate(html("<body style='margin:0;height:5000px'></body>"));
+  expect(await view.evaluate(viewportJs)).toEqual({ w: 300, h: 60 });
+  await view.scroll(0, 100);
+  // The compositor applies the wheel scroll asynchronously; rAF-poll for it
+  // (same as "scroll dispatches wheel event" above).
+  const y = await view.evaluate(`
+    new Promise((resolve, reject) => {
+      const deadline = performance.now() + 2000;
+      requestAnimationFrame(function tick() {
+        if (scrollY > 0) return resolve(scrollY);
+        if (performance.now() > deadline) return reject("scrollY never moved");
+        requestAnimationFrame(tick);
+      });
+    })
+  `);
+  expect(y).toBeGreaterThan(0);
+});
+
+it("chrome: a viewport larger than Chrome's default window renders, screenshots and takes input at full size", async () => {
+  // The window stays at Chrome's default size (800x600 headless); only the
+  // emulated viewport is 1600x1200. Screenshots must cover all of it and
+  // click() coordinates must still be viewport CSS pixels, so a click in
+  // the far corner lands on the element pinned there.
+  await using view = new Bun.WebView({ backend: chrome, width: 1600, height: 1200 });
+  await view.navigate(
+    html(
+      `<body style="margin:0">
+        <button style="position:fixed;right:0;bottom:0;width:40px;height:40px" onclick="window.__hit=1"></button>
+      </body>`,
+    ),
+  );
+  expect(await view.evaluate(viewportJs)).toEqual({ w: 1600, h: 1200 });
+  expect(await pngDimensions(await view.screenshot())).toEqual({ w: 1600, h: 1200 });
+  await view.click(1580, 1180);
+  expect(await view.evaluate("window.__hit")).toBe(1);
 });
 
 // --- Lifecycle -------------------------------------------------------------
@@ -1134,7 +1254,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: ${chromeJson}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");

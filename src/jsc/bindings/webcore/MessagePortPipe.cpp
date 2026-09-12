@@ -228,10 +228,10 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, Thre
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx, ctxLoopKind);
-    // Peer already closed while this side was in transit (detach() cleared
-    // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
-    // owner, or the receiving context's listener loop-ref is never released.
-    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+    // Peer already gone while this side was in transit or unregistered (detach()
+    // cleared ContextKnown so notifyPeerClosed() early-returned): re-deliver to
+    // the new owner, or its listener loop-ref is never released.
+    if (peerRequiresCloseNotification(side, ctxId))
         notifyPeerClosed(side);
 }
 
@@ -254,8 +254,18 @@ void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContext&
     }
     // See attach(): re-deliver a peer-close that fired while this side had no
     // context (in transit or never registered).
-    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+    if (peerRequiresCloseNotification(side, ctxId))
         notifyPeerClosed(side);
+}
+
+bool MessagePortPipe::peerRequiresCloseNotification(uint8_t side, ScriptExecutionContextIdentifier ctxId)
+{
+    auto& peer = m_sides[1 - side];
+    Locker locker { peer.lock };
+    uint64_t pst = peer.state.load(std::memory_order_relaxed);
+    if (pst & ClosedByRequest)
+        return true;
+    return (pst & Closed) && peer.ctxId && peer.ctxId != ctxId;
 }
 
 void MessagePortPipe::detach(uint8_t side)
@@ -276,7 +286,7 @@ void MessagePortPipe::detach(uint8_t side)
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
 }
 
-void MessagePortPipe::close(uint8_t side, CloseKind kind)
+void MessagePortPipe::close(uint8_t side, CloseKind kind, ScriptExecutionContextIdentifier closingCtx)
 {
     ASSERT(side < 2);
 
@@ -296,7 +306,9 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         Deque<MessageWithMessagePorts> dropped;
         {
             Locker locker { s.lock };
-            s.ctxId = 0;
+            // A Collected side keeps its context id so peerRequiresCloseNotification()
+            // can tell a same-context peer (keeps its hold) from a cross-context one.
+            s.ctxId = sdKind == CloseKind::Collected ? closingCtx : 0;
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
             s.state.store(sdKind == CloseKind::Explicit ? (Closed | ClosedByRequest) : Closed, std::memory_order_release);
@@ -317,15 +329,17 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // outside the lock; they may hold the last ref to pipes whose
         // destructors also take locks.
 
-        // Notify each closed pipe's entangled peer so it can fire 'close' and
-        // release its event-loop ref — including nested in-transit ports drained
-        // from the worklist, not just the originally-closed side.
-        // Always notify, even for a collected wrapper. Node never collects an entangled
-        // port so it never faces this; bun does, and a peer that is never told is
-        // stranded -- its loop ref is never released and the process hangs. A 'close'
-        // fired at GC timing is the lesser evil. (jsRef() still ignores a collected
-        // peer: it keys on ClosedByRequest, not on Closed.)
-        pipe->notifyPeerClosed(1 - sd);
+        // Notify the entangled peer so it can fire 'close' and release its
+        // event-loop ref — nested in-transit ports from the worklist too. A
+        // Collected close notifies only a cross-context peer (see CloseKind).
+        bool notify = sdKind == CloseKind::Explicit;
+        if (!notify && closingCtx) {
+            auto& peer = pipe->m_sides[1 - sd];
+            Locker locker { peer.lock };
+            notify = peer.ctxId && peer.ctxId != closingCtx;
+        }
+        if (notify)
+            pipe->notifyPeerClosed(1 - sd);
     }
 }
 

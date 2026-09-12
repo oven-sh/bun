@@ -41,10 +41,10 @@ public:
     ~URLSearchParams();
 
     static ExceptionOr<Ref<URLSearchParams>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&&);
-    static Ref<URLSearchParams> create(const String& string, DOMURL* associatedURL)
-    {
-        return adoptRef(*new URLSearchParams(string, associatedURL));
-    }
+    static ExceptionOr<Ref<URLSearchParams>> create(const String& string, DOMURL* associatedURL);
+
+    // WTF::URLParser::parseURLEncodedForm RELEASE_ASSERTs on a name or value whose UTF-8 form does not fit a Vector.
+    static ExceptionOr<void> checkURLEncodedFormLength(StringView);
 
     void append(const String& name, const String& value);
     void remove(const StringView name, const String& value = {});
@@ -53,7 +53,7 @@ public:
     bool has(const StringView name, const String& value = {}) const;
     void set(const String& name, const String& value);
     String toString() const;
-    void updateFromAssociatedURL();
+    ExceptionOr<void> updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
     size_t memoryCost() const;
@@ -72,7 +72,7 @@ public:
 
 private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
-    URLSearchParams(const String&, DOMURL*);
+    URLSearchParams(Vector<KeyValuePair<String, String>>&&, DOMURL*);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
     void updateURL();
 

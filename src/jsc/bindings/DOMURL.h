@@ -56,7 +56,7 @@ public:
     }
     ExceptionOr<void> setHref(const String&);
 
-    URLSearchParams& searchParams();
+    ExceptionOr<URLSearchParams&> searchParams();
     void markSearchParamsDirty() { m_searchParamsDirty = true; }
 
     size_t memoryCost() const

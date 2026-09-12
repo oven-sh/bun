@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { accessSync, constants, lstatSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, VerdaccioRegistry } from "harness";
+import { tmpdir } from "os";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1230,5 +1231,91 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `bun patch --commit` writes the patch into the install cache's temp dir and
+// renames it into patches/. With the project on another filesystem that rename
+// fails with EXDEV and bun copies instead. The copy goes to a temp file next
+// to the destination that is renamed into place, so a copy that fails part way
+// (here: the disk fills up) leaves the previous patch file as it was.
+//
+// The steps run in bun-patch-xdev-fixture.ts. The project needs a small
+// filesystem of its own that the fixture may fill for a moment:
+// - where unprivileged user namespaces work, a private tmpfs that only the
+//   fixture and its children can see (`unshare -Urm` + `mount -t tmpfs`),
+// - else, inside a container, its /dev/shm (at most 128 MB, a mount of its
+//   own, and not the filesystem of the temp dir where the cache goes),
+// - else the test skips.
+describe("bun patch --commit with the project and the cache on different filesystems", () => {
+  function inPrivateTmpfs(dir: string, ...cmd: string[]) {
+    const script = 'mount -t tmpfs -o size=16m tmpfs "$1" && shift && exec "$@"';
+    return ["unshare", "-Urm", "sh", "-c", script, "sh", dir, ...cmd];
+  }
+  function findProjectFilesystem(): "private" | "shm" | undefined {
+    if (!isLinux) return undefined;
+    try {
+      using probeDir = tempDir("patch-xdev-probe", {});
+      const probe = Bun.spawnSync({
+        cmd: inPrivateTmpfs(String(probeDir), "true"),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      if (probe.exitCode === 0) return "private";
+    } catch {}
+    try {
+      const dev = statSync("/dev/shm").dev;
+      if (dev === statSync(tmpdir()).dev || dev === statSync("/dev").dev) return undefined;
+      accessSync("/dev/shm", constants.W_OK | constants.X_OK);
+      const fsStat = statfsSync("/dev/shm");
+      if (fsStat.blocks * fsStat.bsize > 128 * 1024 * 1024) return undefined;
+      if (fsStat.bavail * fsStat.bsize < 3 * 1024 * 1024) return undefined;
+      return "shm";
+    } catch {}
+    return undefined;
+  }
+  const projectFs = findProjectFilesystem();
+
+  test.skipIf(!projectFs)("a copy that runs out of space keeps the previous patch", async () => {
+    using dir = tempDir("patch-xdev", { cache: {} });
+    const cache = join(String(dir), "cache");
+    const proj = projectFs === "shm" ? join("/dev/shm", `bun-patch-xdev-${process.pid}`) : join(String(dir), "proj");
+    rmSync(proj, { recursive: true, force: true });
+    mkdirSync(proj);
+    try {
+      const fixture = [bunExe(), join(import.meta.dir, "bun-patch-xdev-fixture.ts"), proj, cache];
+      await using proc = Bun.spawn({
+        cmd: projectFs === "private" ? inPrivateTmpfs(proj, ...fixture) : fixture,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, stderr).toContain("{");
+      const result = JSON.parse(stdout.slice(stdout.lastIndexOf("\n{") + 1));
+      expect(result.error).toBeUndefined();
+      expect(result.sameDevice).toBe(false);
+      for (const step of ["install", "patch1", "commit1", "patch2"]) {
+        expect(result[step].exitCode, `${step}: ${result[step].stderr}`).toBe(0);
+      }
+      expect(result.firstPatch.names).toHaveLength(1);
+      expect(result.firstPatch.text).toContain("+// small change");
+
+      expect(result.commit2.stderr).toContain("ENOSPC");
+      expect(result.commit2.exitCode).toBe(1);
+      // The previous patch is untouched and nothing else is left in patches/.
+      expect(result.after.size).toBe(result.firstPatch.size);
+      expect(result.after.text).toBe(result.firstPatch.text);
+      expect(result.after.names).toEqual(result.firstPatch.names);
+
+      // And it still applies.
+      expect(result.reinstall.stderr).not.toContain("failed to apply patchfile");
+      expect(result.reinstall.exitCode, result.reinstall.stderr).toBe(0);
+      expect(result.lastLine).toBe("// small change\n");
+      expect(exitCode, stderr).toBe(0);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
   });
 });

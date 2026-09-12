@@ -1002,8 +1002,7 @@ impl Drop for Keepalive<'_> {
     }
 }
 
-/// A [`Keepalive`] for a frame that is entered holding a ref of its own (a queued task's): it
-/// counts that ref instead of taking another.
+/// A [`Keepalive`] that counts a ref the frame already owns (a queued task's).
 struct OwnedKeepalive(RefPtr<H2FrameParser>);
 
 impl OwnedKeepalive {
@@ -2969,8 +2968,8 @@ impl H2FrameParser {
     /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
     /// latched: those are routine during setup and teardown and the close path that
     /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
-    /// queue the transport's close - the failing write can be deep inside frame
-    /// emission, so the close must not run under the caller's stack.
+    /// close the transport - the failing write can be deep inside frame emission, so
+    /// the close must not run under the caller's stack.
     /// Errno classification lives in `us_socket_write_check_error` (socket.c):
     /// would-block/transient errnos re-arm writable and are never reported
     /// here, known peer-gone errnos are reported immediately, and every other
@@ -2993,15 +2992,7 @@ impl H2FrameParser {
         }
     }
 
-    /// Queues `FatalWriteCloseTask`. The close has to run from the top of the event loop, and
-    /// the deferred task queue is not that: it runs whenever the outermost JS call returns, and
-    /// that call can be a dispatch `on_native_read` made. A close made there detached the
-    /// socket under its own read. The rest of the read wrote through the detached transport,
-    /// and the session reported that write's error (`ERR_SOCKET_CLOSED` on a server, `EBADF`
-    /// on a client). The close also runs JS close handlers, and JS that runs inside the queue
-    /// gets no checkpoint of its own (`EventLoop::exit()` skips it there): with the socket as
-    /// the last handle, the process exited before their `process.nextTick` follow-up ran.
-    /// `FileSink::run_pending_later` leaves the queue the same way.
+    /// The close must not run inside the deferred task queue: it can run under `on_native_read`.
     fn queue_transport_close_after_fatal_write(&self) {
         if self.fatal_write_close_queued.replace(true) {
             return;
@@ -3012,8 +3003,7 @@ impl H2FrameParser {
             task,
             FatalWriteCloseTask::run,
         ));
-        // A queued task makes the next poll non-blocking on POSIX only. From a `setImmediate`
-        // callback the poll comes before the next `tick()`, and libuv would sleep in it.
+        // A queued task does not shorten the libuv poll.
         #[cfg(windows)]
         event_loop.wakeup();
     }
@@ -3365,8 +3355,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     unsafe { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
 }
 
-/// The event loop task `queue_transport_close_after_fatal_write` queues. Its ref keeps the
-/// parser alive in the queue, and `ManagedTask` drops it if the loop releases the task unrun.
+/// Keeps the parser alive in the task queue. `ManagedTask` drops it if the task never runs.
 struct FatalWriteCloseTask(RefPtr<H2FrameParser>);
 
 impl FatalWriteCloseTask {
@@ -3374,8 +3363,7 @@ impl FatalWriteCloseTask {
         // SAFETY: the box `queue_transport_close_after_fatal_write` leaked; `ManagedTask`
         // hands it over once.
         let Self(queued_ref) = *unsafe { bun_core::heap::take(this) };
-        // The close re-enters JS, so the ref this frame holds has to be a counted one:
-        // `finalize` can release it if `process.exit()` strands the frame.
+        // Counted, so `finalize` can release it if `process.exit()` strands this frame.
         let keepalive = OwnedKeepalive::adopt(queued_ref);
         let parser: &H2FrameParser = &keepalive.0;
         parser.fatal_write_close_queued.set(false);

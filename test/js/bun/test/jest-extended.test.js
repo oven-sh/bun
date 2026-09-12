@@ -190,6 +190,24 @@ describe("jest-extended", () => {
     ).toThrow("Bun!");
   });
 
+  test("toSatisfy() with .resolves and .rejects", async () => {
+    const promise = Promise.resolve(42);
+    await expect(promise).resolves.toSatisfy(value => value === 42);
+    await expect(promise).resolves.not.toSatisfy(value => value === promise);
+    await expect(Promise.reject(7)).rejects.toSatisfy(value => value === 7);
+    await expect(Promise.reject(7)).rejects.not.toSatisfy(value => value === 8);
+
+    // Failure messages report the settled value, not the promise
+    if (isBun) {
+      await expect(async () => {
+        await expect(Promise.resolve(42)).resolves.toSatisfy(value => value === 1);
+      }).toThrow("Received: 42");
+      await expect(async () => {
+        await expect(Promise.reject(7)).rejects.toSatisfy(value => value === 1);
+      }).toThrow("Received: 7");
+    }
+  });
+
   // Array
 
   test("toBeArray()", () => {
@@ -638,6 +656,20 @@ describe("jest-extended", () => {
     expect(() => tstErr(null)).toThrow();
     expect(() => tstErr(undefined)).toThrow();
     expect(() => tstErr({})).toThrow();
+  });
+
+  test("toIncludeRepeated() with .resolves and .rejects", async () => {
+    await expect(Promise.resolve("abc abc abc")).resolves.toIncludeRepeated("abc", 3);
+    await expect(Promise.resolve("abc abc abc")).resolves.not.toIncludeRepeated("abc", 2);
+    await expect(Promise.reject("abc abc")).rejects.toIncludeRepeated("abc", 2);
+    await expect(Promise.reject("abc abc")).rejects.not.toIncludeRepeated("abc", 1);
+
+    // Failure messages report the settled value, not the promise
+    if (isBun) {
+      await expect(async () => {
+        await expect(Promise.resolve("abc abc")).resolves.toIncludeRepeated("abc", 3);
+      }).toThrow('Received: "abc abc"');
+    }
   });
 
   // test("toIncludeMultiple()")

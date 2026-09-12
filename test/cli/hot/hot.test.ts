@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -191,6 +191,50 @@ it(
   },
   timeout,
 );
+
+// A write that lands right after the first evaluation must still reload. The
+// Windows watcher used to record changes only once its thread had run, and on a
+// loaded machine (CI) this catches that too, hence the one-line entry. On an
+// idle machine the thread usually wins the race and the old code passes as well.
+it("should hot reload a file written as soon as the entry point first runs", async () => {
+  async function reloadOnce(i: number) {
+    using dir = tempDir(`hot-first-write-${i}`, { "entry.js": `console.log("gen", 0);\n` });
+    const entry = join(String(dir), "entry.js");
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = runner.stderr.text();
+    const reader = runner.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    async function waitForLine(line: string) {
+      while (!stdout.includes(line)) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        stdout += decoder.decode(value, { stream: true });
+      }
+      return true;
+    }
+    const seenFirst = await waitForLine("gen 0\n");
+    writeFileSync(entry, `console.log("gen", 1);\n`);
+    const reloaded = seenFirst && (await waitForLine("gen 1\n"));
+    runner.kill();
+    reader.releaseLock();
+    await runner.exited;
+    const stderrText = await stderr;
+    // stderr is only interesting when the reload did not happen.
+    return { i, reloaded, stderr: reloaded ? "" : stderrText };
+  }
+
+  const children = 6;
+  const results = await Promise.all(Array.from({ length: children }, (_, i) => reloadOnce(i)));
+  expect(results).toEqual(Array.from({ length: children }, (_, i) => ({ i, reloaded: true, stderr: "" })));
+});
 
 it.each(["hot-file-loader.file", "hot-file-loader.css"])(
   "should hot reload when `%s` is overwritten",

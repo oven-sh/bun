@@ -965,6 +965,39 @@ describe.concurrent("HEADERS on a stream the client neither opened nor reserved 
       raw.close();
     }
   });
+
+  // The ordinary cancel race: the response was in flight when the client reset the stream.
+  test("response HEADERS that arrive after the client cancelled the request do not keep a gracefully closed session open", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      // One PING round trip, so the client finishes the read in which it reset the stream.
+      const firstPing = once(client, "ping");
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await firstPing;
+      // The late response HEADERS, left open. The second PING tells when the client has read them.
+      const secondPing = once(client, "ping");
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await secondPing;
+      const closed = once(client, "close");
+      client.close();
+      await closed;
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

@@ -130,16 +130,14 @@ describe.concurrent("a stream that a native consumer takes", () => {
     },
   };
 
-  for (const [name, consume] of Object.entries(consumers)) {
-    test(`closes after ${name} takes it to the end`, async () => {
-      await using upstream = heldUpstream();
-      const response = await fetch(upstream.url);
-      const body = response.body!;
-      await consume(response, upstream.finish);
-      expect(state(body)).toEqual(closed);
-      await finished(body);
-    });
-  }
+  test.each(Object.entries(consumers))("closes after %s takes it to the end", async (_name, consume) => {
+    await using upstream = heldUpstream();
+    const response = await fetch(upstream.url);
+    const body = response.body!;
+    await consume(response, upstream.finish);
+    expect(state(body)).toEqual(closed);
+    await finished(body);
+  });
 
   test("errors with the failure of its producer", async () => {
     // Serves a chunked body and drops the connection in the middle of it.

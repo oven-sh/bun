@@ -11380,3 +11380,30 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// BUN_INSTALL_PROGRESS=1 asks for the progress bar even when stderr is not a
+// terminal. On POSIX it then prints plain lines (on Windows a pipe gets no bar
+// at all): FORCE_COLOR forces colors, not the cursor-left / erase-line redraw,
+// which only a terminal takes.
+it("progress bar writes no cursor sequences into a piped stderr, even with FORCE_COLOR=1", async () => {
+  using dir = tempDir("install-progress-pipe", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    dep: { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", BUN_INSTALL_PROGRESS: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!isWindows) {
+    // The progress bar ran (its "Saving lockfile" node is refreshed explicitly)...
+    expect(stderr).toContain("Saving lockfile");
+  }
+  // ...with SGR colors (`ESC[...m`) at most: no other CSI sequence anywhere.
+  expect(stdout + stderr).not.toMatch(/\x1b\[(?!\d*(?:;\d+)*m)/);
+  expect(exitCode).toBe(0);
+});

@@ -2625,9 +2625,9 @@ fn init_with_runtime_once(
     // The lockfile allocation is folded into the struct literal above
     // (`Box::new(Lockfile::default())`).
 
-    if Output::enable_ansi_colors_stderr() {
+    // The auto-install progress bar redraws in place, so only on a terminal.
+    if Output::is_stderr_ansi_terminal() {
         manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
         // Coerce to a raw pointer immediately so the borrow doesn't outlive the
         // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.

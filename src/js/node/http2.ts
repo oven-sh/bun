@@ -1855,6 +1855,7 @@ const kNghttp2ErrorMessages = {
   [-901]: "Out of memory",
   [-903]: "Received bad client magic byte string",
   [-904]: "Flooding was detected in this HTTP/2 session, and it must be closed",
+  [-905]: "Too many CONTINUATION frames following a HEADER frame",
 };
 
 class NghttpError extends Error {

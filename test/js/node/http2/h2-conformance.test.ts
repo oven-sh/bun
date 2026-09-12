@@ -406,6 +406,66 @@ describe("CONTINUATION (checklist §3,§7)", () => {
       server.close();
     }
   });
+
+  // nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): a header block may be followed
+  // by at most 8 CONTINUATION frames. The frames here are zero-length because that is the shape
+  // the header-block byte cap cannot bound.
+  const MAX_CONTINUATIONS = 8;
+
+  /** Send a complete GET request block as HEADERS + `continuations` empty CONTINUATIONs (END_HEADERS on the last). */
+  function sendSplitRequest(c: RawH2, continuations: number) {
+    c.sendFrame(FrameType.HEADERS, 0x1 /* END_STREAM */, 1, requestHeaderBlock("GET"));
+    for (let i = 1; i < continuations; i++) c.sendFrame(FrameType.CONTINUATION, 0, 1);
+    c.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 1);
+  }
+
+  async function withServer(run: (srv: http2.Http2Server, c: RawH2) => Promise<void>) {
+    const srv = http2.createServer();
+    srv.on("stream", (stream: any) => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await run(srv, c);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  test("server accepts a request block followed by exactly 8 CONTINUATION frames", async () => {
+    await withServer(async (srv, c) => {
+      const dispatched = once(srv, "stream");
+      sendSplitRequest(c, MAX_CONTINUATIONS);
+      await dispatched;
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    });
+  });
+
+  test("server rejects the 9th CONTINUATION frame with GOAWAY(INTERNAL_ERROR) (CVE-2024-28182)", async () => {
+    await withServer(async (srv, c) => {
+      let dispatched = false;
+      srv.on("stream", () => (dispatched = true));
+      const sessionError = once(srv, "sessionError");
+      sendSplitRequest(c, MAX_CONTINUATIONS + 1);
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.INTERNAL_ERROR);
+      // node: nghttp2 fails the session with NGHTTP2_ERR_TOO_MANY_CONTINUATIONS.
+      const [err] = await sessionError;
+      expect(err).toMatchObject({
+        code: "ERR_HTTP2_ERROR",
+        errno: -905,
+        message: "Too many CONTINUATION frames following a HEADER frame",
+      });
+      expect(dispatched).toBe(false);
+    });
+  });
 });
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {

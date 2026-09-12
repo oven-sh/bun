@@ -8,6 +8,7 @@ Bun's bundler has built-in support for CSS with the following features:
 - Transpiling modern/future features to work on all browsers (including vendor prefixing)
 - Minification
 - CSS Modules
+- CSS module scripts (`import sheet from "./a.css" with { type: "css" }`)
 - Tailwind (through a native bundler plugin)
 
 ## Transpiling
@@ -1009,3 +1010,16 @@ When composing classes from separate files, make sure they do not contain the sa
 The CSS module spec says that composing classes from separate files with conflicting properties is undefined behavior: the output may differ and be unreliable.
 
 </Warning>
+
+## CSS module scripts
+
+An import with the `type: "css"` import attribute is a [CSS module script](https://html.spec.whatwg.org/multipage/webappapis.html#creating-a-css-module-script): instead of adding the file to the page's stylesheet, it evaluates to a constructed `CSSStyleSheet` that you apply yourself, for example to a shadow root.
+
+```ts title="component.ts" icon="/icons/typescript.svg"
+import sheet from "./widget.css" with { type: "css" };
+
+const root = host.attachShadow({ mode: "open" });
+root.adoptedStyleSheets = [sheet];
+```
+
+When bundling for the browser, Bun inlines the bundled CSS of that file (with its `@import`s and rewritten `url()`s, minified with `--minify`) into the JavaScript chunk and constructs the stylesheet at runtime, so the output also runs in browsers without native CSS module scripts. `import()` with the attribute works the same way. For the `bun` and `node` targets, which have no `CSSStyleSheet`, the import keeps evaluating to `{}`.

@@ -79,7 +79,7 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
     prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };

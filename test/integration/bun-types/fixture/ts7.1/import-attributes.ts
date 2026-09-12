@@ -44,6 +44,10 @@ expectType(embedded).is<Database>();
 import bundle from "./page.txt" with { type: "html" };
 expectType(bundle).is<HTMLBundle>();
 
+// A CSS module script is a `CSSStyleSheet` with lib.dom; this fixture has no DOM lib.
+import sheet from "./styles.css" with { type: "css" };
+expectType(sheet).is<object>();
+
 // Dynamic imports carry their attributes too.
 const dynamic = await import("./template.html", { with: { type: "text" } });
 expectType(dynamic.default).is<string>();

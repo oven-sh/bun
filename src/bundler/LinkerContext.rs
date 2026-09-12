@@ -139,6 +139,32 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// CSS files imported from browser code with `with { type: "css" }`, by
+    /// source index. Their JS stub exports a `CSSStyleSheet`, page CSS skips
+    /// them, and chunking treats them as JS files.
+    pub(crate) css_module_scripts: ArrayHashMap<u32, CssModuleScript>,
+}
+
+/// See [`LinkerContext::css_module_scripts`].
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CssModuleScript {
+    /// The stub's `__cssModule("")` call; `generate_css_module_script_texts`
+    /// replaces the argument with the printed CSS.
+    pub(crate) call: Option<bun_ast::StoreRef<E::Call>>,
+    /// ESM output with copied assets: `url()`s print as
+    /// `${__cssUrl(path, import.meta.url)}` so they resolve against the chunk.
+    pub(crate) resolve_asset_urls: bool,
+}
+
+/// Whether chunk assignment treats `source_index` like a JS file: every file
+/// but a plain CSS file (the stub of a CSS module script is a JS module).
+#[inline]
+pub(crate) fn is_chunked_as_js(
+    css_asts: &[crate::bundled_ast::CssCol],
+    css_module_scripts: &ArrayHashMap<u32, CssModuleScript>,
+    source_index: u32,
+) -> bool {
+    css_asts[source_index as usize].is_none() || css_module_scripts.contains(&source_index)
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -178,6 +204,7 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            css_module_scripts: ArrayHashMap::new(),
         }
     }
 }
@@ -523,6 +550,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.css_module_scripts.clear_retaining_capacity();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -2879,7 +2907,10 @@ impl<'a> LinkerContext<'a> {
                         ctx.queue.push_back((record.source_index.get(), out_dist));
                     }
                 }
-                continue;
+                // A CSS module script also has live JS parts (the stub).
+                if !self.is_css_module_script(source_index) {
+                    continue;
+                }
             }
 
             // A dead part prints nothing, so only live parts reach other files.
@@ -3091,7 +3122,10 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            return;
+            // A CSS module script also has live JS parts (the stub).
+            if !self.is_css_module_script(source_index) {
+                return;
+            }
         }
 
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
@@ -3320,6 +3354,12 @@ impl<'a> LinkerContext<'a> {
     #[inline]
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         self.graph.runtime_function(name)
+    }
+
+    /// See [`LinkerContext::css_module_scripts`].
+    #[inline]
+    pub(crate) fn is_css_module_script(&self, source_index: u32) -> bool {
+        self.css_module_scripts.count() > 0 && self.css_module_scripts.contains(&source_index)
     }
 
     /// Returns the part indices within file `id` that declare the

@@ -361,25 +361,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
-                        // `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
-                        // `P` and dropped when `Parser::parse` returns — but the parts are
-                        // stored in symbols / `E::Dot.name` and read later by the printer.
-                        // Dupe each part into the arena (which backs the AST) so they
-                        // outlive the parse. Build the `&[&'a [u8]]` slice
-                        // directly in the AST arena instead of a throwaway global-heap
-                        // `Vec` — keeps the visitor off the `#[global_allocator]`.
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .fragment
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
                         break 'tagger p
-                            .jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable");
+                            .jsx_classic_member_expression(expr.loc, |jsx| &jsx.fragment);
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
@@ -441,20 +424,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        // see fragment note above — `options.jsx.factory` is
-                        // owned by `P` and freed when the parser drops; dupe each part
-                        // into the arena so the symbol/E::Dot names outlive the printer.
-                        // Build the parts slice in the AST arena (no global-heap `Vec`).
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .factory
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
-                        p.jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable")
+                        p.jsx_classic_member_expression(expr.loc, |jsx| &jsx.factory)
                     } else {
                         // jsxStringsToMemberExpression(factory) must run
                         // unconditionally before the runtime check; it has the side-effect of

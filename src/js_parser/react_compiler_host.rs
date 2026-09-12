@@ -54,6 +54,26 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.options.jsx.development
     }
 
+    fn is_jsx_classic(&self) -> bool {
+        self.p.options.jsx.runtime != crate::parser::options::JSX::Runtime::Automatic
+    }
+
+    fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr {
+        self.p
+            .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
+    }
+
+    fn jsx_import_kind(&self, ref_: js_ast::Ref) -> Option<bun_react_compiler::JsxImportKind> {
+        use bun_react_compiler::JsxImportKind as K;
+        Some(match self.p.jsx_imports.tag_of(ref_)? {
+            JSXImport::Jsx => K::Jsx,
+            JSXImport::Jsxs => K::Jsxs,
+            JSXImport::JsxDEV => K::JsxDEV,
+            JSXImport::Fragment => K::Fragment,
+            JSXImport::CreateElement => K::CreateElement,
+        })
+    }
+
     fn jsx_import(&mut self, kind: bun_react_compiler::JsxImportKind) -> js_ast::Ref {
         use bun_react_compiler::JsxImportKind as K;
         let kind = match kind {

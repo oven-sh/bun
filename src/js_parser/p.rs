@@ -5501,6 +5501,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(value)
     }
 
+    /// The classic runtime's `options.jsx.factory` / `options.jsx.fragment` as
+    /// a member expression (`React.createElement`), resolved from the current
+    /// scope. `options.jsx` is dropped when `Parser::parse` returns, but the
+    /// parts live on in symbols and `E::Dot.name` until the printer runs, so
+    /// they are duped into the AST arena.
+    pub(crate) fn jsx_classic_member_expression(
+        &mut self,
+        loc: bun_ast::Loc,
+        members: fn(&options::JSX::Pragma) -> &options::JSX::MemberList,
+    ) -> Expr {
+        let arena = self.arena;
+        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
+            members(&self.options.jsx)
+                .iter()
+                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
+        );
+        self.jsx_strings_to_member_expression(loc, parts)
+            .expect("unreachable")
+    }
+
     fn member_expression(
         &mut self,
         loc: bun_ast::Loc,

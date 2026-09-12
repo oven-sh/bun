@@ -917,7 +917,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = requireMapKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto index = key->reverseFind(PLATFORM_SEP, key->length());
+    auto index = key->reverseFind(PLATFORM_SEP, moduleKeyPathLength(key));
 
     JSString* dirname;
     if (index != WTF::notFound) {

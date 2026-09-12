@@ -436,6 +436,12 @@ var require_wasi = __commonJS({
       const nsInt = BigInt(ns);
       return Number(nsInt / BigInt(1e6));
     };
+    // Mirrors uvwasi_serdes_check_bounds: the start must be inside memory even when len is 0.
+    var checkBounds = (ptr, len, byteLength) => {
+      if (!(ptr >>> 0 === ptr && ptr < byteLength && len <= byteLength - ptr)) {
+        throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+      }
+    };
     var wrap =
       f =>
       (...args) => {
@@ -446,11 +452,15 @@ var require_wasi = __commonJS({
           while (e.prev != null) {
             e = e.prev;
           }
-          if (e?.code && typeof e?.code === "string") {
-            return constants_1.ERROR_MAP[e.code] || constants_1.WASI_EINVAL;
-          }
           if (e instanceof types_1.WASIError) {
             return e.errno;
+          }
+          // Out-of-bounds guest pointer: a bare RangeError from DataView/TypedArray, ERR_BUFFER_OUT_OF_BOUNDS from Buffer.from.
+          if (e instanceof RangeError && (e.code == null || e.code === "ERR_BUFFER_OUT_OF_BOUNDS")) {
+            return constants_1.WASI_EOVERFLOW;
+          }
+          if (e?.code && typeof e?.code === "string") {
+            return constants_1.ERROR_MAP[e.code] || constants_1.WASI_EINVAL;
           }
           throw e;
         }
@@ -635,32 +645,25 @@ var require_wasi = __commonJS({
             path: v,
           });
         }
-        const getiovs = (iovs, iovsLen) => {
+        // outPtr is the caller's nread/nwritten pointer, checked here so nothing is read or written first.
+        const getiovs = (iovs, iovsLen, outPtr) => {
           this.refreshMemory();
 
           const { view, memory } = this;
           const { buffer } = memory;
           const { byteLength } = buffer;
 
-          if (iovsLen === 1) {
-            const ptr = iovs;
-            const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
+          if (iovsLen >>> 0 !== iovsLen) {
+            throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+          }
+          checkBounds(iovs, iovsLen * 8, byteLength);
+          checkBounds(outPtr, 4, byteLength);
 
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-            }
-            try {
-              return [new Uint8Array(buffer, buf, bufLen)];
-            } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
-            }
+          if (iovsLen === 1) {
+            const buf = view.getUint32(iovs, true);
+            const bufLen = view.getUint32(iovs + 4, true);
+            checkBounds(buf, bufLen, byteLength);
+            return [new Uint8Array(buffer, buf, bufLen)];
           }
 
           // Avoid referencing Array because materializing the Array constructor can show up in profiling
@@ -669,22 +672,9 @@ var require_wasi = __commonJS({
 
           for (let i = 0, ptr = iovs; i < iovsLen; i++, ptr += 8) {
             const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
-
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-            }
-            try {
-              buffers[i] = new Uint8Array(buffer, buf, bufLen);
-            } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
-            }
+            const bufLen = view.getUint32(ptr + 4, true);
+            checkBounds(buf, bufLen, byteLength);
+            buffers[i] = new Uint8Array(buffer, buf, bufLen);
           }
           return buffers;
         };
@@ -960,7 +950,7 @@ var require_wasi = __commonJS({
           fd_pwrite: wrap((fd, iovs, iovsLen, offset, nwritten) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_WRITE | constants_1.WASI_RIGHT_FD_SEEK);
             let written = 0;
-            getiovs(iovs, iovsLen).forEach(iov => {
+            getiovs(iovs, iovsLen, nwritten).forEach(iov => {
               let w = 0;
               while (w < iov.byteLength) {
                 w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, Number(offset) + written + w);
@@ -975,7 +965,7 @@ var require_wasi = __commonJS({
             const IS_STDOUT = fd == constants_1.WASI_STDOUT_FILENO;
             const IS_STDERR = fd == constants_1.WASI_STDERR_FILENO;
             let written = 0;
-            getiovs(iovs, iovsLen).forEach(iov => {
+            getiovs(iovs, iovsLen, nwritten).forEach(iov => {
               if (iov.byteLength == 0) return;
               if (IS_STDOUT && this.sendStdout != null) {
                 this.sendStdout(iov);
@@ -1005,7 +995,7 @@ var require_wasi = __commonJS({
           fd_pread: wrap((fd, iovs, iovsLen, offset, nread) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_READ | constants_1.WASI_RIGHT_FD_SEEK);
             let read = 0;
-            outer: for (const iov of getiovs(iovs, iovsLen)) {
+            outer: for (const iov of getiovs(iovs, iovsLen, nread)) {
               let r = 0;
               while (r < iov.byteLength) {
                 const length = iov.byteLength - r;
@@ -1025,7 +1015,7 @@ var require_wasi = __commonJS({
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_READ);
             const IS_STDIN = fd == constants_1.WASI_STDIN_FILENO;
             let read = 0;
-            outer: for (const iov of getiovs(iovs, iovsLen)) {
+            outer: for (const iov of getiovs(iovs, iovsLen, nread)) {
               let r = 0;
               while (r < iov.byteLength) {
                 let length = iov.byteLength - r;
@@ -1157,6 +1147,7 @@ var require_wasi = __commonJS({
           fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_SEEK);
             this.refreshMemory();
+            checkBounds(newOffsetPtr, 8, this.memory.buffer.byteLength);
             switch (whence) {
               case constants_1.WASI_WHENCE_CUR:
                 stats.offset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
@@ -1178,6 +1169,7 @@ var require_wasi = __commonJS({
           fd_tell: wrap((fd, offsetPtr) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_TELL);
             this.refreshMemory();
+            checkBounds(offsetPtr, 8, this.memory.buffer.byteLength);
             if (!stats.offset) {
               stats.offset = BigInt(0);
             }
@@ -1337,6 +1329,7 @@ var require_wasi = __commonJS({
                   neededInheriting |= constants_1.WASI_RIGHT_FD_SEEK;
                 }
                 this.refreshMemory();
+                checkBounds(fdPtr, 4, this.memory.buffer.byteLength);
                 const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
                 if (p == "dev/tty") {
                   this.view.setUint32(fdPtr, constants_1.WASI_STDIN_FILENO, true);

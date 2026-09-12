@@ -1705,6 +1705,9 @@ fn spawn_maybe_sync(
         }
     }
 
+    // `maxBuffer` is charged as bytes are read, so a paused reader would never enforce it.
+    let lazy = !is_sync && lazy && max_buffer.is_none();
+
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their
     // start() ref and on_process_exit's later drain is refcount-balanced.
@@ -1712,8 +1715,8 @@ fn spawn_maybe_sync(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
-        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, lazy);
+        if !lazy && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
@@ -1722,9 +1725,9 @@ fn spawn_maybe_sync(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, lazy);
 
-        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
+        if !lazy && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }

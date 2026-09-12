@@ -4638,6 +4638,9 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
+    // onDidChangeListeners restores SIG_DFL for the file's process.on(<signal>) listeners.
+    if (globalObject->hasProcessObject())
+        globalObject->processObject()->wrapped().removeAllListeners();
     globalObject->scriptExecutionContext()->prepareForDestruction();
 }
 

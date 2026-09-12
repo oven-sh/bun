@@ -344,6 +344,13 @@ diffme@1.0.0 → diffme@2.0.0
       ],
     });
     expect(vendored.exitCode).toBe(0);
+
+    // Two folders that spell a version the same way compare as written, even when only one of them resolves.
+    expect(await diff(["./vendor/a", "./packages/a"], String(dir))).toEqual({
+      stdout: "./vendor/a → ./packages/a\nNo differences (2 files)\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("patch output marks a side that ends without a newline", async () => {

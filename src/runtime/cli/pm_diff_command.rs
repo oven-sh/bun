@@ -57,6 +57,21 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Permission bits per path (0o755…), when the source records them.
     modes: BTreeMap<Vec<u8>, u32>,
+    /// For a folder: the dependency versions in its package.json that use `workspace:` or `catalog:`.
+    protocol_versions: Vec<ProtocolVersion>,
+}
+
+/// A dependency version in a folder's package.json that `bun pm pack` replaces before it writes the tarball.
+struct ProtocolVersion {
+    /// `dependencies`, `devDependencies`, …
+    section: &'static [u8],
+    name: Vec<u8>,
+    /// The version as written, e.g. `workspace:^`.
+    spec: Vec<u8>,
+    /// Its string token, quotes included, in the package.json bytes.
+    token: core::ops::Range<usize>,
+    /// The version pack writes in its place. `None` when it does not resolve (pack refuses those).
+    published: Option<Vec<u8>>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -136,6 +151,8 @@ pub(crate) fn exec(
         Some(tree) => tree,
         None => materialize(pm, &left_spec)?,
     };
+    publish_versions(&mut left, &right.protocol_versions);
+    publish_versions(&mut right, &left.protocol_versions);
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -476,6 +493,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
                 label: path.clone(),
                 files: BTreeMap::new(),
                 modes: BTreeMap::new(),
+                protocol_versions: Vec::new(),
             };
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
@@ -546,6 +564,7 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
         label: root.to_vec(),
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
+        protocol_versions: Vec::new(),
     };
     let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
         Ok(fd) => fd,
@@ -616,10 +635,8 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
                         Err(err) => fail(err, rel),
                     }
                 }
-                tree.files.insert(
-                    b"package.json".to_vec(),
-                    with_published_versions(pkg, &json, lockfile),
-                );
+                tree.protocol_versions = protocol_versions(&pkg, &json, lockfile);
+                tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
             }
@@ -701,9 +718,9 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
 }
 
 /// This project's lockfile, loaded into `lockfile`, when `manifest` (the package.json of `dir`) has `workspace:` or
-/// `catalog:` versions and `bun pm pack` run in `dir` would resolve them from it: `dir` is the package the command
-/// was run in, the project root, or a workspace the lockfile lists. Any other folder keeps its versions as written,
-/// so a workspace here that happens to share a name never stands in for one of its own.
+/// `catalog:` versions and `dir` is a folder whose `bun pm pack` reads that lockfile: the package the command was
+/// run in, the project root, or a workspace the lockfile lists. Any other folder keeps its versions as written, so
+/// a workspace here that happens to share a name never stands in for one of its own.
 fn project_lockfile<'a>(
     pm: &mut PackageManager,
     lockfile: &'a mut Lockfile,
@@ -746,21 +763,19 @@ fn project_lockfile<'a>(
     covered.then_some(lockfile)
 }
 
-/// `manifest` (a package.json, parsed as `json`) with each `workspace:` and `catalog:` dependency version replaced by
-/// the one `bun pm pack` writes into the tarball, so a workspace package compares equal to its published copy. The
-/// rest of the file stays as written, and so does a version that does not resolve (pack refuses those).
-fn with_published_versions(
-    manifest: Vec<u8>,
+/// The `workspace:` and `catalog:` dependency versions in `manifest` (a package.json, parsed as `json`), each with the
+/// version `bun pm pack` writes into the tarball in its place.
+fn protocol_versions(
+    manifest: &[u8],
     json: &bun_js_parser::Expr,
     lockfile: Option<&Lockfile>,
-) -> Vec<u8> {
-    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
-    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+) -> Vec<ProtocolVersion> {
+    let mut versions: Vec<ProtocolVersion> = Vec::new();
     for section in bun_install_types::DependencyGroup::FOUR {
-        let Some(section) = json.get_object(section.prop) else {
+        let Some(dependencies) = json.get_object(section.prop) else {
             continue;
         };
-        let Some(dependencies) = section.data.e_object() else {
+        let Some(dependencies) = dependencies.data.e_object() else {
             continue;
         };
         for dependency in dependencies.properties.slice() {
@@ -773,39 +788,65 @@ fn with_published_versions(
             ) else {
                 continue;
             };
-            let Some(Ok(published)) =
-                crate::cli::pack_command::published_version(lockfile, name, spec)
+            let Some(published) = crate::cli::pack_command::published_version(lockfile, name, spec)
             else {
                 continue;
             };
-            // Only a token that reads exactly as the value the parser gave is replaced.
+            // Only a token that reads exactly as the value the parser gave can be replaced.
             let token = usize::try_from(version.loc.start).ok().and_then(|at| {
-                let end = bun_parsers::json::skip_string_token(&manifest, at)?;
-                (manifest[at + 1..end - 1] == *spec).then_some((at, end))
+                let end = bun_parsers::json::skip_string_token(manifest, at)?;
+                (manifest[at + 1..end - 1] == *spec).then_some(at..end)
             });
-            if let Some((at, end)) = token {
-                edits.push((at, end, published));
+            if let Some(token) = token {
+                versions.push(ProtocolVersion {
+                    section: section.prop,
+                    name: name.to_vec(),
+                    spec: spec.to_vec(),
+                    token,
+                    published: published.ok(),
+                });
             }
         }
     }
+    versions
+}
+
+/// Replaces the `workspace:` and `catalog:` versions in a folder's package.json with the ones `bun pm pack` publishes,
+/// so a workspace package compares equal to its published copy. The rest of the file stays as written. So does a
+/// version that `other`, the folder on the other side, spells the same way: the two already compare equal, and maybe
+/// only one of them has a lockfile that resolves it (two checkouts of one package).
+fn publish_versions(tree: &mut Tree, other: &[ProtocolVersion]) {
+    let Some(manifest) = tree.files.get_mut(b"package.json".as_slice()) else {
+        return;
+    };
+    let mut edits: Vec<(&core::ops::Range<usize>, &[u8])> = tree
+        .protocol_versions
+        .iter()
+        .filter(|v| {
+            !other
+                .iter()
+                .any(|o| o.section == v.section && o.name == v.name && o.spec == v.spec)
+        })
+        .filter_map(|v| Some((&v.token, v.published.as_deref()?)))
+        .collect();
     if edits.is_empty() {
-        return manifest;
+        return;
     }
-    edits.sort_unstable_by_key(|&(at, ..)| at);
-    edits.dedup_by_key(|&mut (at, ..)| at);
+    edits.sort_unstable_by_key(|(token, _)| token.start);
+    edits.dedup_by_key(|(token, _)| token.start);
     let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
     let mut copied = 0usize;
-    for (at, end, published) in &edits {
-        out.extend_from_slice(&manifest[copied..*at]);
+    for (token, published) in edits {
+        out.extend_from_slice(&manifest[copied..token.start]);
         let _ = write!(
             out,
             "{}",
             bun_core::fmt::format_json_string_utf8(published, Default::default())
         );
-        copied = *end;
+        copied = token.end;
     }
     out.extend_from_slice(&manifest[copied..]);
-    out
+    *manifest = out;
 }
 
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.
@@ -946,6 +987,7 @@ fn fetch_registry_tree(
         label,
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
+        protocol_versions: Vec::new(),
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)

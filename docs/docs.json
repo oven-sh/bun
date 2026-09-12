@@ -379,6 +379,7 @@
               "/guides/ecosystem/neon-drizzle",
               "/guides/ecosystem/neon-serverless-postgres",
               "/guides/ecosystem/nextjs",
+              "/guides/ecosystem/nextjs-docker",
               "/guides/ecosystem/nuxt",
               "/guides/ecosystem/pm2",
               "/guides/ecosystem/prisma",

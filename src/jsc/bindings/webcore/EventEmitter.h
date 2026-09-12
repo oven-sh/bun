@@ -52,7 +52,7 @@ public:
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
@@ -60,7 +60,8 @@ public:
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
-    WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
+    // With `listener`, counts only the registrations of that function (node's `listenerCount(event, fn)`).
+    WEBCORE_EXPORT int listenerCount(const Identifier& eventType, JSC::JSObject* listener = nullptr);
 
     bool hasEventListeners() const;
     bool hasEventListeners(const Identifier& eventType) const;
@@ -102,6 +103,8 @@ private:
     {
     }
 
+    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
+    bool invokeEventListeners(EventEmitterData&, const Identifier&, SimpleEventListenerVector&, const MarkedArgumentBuffer& arguments);
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;

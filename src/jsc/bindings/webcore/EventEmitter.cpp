@@ -14,6 +14,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/SymbolRegistry.h>
 
 namespace WebCore {
 
@@ -24,21 +25,16 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-
-    if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
-            return false;
-    } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
-            return false;
-    }
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return true;
 }
 
 void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
@@ -64,6 +60,22 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
         return false;
 
     if (data->eventListenerMap.remove(eventType, listener)) {
+        eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
+        return true;
+    }
+    return false;
+}
+
+bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    if (data->eventListenerMap.remove(eventType, registration)) {
         eventListenersDidChange();
 
         if (this->onDidChangeListener)
@@ -143,7 +155,7 @@ Vector<Identifier> EventEmitter::getEventNames()
     return data->eventListenerMap.eventTypes();
 }
 
-int EventEmitter::listenerCount(const Identifier& eventType)
+int EventEmitter::listenerCount(const Identifier& eventType, JSC::JSObject* listener)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -154,7 +166,8 @@ int EventEmitter::listenerCount(const Identifier& eventType)
             if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
-            if (registeredListener->callback().jsFunction()) {
+            JSC::JSObject* jsFunction = registeredListener->callback().jsFunction();
+            if (jsFunction && (!listener || jsFunction == listener)) {
                 result++;
             }
         }
@@ -184,16 +197,26 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-
+    auto* context = scriptExecutionContext();
     auto* data = eventTargetData();
-    if (!data)
+    if (!context || !data)
         return false;
+
+    VM& vm = context->vm();
+    Ref<EventEmitter> protectedThis(*this);
+
+    bool isErrorEvent = eventType == vm.propertyNames->error;
+    if (isErrorEvent) [[unlikely]] {
+        // events.errorMonitor listeners observe 'error' before its handlers run, whether or not it is handled (see emitError in events.ts).
+        auto errorMonitor = Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
+        if (auto* monitors = data->eventListenerMap.find(errorMonitor)) [[unlikely]]
+            invokeEventListeners(*data, errorMonitor, *monitors, arguments);
+    }
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
     if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
-            Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
+        if (isErrorEvent && arguments.size() > 0) {
+            auto* thisObject = m_thisObject.get();
             if (!thisObject)
                 return false;
 
@@ -203,10 +226,15 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
         return false;
     }
 
-    bool prevFiringEventListeners = data->isFiringEventListeners;
-    data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
-    data->isFiringEventListeners = prevFiringEventListeners;
+    return invokeEventListeners(*data, eventType, *listenersVector, arguments);
+}
+
+bool EventEmitter::invokeEventListeners(EventEmitterData& data, const Identifier& eventType, SimpleEventListenerVector& listeners, const MarkedArgumentBuffer& arguments)
+{
+    bool prevFiringEventListeners = data.isFiringEventListeners;
+    data.isFiringEventListeners = true;
+    auto fired = innerInvokeEventListeners(eventType, listeners, arguments);
+    data.isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
 
@@ -243,7 +271,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, callback);
+            removeListener(eventType, *registeredListener);
 
         if (!jsFunction) [[unlikely]]
             continue;

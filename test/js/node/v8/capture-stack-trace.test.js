@@ -1122,6 +1122,69 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
+// An error holds the functions in its trace weakly. These functions are strict, so the call sites do
+// not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
+// blocks keep each `return` out of tail position, so every frame stays in the trace.
+const errorWithDeadFrames = `new Function('"use strict"; function inner() { try { return new Error("x"); } finally {} } try { return inner(); } finally {}')()`;
+test.concurrent.each([
+  [
+    "Bun.gc(true) in Error.prepareStackTrace",
+    `const e = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);`,
+    "formatted inner",
+  ],
+  [
+    "v8.getHeapStatistics() in Error.prepareStackTrace, error from an arrow that has returned",
+    `import v8 from "node:v8";
+     Error.prepareStackTrace = (err, callSites) => { v8.getHeapStatistics(); return "formatted " + callSites[1].getFunctionName(); };
+     async function handler() {
+       const e = (() => { try { return new Error("request failed"); } finally {} })();
+       await 1;
+       return e.stack;
+     }
+     console.log(await handler());`,
+    "formatted handler",
+  ],
+  [
+    "Bun.gc(true) in a message getter",
+    `const e = ${errorWithDeadFrames};
+     Object.defineProperty(e, "message", { get() { Bun.gc(true); return "from getter"; } });
+     Error.prepareStackTrace = (err, callSites) => err.stack.split("\\n")[0] + " | " + callSites[0].getFunctionName();
+     console.log(e.stack);`,
+    "Error: from getter | inner",
+  ],
+  [
+    "Bun.gc(true) in a node:vm Error.prepareStackTrace getter",
+    `const vm = require("node:vm");
+     const context = vm.createContext({ collect: () => Bun.gc(true) });
+     const e = vm.runInContext(${JSON.stringify(errorWithDeadFrames)}, context);
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)[1]);`,
+    "Error: x | inner",
+  ],
+  [
+    "Error.appendStackTrace onto the error being formatted, then Bun.gc(true)",
+    `const e = ${errorWithDeadFrames};
+     const other = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Error.appendStackTrace(other, err); Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);
+     Error.prepareStackTrace = undefined;
+     console.log(/at (\\w+)/.exec(other.stack)[1]);`,
+    "formatted inner\ninner",
+  ],
+])("a synchronous GC while .stack is being formatted keeps the trace: %s", async (_, source, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.prepareStackTrace call sites keep their own file when a hidden frame is on the stack", async () => {
   // A bound function call is a frame with private implementation visibility. JSC omits it from the
   // trace unless showPrivateScriptsInStackTraces is on (debug builds turn it on); Bun then has to

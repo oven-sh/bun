@@ -3,7 +3,10 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "cf1b36ec8703d8e87436094d21d478d358c7d886";
+// Preview of oven-sh/WebKit#638 (on top of cf1b36ec, the previous pin here): Bun.JSONL reports
+// a chunk that ends inside a \uXXXX escape or a number's exponent as incomplete, not as an error.
+// Swap in the merged sha once that PR lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-638-2a5a22bc";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

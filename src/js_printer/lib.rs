@@ -1265,8 +1265,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     Ok(())
 }
 
-/// `write_json_string` for a string whose encoding is known only at run time, such as a JS string.
-/// Equal strings print the same in every encoding.
+/// `write_json_string` for a string whose encoding is known only at run time. Equal strings print the same.
 pub fn write_json_string_encoded<W: Write + ?Sized>(
     input: bun_core::EncodedSlice<'_>,
     writer: &mut W,

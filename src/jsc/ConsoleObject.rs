@@ -14,9 +14,7 @@ use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
-/// Thin facade over `bun_js_parser::lexer` so the call sites below can use the
-/// `JSLexer.isLatin1Identifier` spelling while the underlying crate exposes a
-/// slightly different shape (single generic identifier predicate).
+/// Thin facade so the call sites below keep the `JSLexer.isLatin1Identifier` spelling.
 mod JSLexer {
     #[inline]
     pub(super) fn is_latin1_identifier_u8(name: &[u8]) -> bool {

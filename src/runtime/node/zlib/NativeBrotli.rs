@@ -62,11 +62,14 @@ mod _impl {
     use core::ffi::c_uint;
 
     use bun_jsc::{
-        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions,
-        StrongOptional, WorkPoolTask,
+        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
+        WorkPoolTask,
     };
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, Error, unset_task_callback, validate_mode,
+        validate_uint32_array, validate_write_result_array,
+    };
     use crate::node::util::validators;
 
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
@@ -117,28 +120,7 @@ mod _impl {
         ) -> JsResult<Box<Self>> {
             let arguments = callframe.arguments_undef::<1>();
 
-            let mode = arguments.ptr[0];
-            if !mode.is_number() {
-                return Err(global_this.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global_this.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 8 || mode_int > 9 {
-                return Err(global_this.throw_range_error(
-                    mode_int,
-                    RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 8,
-                        max: 9,
-                        ..Default::default()
-                    },
-                ));
-            }
-
-            let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let mode = validate_mode(global_this, arguments.ptr[0], 8, 9)?;
             let stream = Context {
                 mode,
                 ..Default::default()
@@ -157,7 +139,7 @@ mod _impl {
                 // .callback = undefined — overwritten before WorkPool::schedule()
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
-                    callback: noop_task_callback,
+                    callback: unset_task_callback,
                 }),
                 estimated_external_size: Self::external_size_for(mode),
             }))
@@ -200,53 +182,15 @@ mod _impl {
             // across threads; a closed `Context` cannot be re-initialized.
             CompressionStream::<Self>::throw_unless_idle(self, global_this)?;
 
-            // `flush_write_result` writes two u32s into this array, so the
-            // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[1];
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
-            };
-            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
-            }
-            let write_result_slice = write_result_buf.as_u32();
-            if write_result_slice.len() < 2 {
-                return Err(global_this
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
-                    )
-                    .throw());
-            }
+            validate_write_result_array(global_this, write_result_value, "writeResult")?;
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let params_value = arguments.ptr[0];
-            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    "params",
-                    "Uint32Array",
-                    params_value,
-                ));
-            };
-            if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    "params",
-                    "Uint32Array",
-                    params_value,
-                ));
-            }
+            let mut params_buf = validate_uint32_array(global_this, arguments.ptr[0], "params")?;
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
@@ -724,12 +668,6 @@ mod _impl {
         };
         s.as_ptr()
     }
-
-    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
-    fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
     crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl

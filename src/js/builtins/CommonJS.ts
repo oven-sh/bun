@@ -17,7 +17,8 @@ $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
-  if (id.startsWith("node:")) {
+  // $stringSubstring / $stringIndexOfInternal: user code can replace String.prototype.*.
+  if ($stringSubstring.$call(id, 0, 5) === "node:") {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
@@ -62,8 +63,9 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
-  const queryIndex = id.indexOf("?");
-  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
+  const queryIndex = $stringIndexOfInternal.$call(id, "?");
+  const pathEnd = queryIndex === -1 ? id.length : queryIndex;
+  if (pathEnd >= 5 && $stringSubstring.$call(id, pathEnd - 5, pathEnd) === ".node") {
     return $internalRequire(id, this);
   }
 
@@ -160,9 +162,9 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   // `id` keys the module cache and may carry a `?query` suffix;
   // `process.dlopen` needs the on-disk path.
-  const queryIndex = id.indexOf("?");
-  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
-  $assert(filename.endsWith(".node"));
+  const queryIndex = $stringIndexOfInternal.$call(id, "?");
+  const filename = queryIndex === -1 ? id : $stringSubstring.$call(id, 0, queryIndex);
+  $assert($stringSubstring.$call(filename, filename.length - 5) === ".node");
 
   const module = $createCommonJSModule(id, {}, true, parent);
   process.dlopen(module, filename);

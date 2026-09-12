@@ -84,7 +84,10 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
 function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void) {
   $assert(this[kFd] == fd, "fd mismatch");
   this[kUnref]();
-  this.close().then(() => cb(), cb);
+  const closed = this.close();
+  // Only a FileHandle whose close() the user replaced can hand back a thenable.
+  if ($isPromise(closed)) closed.$then(() => cb(), cb);
+  else closed.then(() => cb(), cb);
 }
 
 function getValidatedPath(p: any) {
@@ -562,11 +565,11 @@ function _write(data, encoding, cb) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise
-        .then(() => {
+        .$then(() => {
           this.emit("drain"); // Emit drain event
           cb(null);
         })
-        .catch(cb);
+        .$then(undefined, cb);
       return false; // Indicate backpressure
     } else {
       cb(null);
@@ -606,7 +609,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      maybePromise.then(
+      maybePromise.$then(
         () => {
           if (cb) cb(null);
           this.emit("drain");
@@ -655,7 +658,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     if ($isPromise(maybePromise)) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
-      maybePromise.then(
+      maybePromise.$then(
         () => {
           this.emit("drain"); // Emit drain event
           cb(null);
@@ -699,11 +702,11 @@ writeStreamPrototype._writev = function (data, cb) {
     const maybePromise = fileSink.write(Buffer.concat(chunks));
     if ($isPromise(maybePromise)) {
       maybePromise
-        .then(() => {
+        .$then(() => {
           this.emit("drain");
           cb(null);
         })
-        .catch(cb);
+        .$then(undefined, cb);
       return false;
     } else {
       cb(null);
@@ -731,7 +734,7 @@ writeStreamPrototype._destroy = function (err, cb) {
   if (sink && sink !== true) {
     const end = sink.end(err);
     if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
+      end.$then(() => cb(err), cb);
       return;
     }
   }
@@ -790,7 +793,7 @@ Object.defineProperty(writeStreamPrototype, "pending", {
 function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   $assert(typeof cb === "function", "cb is not a function");
   if ($isPromise(maybePromise)) {
-    maybePromise.then(() => cb(null), cb);
+    maybePromise.$then(() => cb(null), cb);
   } else {
     process.nextTick(cb, null);
   }

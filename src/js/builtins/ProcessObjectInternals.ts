@@ -93,7 +93,7 @@ export function getStdioWriteStream(
         if (sink && sink !== true) {
           const result = sink.flush();
           if ($isPromise(result)) {
-            result.then(
+            result.$then(
               () => cb(null),
               err => cb(err),
             );
@@ -464,24 +464,36 @@ export function windowsEnv(
   coerceForWrite,
   resetForDelete,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
-    let o = {};
-    for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
-    }
-    return o;
-  };
+  // Captured once: user code can replace these on the prototypes later.
+  const ArrayPrototypeSlice = Array.prototype.slice;
+  const ArrayPrototypeIncludes = Array.prototype.includes;
+  const ArrayPrototypePush = Array.prototype.push;
+  const ArrayPrototypeSplice = Array.prototype.splice;
+  const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+  const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
-  (internalEnv as any).toJSON = () => {
+  // Index of the entry naming the same variable as the uppercase key k, or -1.
+  function indexOfEnvKey(k: string) {
+    for (let i = 0; i < envMapList.length; i++) {
+      if (StringPrototypeToUpperCase.$call(envMapList[i]) === k) return i;
+    }
+    return -1;
+  }
+
+  function toPlainObject() {
     // Mirror enumeration: original-case key names, case-insensitive values.
     // Spreading internalEnv directly would leak the canonical UPPERCASE
     // storage keys into JSON.stringify(process.env) and IPC env echoes.
     let o = {};
-    for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+    for (let i = 0; i < envMapList.length; i++) {
+      const k = envMapList[i];
+      o[k] = internalEnv[StringPrototypeToUpperCase.$call(k)];
     }
     return o;
-  };
+  }
+
+  (internalEnv as any)[Bun.inspect.custom] = toPlainObject;
+  (internalEnv as any).toJSON = toPlainObject;
 
   // Shared write path for the `set` and `defineProperty` traps. Plain
   // assignment (never Object.defineProperty on the target) keeps the
@@ -493,8 +505,8 @@ export function windowsEnv(
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
     // as DontEnum CustomAccessors even when the variable was never set.
-    if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
-      envMapList.push(p);
+    if (!ArrayPrototypeIncludes.$call(envMapList, p) && indexOfEnvKey(k) === -1) {
+      ArrayPrototypePush.$call(envMapList, p);
     }
     if (internalEnv[k] !== coerced) {
       editWindowsEnvVar(k, coerced);
@@ -510,7 +522,7 @@ export function windowsEnv(
       }
       // Env-var lookup is case-insensitive on Windows: the canonical
       // uppercase key wins when the variable exists.
-      const k = p.toUpperCase();
+      const k = StringPrototypeToUpperCase.$call(p);
       if (k in internalEnv) {
         return internalEnv[k];
       }
@@ -525,7 +537,7 @@ export function windowsEnv(
       if (typeof p === "symbol" || typeof value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
+      const k = StringPrototypeToUpperCase.$call(p);
       // Node silently ignores assignments to an empty variable name
       // (https://github.com/nodejs/node/issues/32920).
       if (k === "") {
@@ -539,7 +551,7 @@ export function windowsEnv(
       // Case-insensitive env-var query first, then ordinary lookup so own
       // as-is properties and Object.prototype methods answer `in` like node
       // (`'hasOwnProperty' in process.env` is true on all platforms).
-      if (typeof p === "string" && p.toUpperCase() in internalEnv) {
+      if (typeof p === "string" && StringPrototypeToUpperCase.$call(p) in internalEnv) {
         return true;
       }
       return p in internalEnv;
@@ -549,10 +561,10 @@ export function windowsEnv(
       if (typeof p === "symbol") {
         return true;
       }
-      const k = String(p).toUpperCase();
-      const i = envMapList.findIndex(x => x.toUpperCase() === k);
+      const k = StringPrototypeToUpperCase.$call(p);
+      const i = indexOfEnvKey(k);
       if (i !== -1) {
-        envMapList.splice(i, 1);
+        ArrayPrototypeSplice.$call(envMapList, i, 1);
       }
       editWindowsEnvVar(k, null);
       // internalEnv is a plain object here so `delete internalEnv[k]` never
@@ -588,7 +600,7 @@ export function windowsEnv(
       if (typeof attributes.value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
+      const k = StringPrototypeToUpperCase.$call(p);
       // Node silently ignores an empty variable name, like the set trap.
       if (k === "") {
         return true;
@@ -600,15 +612,15 @@ export function windowsEnv(
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {
-        const desc = Reflect.getOwnPropertyDescriptor(target, p.toUpperCase());
+        const desc = ReflectGetOwnPropertyDescriptor(target, StringPrototypeToUpperCase.$call(p));
         if (desc) return desc;
       }
       // Own as-is properties (toJSON, Bun.inspect.custom symbol).
-      return Reflect.getOwnPropertyDescriptor(target, p);
+      return ReflectGetOwnPropertyDescriptor(target, p);
     },
     ownKeys() {
-      // .slice() because paranoia that there is a way to call this without the engine cloning it for us
-      return envMapList.slice();
+      // A copy: the engine validates the result and the caller may keep it.
+      return ArrayPrototypeSlice.$call(envMapList);
     },
   });
 }

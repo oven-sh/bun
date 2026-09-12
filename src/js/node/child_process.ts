@@ -561,10 +561,7 @@ function spawnSync(file, args, options) {
       exitedDueToMaxBuffer,
       pid,
     } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
+      cmd: spawnCommand(options.file, options.args),
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
       // the child like in Node.js.
@@ -797,7 +794,12 @@ function fork(modulePath, args = [], options) {
     }
   }
 
-  args = [...execArgv, modulePath, ...args];
+  const forkArgs = ArrayPrototypeSlice.$call(execArgv);
+  ArrayPrototypePush.$call(forkArgs, modulePath);
+  for (let i = 0; i < args.length; i++) {
+    ArrayPrototypePush.$call(forkArgs, args[i]);
+  }
+  args = forkArgs;
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -908,6 +910,13 @@ function normalizeExecArgs(command, options, callback) {
   };
 }
 
+// spawnargs[0] is argv0 (normalizeSpawnArguments prepends it); Bun.spawn() takes argv0 separately and wants the program in cmd[0].
+function spawnCommand(file, spawnargs) {
+  const cmd = ArrayPrototypeSlice.$call(spawnargs);
+  cmd[0] = file;
+  return cmd;
+}
+
 const kBunEnv = Symbol("bunEnv");
 function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
@@ -985,7 +994,7 @@ function normalizeSpawnArguments(file, args, options) {
   // Handle shell
   if (shell) {
     validateArgumentNullCheck(shell, "options.shell");
-    const command = ArrayPrototypeJoin.$call([file, ...args], " ");
+    const command = args.length === 0 ? file : file + " " + ArrayPrototypeJoin.$call(args, " ");
     // Set the shell, switches, and commands.
     if (process.platform === "win32") {
       if (typeof shell === "string") file = shell;
@@ -1044,7 +1053,8 @@ function normalizeSpawnArguments(file, args, options) {
     });
   }
 
-  for (const key of envKeys) {
+  for (let i = 0; i < envKeys.length; i++) {
+    const key = envKeys[i];
     const value = env[key];
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
@@ -1404,13 +1414,9 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
-    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-
     try {
       this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+        cmd: spawnCommand(file, spawnargs),
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,
@@ -1485,7 +1491,7 @@ class ChildProcess extends EventEmitter {
       ) {
         this.#handle = null;
         ex.syscall = "spawn " + this.spawnfile;
-        ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        ex.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);

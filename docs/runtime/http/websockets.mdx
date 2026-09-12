@@ -286,6 +286,20 @@ Bun.serve({
 });
 ```
 
+The idle timer restarts every time the client sends something. By default, messages the server sends to the client restart it too, so Bun never treats a connection the server keeps pushing to as idle. With `sendPings` enabled (the default), Bun pings the client before the deadline. Bun closes the connection with code `1006` if nothing has come back from the client by the deadline.
+
+Set `resetIdleTimeoutOnSend: false` to count only traffic received from the client. Use this on servers that mostly push data, such as tickers or chat fan-out. Bun then closes a client that has been silent for `idleTimeout` seconds, no matter how much the server sent to it in the meantime.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    idleTimeout: 30,
+    resetIdleTimeoutOnSend: false, // [!code ++]
+  },
+});
+```
+
 Bun also closes a WebSocket connection if it receives a message larger than 16 MB. Configure this with the `maxPayloadLength` parameter.
 
 ```ts
@@ -373,6 +387,7 @@ namespace Bun {
 
       maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
       idleTimeout?: number; // default: 120 (seconds)
+      resetIdleTimeoutOnSend?: boolean; // default: true
       backpressureLimit?: number; // default: 16 * 1024 * 1024 = 16 MB
       closeOnBackpressureLimit?: boolean; // default: false
       sendPings?: boolean; // default: true

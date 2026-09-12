@@ -798,6 +798,32 @@ describe("Server", () => {
         },
       );
     });
+    describe("resetIdleTimeoutOnSend (validation)", () => {
+      it.each([0, 1, "false", {}])("throws on %p", value => {
+        expect(() => {
+          serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              // @ts-expect-error
+              resetIdleTimeoutOnSend: value,
+            },
+          });
+        }).toThrow("websocket expects resetIdleTimeoutOnSend to be a boolean");
+      });
+      it.each([true, false, null, undefined])("accepts %p", value => {
+        using server = serve({
+          port: 0,
+          fetch: () => new Response(),
+          websocket: {
+            message() {},
+            resetIdleTimeoutOnSend: value as boolean | undefined,
+          },
+        });
+        expect(server.port).toBeGreaterThan(0);
+      });
+    });
   });
 });
 describe("ServerWebSocket", () => {
@@ -2639,4 +2665,116 @@ describe.concurrent("request handlers run to completion before the callbacks the
     await sockets.closed;
     expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
+});
+
+// uws runs idle timeouts on a 4 second tick and splits `idleTimeout` into an
+// idle part and a ping part: once the idle part passes without traffic it pings
+// the client, and if the ping part also passes it closes the socket with
+// 1006 "WebSocket timed out from inactivity". These tests keep the server
+// sending to a client that never writes anything after the handshake (no
+// messages, no pongs), which must still get reaped.
+describe.concurrent("idleTimeout while the server keeps sending", () => {
+  const HANDSHAKE =
+    "GET / HTTP/1.1\r\n" +
+    "Host: x\r\n" +
+    "Upgrade: websocket\r\n" +
+    "Connection: Upgrade\r\n" +
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+    "Sec-WebSocket-Version: 13\r\n\r\n";
+
+  // Raw RFC 6455 client that completes the handshake and then never writes
+  // again, counting the frames the server sends it. `secondPing` rejects when
+  // the server pings again instead of closing, so a server that never reaps
+  // the client fails the test at the next tick instead of at the test timeout.
+  function connectAndGoSilent(port: number) {
+    const upgraded = Promise.withResolvers<void>();
+    const secondPing = Promise.withResolvers<never>();
+    const counts = { pings: 0, messages: 0 };
+    let head: string | null = "";
+    let frames = Buffer.alloc(0);
+    const socket = net.connect({ port, host: "127.0.0.1" }, () => socket.write(HANDSHAKE));
+    socket.on("data", (chunk: Buffer) => {
+      if (head !== null) {
+        head += chunk.toString("latin1");
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        if (!head.startsWith("HTTP/1.1 101 ")) {
+          upgraded.reject(new Error("upgrade failed: " + head));
+          return;
+        }
+        chunk = Buffer.from(head.slice(end + 4), "latin1");
+        head = null;
+        upgraded.resolve();
+      }
+      frames = Buffer.concat([frames, chunk]);
+      // Server frames are unmasked, and everything this server sends ("tick"
+      // and empty pings) fits the 2 byte header with a 7 bit payload length.
+      while (frames.length >= 2 && frames.length >= 2 + (frames[1] & 0x7f)) {
+        const opcode = frames[0] & 0x0f;
+        if (opcode === 0x9 && ++counts.pings === 2) {
+          secondPing.reject(new Error("server pinged the silent client again instead of closing it"));
+        } else if (opcode === 0x1) {
+          counts.messages++;
+        }
+        frames = frames.subarray(2 + (frames[1] & 0x7f));
+      }
+    });
+    socket.on("error", upgraded.reject);
+    socket.on("close", () => upgraded.reject(new Error("socket closed before the upgrade completed")));
+    return { socket, counts, upgraded: upgraded.promise, secondPing: secondPing.promise };
+  }
+
+  async function reapSilentClient(options: Pick<WebSocketHandler<undefined>, "sendPings" | "resetIdleTimeoutOnSend">) {
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    let pusher: ReturnType<typeof setInterval> | undefined;
+    await using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        ...options,
+        // The smallest idleTimeout uws accepts.
+        idleTimeout: 8,
+        open(ws) {
+          pusher = setInterval(() => ws.send("tick"), 100);
+        },
+        message() {},
+        close(_, code, reason) {
+          clearInterval(pusher);
+          closed.resolve({ code, reason });
+        },
+      },
+    });
+    const client = connectAndGoSilent(server.port!);
+    try {
+      await client.upgraded;
+      const { code, reason } = await Promise.race([closed.promise, client.secondPing]);
+      return { code, reason, pings: client.counts.pings, serverWasSending: client.counts.messages > 0 };
+    } finally {
+      clearInterval(pusher);
+      client.socket.destroy();
+    }
+  }
+
+  const reaped = { code: 1006, reason: "WebSocket timed out from inactivity", serverWasSending: true };
+
+  // With an 8 second idleTimeout the idle part is a single tick, so the ping
+  // goes out even though every send() re-arms the idle timer. The sends made
+  // after the ping must not cancel the ping deadline: the client never answered.
+  it("a ping the client does not answer closes the connection even though the server keeps sending (default options)", async () => {
+    expect(await reapSilentClient({})).toEqual({ ...reaped, pings: 1 });
+  }, 20_000);
+
+  // Without pings the idle part is the whole 8 seconds (two ticks), which the
+  // default reset-on-send keeps re-arming forever while the server is sending.
+  // resetIdleTimeoutOnSend: false makes only the client's traffic count.
+  it("resetIdleTimeoutOnSend: false closes a silent client on idleTimeout regardless of what the server sends", async () => {
+    expect(await reapSilentClient({ sendPings: false, resetIdleTimeoutOnSend: false })).toEqual({
+      ...reaped,
+      pings: 0,
+    });
+  }, 20_000);
 });

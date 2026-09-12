@@ -11,7 +11,6 @@ use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
 
-use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
@@ -368,7 +367,6 @@ pub struct MatchResult {
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
     pub(crate) package_json: Option<*const PackageJSON>,
-    pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
 }
@@ -381,7 +379,6 @@ impl Default for MatchResult {
             file_fd: FD::INVALID,
             is_node_module: false,
             package_json: None,
-            dir_info: None,
             module_type: options::ModuleType::Unknown,
             is_external: false,
         }

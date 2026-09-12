@@ -444,6 +444,115 @@ describe("When CJS and ESM are mixed", () => {
   });
 });
 
+// When the importing package has a "browser" map, every bare specifier is probed
+// against the map through fixed-size path buffers (as written, with "/index"
+// appended, and with "./" prepended). A specifier that did not fit used to abort
+// the build:
+//   panic: range end index 5000 out of range for slice of length 4096
+// Such a specifier cannot be remapped; it has to fall through to ordinary
+// resolution exactly like it does when there is no "browser" map.
+describe.concurrent("browser map lookup of a bare specifier that does not fit a path buffer", () => {
+  // MAX_PATH_BYTES in src/bun_core/util.rs
+  const maxPathBytes = { linux: 4096, darwin: 1024, win32: 32767 * 3 + 1 }[process.platform] ?? 1024;
+  const packageJsonWithBrowserMap = JSON.stringify({ name: "pkg", browser: { "./a.js": "./b.js" } });
+
+  async function bunBuild(dir: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", entry],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    // The shortest specifier that overflowed: it fits on its own, `<specifier>/index` does not.
+    ["specifier + '/index' does not fit", maxPathBytes - "/index".length],
+    // The specifier itself does not fit a path buffer.
+    ["specifier does not fit", maxPathBytes + 1000],
+  ])("bun build reports the unresolved import (%s)", async (_, length) => {
+    const specifier = Buffer.alloc(length, "x").toString();
+    using dir = tempDir("resolver-browser-map-long-specifier", {
+      "package.json": packageJsonWithBrowserMap,
+      "entry.js": `import ${JSON.stringify(specifier)};`,
+    });
+
+    const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.js");
+
+    expect(stderr).toContain(`error: Could not resolve: "${specifier}"`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  it("Bun.build reports the unresolved import", async () => {
+    const specifier = Buffer.alloc(maxPathBytes + 1000, "x").toString();
+    using dir = tempDir("resolver-browser-map-long-specifier-api", {
+      "package.json": packageJsonWithBrowserMap,
+      "entry.js": `import ${JSON.stringify(specifier)};`,
+      "build.js": `
+        const result = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        console.log(JSON.stringify({ success: result.success, messages: result.logs.map(log => log.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      messages: [expect.stringContaining(`Could not resolve: "${specifier}"`)],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("still resolves the specifier through node_modules", async () => {
+    // Ordinary resolution normalizes this down to "b". The browser map lookup sees the
+    // raw specifier, whose "./"-prefixed probe does not fit; it must give up on the
+    // remap instead of aborting.
+    const segment = "x/../";
+    const segments = Math.ceil((maxPathBytes + 100) / segment.length);
+    const specifier = Buffer.alloc(segments * segment.length, segment).toString() + "b";
+    using dir = tempDir("resolver-browser-map-long-specifier-node-modules", {
+      "package.json": packageJsonWithBrowserMap,
+      "node_modules/b/index.js": `export const x = "resolved through node_modules";`,
+      "entry.js": `import {x} from ${JSON.stringify(specifier)}; console.log(x);`,
+    });
+
+    const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.js");
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`"resolved through node_modules"`);
+    expect(exitCode).toBe(0);
+  });
+
+  it("still remaps a long specifier that does fit", async () => {
+    // Long enough to matter on every platform, while staying inside macOS's 1024-byte
+    // path buffer.
+    const specifier = Buffer.alloc(1000, "x").toString();
+    using dir = tempDir("resolver-browser-map-long-specifier-remapped", {
+      "package.json": JSON.stringify({ name: "pkg", browser: { [specifier]: "./shim.js" } }),
+      "shim.js": `export const x = "remapped by the browser map";`,
+      "entry.js": `import {x} from ${JSON.stringify(specifier)}; console.log(x);`,
+    });
+
+    const { stdout, stderr, exitCode } = await bunBuild(String(dir), "entry.js");
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`"remapped by the browser map"`);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // The "browser" map resolver copied the normalized input path into a 512-byte
 // threadlocal buffer without a bounds check. Paths inside deep directory trees
 // can easily exceed 512 bytes while still being well under MAX_PATH_BYTES.

@@ -4,9 +4,13 @@ use crate::IndexStringMap::IndexInt;
 
 /// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
 /// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
-/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
+/// the crates converge.
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
+
+    /// The map key. A disabled module is keyed by its `(disabled):` pretty path,
+    /// so it stays separate from the same file enabled.
+    fn source_key(&self) -> &[u8];
 }
 
 // `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
@@ -15,6 +19,15 @@ impl PathLike for bun_paths::fs::Path<'_> {
     #[inline]
     fn path_text(&self) -> &[u8] {
         self.text
+    }
+
+    #[inline]
+    fn source_key(&self) -> &[u8] {
+        if self.is_disabled {
+            self.pretty
+        } else {
+            self.text
+        }
     }
 }
 
@@ -34,7 +47,7 @@ pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutR
 
 impl PathToSourceIndexMap {
     pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
-        self.get(path.path_text())
+        self.get(path.source_key())
     }
 
     pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {

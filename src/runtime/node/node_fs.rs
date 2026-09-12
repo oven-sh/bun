@@ -999,8 +999,7 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-        /// [`from_js`](Self::from_js) for a work-pool job: paths and data parse
-        /// thread-isolated / pinned and rooted under `will_be_async`.
+        /// [`from_js`](Self::from_js) under `will_be_async`: paths parse thread-isolated or copied, data pinned and rooted.
         fn from_js_async(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -1020,8 +1019,8 @@ mod _async_tasks {
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
-        // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
-        // and rooted; the remaining fields are plain data.
+        // SAFETY: `from_js_async` parses paths thread-isolated or copied and data
+        // pinned and rooted; the remaining fields are plain data.
         unsafe impl ThreadIsolatedArg for $ty {}
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }

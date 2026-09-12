@@ -5876,6 +5876,7 @@ impl VirtualMachine {
                     || frame.source_url.eq_ascii(b"native")
                     || frame.source_url.eq_ascii(b"unknown")
                     || frame.source_url.eq_ascii(b"[unknown]")
+                    || frame.source_url.eq_ascii(b"[wasm code]")
                     || frame.source_url.starts_with_ascii(b"[source:")
                 {
                     top_frame_is_builtin = true;
@@ -6886,7 +6887,7 @@ impl VirtualMachine {
                     );
                     (name_str, loc_str)
                 };
-                if !name_str.is_empty() {
+                if !name_str.is_empty() && !loc_str.is_empty() {
                     let _ = write!(
                         writer,
                         "%0A      at {} ({})",
@@ -6894,10 +6895,16 @@ impl VirtualMachine {
                         bun_core::fmt::github_action(loc_str.as_bytes()),
                     );
                 } else {
+                    // A WebAssembly frame has a name and no location.
+                    let only = if name_str.is_empty() {
+                        &loc_str
+                    } else {
+                        &name_str
+                    };
                     let _ = write!(
                         writer,
                         "%0A      at {}",
-                        bun_core::fmt::github_action(loc_str.as_bytes()),
+                        bun_core::fmt::github_action(only.as_bytes()),
                     );
                 }
             }

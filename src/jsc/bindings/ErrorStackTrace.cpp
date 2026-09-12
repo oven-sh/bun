@@ -516,6 +516,10 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
 
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
 {
+    // A wasm frame has no callee and no code block. Same name as JSCStackFrame::retrieveFunctionName.
+    if (frame.isWasmFrame())
+        return JSC::Wasm::makeString(frame.wasmFunctionIndexOrName());
+
     bool isConstructor = false;
     if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
 

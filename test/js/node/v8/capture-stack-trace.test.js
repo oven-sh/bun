@@ -1223,3 +1223,100 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(exitCode).toBe(0);
   },
 );
+
+test("a WebAssembly frame keeps its function name in error.stack, the error printer, console.trace and process.report", async () => {
+  using dir = tempDir("wasm-frame-names", {
+    "fixture.js": [
+      `// (module $kit`,
+      `//   (import "env" "js" (func $js))`,
+      `//   (func $viaImport (export "viaImport") call $js)`,
+      `//   (func $trapper (export "trapper") unreachable))`,
+      `// The "name" custom section carries the module name and the function names.`,
+      `const str = s => [s.length, ...Buffer.from(s)];`,
+      `const section = (id, content) => [id, content.length, ...content];`,
+      `const bytes = new Uint8Array([`,
+      `  0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,`,
+      `  ...section(1, [1, 0x60, 0, 0]),`,
+      `  ...section(2, [1, ...str("env"), ...str("js"), 0, 0]),`,
+      `  ...section(3, [2, 0, 0]),`,
+      `  ...section(7, [2, ...str("viaImport"), 0, 1, ...str("trapper"), 0, 2]),`,
+      `  ...section(10, [2, 4, 0, 0x10, 0, 0x0b, 3, 0, 0, 0x0b]),`,
+      `  ...section(0, [`,
+      `    ...str("name"),`,
+      `    ...section(0, str("kit")),`,
+      `    ...section(1, [3, 0, ...str("js"), 1, ...str("viaImport"), 2, ...str("trapper")]),`,
+      `  ]),`,
+      `]);`,
+      `let inJs;`,
+      `const { viaImport, trapper } = new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { js: () => inJs() } }).exports;`,
+      `const out = {};`,
+      ``,
+      `try { trapper(); } catch (e) { out.stack = e.stack; }`,
+      `try { trapper(); } catch (e) { out.inspect = Bun.inspect(e); }`,
+      `// Once error.stack is read, the error printer parses the frames back out of that string.`,
+      `function readStackThenInspect() {`,
+      `  try { trapper(); } catch (e) { e.stack; return Bun.inspect(e); }`,
+      `}`,
+      `out.inspectAfterStackRead = readStackThenInspect();`,
+      ``,
+      `inJs = () => { out.newError = new Error("below wasm").stack; };`,
+      `viaImport();`,
+      `inJs = () => { const target = {}; Error.captureStackTrace(target); out.captureStackTrace = target.stack; };`,
+      `viaImport();`,
+      `inJs = () => { out.report = process.report.getReport().javascriptStack.stack.join("\\n"); };`,
+      `viaImport();`,
+      ``,
+      `Error.prepareStackTrace = (_error, callSites) => callSites[0];`,
+      `try { trapper(); } catch (e) { out.callSite = { functionName: e.stack.getFunctionName(), fileName: e.stack.getFileName() }; }`,
+      `Error.prepareStackTrace = undefined;`,
+      ``,
+      `console.log(JSON.stringify(out));`,
+      `inJs = () => console.trace("traced");`,
+      `viaImport();`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    cwd: String(dir),
+    // Debug builds show private frames: the "wasm-stub" entry and exit thunks around each WebAssembly frame.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Every JavaScript frame is in fixture.js, so the frames that are left are the WebAssembly frames.
+  const wasmFrames = text =>
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at ") && !line.includes("fixture.js"));
+
+  const [json, ...traced] = stdout.split("\n");
+  expect(json, stderr).toStartWith("{");
+  const { callSite, inspectAfterStackRead, ...texts } = JSON.parse(json);
+  const frames = Object.fromEntries(Object.entries(texts).map(([name, text]) => [name, wasmFrames(text)]));
+
+  expect({
+    callSite,
+    ...frames,
+    // console.trace() prints the trace where it prints the message.
+    traced: wasmFrames(traced.join("\n") + stderr),
+  }).toEqual({
+    // error.stack has what CallSite.getFunctionName() and CallSite.getFileName() return for the same frame.
+    callSite: { functionName: "kit.wasm-function[trapper]", fileName: "[wasm code]" },
+    stack: ["at kit.wasm-function[trapper] ([wasm code])"],
+    inspect: ["at kit.wasm-function[trapper]"],
+    newError: ["at kit.wasm-function[viaImport] ([wasm code])"],
+    captureStackTrace: ["at kit.wasm-function[viaImport] ([wasm code])"],
+    report: ["at kit.wasm-function[viaImport] ([wasm code])"],
+    traced: ["at kit.wasm-function[viaImport]"],
+  });
+
+  // The frame survives the round trip through the error.stack string, and the source preview still comes from the
+  // JavaScript frame below it.
+  expect(wasmFrames(inspectAfterStackRead)[0]).toStartWith("at kit.wasm-function[trapper] ([wasm code]");
+  expect(inspectAfterStackRead).toContain("|   try { trapper(); } catch (e) { e.stack; return Bun.inspect(e); }");
+  expect(exitCode).toBe(0);
+});

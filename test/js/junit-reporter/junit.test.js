@@ -608,6 +608,42 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it("prints a WebAssembly frame, which has a name and no source, in <failure>", async () => {
+    await using tmpDir = tempDir("junit-wasm-frame", {
+      "package.json": "{}",
+      "wasm.test.js": `
+        import { test } from "bun:test";
+        // (module $kit (func $trapper (export "trapper") unreachable)), names from the "name" custom section
+        const bytes = new Uint8Array([
+          0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0, 3, 2, 1, 0,
+          7, 11, 1, 7, 0x74, 0x72, 0x61, 0x70, 0x70, 0x65, 0x72, 0, 0, 10, 5, 1, 3, 0, 0, 0x0b,
+          0, 23, 4, 0x6e, 0x61, 0x6d, 0x65, 0, 4, 3, 0x6b, 0x69, 0x74, 1, 10, 1, 0, 7, 0x74, 0x72, 0x61, 0x70, 0x70, 0x65, 0x72,
+        ]);
+        const { trapper } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+        test("trap", function trapTest() { trapper(); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      // Debug builds show private frames: the "wasm-stub" entry thunk next to the WebAssembly frame.
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const [trapCase] = result.testsuites.testsuite[0].testcase;
+
+    expect(trapCase.failure[0]._).toContain("      at kit.wasm-function[trapper]\n      at trapTest (wasm.test.js:");
+    expect(exitCode).toBe(1);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

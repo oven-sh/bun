@@ -51,7 +51,7 @@ notreal.type; // "text/plain;charset=utf-8"
 const exists = await notreal.exists(); // false
 ```
 
-The default MIME type is `text/plain;charset=utf-8`. Override it by passing a second argument to `Bun.file`.
+The MIME type is inferred from the file extension (`.txt` above maps to `text/plain;charset=utf-8`). An unknown extension gives `application/octet-stream`. Override it by passing a second argument to `Bun.file`.
 
 ```ts
 const notreal = Bun.file("notreal.json", { type: "application/json" });

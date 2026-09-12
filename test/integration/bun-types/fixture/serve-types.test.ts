@@ -130,6 +130,9 @@ test("basic + websocket + upgrade", {
       expectType(message).is<string | Buffer<ArrayBuffer>>();
       expectType(ws.binaryType).is<"nodebuffer" | "arraybuffer" | "uint8array" | "blob" | undefined>();
     },
+    error(error) {
+      expectType(error).is<unknown>();
+    },
   },
 
   fetch(req, server) {

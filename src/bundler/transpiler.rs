@@ -2739,7 +2739,18 @@ impl<'a> Transpiler<'a> {
         }
         self.options.transform_only = true;
 
-        self.process_resolve_queue(self.options.import_path_format)?;
+        // Only the main-thread transpiler reaches here; worker option clones
+        // carry `output_dir_handle: None` and would route output to stdout.
+        let outstream = match self
+            .options
+            .output_dir_handle
+            .as_ref()
+            .map(bun_sys::Dir::fd)
+        {
+            None => TransformOutstream::Stdout,
+            Some(output_dir) => TransformOutstream::Dir(output_dir),
+        };
+        self.process_resolve_queue(self.options.import_path_format, outstream)?;
 
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)
@@ -2767,6 +2778,7 @@ impl<'a> Transpiler<'a> {
     fn process_resolve_queue(
         &mut self,
         import_path_format: options::ImportPathFormat,
+        outstream: TransformOutstream,
     ) -> crate::Result<()> {
         while let Some(item) = self.resolve_queue.pop_front() {
             bun_ast::Expr::data_store_reset();
@@ -2774,30 +2786,34 @@ impl<'a> Transpiler<'a> {
             bun_ast::store_ast_alloc_heap::reset();
 
             let errors_before = self.log().errors;
-            let output_file =
-                match self.build_with_resolve_result_eager(&item, import_path_format, None) {
-                    Ok(Some(f)) => f,
-                    Ok(None) => continue,
-                    Err(err) => {
-                        // Print errors (unlike parse errors) add nothing to the
-                        // log, and an unlogged failure exits 0 with no output.
-                        if self.log().errors == errors_before {
-                            let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
-                            let message: &str = match err {
-                                crate::Error::JsPrinter(js_printer::Error::StackOverflow) => {
-                                    "Maximum call stack size exceeded while generating code for"
-                                }
-                                _ => "Failed to generate code for",
-                            };
-                            self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
-                            );
-                        }
-                        continue;
+            let output_file = match self.build_with_resolve_result_eager(
+                &item,
+                import_path_format,
+                outstream,
+                None,
+            ) {
+                Ok(Some(f)) => f,
+                Ok(None) => continue,
+                Err(err) => {
+                    // Print errors (unlike parse errors) add nothing to the
+                    // log, and an unlogged failure exits 0 with no output.
+                    if self.log().errors == errors_before {
+                        let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
+                        let message: &str = match err {
+                            crate::Error::JsPrinter(js_printer::Error::StackOverflow) => {
+                                "Maximum call stack size exceeded while generating code for"
+                            }
+                            _ => "Failed to generate code for",
+                        };
+                        self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
+                        );
                     }
-                };
+                    continue;
+                }
+            };
             self.output_files.push(output_file);
         }
         Ok(())
@@ -2859,6 +2875,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
+        _outstream: TransformOutstream,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
@@ -3236,4 +3253,13 @@ impl<'a> Transpiler<'a> {
             },
         ))
     }
+}
+
+/// Outstream selector for `process_resolve_queue` /
+/// `build_with_resolve_result_eager` — a runtime enum since the only
+/// behavioural difference is unused (`_ = outstream`).
+#[derive(Clone, Copy)]
+enum TransformOutstream {
+    Stdout,
+    Dir(#[expect(dead_code)] bun_sys::Fd),
 }

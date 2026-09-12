@@ -32,6 +32,19 @@ using namespace WebCore;
 
 namespace Bun {
 
+// What `.stack` is when the frames do not fit in one string. It cannot throw: `formatStackTrace` also runs in a GC finalizer.
+static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
+{
+    if (name.isEmpty())
+        return message;
+    if (message.isEmpty())
+        return name;
+    WTF::String header = tryMakeString(name, ": "_s, message);
+    if (header.isNull()) [[unlikely]]
+        return message;
+    return header;
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -39,8 +52,10 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     // default formatting
     size_t framesCount = callSites->length();
 
-    WTF::StringBuilder sb;
+    // The message and the frames come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
+    WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
 
+    JSC::JSString* messageString = nullptr;
     auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
     RETURN_IF_EXCEPTION(scope, {});
     if (errorMessage) {
@@ -49,6 +64,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         if (str->length() > 0) {
             auto value = str->view(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            messageString = str;
             sb.append("Error: "_s);
             sb.append(value.data);
         } else {
@@ -76,6 +92,14 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             RETURN_IF_EXCEPTION(scope, {});
             sb.append(value.data);
         }
+    }
+
+    if (sb.hasOverflowed()) [[unlikely]] {
+        if (!messageString)
+            return jsNontrivialString(vm, "Error"_s);
+        auto message = messageString->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return jsString(vm, stackTraceHeaderOnly("Error"_s, message.data));
     }
 
     return jsString(vm, sb.toString());
@@ -151,7 +175,8 @@ WTF::String formatStackTrace(
     JSC::JSObject* errorInstance)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::StringBuilder sb;
+    // The message and each frame's source URL come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
+    WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
 
     if (!name.isEmpty()) {
         sb.append(name);
@@ -233,6 +258,8 @@ WTF::String formatStackTrace(
 
     if (framesCount == 0) {
         ASSERT(stackTrace.isEmpty());
+        if (sb.hasOverflowed()) [[unlikely]]
+            return stackTraceHeaderOnly(name, message);
         return sb.toString();
     }
 
@@ -388,6 +415,9 @@ WTF::String formatStackTrace(
             sb.append("\n"_s);
         }
     }
+
+    if (sb.hasOverflowed()) [[unlikely]]
+        return stackTraceHeaderOnly(name, message);
 
     return sb.toString();
 }

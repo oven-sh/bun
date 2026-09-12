@@ -44,6 +44,8 @@ pub mod reactive;
 pub mod type_config;
 pub mod visitors;
 
+use std::sync::Arc;
+
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 pub use crate::diagnostics::CompilerDiagnostic;
@@ -1530,8 +1532,12 @@ impl NonLocalBinding {
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
 /// apply because `Type` is stored in `Drop`-running containers (registry
 /// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
-/// slabs; the one arena-backed holder, `Phi::operands`, is dropped normally
-/// at the end of type inference before any arena reset.
+/// slabs.
+///
+/// `Phi::operands` is shared, not owned. Phis feed phis, so the operands form
+/// a DAG, and the type of one identifier can reach the same phi along many
+/// paths. With an owned `Vec` every path is a separate copy and the resolved
+/// types of a function grow exponentially with the depth of that DAG.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,
@@ -1548,7 +1554,7 @@ pub enum Type {
     },
     Poly,
     Phi {
-        operands: HirVec<Type>,
+        operands: Arc<[Type]>,
     },
     Property {
         object_type: Box<Type>,

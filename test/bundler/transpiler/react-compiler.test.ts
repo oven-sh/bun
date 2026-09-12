@@ -9,6 +9,63 @@ import { itBundled, type BundlerTestInput } from "../expectBundled";
 // See vendor/react-compiler/crates/react_compiler/src/entrypoint/imports.rs
 // (`add_memo_cache_import` / `get_react_compiler_runtime_module`).
 
+// InferTypes stores the type of a phi as `Phi[TypeVar, ..]` and resolves it by
+// walking into the phis that feed it. Those form a DAG, and every path to a
+// phi used to produce its own copy of that phi's resolved type. Here a `let`
+// is reassigned in a nested `try` in a loop that holds another loop. Each
+// added statement multiplied the copies by 3 to 5: three of them took 700 MB,
+// four took 1.9 GB and five ran out of memory.
+test("react-compiler resolves a phi type once however many paths reach it", async () => {
+  const mutate = Array.from({ length: 3 }, () => "if (Array.isArray(v0)) v0.push(p.a);").join("\n");
+  using dir = tempDir("react-compiler-phi-types", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "entry.jsx": `
+      export default function App(p) {
+        let v0 = [p.a];
+        let v3;
+        for (const x of p.items) {
+          try {
+            if (p.a > 1) { v0 = p.b; }
+            ${mutate}
+            JSON.parse(p.t);
+          } catch {
+            try {
+              ${mutate}
+              v0 = p.b;
+            } catch {}
+          }
+          for (const y of p.items) {
+            v3 = {};
+            if (y > 3) v0 = "k";
+          }
+        }
+        return <div data-v={v3} />;
+      }
+    `,
+  });
+
+  const build = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { stdout, peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+  };
+
+  const [empty, entry] = await Promise.all([build("empty.jsx"), build("entry.jsx")]);
+  // The component compiled: it reads its memo cache.
+  expect(entry.stdout).toMatch(/\b_c\(\d+\)/);
+  // A build without the fix is 450 MB or more above the empty build, when it
+  // finishes in time at all. With the fix it is 20 MB above.
+  expect(entry.peakMB - empty.peakMB).toBeLessThan(150);
+});
+
 describe("bundler", () => {
   itBundled("react-compiler/SimpleComponent", {
     files: {

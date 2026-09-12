@@ -8,7 +8,8 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
@@ -54,7 +55,7 @@ pub(crate) fn infer_types(
         &env.functions,
         &mut env.identifiers,
         &mut env.types,
-        &mut unifier,
+        &mut Resolver::new(&unifier),
     );
     Ok(())
 }
@@ -407,11 +408,11 @@ fn generate(
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, &env.identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, &env.identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, &env.shapes)?;
         }
 
@@ -445,7 +446,7 @@ fn generate(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: return_types,
+                operands: return_types.into_iter().collect(),
             },
             &env.shapes,
         )?;
@@ -508,11 +509,11 @@ fn generate_for_function_id(
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, shapes)?;
         }
 
@@ -542,7 +543,7 @@ fn generate_for_function_id(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: inner_return_types,
+                operands: inner_return_types.into_iter().collect(),
             },
             shapes,
         )?;
@@ -987,28 +988,28 @@ fn apply_function(
     functions: &[HirFunction],
     identifiers: &mut [Identifier],
     types: &mut HirVec<Type>,
-    unifier: &Unifier,
+    resolver: &mut Resolver<'_>,
 ) {
     for (_block_id, block) in &func.body.blocks {
         // Phi places
         for phi in &block.phis {
-            resolve_identifier(phi.place.identifier, identifiers, types, unifier);
+            resolve_identifier(phi.place.identifier, identifiers, types, resolver);
         }
 
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
 
             // Instruction lvalue
-            resolve_identifier(instr.lvalue.identifier, identifiers, types, unifier);
+            resolve_identifier(instr.lvalue.identifier, identifiers, types, resolver);
 
             // LValues from instruction values (StoreLocal, StoreContext, DeclareLocal, DeclareContext, Destructure)
             each_lvalue(&instr.value, |p| {
-                resolve_identifier(p.identifier, identifiers, types, unifier)
+                resolve_identifier(p.identifier, identifiers, types, resolver)
             });
 
             // Operands
             each_operand(&instr.value, |p| {
-                resolve_identifier(p.identifier, identifiers, types, unifier)
+                resolve_identifier(p.identifier, identifiers, types, resolver)
             });
 
             // Recurse into inner functions
@@ -1025,9 +1026,9 @@ fn apply_function(
                     // Resolve types for captured context variable places (matching TS
                     // where eachInstructionValueOperand yields func.context places)
                     for ctx in &inner_func.context {
-                        resolve_identifier(ctx.identifier, identifiers, types, unifier);
+                        resolve_identifier(ctx.identifier, identifiers, types, resolver);
                     }
-                    apply_function(inner_func, functions, identifiers, types, unifier);
+                    apply_function(inner_func, functions, identifiers, types, resolver);
                 }
                 _ => {}
             }
@@ -1035,19 +1036,96 @@ fn apply_function(
     }
 
     // Resolve return type
-    resolve_identifier(func.returns.identifier, identifiers, types, unifier);
+    resolve_identifier(func.returns.identifier, identifiers, types, resolver);
 }
 
 fn resolve_identifier(
     id: IdentifierId,
     identifiers: &mut [Identifier],
     types: &mut HirVec<Type>,
-    unifier: &Unifier,
+    resolver: &mut Resolver<'_>,
 ) {
     let type_id = identifiers[id.0 as usize].type_;
-    let current_type = types[type_id.0 as usize].clone();
-    let resolved = unifier.get(&current_type);
+    // `get` of a resolved type returns an equal type, and an identifier is
+    // visited once per occurrence.
+    if !resolver.applied.insert(type_id) {
+        return;
+    }
+    let resolved = resolver.get(&types[type_id.0 as usize]);
     types[type_id.0 as usize] = resolved;
+}
+
+// =============================================================================
+// Resolver
+// =============================================================================
+
+/// `Unifier::get` with the results for shared nodes kept, for as long as the
+/// substitutions do not change.
+///
+/// A substitution is stored unresolved, so a phi is `Phi[TypeVar, ..]` and
+/// resolving it walks into the phis that feed it. That is a DAG. Without the
+/// memo a node is resolved once per path that reaches it, and with owned
+/// operands every one of those is a fresh copy: 12 million nodes for a 500
+/// byte component with two loops and a nested `try`.
+struct Resolver<'a> {
+    unifier: &'a Unifier,
+    vars: HashMap<TypeId, Type>,
+    /// Keyed by the address of the operand slice. The entry holds the slice,
+    /// so the address cannot be reused while the memo is alive.
+    phis: HashMap<*const Type, (Arc<[Type]>, Type)>,
+    /// Type slots that `apply_function` has resolved.
+    applied: HashSet<TypeId>,
+}
+
+impl<'a> Resolver<'a> {
+    fn new(unifier: &'a Unifier) -> Self {
+        Resolver {
+            unifier,
+            vars: HashMap::new(),
+            phis: HashMap::new(),
+            applied: HashSet::new(),
+        }
+    }
+
+    fn get(&mut self, ty: &Type) -> Type {
+        if let Type::TypeVar { id } = ty {
+            if let Some(sub) = self.unifier.substitutions.get(id) {
+                if let Some(resolved) = self.vars.get(id) {
+                    return resolved.clone();
+                }
+                let resolved = self.get(sub);
+                self.vars.insert(*id, resolved.clone());
+                return resolved;
+            }
+        }
+
+        if let Type::Phi { operands } = ty {
+            if let Some((_, resolved)) = self.phis.get(&operands.as_ptr()) {
+                return resolved.clone();
+            }
+            let resolved = Type::Phi {
+                operands: operands.iter().map(|o| self.get(o)).collect(),
+            };
+            self.phis
+                .insert(operands.as_ptr(), (operands.clone(), resolved.clone()));
+            return resolved;
+        }
+
+        if let Type::Function {
+            is_constructor,
+            shape_id,
+            return_type,
+        } = ty
+        {
+            return Type::Function {
+                is_constructor: *is_constructor,
+                shape_id: *shape_id,
+                return_type: Box::new(self.get(return_type)),
+            };
+        }
+
+        ty.clone()
+    }
 }
 
 // =============================================================================
@@ -1206,8 +1284,11 @@ impl Unifier {
             }
 
             let mut candidate_type: Option<Type> = None;
-            for operand in operands {
-                let resolved = self.get(operand);
+            // The operands are resolved against the same substitutions, so
+            // they share one memo.
+            let mut resolver = Resolver::new(self);
+            for operand in operands.iter() {
+                let resolved = resolver.get(operand);
                 match &candidate_type {
                     None => {
                         candidate_type = Some(resolved);
@@ -1255,8 +1336,8 @@ impl Unifier {
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
-                for operand in operands {
+                let mut new_operands = Vec::with_capacity(operands.len());
+                for operand in operands.iter() {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
                             if id == v_id {
@@ -1268,7 +1349,7 @@ impl Unifier {
                     new_operands.push(resolved);
                 }
                 Some(Type::Phi {
-                    operands: new_operands,
+                    operands: new_operands.into(),
                 })
             }
             Type::TypeVar { id } => {
@@ -1336,32 +1417,7 @@ impl Unifier {
     }
 
     fn get(&self, ty: &Type) -> Type {
-        if let Type::TypeVar { id } = ty {
-            if let Some(sub) = self.substitutions.get(id) {
-                return self.get(sub);
-            }
-        }
-
-        if let Type::Phi { operands } = ty {
-            return Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
-            };
-        }
-
-        if let Type::Function {
-            is_constructor,
-            shape_id,
-            return_type,
-        } = ty
-        {
-            return Type::Function {
-                is_constructor: *is_constructor,
-                shape_id: *shape_id,
-                return_type: Box::new(self.get(return_type)),
-            };
-        }
-
-        ty.clone()
+        Resolver::new(self).get(ty)
     }
 }
 

@@ -28,6 +28,8 @@ const enum BunProcessStdinFdType {
   file = 0,
   pipe = 1,
   socket = 2,
+  // libuv's UV_UNKNOWN_HANDLE: a directory, a block device, or an fd fstat rejects.
+  unknown = 3,
 }
 
 export function getStdioWriteStream(
@@ -136,6 +138,14 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
+    // Node's getStdin() default branch. The native stream would throw EISDIR on first read.
+    const stream = require("internal/worker/stdio").makeEndedReadable();
+    stream.fd = fd;
+    return stream;
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 

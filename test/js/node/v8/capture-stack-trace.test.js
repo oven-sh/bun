@@ -614,6 +614,79 @@ test("err.stack should invoke prepareStackTrace", () => {
   expect(parentLineNumber).toBe(expectedParentLineNumber);
 });
 
+// The first read of error.stack calls Error.prepareStackTrace, and only then stores "stack", "line", "column"
+// and "sourceURL" on the error. A lock that the callback adds in between has to hold. V8 never writes after
+// the callback: it keeps the result in an internal slot, behind an accessor that the constructor installed.
+test("the first read of error.stack does not undo an integrity level that Error.prepareStackTrace sets", () => {
+  const read = lock => {
+    Error.prepareStackTrace = error => {
+      lock(error);
+      return "from-prepare";
+    };
+    const error = new Error("locked");
+    return { error, stack: error.stack, names: Object.getOwnPropertyNames(error) };
+  };
+  // What the callback is handed as error.stack, and so what it freezes or seals.
+  const defaultStack = expect.stringMatching(/^Error: locked\n    at /);
+
+  const frozen = read(Object.freeze);
+  expect(Object.isFrozen(frozen.error)).toBe(true);
+  expect(frozen.names).toEqual(["message", "stack"]);
+  expect(Object.getOwnPropertyDescriptor(frozen.error, "stack")).toEqual({
+    value: defaultStack,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(frozen.stack).toBe(frozen.error.stack);
+
+  const sealed = read(Object.seal);
+  expect(Object.isSealed(sealed.error)).toBe(true);
+  expect(sealed.names).toEqual(["message", "stack"]);
+  expect(sealed.stack).toEqual(defaultStack);
+
+  // "stack" stays configurable here, so it takes the result. No other property is added.
+  const nonExtensible = read(Object.preventExtensions);
+  expect(Object.isExtensible(nonExtensible.error)).toBe(false);
+  expect(nonExtensible.names).toEqual(["message", "stack"]);
+  expect(nonExtensible.stack).toBe("from-prepare");
+});
+
+test("the first read of error.stack does not redefine a property that Error.prepareStackTrace made non-configurable", () => {
+  for (const [name, descriptor, expectedStack] of [
+    ["stack", { value: "locked", writable: false }, "locked"],
+    ["stack", { value: "locked", writable: true }, "locked"],
+    ["stack", { get: () => "from-getter", set: undefined }, "from-getter"],
+    ["line", { value: -1, writable: false }, "from-prepare"],
+  ]) {
+    Error.prepareStackTrace = error => {
+      Object.defineProperty(error, name, { ...descriptor, configurable: false });
+      return "from-prepare";
+    };
+    const error = new Error("locked");
+    expect(error.stack).toBe(expectedStack);
+    expect(Object.getOwnPropertyDescriptor(error, name)).toEqual({
+      ...descriptor,
+      enumerable: false,
+      configurable: false,
+    });
+    // The error is still extensible, so the properties that are not locked arrive.
+    expect(Object.getOwnPropertyNames(error)).toEqual(expect.arrayContaining(["stack", "line", "column"]));
+  }
+});
+
+test("an error that is non-extensible before the first read of error.stack still gets its lazy properties", () => {
+  // In Node "stack" exists from construction. Here it counts as present from construction.
+  const plain = Object.preventExtensions(new Error("plain"));
+  expect(plain.stack).toStartWith("Error: plain\n    at ");
+  expect(Object.getOwnPropertyNames(plain)).toEqual(expect.arrayContaining(["stack", "line", "column"]));
+
+  Error.prepareStackTrace = () => "from-prepare";
+  const prepared = Object.preventExtensions(new Error("prepared"));
+  expect(prepared.stack).toBe("from-prepare");
+  expect(Object.getOwnPropertyNames(prepared)).toEqual(expect.arrayContaining(["stack", "line", "column"]));
+});
+
 test("Error.prepareStackTrace inside a node:vm works", () => {
   const { runInNewContext } = require("node:vm");
   Error.prepareStackTrace = null;

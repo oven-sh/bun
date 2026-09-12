@@ -14,7 +14,7 @@
 //! 4. Mutation with reactive operands
 //! 5. Conditional assignment based on reactive control flow
 
-use crate::collections::{FxHashMap as HashMap, IdMap};
+use crate::collections::IdMap;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::dominator::post_dominator_frontier;
@@ -85,13 +85,6 @@ pub(crate) fn infer_reactive_places(
         control_tests.insert(block_id, tests);
     }
 
-    // Track phi operand reactive flags during fixpoint.
-    // In TS, isReactive() sets place.reactive as a side effect. But when a phi
-    // is already reactive, the TS `continue`s and skips operand processing.
-    // We track which phi operand Places should be marked reactive.
-    // Key: (block_id, phi_idx, operand_idx), Value: should be reactive
-    let mut phi_operand_reactive: HashMap<(BlockId, usize, usize), bool> = HashMap::default();
-
     // Fixpoint iteration — compute reactive set
     loop {
         for block_id in &block_ids {
@@ -100,22 +93,14 @@ pub(crate) fn infer_reactive_places(
 
             // Process phi nodes
             let block = func.body.blocks.get(block_id).unwrap();
-            for (phi_idx, phi) in block.phis.iter().enumerate() {
+            for phi in &block.phis {
                 if reactive_map.is_reactive(phi.place.identifier) {
-                    // TS does `continue` here — skips operand isReactive calls.
-                    // phi operand reactive flags stay as they were from last visit.
                     continue;
                 }
-                let mut is_phi_reactive = false;
-                for (op_idx, (_pred, operand)) in phi.operands.iter().enumerate() {
-                    let op_reactive = reactive_map.is_reactive(operand.identifier);
-                    // Record the reactive state for this operand at this point
-                    phi_operand_reactive.insert((*block_id, phi_idx, op_idx), op_reactive);
-                    if op_reactive {
-                        is_phi_reactive = true;
-                        break; // TS breaks here — remaining operands NOT visited
-                    }
-                }
+                let is_phi_reactive = phi
+                    .operands
+                    .iter()
+                    .any(|(_pred, operand)| reactive_map.is_reactive(operand.identifier));
                 if is_phi_reactive {
                     reactive_map.mark_reactive(phi.place.identifier);
                 } else {
@@ -234,13 +219,7 @@ pub(crate) fn infer_reactive_places(
     propagate_reactivity_to_inner_functions_outer(func, env, &mut reactive_map);
 
     // Now apply reactive flags by replaying the traversal pattern.
-    apply_reactive_flags_replay(
-        func,
-        env,
-        &mut reactive_map,
-        &mut stable_sidemap,
-        &phi_operand_reactive,
-    );
+    apply_reactive_flags_replay(func, env, &mut reactive_map, &mut stable_sidemap);
 
     Ok(())
 }
@@ -548,7 +527,6 @@ fn apply_reactive_flags_replay(
     env: &mut Environment,
     reactive_map: &mut ReactivityMap,
     stable_sidemap: &mut StableSidemap,
-    phi_operand_reactive: &HashMap<(BlockId, usize, usize), bool>,
 ) {
     let reactive_ids = build_reactive_id_set(reactive_map);
 
@@ -574,12 +552,13 @@ fn apply_reactive_flags_replay(
                 phi.place.reactive = true;
             }
 
-            for (op_idx, (_pred, operand)) in phi.operands.iter_mut().enumerate() {
-                if let Some(&is_reactive) = phi_operand_reactive.get(&(*block_id, phi_idx, op_idx))
-                {
-                    if is_reactive {
-                        operand.reactive = true;
-                    }
+            // Upstream flags a phi operand as a side effect of the query that
+            // marks the phi, and stops at the first reactive operand. Here every
+            // reactive operand has the flag: `visit_phi_operand` in
+            // propagate_scope_dependencies_hir reads it.
+            for (_pred, operand) in phi.operands.iter_mut() {
+                if reactive_ids[operand.identifier.0 as usize] {
+                    operand.reactive = true;
                 }
             }
         }

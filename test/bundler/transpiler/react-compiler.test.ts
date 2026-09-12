@@ -1784,15 +1784,13 @@ describe("bundler", () => {
     },
   });
 
-  // Not fixed yet (facebook/react#37224, upstream has it too). The local is
-  // assigned on only some paths through the scope. On the other paths it keeps
-  // the value it had on entry, and that value is not a dependency of the scope.
-  // When only that value changes, the cache hits and restores the value of an
-  // older render: the second render of each component prints the first
-  // render's value. Before the outer scope restored the variable, the two
-  // nested shapes got the second render right and the fourth one wrong.
+  // The local is assigned on only some paths through the scope. On the other
+  // paths it keeps the value it had on entry, so that value has to be a
+  // dependency of the scope (facebook/react#37224, upstream has the bug too).
+  // Without it, when only that value changes, the cache hits and restores the
+  // value of an older render: the second render of each component printed the
+  // first render's value.
   itBundled("react-compiler/LocalAssignedOnSomePathsKeepsItsValueOnEntry", {
-    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         function OneScope(p) {
@@ -1841,6 +1839,209 @@ describe("bundler", () => {
         OneScope "a" "b" "off" "off"
         NestedScopes "a" "b" "off" "off"
         LoopInsideScopeOfSibling "a" "b" "off" "off"
+      `,
+    },
+  });
+
+  // More shapes of the same thing, and what the dependency on the value on
+  // entry must not break. Each entry of a line is the `v` prop of one render.
+  // Then `=` says that the `x` prop is the array of the render before, so the
+  // scope was skipped, and `!` says that it ran.
+  itBundled("react-compiler/ValueOnEntryOfReassignedLocalIsADependency", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        // The scope of x spans the if statement. The last but one render has
+        // the props of the render before it, after the assignment ran: the
+        // scope has to compare the value on entry, not the value it left.
+        function IfBranch(p) {
+          let v = p.z;
+          const x = [];
+          if (p.c) v = "k";
+          x.push(p.a);
+          return <div v={v} x={x} />;
+        }
+        // The branch assigns a value that changes between renders, too.
+        function IfBranchToProp(p) {
+          let v = p.z;
+          const x = [];
+          if (p.c) v = p.w;
+          x.push(p.a);
+          return <div v={v} x={x} />;
+        }
+        // The value that the second scope gets is the result of the first if
+        // statement, not of a declaration.
+        function TwoScopes(p) {
+          let hasErrors = false;
+          const nameErrors = [];
+          if (p.name === "taken") {
+            hasErrors = true;
+            nameErrors.push("taken");
+          }
+          const x = [];
+          if (p.missing) {
+            hasErrors = true;
+            x.push("missing");
+          }
+          return <div v={[hasErrors, nameErrors]} x={x} />;
+        }
+        // The loop can run zero times, and the branch in it can stay untaken.
+        function LoopBranch(p) {
+          let v = p.z;
+          const x = [];
+          for (const item of p.items) {
+            if (item > 1) v = item;
+            x.push(item);
+          }
+          return <div v={v} x={x} />;
+        }
+        // The scope reads the variable it assigns. The second render gets the
+        // value that the first one left.
+        function Increment(p) {
+          let v = p.z;
+          const x = [];
+          v = v + 1;
+          x.push(p.a);
+          return <div v={v} x={x} />;
+        }
+        // o.size is read after the if statement only. The scope must not read
+        // it from the value on entry, which can be null.
+        function DefaultBeforeRead(p) {
+          let o = p.o;
+          const x = [];
+          if (o == null) o = DEFAULTS;
+          x.push(o.size);
+          return <div v={o.size} x={x} />;
+        }
+        function DefaultBeforeReadByFlag(p) {
+          let o = p.o;
+          const x = [];
+          if (p.useDefault) o = DEFAULTS;
+          x.push(o.size);
+          return <div v={o.size} x={x} />;
+        }
+        // The if statement is before the scope of y and inside the scope of x.
+        // o.k is on entry of the first, not of the second.
+        function DefaultBeforeReadInNestedScope(p) {
+          let o = p.o;
+          const x = [];
+          if (!o) o = { k: 7 };
+          const y = [];
+          y.push(o.k);
+          x.push(y);
+          x.push(p.a);
+          return <div v={o.k} x={x} />;
+        }
+        // The scope of y is in a loop, so it is flattened.
+        function AccumulatorInFlattenedScope(p) {
+          let v = 0;
+          const x = [];
+          for (const item of p.items) {
+            const y = [];
+            if (item > 1) {
+              v = v + item;
+              y.push(item);
+            }
+            x.push(y);
+          }
+          return <div v={v} x={x} />;
+        }
+        const DEFAULTS = { size: 10 };
+
+        function renders(Component, list) {
+          globalThis.renderingComponent = Component.name;
+          let previous;
+          const line = list.map(props => {
+            const { v, x } = Component(props).p;
+            const mark = x === previous ? "=" : "!";
+            previous = x;
+            return JSON.stringify(v) + mark;
+          });
+          console.log(Component.name, ...line);
+        }
+
+        renders(IfBranch, [
+          { z: 1, c: false, a: 1 },
+          { z: 2, c: false, a: 1 },
+          { z: 2, c: false, a: 1 },
+          { z: 2, c: true, a: 1 },
+          { z: 3, c: true, a: 1 },
+          { z: 3, c: true, a: 1 },
+          { z: 3, c: false, a: 1 },
+        ]);
+        renders(IfBranchToProp, [
+          { z: 1, c: false, w: 9, a: 1 },
+          { z: 2, c: false, w: 9, a: 1 },
+          { z: 2, c: true, w: 9, a: 1 },
+          { z: 3, c: true, w: 8, a: 1 },
+          { z: 3, c: true, w: 8, a: 1 },
+          { z: 4, c: false, w: 8, a: 1 },
+        ]);
+        renders(TwoScopes, [
+          { name: "", missing: false },
+          { name: "taken", missing: false },
+          { name: "taken", missing: false },
+          { name: "", missing: false },
+          { name: "", missing: true },
+          { name: "taken", missing: true },
+        ]);
+        const one = [1], two = [1, 2], three = [1, 2, 2], none = [];
+        renders(LoopBranch, [
+          { z: 1, items: one },
+          { z: 2, items: one },
+          { z: 2, items: two },
+          { z: 3, items: two },
+          { z: 3, items: none },
+          { z: 4, items: none },
+          { z: 4, items: none },
+        ]);
+        renders(Increment, [
+          { z: 0, a: 1 },
+          { z: 1, a: 1 },
+          { z: 1, a: 1 },
+          { z: 2, a: 1 },
+        ]);
+        const small = { size: 1 };
+        renders(DefaultBeforeRead, [{ o: small }, { o: null }, { o: null }, { o: small }, { o: undefined }]);
+        renders(DefaultBeforeReadByFlag, [
+          { o: small, useDefault: false },
+          { o: null, useDefault: true },
+          { o: null, useDefault: true },
+          { o: small, useDefault: true },
+          { o: small, useDefault: false },
+        ]);
+        const k1 = { k: 1 };
+        renders(DefaultBeforeReadInNestedScope, [
+          { o: k1, a: 1 },
+          { o: null, a: 1 },
+          { o: null, a: 1 },
+          { o: k1, a: 1 },
+          { o: undefined, a: 2 },
+        ]);
+        renders(AccumulatorInFlattenedScope, [
+          { items: two },
+          { items: two },
+          { items: three },
+          { items: three },
+          { items: one },
+          { items: two },
+        ]);
+      `,
+      ...stubReactWithPersistentMemoCache,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        IfBranch 1! 2! 2= "k"! "k"! "k"= 3!
+        IfBranchToProp 1! 2! 9! 8! 8= 4!
+        TwoScopes [false,[]]! [true,["taken"]]! [true,["taken"]]= [false,[]]! [true,[]]! [true,["taken"]]!
+        LoopBranch 1! 2! 2! 2! 3! 4! 4=
+        Increment 1! 2! 2= 3!
+        DefaultBeforeRead 1! 10! 10= 1! 10!
+        DefaultBeforeReadByFlag 1! 10! 10= 10! 1!
+        DefaultBeforeReadInNestedScope 1! 7! 7= 1! 7!
+        AccumulatorInFlattenedScope 2! 2= 4! 4= 0! 2!
       `,
     },
   });

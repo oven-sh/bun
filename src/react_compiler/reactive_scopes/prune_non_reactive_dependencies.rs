@@ -214,9 +214,14 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
         let scope_data = &mut self.env.scopes[scope_id.0 as usize];
 
         // Remove non-reactive dependencies
+        //
+        // Upstream has no `|| dep.reactive`. A dependency from
+        // `visit_phi_operand` in propagate_scope_dependencies_hir can name an
+        // identifier that only a phi defines. Phis are gone by now, so `state`
+        // cannot have it. The dependency carries the flag of the phi operand.
         scope_data
             .dependencies
-            .retain(|dep| state.contains(&dep.identifier));
+            .retain(|dep| state.contains(&dep.identifier) || dep.reactive);
 
         // If any deps remain, mark all declarations and reassignments as reactive
         if !scope_data.dependencies.is_empty() {

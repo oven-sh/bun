@@ -435,6 +435,25 @@ impl<'a, 'h> Context<'a, 'h> {
         validated
     }
 
+    /// A `t{n}` local that no binding in the function uses. For a value that
+    /// only codegen introduces, so `rename_variables` never named it.
+    fn synthesize_temporary(&mut self) -> Ref {
+        use std::fmt::Write;
+        let mut name = String::new();
+        let mut index = 0u32;
+        loop {
+            name.clear();
+            write!(name, "t{index}").unwrap();
+            if !self.unique_identifiers.contains(&name) {
+                break;
+            }
+            index += 1;
+        }
+        let r = self.cg.ref_for_name(store_str(name.as_bytes()));
+        self.unique_identifiers.insert(name);
+        r
+    }
+
     fn record_error(&mut self, detail: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(detail)
     }
@@ -669,6 +688,17 @@ fn codegen_reactive_scope(
         )
     };
 
+    // Upstream stores every dependency after the scope body
+    // (facebook/react#37224). A dependency on a variable that the body reassigns
+    // is then stored with the value the scope leaves, and compared with the
+    // value the scope gets. So the body starts with a copy of it, and the copy
+    // is stored.
+    let reassigned_declarations: HashSet<DeclarationId> = scope_reassignments
+        .iter()
+        .map(|id| cx.env.identifiers[id.0 as usize].declaration_id)
+        .collect();
+    let mut reassigned_dep_copies: Vec<G::Decl> = Vec::new();
+
     for dep in &deps {
         let index = cx.alloc_cache_index();
         let comparison = Expr::init(
@@ -681,7 +711,18 @@ fn codegen_reactive_scope(
         );
         change_exprs.push(comparison);
 
-        let dep_value = codegen_dependency(cx, dep)?;
+        let mut dep_value = codegen_dependency(cx, dep)?;
+        if reassigned_declarations
+            .contains(&cx.env.identifiers[dep.identifier.0 as usize].declaration_id)
+        {
+            let copy_ref = cx.synthesize_temporary();
+            reassigned_dep_copies.push(G::Decl {
+                binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: copy_ref }, loc),
+                value: Some(dep_value),
+            });
+            cx.cg.host.record_usage(copy_ref);
+            dep_value = Expr::init_identifier(copy_ref, loc);
+        }
         cache_store_exprs.push(Expr::init(
             E::Binary {
                 op: OpCode::BinAssign,
@@ -775,6 +816,20 @@ fn codegen_reactive_scope(
     };
 
     let mut computation_block = codegen_block(cx, block)?;
+
+    if !reassigned_dep_copies.is_empty() {
+        computation_block.insert(
+            0,
+            Stmt::alloc(
+                S::Local {
+                    kind: S::Kind::KConst,
+                    decls: decl_list(reassigned_dep_copies),
+                    ..Default::default()
+                },
+                loc,
+            ),
+        );
+    }
 
     for (name_ref, index, value) in &cache_loads {
         cache_store_exprs.push(Expr::init(

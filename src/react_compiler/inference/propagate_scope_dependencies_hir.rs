@@ -1741,6 +1741,10 @@ struct DependencyCollectionContext<'a> {
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
+    /// Upstream has no such map. The identifiers that a phi has defined so far,
+    /// each with the scopes that were open at that phi. `reassignments` only
+    /// has the identifiers that an instruction defines.
+    phis: IdMap<IdentifierId, Vec<ScopeId>>,
 }
 
 impl<'a> DependencyCollectionContext<'a> {
@@ -1757,6 +1761,7 @@ impl<'a> DependencyCollectionContext<'a> {
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
+            phis: IdMap::new(),
         }
     }
 
@@ -1826,6 +1831,20 @@ impl<'a> DependencyCollectionContext<'a> {
         }
         // Object methods are not deps
         if matches!(ty, Type::ObjectMethod) {
+            return false;
+        }
+
+        // Upstream has no record of where a phi is. For an identifier that a phi
+        // defines it looks at the `let`, so it also accepts a phi inside the
+        // scope. That value is made inside the scope. The dependency would name
+        // the variable, and be compared with what the variable holds when the
+        // scope starts: `let o = p.o; if (!o) o = D; f(o.k)` would read `o.k`
+        // of a null `o`. `visit_phi_operand` covers what flows into the phi.
+        if self
+            .phis
+            .get(dep.identifier)
+            .is_some_and(|scope_stack| scope_stack.contains(&scope_id))
+        {
             return false;
         }
 
@@ -1946,6 +1965,20 @@ impl<'a> DependencyCollectionContext<'a> {
                     .reassignments
                     .push(place.identifier);
             }
+        }
+    }
+
+    /// Upstream visits a phi operand only for an optional chain
+    /// (facebook/react#37224). A scope that reassigns a variable on some paths
+    /// lets the value from before the scope through on the others. That value
+    /// reaches the scope only as a phi operand. Without a dependency on it, a
+    /// cache hit restores the value of the render that filled the cache.
+    ///
+    /// The caller skips an operand from a loop back edge: nothing has recorded
+    /// it yet, so `check_valid_dependency` would look at the `let`.
+    fn visit_phi_operand(&mut self, operand: &Place, env: &mut Environment) {
+        if operand.reactive {
+            self.visit_operand(operand, env);
         }
     }
 
@@ -2216,6 +2249,11 @@ fn handle_function_deps(
     ctx: &mut DependencyCollectionContext,
     traversal: &mut ScopeBlockTraversal,
 ) {
+    // Upstream has no such set, it is for `visit_phi_operand`. The blocks are in
+    // reverse postorder, so a predecessor that is not in here yet is a loop
+    // back edge.
+    let mut visited_blocks: HashSet<BlockId> = HashSet::default();
+
     for (block_id, block) in &func.body.blocks {
         // Record scopes
         traversal.record_scopes(block);
@@ -2233,11 +2271,17 @@ fn handle_function_deps(
 
         // Record phi operands
         for phi in &block.phis {
-            for (_pred_id, operand) in &phi.operands {
+            for (pred_id, operand) in &phi.operands {
                 if let Some(maybe_optional_chain) = ctx.temporaries.get(operand.identifier) {
                     ctx.visit_dependency(maybe_optional_chain.clone(), env);
+                } else if visited_blocks.contains(pred_id) {
+                    ctx.visit_phi_operand(operand, env);
                 }
             }
+        }
+        for phi in &block.phis {
+            ctx.phis
+                .insert(phi.place.identifier, ctx.scope_stack.clone());
         }
 
         for &instr_id in &block.instructions {
@@ -2279,5 +2323,7 @@ fn handle_function_deps(
                 ctx.visit_operand(op, env);
             }
         }
+
+        visited_blocks.insert(*block_id);
     }
 }

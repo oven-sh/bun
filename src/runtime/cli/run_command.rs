@@ -3877,7 +3877,7 @@ impl BunXFastPath {
 
         // Trigger quoting only on
         // space/tab/quote — compare the FULL u16, not the truncated low byte.
-        let needs_quote = strings::index_of_any16(warg, bun_core::w!(" \t\"")).is_some();
+        let needs_quote = strings::index_of_any_t(warg, bun_core::w!(" \t\"")).is_some();
 
         if !needs_quote {
             buffer[..warg.len()].copy_from_slice(warg);
@@ -3885,7 +3885,7 @@ impl BunXFastPath {
         }
 
         // Fast path: no embedded `"`/`\` → simple wrap.
-        let has_quote_or_backslash = strings::index_of_any16(warg, bun_core::w!("\"\\")).is_some();
+        let has_quote_or_backslash = strings::index_of_any_t(warg, bun_core::w!("\"\\")).is_some();
         if !has_quote_or_backslash {
             buffer[0] = b'"' as u16;
             buffer[1..1 + warg.len()].copy_from_slice(warg);

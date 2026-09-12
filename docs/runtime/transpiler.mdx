@@ -178,6 +178,60 @@ const result = transpiler.scanImports(code);
 
 </CodeGroup>
 
+## `.unstable_parse()`
+
+<Warning>
+  **Unstable.** This method exposes Bun's internal AST. The output is **not** ESTree-compatible and the shape (node
+  kinds, field names, nesting) may change or be removed in any patch release without a deprecation period. Use it for
+  experimentation and tooling you control end to end.
+</Warning>
+
+Parse code and return the AST as `{ buffer, root, visit }`. The AST is written
+to a compact binary tape in `buffer`; `root` is a lazy proxy that decodes
+fields on access, and `visit()` walks every node by `kind`. Every node has a
+`kind` (a snake_case tag like `"s_local"`, `"e_binary"`, `"b_identifier"`) and
+a `loc` (byte offset into the input, or `null`). `JSON.stringify(root)`
+materializes the full tree.
+
+```ts example.ts icon="/icons/typescript.svg"
+const t = new Bun.Transpiler({ loader: "ts" });
+const { root, visit } = t.unstable_parse(`export const x: number = 1 + 2;`);
+
+root.stmts[0].decls[0].value.op;
+// "bin_add"
+
+JSON.parse(JSON.stringify(root.stmts[0]));
+// {
+//   kind: "s_local",
+//   loc: 7,
+//   declKind: "k_const",
+//   isExport: true,
+//   decls: [
+//     {
+//       binding: { kind: "b_identifier", loc: 13, name: "x" },
+//       value: {
+//         kind: "e_binary", loc: 25, op: "bin_add",
+//         left:  { kind: "e_number", loc: 25, value: 1 },
+//         right: { kind: "e_number", loc: 29, value: 2 },
+//       },
+//     },
+//   ],
+// }
+
+visit({
+  e_binary(n) {
+    console.log(n.op);
+  },
+  s_function() {
+    return false;
+  }, // skip subtree
+});
+```
+
+`root` carries `stmts`, `symbols`, `importRecords`, `hashbang`, `directive`,
+`exportsKind`, and `approximateNewlineCount`. Identifier nodes resolve their
+`Ref` to the symbol's original name string.
+
 ---
 
 ## Reference
@@ -248,6 +302,13 @@ class Bun.Transpiler {
 
   scan(code: string): {exports: string[], imports: Import[]}
   scanImports(code: string): Import[]
+
+  /** Unstable: returns Bun's internal AST. Shape may change any release. */
+  unstable_parse(code: string, loader?: Loader): {
+    buffer: ArrayBuffer;
+    root: UnstableAST;
+    visit: (visitors: Record<string, (n: UnstableASTNode) => boolean | void>) => void;
+  }
 }
 
 type Import = {

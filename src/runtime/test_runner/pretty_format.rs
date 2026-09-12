@@ -1139,10 +1139,9 @@ impl<'a> Formatter<'a> {
                             writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
                         }
 
-                        let mut has_newline = false;
-
-                        if str.index_of_any(b"\n\r").is_some() {
-                            has_newline = true;
+                        // Jest wraps only a top-level multiline value (addExtraLineBreaks).
+                        let wrap = self.indent == 0 && str.index_of_any(b"\n\r").is_some();
+                        if wrap {
                             writer.write_all(b"\n");
                         }
 
@@ -1186,7 +1185,7 @@ impl<'a> Formatter<'a> {
                         writer.print(format_args!("{}", remaining));
                         writer.write_all(b"\"");
 
-                        if has_newline {
+                        if wrap {
                             writer.write_all(b"\n");
                         }
                         // The `<r>` reset must come AFTER the trailing `\n`
@@ -2029,6 +2028,8 @@ impl<'a> Formatter<'a> {
 
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
+                            // The key is nested even on a root element.
+                            self.indent += 1;
 
                             let inner: JsResult<()> = (|| {
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -2038,6 +2039,7 @@ impl<'a> Formatter<'a> {
                                     self.global_this,
                                 )
                             })();
+                            self.indent = self.indent.saturating_sub(1);
                             self.quote_strings = old_quote_strings;
                             inner?;
                             needs_space = true;

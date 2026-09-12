@@ -973,6 +973,20 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    /// `Init::init` maps a method token it does not know to `GET`. Tell that
+    /// fallback apart from a real `GET`/`HEAD` so the body check skips it.
+    fn init_method_is_unknown(global_this: &JSGlobalObject, init: JSValue) -> JsResult<bool> {
+        let Some(method) = init.fast_get_truthy(global_this, bun_jsc::BuiltinName::method)? else {
+            return Ok(false);
+        };
+        let str = BunString::from_js(method, global_this)?;
+        let utf8 = str.to_utf8();
+        let token: &[u8] = &utf8;
+        Ok(Method::which(token).is_none()
+            && !token.eq_ignore_ascii_case(b"GET")
+            && !token.eq_ignore_ascii_case(b"HEAD"))
+    }
+
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
@@ -1037,7 +1051,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
-        let mut body_from_response = false;
+        let mut skip_body_check = false;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1192,7 +1206,7 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
-                                body_from_response = true;
+                                skip_body_check = true;
                             }
                         }
                     }
@@ -1330,6 +1344,11 @@ impl Request {
                             if !fields.contains(Fields::Method) {
                                 req.method = response_init.method;
                                 fields.insert(Fields::Method);
+                                match Self::init_method_is_unknown(global_this, value) {
+                                    Ok(true) => skip_body_check = true,
+                                    Ok(false) => {}
+                                    Err(e) => bail!(Err(e)),
+                                }
                             }
                         }
                     }
@@ -1401,7 +1420,7 @@ impl Request {
         req.url.set(href);
 
         // Fetch spec `new Request()` step 36. A Response init body is a Bun extension.
-        if !body_from_response
+        if !skip_body_check
             && matches!(req.method, Method::GET | Method::HEAD)
             && req.body_value_mut().has_request_body()
         {

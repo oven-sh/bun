@@ -132,6 +132,15 @@ describe("new Request() with a GET/HEAD method and a body", () => {
     expect(await new Request("http://example.com/", { method: "GET", body: body() }).text()).toBe("");
   });
 
+  test.each(["Get", "Head", "gEt"])("mixed-case %s with a body throws TypeError", method => {
+    expect(() => new Request("http://example.com/", { method, body: "x" })).toThrow(new TypeError(message));
+  });
+
+  test.each(["Post", "LIST", "Purge"])("a method token Bun does not know (%s) keeps its body", async method => {
+    const request = new Request("http://example.com/", { method, body: "x" });
+    expect(await request.text()).toBe("x");
+  });
+
   test("a body taken from a Response init is kept (Bun extension)", async () => {
     // @ts-expect-error Bun accepts a Response as init
     const request = new Request("http://example.com/", new Response("from response"));

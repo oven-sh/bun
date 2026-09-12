@@ -1004,7 +1004,6 @@ impl Response {
                     response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
                     // cleanup is handled by Init's drop glue on `?` below
-                    init.validate_status_text(global_this)?;
                     response.init.set(init);
 
                     let status = response.init.get().status_code;
@@ -1013,6 +1012,7 @@ impl Response {
                             Self::validate_redirect_status_code(global_this, i32::from(status))?;
                         response.init.with_mut(|i| i.status_code = status);
                     }
+                    response.init.get().validate_status_text(global_this)?;
                 }
             }
 

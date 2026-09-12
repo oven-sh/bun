@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ZeroCollectorStack.h"
 
 #include "ZigGlobalObject.h"
 #include "BunModuleRegistry.h"
@@ -3420,6 +3421,7 @@ void GlobalObject::reload()
     // So we run the GC every other time.
     if ((this->reloadCount++ + 1) % 2 == 0) {
         this->vm().heap.collectSync();
+        Bun::zeroCollectorStack();
     }
 }
 

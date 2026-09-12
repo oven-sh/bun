@@ -8,6 +8,7 @@
  *      can be disabled if necessary. Consult cppbind.ts for details.
  */
 #include "root.h"
+#include "ZeroCollectorStack.h"
 
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -4987,6 +4988,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     }
 #endif
 
+    Bun::zeroCollectorStack();
     return vm->heap.sizeAfterLastFullCollection();
 }
 

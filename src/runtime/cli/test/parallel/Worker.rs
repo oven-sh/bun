@@ -4,6 +4,7 @@
 //! spawn/dispatch/shutdown mechanics.
 
 use core::ffi::c_void;
+use std::collections::VecDeque;
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -21,6 +22,15 @@ use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
 use super::frame;
+
+/// One `test_done` result the coordinator has not printed yet.
+pub struct PendingLine {
+    pub(crate) file_idx: u32,
+    pub(crate) line: Box<[u8]>,
+    /// The worker wrote `line` to its stderr before it sent the frame. A
+    /// dot or the agent status is not in the stream.
+    pub(crate) in_stream: bool,
+}
 
 pub struct Worker {
     // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
@@ -61,9 +71,10 @@ pub struct Worker {
     /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
     pub(crate) dispatched_at: i64,
-    /// Worker stdout+stderr since the last `test_done`. Flushed atomically
-    /// under the right file header so concurrent files don't interleave.
+    /// Worker stdout+stderr not yet printed.
     pub(crate) captured: Vec<u8>,
+    /// Results from `test_done` frames not printed yet, in frame order.
+    pub(crate) pending_lines: VecDeque<PendingLine>,
     pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.

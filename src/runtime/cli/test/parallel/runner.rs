@@ -129,6 +129,7 @@ pub(crate) fn run_as_coordinator(
             inflight: None,
             dispatched_at: 0,
             captured: Vec::new(),
+            pending_lines: std::collections::VecDeque::new(),
             alive: false,
             exit_status: None,
             reap_pending: false,

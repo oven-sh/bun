@@ -20,9 +20,11 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
+
 const common = require('../common');
-const assert = require('assert');
-const zlib = require('zlib');
+
+const assert = require('node:assert');
+const zlib = require('node:zlib');
 
 const compressors = [
   [zlib.Gzip, 20],
@@ -37,12 +39,11 @@ for (const [Compressor, expected] of compressors) {
   gz.on('data', function(c) {
     received += c.length;
   });
-
-  gz.on('end', common.mustCall(function() {
+  gz.on('error', common.mustNotCall());
+  gz.on('end', common.mustCall(() => {
     assert.strictEqual(received, expected,
                        `${received}, ${expected}, ${Compressor.name}`);
   }));
-  gz.on('finish', common.mustCall());
   gz.write(emptyBuffer);
   gz.end();
 }

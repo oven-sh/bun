@@ -707,6 +707,14 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
 
+// os.cpus() on Linux with /proc and /sys read from under `root`, so a test can
+// stage a CPU layout that the host does not have. undefined on other platforms.
+export const linuxCpusFromRoot: (root: string) => import("node:os").CpuInfo[] | undefined = $newRustFunction(
+  "node_os.rs",
+  "jsLinuxCpusFromRoot",
+  1,
+);
+
 export const getEventLoopStats: () => {
   activeTasks: number;
   tasks: number;

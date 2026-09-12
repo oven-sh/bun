@@ -1,6 +1,7 @@
+import { linuxCpusFromRoot } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { isLinux, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -81,7 +82,9 @@ it("tmpdir", () => {
 
     process.env.TMPDIR = "/boop";
     expect(os.tmpdir()).toBe("/boop");
-    process.env.TMPDIR = originalEnv;
+    // Assigning undefined would leave TMPDIR="undefined" for every later test.
+    if (originalEnv === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalEnv;
   }
 });
 
@@ -141,6 +144,75 @@ it("cpus", () => {
     expect(typeof cpu.times.sys === "number").toBe(true);
     expect(typeof cpu.times.user === "number").toBe(true);
   }
+});
+
+// linuxCpusFromRoot(root) is os.cpus() with /proc and /sys read from under `root`.
+// Each file gives every CPU id its own value, so a slot filled from the wrong id fails.
+describe.skipIf(!isLinux)("cpus on Linux", () => {
+  function procfs(statIds, cpuinfoIds, freqIds, overrides = {}) {
+    const files = {
+      "proc/stat":
+        "cpu  100 0 100 1000 0 0 0 0 0 0\n" +
+        statIds.map(id => `cpu${id} ${id + 1} 0 10 100 0 0 0 0 0 0\n`).join("") +
+        "intr 0\nctxt 1\nbtime 1700000000\nprocesses 1\nprocs_running 1\nprocs_blocked 0\n",
+      "proc/cpuinfo": cpuinfoIds
+        .map(id => `processor\t: ${id}\nvendor_id\t: AuthenticAMD\nmodel name\t: EPYC 7713 (cpu ${id})\n\n`)
+        .join(""),
+    };
+    for (const id of freqIds) {
+      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`] = `${(id + 1) * 1000}\n`;
+    }
+    return tempDir("os-cpus", { ...files, ...overrides });
+  }
+  const times = id => ({ user: (id + 1) * 10, nice: 0, sys: 100, idle: 1000, irq: 0 });
+
+  // https://github.com/oven-sh/bun/issues/29689
+  // The host in the issue (a dual-socket EPYC 7713) has CPUs 0-63 and 128-191.
+  it("handles a gap in the CPU ids", () => {
+    const ids = [0, 1, 2, 3, 8, 9, 10, 11];
+    using root = procfs(ids, ids, ids);
+    expect(linuxCpusFromRoot(String(root))).toEqual(
+      ids.map(id => ({ times: times(id), model: `EPYC 7713 (cpu ${id})`, speed: id + 1 })),
+    );
+  });
+
+  it("ignores a /proc/cpuinfo processor that /proc/stat does not list", () => {
+    using root = procfs([0, 2], [0, 1, 2, 7], [0]);
+    expect(linuxCpusFromRoot(String(root))).toEqual([
+      { times: times(0), model: "EPYC 7713 (cpu 0)", speed: 1 },
+      { times: times(2), model: "EPYC 7713 (cpu 2)", speed: 0 },
+    ]);
+  });
+
+  it("reports an unknown model for a CPU that /proc/cpuinfo does not list", () => {
+    using root = procfs([0, 4], [4], []);
+    expect(linuxCpusFromRoot(String(root))).toEqual([
+      { times: times(0), model: "unknown", speed: 0 },
+      { times: times(4), model: "EPYC 7713 (cpu 4)", speed: 0 },
+    ]);
+  });
+
+  it("ignores a /proc/cpuinfo processor line that is not a number", () => {
+    using root = procfs([0, 1], [], [], {
+      "proc/cpuinfo": "processor\t: 0\nmodel name\t: A\n\nprocessor\t: x\nmodel name\t: B\n\n",
+    });
+    expect(linuxCpusFromRoot(String(root))).toEqual([
+      { times: times(0), model: "A", speed: 0 },
+      { times: times(1), model: "unknown", speed: 0 },
+    ]);
+  });
+
+  it("keeps the defaults when /proc/cpuinfo or scaling_cur_freq cannot be read", () => {
+    // A directory opens for reading, and then read() fails with EISDIR.
+    using root = procfs([0, 1], [], [1], {
+      "proc/cpuinfo": {},
+      "sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": {},
+    });
+    expect(linuxCpusFromRoot(String(root))).toEqual([
+      { times: times(0), model: "unknown", speed: 0 },
+      { times: times(1), model: "unknown", speed: 2 },
+    ]);
+  });
 });
 
 it("networkInterfaces", () => {

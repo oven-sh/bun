@@ -4703,14 +4703,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
-    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
-    // first line - so a second destroy (e.g. the received-GOAWAY handler
-    // destroying with a session error after a socket error's destroy already
-    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
-    // re-emits 'error' on a session whose one-shot listeners are consumed.
-    // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
+    // Idempotent like Node's. Latched, not `destroyed`: destroy() is re-entered before the socket detaches.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;
@@ -5417,13 +5410,13 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
-    // See the client session's #onError: Node's socketOnError is a no-op once
+    // See the server session's #onError: Node's socketOnError is a no-op once
     // the session has been detached from the socket, so a transport error that
     // races our own teardown is not re-reported.
     if (this.destroyed) {
       return;
     }
-    this[bunHTTP2Socket] = null;
+    // The socket stays attached so destroy() can end and destroy it.
     if (this.#closed) {
       this.destroy();
       return;
@@ -5776,14 +5769,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   destroy(error?: Error | number, code?: number) {
-    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
-    // first line - so a second destroy (e.g. the received-GOAWAY handler
-    // destroying with a session error after a socket error's destroy already
-    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
-    // re-emits 'error' on a session whose one-shot listeners are consumed.
-    // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
+    // Idempotent like Node's. Latched, not `destroyed`: destroy() is re-entered before the socket detaches.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;

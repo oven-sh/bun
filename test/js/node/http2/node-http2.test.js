@@ -6329,3 +6329,78 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+it("destroys the transport when a transport 'error' tears the client session down", async () => {
+  // Node's socketOnError hands a transport error to session.destroy(error), and that teardown
+  // ends and then destroys the socket. So a transport that reports an error without destroying
+  // itself (emit('error'), an autoDestroy:false stream, a wrapper that forwards errors) is still
+  // closed by the session. Bun detached the socket from the session first, which left the
+  // teardown with no socket to close: the connection, and its fd, stayed open for the life of the
+  // process.
+  function frame(type, flags) {
+    const header = Buffer.alloc(9);
+    header[3] = type;
+    header[4] = flags;
+    return header;
+  }
+  let connectionsOpen = 0;
+  const { promise: peerConnected, resolve: resolvePeerConnected } = Promise.withResolvers();
+  const { promise: peerClosed, resolve: resolvePeerClosed } = Promise.withResolvers();
+  const server = net.createServer(connection => {
+    connectionsOpen++;
+    connection.on("close", () => {
+      connectionsOpen--;
+      resolvePeerClosed();
+    });
+    connection.on("error", () => {});
+    // The smallest usable server preface: an empty SETTINGS frame, then an ACK of the client's.
+    connection.write(frame(4, 0));
+    connection.once("data", () => connection.write(frame(4, 1)));
+    resolvePeerConnected();
+  });
+  let transport;
+  let session;
+  try {
+    const port = await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+    });
+    session = http2.connect(`http://127.0.0.1:${port}`, {
+      createConnection: () => (transport = net.connect(port, "127.0.0.1")),
+    });
+    const injected = Object.assign(new Error("transport failed"), { code: "EFAIL" });
+    const sessionError = new Promise(resolve => session.once("error", resolve));
+    const sessionClosed = new Promise(resolve => session.once("close", resolve));
+    // The client's 'connect' can land before the server has accepted (it did on macOS), so wait
+    // for both ends before counting connections. A session that dies first fails the wait.
+    const connected = new Promise((resolve, reject) => {
+      session.once("connect", resolve);
+      sessionError.then(reject);
+      sessionClosed.then(() => reject(new Error("session closed before 'connect'")));
+    });
+    await Promise.all([connected, peerConnected]);
+    expect(connectionsOpen).toBe(1);
+
+    transport.emit("error", injected);
+
+    expect(await sessionError).toBe(injected);
+    await sessionClosed;
+    expect(session.destroyed).toBe(true);
+
+    // The socket teardown is end() -> 'finish' -> destroy(), so it lands a few turns after the
+    // session's 'close'.
+    for (let tick = 0; tick < 200 && !transport.destroyed; tick++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    expect(transport.destroyed).toBe(true);
+    // The peer observes the connection going away.
+    await peerClosed;
+    expect(connectionsOpen).toBe(0);
+  } finally {
+    // server.close() does not drop a live connection, so release the client end too (a failing
+    // run has just shown it is still open).
+    transport?.destroy();
+    session?.destroy();
+    server.close();
+  }
+});

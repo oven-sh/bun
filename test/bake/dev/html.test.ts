@@ -154,6 +154,108 @@ devTest("import then create", {
     await c.expectMessage("data");
   },
 });
+devTest("error page drops failures that a build fixed before its hmr socket subscribed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+    }),
+    "script.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      console.log(a, b);
+    `,
+    "a.ts": `
+      export const a = (1;
+    `,
+    "b.ts": `
+      export const b = (2;
+    `,
+  },
+  async test(dev) {
+    // Walks the failures embedded in the error page as `let error=...`. The
+    // layout is written by serialized_failure.rs and read by overlay.ts.
+    function embeddedFailures(html: string) {
+      const match = html.match(/error=Uint8Array\.from\(atob\("([^"]*)"\)/);
+      expect(match).not.toBeNull();
+      const bytes = Buffer.from(match![1], "base64");
+      let cursor = 0;
+      const u32 = () => ((cursor += 4), bytes.readUInt32LE(cursor - 4));
+      const string32 = () => {
+        const length = u32();
+        cursor += length;
+        return bytes.toString("utf8", cursor - length, cursor);
+      };
+      const location = () => {
+        if (u32() === 0) return; // line, 0 means no location
+        u32(); // column
+        u32(); // length
+        string32(); // line text
+      };
+      const failures: { owner: number; file: string }[] = [];
+      while (cursor < bytes.length) {
+        const owner = u32();
+        const file = string32();
+        for (let messages = u32(); messages > 0; messages--) {
+          cursor += 1; // kind
+          string32(); // text
+          location();
+          for (let notes = u32(); notes > 0; notes--) {
+            string32();
+            location();
+          }
+        }
+        failures.push({ owner, file });
+      }
+      return failures;
+    }
+
+    // The route fails to bundle, so a page load gets the error page. Its
+    // script renders the embedded failures, opens /_bun/hmr, subscribes to
+    // the errors topic and reloads once every failure it knows is removed.
+    const page = await dev.fetch("/");
+    expect(page.status).toBe(500);
+    const failures = embeddedFailures(await page.text());
+    expect(failures.map(f => f.file).sort()).toEqual(["a.ts", "b.ts"]);
+    const ownerA = failures.find(f => f.file === "a.ts")!.owner;
+    const ownerB = failures.find(f => f.file === "b.ts")!.owner;
+
+    // a.ts is fixed before that page's socket subscribed. The errors frame of
+    // this build is published to nobody.
+    await dev.write("a.ts", "export const a = 1;");
+
+    // Replay the error page handshake. After subscribing it lists the owners
+    // it was rendered with, and the server answers with an errors frame that
+    // removes the ones that no longer fail. b.ts still fails and must stay.
+    const reply = await new Promise<Buffer>((resolve, reject) => {
+      const ws = new WebSocket(dev.baseUrl.replace(/^http/, "ws") + "/_bun/hmr");
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = event => {
+        const data = Buffer.from(event.data as ArrayBuffer);
+        switch (String.fromCharCode(data[0])) {
+          case "V": {
+            ws.send("se"); // IncomingMessageId.subscribe, HmrTopic.errors
+            const check = Buffer.alloc(1 + 4 + 4);
+            check.write("e", 0); // IncomingMessageId.check_errors
+            check.writeUInt32LE(ownerA, 1);
+            check.writeUInt32LE(ownerB, 5);
+            ws.send(check);
+            break;
+          }
+          case "e": // MessageId.errors
+            resolve(data);
+            ws.close();
+            break;
+        }
+      };
+      ws.onerror = () => reject(new Error("hmr socket error"));
+      ws.onclose = () => reject(new Error("hmr socket closed without an errors frame"));
+    });
+    const removedCount = reply.readUInt32LE(1);
+    const removed = Array.from({ length: removedCount }, (_, i) => reply.readUInt32LE(5 + 4 * i));
+    const addedBytes = reply.length - (5 + 4 * removedCount);
+    expect({ removed, addedBytes }).toEqual({ removed: [ownerA], addedBytes: 0 });
+  },
+});
 devTest("external links", {
   files: {
     "index.html": `

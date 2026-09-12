@@ -2179,7 +2179,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let ref_ = ident.ref_;
 
-        if self.options.features.inlining {
+        // Inside a `with` body the name can resolve to a property of the
+        // `with` object, which shadows the const.
+        if self.options.features.inlining && !ident.must_keep_due_to_with_stmt() {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);

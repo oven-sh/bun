@@ -19,6 +19,46 @@ describe("bundler", () => {
     },
     run: { stdout: "top fn" },
   });
+  // The `with` object can have a property with the name of a `const` from an
+  // enclosing scope. That property shadows the const, so a read inside the
+  // `with` body is not inlined. The `.cjs` names keep the code sloppy.
+  itBundled("minify/ConstReadInsideWithIsNotInlined", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function f(o) { const x = "const"; with (o) { return x; } }
+        // The cases of a switch share one scope, and the read is in a later case.
+        function g(k, o) { switch (k) { case 1: const y = "const"; case 2: with (o) { return y; } } }
+        console.log(f({ x: "with" }), f({}), g(1, { y: "with" }), g(1, {}));
+      `,
+    },
+    minifySyntax: true,
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      // The bundler prints the declarations as `let`.
+      api.expectFile("/out.cjs").toContain('x = "const"');
+      api.expectFile("/out.cjs").toContain("return x");
+      api.expectFile("/out.cjs").toContain('y = "const"');
+      api.expectFile("/out.cjs").toContain("return y");
+    },
+    run: { stdout: "with const with const" },
+  });
+  // The bundler can print `const` as `let` or `var`, which is only safe when
+  // nothing assigns to the name. So it still rejects the assignment, although
+  // the target can be a property of the `with` object.
+  itBundled("minify/ConstAssignInsideWithIsStillABundleError", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function f(o) { const x = 1; with (o) { x = 5; } return o.x; }
+        console.log(f({ x: 2 }));
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    bundleErrors: {
+      "/entry.cjs": ['Cannot assign to "x" because it is a constant'],
+    },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

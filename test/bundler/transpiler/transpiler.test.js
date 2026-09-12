@@ -4001,6 +4001,82 @@ console.log(foo, array);
       );
     });
 
+    // The `with` object can have a property with the name of the const. That
+    // property shadows the const, so the read must stay a read.
+    it("const inlining keeps a read inside a with statement", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+        minify: { syntax: true },
+      });
+
+      function check(input, output) {
+        expect(transpiler.transformSync(input)).toBe(output);
+      }
+      hideFromStackTrace(check);
+
+      check(
+        "function f(o) { const x = 1; with (o) { return x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return x;\n}\n",
+      );
+      check(
+        "function f(o) { const x = 1; with (o) { return typeof x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return typeof x;\n}\n",
+      );
+      // A function created in the body captures the `with` object.
+      check(
+        "function f(o) { const x = 1; with (o) { return () => x; } }",
+        "function f(o) {\n  const x = 1;\n  with (o)\n    return () => x;\n}\n",
+      );
+      check(
+        "function f(a, b) { const x = 1; with (a) { with (b) { return x; } } }",
+        "function f(a, b) {\n  const x = 1;\n  with (a)\n    with (b)\n      return x;\n}\n",
+      );
+      check("const x = 1; with (o) { console.log(x); }", "const x = 1;\nwith (o)\n  console.log(x);\n");
+
+      // A read outside the body is still inlined. The read inside keeps the declaration.
+      check(
+        "function f(o) { const x = 1; g(x); with (o) { return x; } }",
+        "function f(o) {\n  const x = 1;\n  g(1);\n  with (o)\n    return x;\n}\n",
+      );
+      // The cases of a switch share one scope. A read in a later case keeps the declaration.
+      check(
+        "function f(k, o) { switch (k) { case 1: const x = 1; case 2: with (o) { return x; } } }",
+        "function f(k, o) {\n  switch (k) {\n    case 1:\n      const x = 1;\n    case 2:\n      with (o)\n        return x;\n  }\n}\n",
+      );
+      // The `with` object expression is evaluated outside the body.
+      check("function f() { const x = 1; with (x) { return y; } }", "function f() {\n  with (1)\n    return y;\n}\n");
+      // A const declared in the body's own block shadows the `with` object.
+      check("function f(o) { with (o) { const x = 1; return x; } }", "function f(o) {\n  with (o)\n    return 1;\n}\n");
+    });
+
+    // The target can be a property of the `with` object, so the assignment is
+    // not a const assignment error and the name is not replaced by the value.
+    it("allows an assignment to the name of a const inside a with statement", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+        minify: { syntax: true },
+      });
+
+      expect(transpiler.transformSync("function f(o) { const x = 1; with (o) { x = 5; } }")).toBe(
+        "function f(o) {\n  const x = 1;\n  with (o)\n    x = 5;\n}\n",
+      );
+      expect(transpiler.transformSync("function f(o) { const x = {}; with (o) { x++; } }")).toBe(
+        "function f(o) {\n  const x = {};\n  with (o)\n    x++;\n}\n",
+      );
+
+      // Outside the body the assignment is still an error.
+      expect(() => transpiler.transformSync("function f(o) { const x = 1; with (o) {} x = 5; }")).toThrow(
+        'Cannot assign to "x" because it is a constant',
+      );
+      expect(() => transpiler.transformSync("function f(o) { const x = {}; with (o) {} x++; }")).toThrow(
+        'This assignment will throw because "x" is a constant',
+      );
+    });
+
     it("constant folding scopes", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

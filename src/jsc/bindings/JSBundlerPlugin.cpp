@@ -215,10 +215,10 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
-// The host functions below are reachable only from the builtins in BundlerPlugin.ts, which always
-// call them with the plugin object as the receiver. The receiver is checked anyway: each one reads
-// C++ fields off `this`, so a receiver of another type is a type confusion and not a bad argument.
-// Returns nullptr with an exception pending.
+// The host functions below read C++ fields off the receiver. The builtins in BundlerPlugin.ts call
+// them with the plugin object, and the object is a gcProtect'ed cell that bun:jsc's
+// getProtectedObjects() hands to JS, so the receiver is checked: any other type would be read as a
+// plugin. Returns nullptr with an exception pending.
 static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto* thisObject = dynamicDowncast<JSBundlerPlugin>(callFrame->thisValue());
@@ -686,7 +686,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
-    auto* lexicalGlobalObject = uncheckedDowncast<JSFunction>(JSValue::decode(encodedSetupFunction))->globalObject();
+    // The setup function is any callable the user gave, not always a JSFunction: a callable Proxy
+    // and a native function are objects of another class.
+    auto* setupObject = JSValue::decode(encodedSetupFunction).getObject();
+    auto* lexicalGlobalObject = setupObject ? setupObject->globalObject() : plugin->globalObject();
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active

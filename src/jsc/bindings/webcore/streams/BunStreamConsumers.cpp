@@ -1405,6 +1405,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
+// A transferred stream has no reader and no controller: the NativeReadable that drives its handle reports the end. The lock (m_transferred) stays.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCloseTransferredReadableStream, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0));
+    if (!stream || !stream->m_transferred)
+        return JSValue::encode(jsUndefined());
+    Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))

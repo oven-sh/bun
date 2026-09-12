@@ -3,7 +3,19 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  addAbortSignal,
+  Duplex,
+  duplexPair,
+  finished,
+  isErrored,
+  isReadable,
+  PassThrough,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -561,6 +573,229 @@ it("Readable.fromWeb async iteration rejects with the web stream error", async (
   expect(r.destroyed).toBe(true);
 });
 
+// Readable.fromWeb takes the native handle of a Blob, Bun.file(), fetch() or Bun.spawn() stream
+// and drives it itself. The web stream stays locked, with no reader and no controller, so only
+// that Readable can take it out of the readable state. Node reads through a reader: the web
+// stream closes or errors with its source, and a cancel closes it.
+describe.concurrent("Readable.fromWeb over a native stream ends the web stream", () => {
+  const { _ReadableFromWeb: ReadableFromWeb } = exposedInternals["internal/webstreams/adapters"];
+  // Every source below delivers this in more than one chunk, except an already buffered fetch() body.
+  const payload = Buffer.alloc(512 * 1024, "a");
+
+  const state = web => ({
+    readable: isReadable(web),
+    errored: isErrored(web),
+    locked: web.locked,
+    inspect: /state: '(\w+)'/.exec(Bun.inspect(web))?.[1],
+  });
+  const readable = { readable: true, errored: false, locked: true, inspect: "readable" };
+  const closed = { readable: false, errored: false, locked: true, inspect: "closed" };
+  const errored = { readable: false, errored: true, locked: true, inspect: "errored" };
+
+  const event = (emitter, name) => new Promise(resolve => emitter.once(name, resolve));
+
+  // The native path returns a plain Readable. The reader-based adapter is a ReadableFromWeb.
+  const fromWebNative = (web, options) => {
+    const node = Readable.fromWeb(web, options);
+    expect(node).not.toBeInstanceOf(ReadableFromWeb);
+    return node;
+  };
+
+  const sources = {
+    "new Blob().stream()": () => new Blob([payload]).stream(),
+    "new Response(bytes).body": () => new Response(payload).body,
+    "Bun.file().stream()": ({ file }) => Bun.file(file).stream(),
+    "a fetch() body": async ({ url }) => (await fetch(url)).body,
+  };
+
+  it.each(Object.keys(sources))("%s closes when the Readable reads it to the end", async name => {
+    using dir = tempDir("fromweb-native-end", { "payload.bin": payload });
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(payload) });
+    const web = await sources[name]({ file: join(String(dir), "payload.bin"), url: server.url });
+    // Requested while the stream is readable, so the stream has to settle it later.
+    const early = finishedP(web);
+    let length = 0;
+    for await (const chunk of fromWebNative(web)) length += chunk.length;
+    expect(length).toBe(payload.length);
+    expect(state(web)).toEqual(closed);
+    await early;
+    await finishedP(web);
+  });
+
+  it("Bun.spawn().stdout closes when the Readable reads it to the end", async () => {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(Buffer.alloc(${payload.length}, "a"))`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const web = child.stdout;
+    let length = 0;
+    for await (const chunk of fromWebNative(web)) length += chunk.length;
+    expect(length).toBe(payload.length);
+    expect(state(web)).toEqual(closed);
+    await finishedP(web);
+    expect(await child.exited).toBe(0);
+  });
+
+  it("a fetch() body stays readable until its last chunk arrives", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("first "));
+              await released;
+              controller.enqueue(new TextEncoder().encode("last"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    const web = (await fetch(server.url)).body;
+    const node = fromWebNative(web);
+    const chunks = [];
+    node.on("data", chunk => chunks.push(chunk));
+    await event(node, "data");
+    expect(state(web)).toEqual(readable);
+    release();
+    await event(node, "end");
+    expect(Buffer.concat(chunks).toString()).toBe("first last");
+    expect(state(web)).toEqual(closed);
+  });
+
+  // Every early stop cancels the source. A cancel closes a web stream whatever the reason is:
+  // Node leaves the stream closed, not errored, after destroy(error) too.
+  const stops = {
+    "destroy() before the first read": node => node.destroy(),
+    "destroy(error) before the first read": node => node.destroy(new Error("consumer gone")),
+    "destroy() after a chunk": async node => {
+      await event(node, "data");
+      node.destroy();
+    },
+    "destroy(error) after a chunk": async node => {
+      await event(node, "data");
+      node.destroy(new Error("consumer gone"));
+    },
+    "a break out of for await": async node => {
+      for await (const _ of node) break;
+    },
+    "its abort signal": async (node, abort) => {
+      await event(node, "data");
+      abort.abort();
+    },
+  };
+
+  describe.each(["new Blob().stream()", "Bun.file().stream()"])("%s closes when the Readable stops with", source => {
+    it.each(Object.keys(stops))("%s", async stop => {
+      using dir = tempDir("fromweb-native-end", { "payload.bin": payload });
+      const web = await sources[source]({ file: join(String(dir), "payload.bin") });
+      const early = finishedP(web);
+      const abort = new AbortController();
+      const node = fromWebNative(web, { signal: abort.signal });
+      node.on("error", () => {});
+      const stopped = event(node, "close");
+      await stops[stop](node, abort);
+      await stopped;
+      expect(state(web)).toEqual(closed);
+      await early;
+      await finishedP(web);
+    });
+
+    // The Readable constructor handles such a signal before fromWeb has set the Readable up.
+    it("a signal that is already aborted", async () => {
+      using dir = tempDir("fromweb-native-end", { "payload.bin": payload });
+      const web = await sources[source]({ file: join(String(dir), "payload.bin") });
+      const node = fromWebNative(web, { signal: AbortSignal.abort() });
+      const [error] = await Promise.all([event(node, "error"), event(node, "close")]);
+      expect(error.name).toBe("AbortError");
+      expect(state(web)).toEqual(closed);
+      await finishedP(web);
+    });
+  });
+
+  // Node watches reader.closed. Whatever errors the web stream also fails the Readable.
+  it("the Readable fails when something else errors the web stream", async () => {
+    const web = new Blob([payload]).stream();
+    const abort = new AbortController();
+    addAbortSignal(abort.signal, web);
+    const node = fromWebNative(web);
+    const outcome = Promise.race([event(node, "error"), event(node, "end").then(() => "end")]);
+    // Paused: the Readable stops at its highWaterMark, so the source has not ended yet.
+    await event(node, "readable");
+    abort.abort();
+    node.resume();
+    expect((await outcome).name).toBe("AbortError");
+    expect(state(web)).toEqual(errored);
+  });
+
+  // An abort errors the body stream of the Response and then ends its source. The Readable must
+  // not take that for the end of the body.
+  it("a fetch() body fails with the abort reason of its fetch", async () => {
+    // Serves the first chunk of a chunked body and never the rest.
+    using upstream = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst \r\n");
+        },
+      },
+    });
+    const abort = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${upstream.port}/`, { signal: abort.signal });
+    const web = response.body;
+    const node = fromWebNative(web);
+    const outcome = Promise.race([event(node, "error"), event(node, "end").then(() => "end")]);
+    expect(String(await event(node, "data"))).toBe("first ");
+    const reason = new Error("stop the download");
+    abort.abort(reason);
+    expect(await outcome).toBe(reason);
+    expect(state(web)).toEqual(errored);
+    expect(await finishedP(web).catch(error => error)).toBe(reason);
+  });
+
+  it("Bun.file().stream() errors when its file does not open", async () => {
+    using dir = tempDir("fromweb-native-end", {});
+    const web = Bun.file(join(String(dir), "missing")).stream();
+    const early = finishedP(web).catch(error => error);
+    const node = fromWebNative(web);
+    const failed = event(node, "error");
+    node.resume();
+    const error = await failed;
+    expect(error.code).toBe("ENOENT");
+    expect(state(web)).toEqual(errored);
+    expect(await early).toBe(error);
+    expect(await finishedP(web).catch(error => error)).toBe(error);
+  });
+
+  it("a fetch() body errors when its connection drops", async () => {
+    // Serves a chunked body and drops the connection in the middle of it.
+    const connections = [];
+    using upstream = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst \r\n");
+          connections.push(socket);
+        },
+      },
+    });
+    const web = (await fetch(`http://127.0.0.1:${upstream.port}/`)).body;
+    const node = fromWebNative(web);
+    const failed = event(node, "error");
+    expect(String(await event(node, "data"))).toBe("first ");
+    for (const connection of connections) connection.end();
+    const error = await failed;
+    expect(error.code).toBe("ECONNRESET");
+    expect(state(web)).toEqual(errored);
+    expect(await finishedP(web).catch(error => error)).toBe(error);
+  });
+});
+
 it("Readable.fromWeb destroyed before the first read cancels the web stream", async () => {
   let cancelReason;
   const web = new ReadableStream({
@@ -576,6 +811,40 @@ it("Readable.fromWeb destroyed before the first read cancels the web stream", as
   await promise;
   expect(cancelReason?.message).toBe("user-destroy");
   expect(r.destroyed).toBe(true);
+});
+
+it("Readable.fromWeb with a signal that is already aborted cancels the web stream", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web, { signal: AbortSignal.abort() });
+  const [error] = await Promise.all([
+    new Promise(resolve => r.once("error", resolve)),
+    new Promise(resolve => r.once("close", resolve)),
+  ]);
+  expect(error.name).toBe("AbortError");
+  expect(cancelReason).toBe(error);
+  await finishedP(web);
+});
+
+it("Readable.fromWeb rejects an invalid signal before it takes the web stream", () => {
+  for (const web of [new ReadableStream({}), new Blob(["payload"]).stream()]) {
+    expect(() => Readable.fromWeb(web, { signal: {} })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(web.locked).toBe(false);
+  }
+});
+
+it("Readable.fromWeb cancels the web stream when it cannot listen to the signal", () => {
+  for (const web of [new ReadableStream({}), new Blob(["payload"]).stream()]) {
+    // Has the `aborted` that the check of the option looks for, but no addEventListener().
+    expect(() => Readable.fromWeb(web, { signal: { aborted: false } })).toThrow(TypeError);
+    expect(isReadable(web)).toBe(false);
+  }
 });
 
 it("Readable.fromWeb: breaking out of for-await cancels the web source with ABORT_ERR", async () => {

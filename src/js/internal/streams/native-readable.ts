@@ -11,8 +11,14 @@ const transferToNativeReadable = $newCppFunction(
   "jsFunctionTransferToNativeReadableStream",
   1,
 );
+const closeTransferredReadableStream = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionCloseTransferredReadableStream",
+  1,
+);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
+const kWebStream = Symbol("webStream");
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
 const kConstructed = Symbol("constructed");
@@ -31,6 +37,7 @@ type NativeReadable = typeof import("node:stream").Readable &
   typeof import("node:stream").Stream & {
     push: (chunk: any) => boolean;
     $bunNativePtr?: NativePtr;
+    [kWebStream]: ReadableStream | undefined;
     [kRefCount]: number;
     [kCloseState]: [boolean];
     [kPendingRead]: boolean;
@@ -91,10 +98,41 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // We can't update those handles to point to the NativeReadable from JS
   // So we instead mark it as no longer usable, and create a new NativeReadable
   transferToNativeReadable(readableStream);
+  stream[kWebStream] = readableStream;
+  // Node: `reader.closed` rejects and the Readable fails with that error, for example the abort reason of a fetch().
+  $webStreamClosedPromise(readableStream).$then(undefined, error => errorOrDestroy(stream, error));
 
   $debug(`[${stream.debugId}] constructed!`);
 
   return stream;
+}
+
+// The transferred web stream has no reader and no controller: only this Readable can close or error it, as a reader does in Node.
+function closeWebStream(stream: NativeReadable) {
+  const webStream = stream[kWebStream];
+  if (webStream === undefined) return;
+  stream[kWebStream] = undefined;
+  closeTransferredReadableStream(webStream);
+}
+
+function errorWebStream(stream: NativeReadable, error: unknown) {
+  const webStream = stream[kWebStream];
+  if (webStream === undefined) return;
+  stream[kWebStream] = undefined;
+  $webStreamControllerError(webStream, error);
+}
+
+function endOfSource(stream: NativeReadable) {
+  const webStream = stream[kWebStream];
+  if (webStream !== undefined) {
+    // A fetch() abort errors the web stream, then ends its source: not an EOF, and it can get here before the handler above runs.
+    const closed = $webStreamClosedPromise(webStream);
+    if ($isPromiseRejected(closed)) return errorOrDestroy(stream, $peekPromiseSettledValue(closed));
+  }
+  closeWebStream(stream);
+  process.nextTick(() => {
+    stream.push(null);
+  });
 }
 
 function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
@@ -123,7 +161,17 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   return chunk;
 }
 
+// start() and pull() throw when the source fails. Readable.read() catches the rethrow and destroys this stream with it.
 function read(this: NativeReadable, maxToRead: number) {
+  try {
+    return readFromHandle.$call(this, maxToRead);
+  } catch (error) {
+    errorWebStream(this, error);
+    throw error;
+  }
+}
+
+function readFromHandle(this: NativeReadable, maxToRead: number) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   var ptr = this.$bunNativePtr;
   // Readable called `_read`, so it wants data: make sure the native reader is
@@ -135,6 +183,7 @@ function read(this: NativeReadable, maxToRead: number) {
   }
   if (!ptr) {
     $debug(`[${this.debugId}] read, no ptr`);
+    closeWebStream(this);
     this.push(null);
     return;
   }
@@ -172,6 +221,7 @@ function read(this: NativeReadable, maxToRead: number) {
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
+        errorWebStream(this, reason);
         errorOrDestroy(this, reason);
       },
     );
@@ -189,9 +239,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
     return handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
     $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    endOfSource(stream);
     return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
@@ -223,9 +271,7 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   }
 
   if (isClosed) {
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    endOfSource(stream);
   }
 
   return chunk;
@@ -237,9 +283,7 @@ function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk:
   }
 
   if (isClosed) {
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    endOfSource(stream);
   }
 
   return chunk;
@@ -251,6 +295,8 @@ function adjustHighWaterMark(stream: NativeReadable) {
 }
 
 function destroy(this: NativeReadable, error: any, cb: () => void) {
+  // A cancel closes a web stream whatever the reason is. It never errors it.
+  closeWebStream(this);
   const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);

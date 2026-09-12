@@ -10,8 +10,24 @@ pub enum Decompressor {
     Zlib(bun_zlib::InflateDecoder),
     Brotli(Box<bun_brotli::StreamingDecoder>),
     Zstd(Box<bun_zstd::StreamingDecoder>),
+    /// `Content-Encoding: deflate` with only one body byte delivered so far.
+    /// Holds that byte until a second arrives so the RFC 1950 zlib-header
+    /// sniff (which needs both CMF and FLG) can decide zlib-wrapped vs raw.
+    PendingDeflate(u8),
     #[default]
     None,
+}
+
+/// RFC 1950 §2.2 zlib header: CMF low nibble = 8 (deflate), high nibble <= 7
+/// (window), and big-endian CMF|FLG is a multiple of 31. RFC 9110 §8.4.1.2
+/// says `Content-Encoding: deflate` is zlib-wrapped; some origins send raw.
+fn is_zlib_header(chunk: &[u8]) -> bool {
+    match *chunk {
+        [b0, b1, ..] => {
+            (b0 & 0x0f) == 8 && (b0 >> 4) <= 7 && ((u16::from(b0) << 8) | u16::from(b1)) % 31 == 0
+        }
+        _ => false,
+    }
 }
 
 impl Decompressor {
@@ -24,11 +40,11 @@ impl Decompressor {
             Encoding::Gzip | Encoding::Deflate => {
                 // zlib.MAX_WBITS = 15
                 // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
+                // to (de-)compress deflate format with headers we use wbits = 0 (auto-detect window from header)
                 // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
                 let window_bits = if encoding == Encoding::Gzip {
                     bun_zlib::MAX_WBITS | 16
-                } else if first_chunk.len() > 1 && first_chunk[0] == 120 {
+                } else if is_zlib_header(first_chunk) {
                     0
                 } else {
                     -bun_zlib::MAX_WBITS
@@ -62,7 +78,28 @@ impl Decompressor {
         if !encoding.is_compressed() {
             return Ok(());
         }
+
+        // If the first deflate body segment was a single byte, it was stashed
+        // in PendingDeflate; prepend it now so init() can sniff the 2-byte
+        // zlib header. This path runs at most once per response.
+        let mut prefixed;
+        let buffer = if let Decompressor::PendingDeflate(b0) = *self {
+            prefixed = Vec::with_capacity(1 + buffer.len());
+            prefixed.push(b0);
+            prefixed.extend_from_slice(buffer);
+            *self = Decompressor::None;
+            prefixed.as_slice()
+        } else {
+            buffer
+        };
+
         if matches!(self, Decompressor::None) {
+            if encoding == Encoding::Deflate && buffer.len() < 2 && !is_done {
+                if let &[b0] = buffer {
+                    *self = Decompressor::PendingDeflate(b0);
+                }
+                return Err(bun_core::err!("ShortRead"));
+            }
             self.init(encoding, buffer)?;
         }
         let out = &mut body_out_str.list;
@@ -70,7 +107,7 @@ impl Decompressor {
             Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, is_done)?),
             Decompressor::Brotli(reader) => Ok(reader.decompress(buffer, out, is_done)?),
             Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::None => {
+            Decompressor::None | Decompressor::PendingDeflate(_) => {
                 unreachable!("Invalid encoding. This code should not be reachable")
             }
         }

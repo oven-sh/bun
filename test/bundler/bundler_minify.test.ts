@@ -839,6 +839,48 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // "1" + "2" is folded into a rope (the pieces linked together, flattened when
+  // printed); +, - and ~ have to read the whole rope.
+  itBundled("minify/ConstantFoldingUnaryOnFoldedString", {
+    files: {
+      "/entry.ts": `
+        capture(+("1" + "2"));
+        capture(-("1" + "2"));
+        capture(~("1" + "2"));
+        capture(+("1" + "2" + "3"));
+        capture(+("" + ""));
+        capture(-(" 0x" + "10 "));
+        capture(+("1" + y));
+        enum E { A = "1" + "2", B = +("3" + "4"), C = -A, D = ~A }
+        capture(+E.A);
+        capture(-E.A);
+        capture(E.B + E.C + E.D);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["12", "-12", "-13", "123", "0", "-16", '+("1" + y)', "12", "-12", "9"],
+  });
+  // Strings from --define are stored as UTF-8. U+00A0 is whitespace to
+  // StringToNumber (+"\u00a01" is 1), so a non-ascii string is left alone
+  // instead of being folded to NaN.
+  itBundled("minify/ConstantFoldingUnaryPlusNonAsciiDefine", {
+    files: {
+      "/entry.js": `
+        capture(+NBSP_ONE);
+        capture(-NBSP_ONE);
+        capture(~NBSP_ONE);
+        capture(+(NBSP_ONE + ""));
+        capture(+SPACE_ONE);
+        capture(+(SPACE_ONE + ""));
+      `,
+    },
+    define: {
+      NBSP_ONE: JSON.stringify("\u00a01"),
+      SPACE_ONE: JSON.stringify(" 1 "),
+    },
+    minifySyntax: true,
+    capture: ['+"\u00a01"', '-"\u00a01"', '~"\u00a01"', '+"\u00a01"', "1", "1"],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

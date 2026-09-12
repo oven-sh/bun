@@ -95,8 +95,8 @@ impl SideEffects {
 
     // Re-exports of ExprData methods.
     #[inline(always)]
-    pub(crate) fn to_number(data: &ExprData) -> Option<f64> {
-        data.to_number()
+    pub(crate) fn to_number(data: &ExprData, bump: &Bump) -> Option<f64> {
+        data.to_number(bump)
     }
     #[inline(always)]
     pub(crate) fn typeof_(data: &ExprData) -> Option<&'static [u8]> {

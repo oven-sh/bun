@@ -938,6 +938,34 @@ test("scan handles a cwd with redundant trailing separators when following symli
   expect(exitCode).toBe(0);
 });
 
+// `scan` and `scanSync` are JS builtins that reach the native scanner through
+// private names on `this`. Those names must not exist on any other object:
+// when `scanSync` used `@resolveSync`, the name the module resolver installs on
+// `globalThis`, `scanSync.call(globalThis, "fs")` resolved the module instead.
+test("scan and scanSync called with globalThis as this throw a TypeError", async () => {
+  const script = `
+    for (const fn of ["scanSync", "scan"]) {
+      try {
+        Bun.Glob.prototype[fn].call(globalThis, "fs");
+        console.log(fn + ": no error");
+      } catch (e) {
+        console.log(fn + ": " + (e.code ?? e.name));
+      }
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("scanSync: TypeError\nscan: TypeError");
+  expect(exitCode).toBe(0);
+});
+
 // A pattern segment that spells out a leading `.` is an explicit request for
 // that dotfile/dot-directory, so the `dot: false` default must not hide it.
 // This matches bash, picomatch, minimatch and fast-glob.

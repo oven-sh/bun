@@ -170,7 +170,7 @@ describe("Bun.Image", () => {
     // the terminal is awaited, then the pipeline task runs — both off-thread.
     const img = new Bun.Image(Bun.file(p));
     const meta = await img.metadata();
-    expect(meta).toEqual({ width: 4, height: 3, format: "png" });
+    expect(meta).toEqual({ width: 4, height: 3, format: "png", space: "srgb", channels: 4, hasAlpha: true });
     // Second terminal on the same instance reuses the now-.owned bytes
     // (no re-read).
     const out = await img.png().bytes();
@@ -224,10 +224,24 @@ describe("Bun.Image", () => {
     for (const k of proxyKeys) process.env[k] = "";
     try {
       const fromS3 = new Bun.Image(client.file("src.png"));
-      expect(await fromS3.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await fromS3.metadata()).toEqual({
+        width: 4,
+        height: 3,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
-      expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await client.file("src.png").image().metadata()).toEqual({
+        width: 4,
+        height: 3,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
 
       // Download failure rejects the terminal with the S3 error.
       expect(
@@ -254,8 +268,132 @@ describe("Bun.Image", () => {
     expect(meta.width).toBe(4);
     expect(meta.height).toBe(3);
     expect(meta.format).toBe("png");
+    expect(meta.space).toBe("srgb");
+    expect(meta.channels).toBe(4);
+    expect(meta.hasAlpha).toBe(true);
     expect(img.width).toBe(4);
     expect(img.height).toBe(3);
+  });
+
+  // space / channels / hasAlpha use sharp's vocabulary; every expectation
+  // below was cross-checked against sharp 0.34.5 (libvips 8.17) on the same
+  // bytes.
+  describe("metadata() colour info", () => {
+    // PNG with an arbitrary colour type: 0 grey, 2 RGB, 3 indexed,
+    // 4 grey+alpha, 6 RGBA. `extra` splices chunks (e.g. tRNS) between
+    // IHDR and IDAT.
+    function makePngVariant(
+      colorType: 0 | 2 | 3 | 4 | 6,
+      bitDepth: number,
+      extra: [string, Uint8Array][] = [],
+      palette?: Uint8Array,
+    ): Uint8Array {
+      const w = 2,
+        h = 2;
+      const ihdr = new Uint8Array(13);
+      const iv = new DataView(ihdr.buffer);
+      iv.setUint32(0, w);
+      iv.setUint32(4, h);
+      ihdr[8] = bitDepth;
+      ihdr[9] = colorType;
+      const bpp = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType] * (bitDepth / 8);
+      const raw = Buffer.alloc(h * (1 + w * bpp), 100);
+      for (let y = 0; y < h; y++) raw[y * (1 + w * bpp)] = 0; // filter byte
+      const parts = [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", ihdr)];
+      if (palette) parts.push(pngChunk("PLTE", palette));
+      for (const [t, d] of extra) parts.push(pngChunk(t, d));
+      parts.push(pngChunk("IDAT", zlib.deflateSync(raw)), pngChunk("IEND", new Uint8Array(0)));
+      return Buffer.concat(parts);
+    }
+    const pal = new Uint8Array([255, 0, 0, 0, 255, 0]);
+
+    test.each([
+      ["grey", makePngVariant(0, 8), { space: "b-w", channels: 1, hasAlpha: false }],
+      ["RGB", makePngVariant(2, 8), { space: "srgb", channels: 3, hasAlpha: false }],
+      ["indexed", makePngVariant(3, 8, [], pal), { space: "srgb", channels: 3, hasAlpha: false }],
+      ["grey+alpha", makePngVariant(4, 8), { space: "b-w", channels: 2, hasAlpha: true }],
+      ["RGBA", makePngVariant(6, 8), { space: "srgb", channels: 4, hasAlpha: true }],
+      // tRNS adds transparency to the alpha-less colour types; sharp counts
+      // it as a real channel because libvips expands it on load.
+      ["grey + tRNS", makePngVariant(0, 8, [["tRNS", new Uint8Array([0, 100])]]), { space: "b-w", channels: 2, hasAlpha: true }], // prettier-ignore
+      ["RGB + tRNS", makePngVariant(2, 8, [["tRNS", new Uint8Array([0, 100, 0, 100, 0, 100])]]), { space: "srgb", channels: 4, hasAlpha: true }], // prettier-ignore
+      ["indexed + tRNS", makePngVariant(3, 8, [["tRNS", new Uint8Array([128])]], pal), { space: "srgb", channels: 4, hasAlpha: true }], // prettier-ignore
+      // 16-bit depth folds into the space name, libvips-style.
+      ["16-bit RGB", makePngVariant(2, 16), { space: "rgb16", channels: 3, hasAlpha: false }],
+      ["16-bit RGBA", makePngVariant(6, 16), { space: "rgb16", channels: 4, hasAlpha: true }],
+      ["16-bit grey", makePngVariant(0, 16), { space: "grey16", channels: 1, hasAlpha: false }],
+    ] as const)("PNG %s", async (_name, png, expected) => {
+      const meta = await new Bun.Image(png).metadata();
+      expect({ space: meta.space, channels: meta.channels, hasAlpha: meta.hasAlpha }).toEqual(expected);
+    });
+
+    test("PNG with an invalid colour type rejects", async () => {
+      const bad = Buffer.from(makePngVariant(2, 8));
+      bad[25] = 7; // not a legal PNG colour type
+      await expect(new Bun.Image(bad).metadata()).rejects.toThrow(/decode/i);
+    });
+
+    test("PNG with an illegal bit-depth/colour-type pair rejects", async () => {
+      // Truecolour only allows depths 8/16; indexed only 1/2/4/8 (spec
+      // §11.2.2 — libspng rejects these at decode too).
+      const rgb4 = Buffer.from(makePngVariant(2, 8));
+      rgb4[24] = 4;
+      await expect(new Bun.Image(rgb4).metadata()).rejects.toThrow(/decode/i);
+      const indexed16 = Buffer.from(makePngVariant(3, 8, [], pal));
+      indexed16[24] = 16;
+      await expect(new Bun.Image(indexed16).metadata()).rejects.toThrow(/decode/i);
+    });
+
+    test("JPEG is 3-channel srgb with no alpha", async () => {
+      const jpg = await new Bun.Image(cornersPng).jpeg().bytes();
+      const meta = await new Bun.Image(jpg).metadata();
+      expect({ space: meta.space, channels: meta.channels, hasAlpha: meta.hasAlpha }).toEqual({
+        space: "srgb",
+        channels: 3,
+        hasAlpha: false,
+      });
+    });
+
+    // Bun's encoder only emits YCbCr, so greyscale/CMYK inputs are pre-baked:
+    // sharp(rgb).toColourspace("b-w" | "cmyk").jpeg() with sharp 0.34.5, 4×4.
+    const greyJpeg = Buffer.from(
+      "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/wAALCAAEAAQBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8ANz//2Q==",
+      "base64",
+    );
+    const cmykJpeg = Buffer.from(
+      "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwAGBAUGBQQGBgUGBwcGCAoQCgoJCQoUDg8MEBcUGBgXFBYWGh0lHxobIxwWFiAsICMmJykqKRkfLTAtKDAlKCko/8AAFAgABAAEBEMRAE0RAFkRAEsRAP/EABYAAQEBAAAAAAAAAAAAAAAAAAYHCP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAOBEMATQBZAEsAAD8ANKCbsxv/2Q==",
+      "base64",
+    );
+
+    test("greyscale JPEG reports b-w with 1 channel", async () => {
+      const meta = await new Bun.Image(greyJpeg).metadata();
+      expect(meta).toEqual({ width: 4, height: 4, format: "jpeg", space: "b-w", channels: 1, hasAlpha: false });
+    });
+
+    test("CMYK JPEG reports cmyk with 4 channels", async () => {
+      const meta = await new Bun.Image(cmykJpeg).metadata();
+      expect(meta).toEqual({ width: 4, height: 4, format: "jpeg", space: "cmyk", channels: 4, hasAlpha: false });
+    });
+
+    test.each([
+      ["lossy", {}],
+      ["lossless", { lossless: true }],
+    ] as const)("WebP (%s) tracks alpha from the bitstream", async (_name, opts) => {
+      const opaque = makePng(2, 2, () => [1, 2, 3, 255]);
+      const transparent = makePng(2, 2, () => [1, 2, 3, 128]);
+      const o = await new Bun.Image(await new Bun.Image(opaque).webp(opts).bytes()).metadata();
+      expect({ space: o.space, channels: o.channels, hasAlpha: o.hasAlpha }).toEqual({
+        space: "srgb",
+        channels: 3,
+        hasAlpha: false,
+      });
+      const t = await new Bun.Image(await new Bun.Image(transparent).webp(opts).bytes()).metadata();
+      expect({ space: t.space, channels: t.channels, hasAlpha: t.hasAlpha }).toEqual({
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
+    });
   });
 
   test("PNG → PNG round-trip preserves every pixel", async () => {
@@ -823,7 +961,14 @@ describe("Bun.Image", () => {
       ["CMYK (Adobe transform=0)", cmykJpeg],
       ["YCCK (Adobe transform=2)", ycckJpeg],
     ])("%s decodes to sRGB", async (_name, fixture) => {
-      expect(await new Bun.Image(fixture).metadata()).toEqual({ width: 64, height: 64, format: "jpeg" });
+      expect(await new Bun.Image(fixture).metadata()).toEqual({
+        width: 64,
+        height: 64,
+        format: "jpeg",
+        space: "cmyk",
+        channels: 4,
+        hasAlpha: false,
+      });
       const { w, h, data } = decodePngRaw(await new Bun.Image(fixture).png().bytes());
       expect([w, h]).toEqual([64, 64]);
       expectQuadrants(data, w);
@@ -867,10 +1012,10 @@ describe("Bun.Image", () => {
     const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
 
     const meta = await new Bun.Image(withExif).metadata();
-    expect(meta).toEqual({ width: 2, height: 4, format: "jpeg" });
+    expect(meta).toEqual({ width: 2, height: 4, format: "jpeg", space: "srgb", channels: 3, hasAlpha: false });
     // And opting out leaves it landscape.
     const raw = await new Bun.Image(withExif, { autoOrient: false }).metadata();
-    expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
+    expect(raw).toEqual({ width: 4, height: 2, format: "jpeg", space: "srgb", channels: 3, hasAlpha: false });
   });
 
   test("rejects on unrecognised input", async () => {
@@ -1085,7 +1230,14 @@ describe("Bun.Image", () => {
       const [b64, url] = await Promise.all([img.toBase64(), img.dataurl()]);
       expect(url).toBe(`data:image/png;base64,${b64}`);
       // Round-trip: the constructor accepts data: URLs.
-      expect(await new Bun.Image(url).metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await new Bun.Image(url).metadata()).toEqual({
+        width: 4,
+        height: 3,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
       // Format follows the chained encoder.
       expect(await new Bun.Image(cornersPng).webp().dataurl()).toMatch(/^data:image\/webp;base64,/);
     });
@@ -1271,7 +1423,7 @@ describe("Bun.Image", () => {
       const buf = new Uint8Array(await res.arrayBuffer());
       expect(String.fromCharCode(...buf.subarray(8, 12))).toBe("WEBP");
       const meta = await new Bun.Image(buf).metadata();
-      expect(meta).toEqual({ width: 4, height: 4, format: "webp" });
+      expect(meta).toEqual({ width: 4, height: 4, format: "webp", space: "srgb", channels: 3, hasAlpha: false });
     });
 
     test("new Request({body: image}) works the same way", async () => {
@@ -1335,7 +1487,34 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     }
     // BMP header is fully valid → metadata succeeds everywhere.
     const meta = await new Bun.Image(makeBmp24(7, 3, () => [0, 0, 0])).metadata();
-    expect(meta).toEqual({ width: 7, height: 3, format: "bmp" });
+    expect(meta).toEqual({ width: 7, height: 3, format: "bmp", space: "srgb", channels: 3, hasAlpha: false });
+  });
+
+  test("BMP metadata() reports alpha only for a V4 BITFIELDS alpha mask", async () => {
+    // 1×1 32-bpp V4HEADER; `alphaMask` 0 ⇒ the 4th byte is reserved padding.
+    function bmp32(alphaMask: number) {
+      const buf = new Uint8Array(14 + 108 + 4);
+      const dv = new DataView(buf.buffer);
+      buf[0] = 0x42;
+      buf[1] = 0x4d;
+      dv.setUint32(2, buf.length, true);
+      dv.setUint32(10, 14 + 108, true);
+      dv.setUint32(14, 108, true); // biSize = V4
+      dv.setInt32(18, 1, true);
+      dv.setInt32(22, 1, true);
+      dv.setUint16(26, 1, true);
+      dv.setUint16(28, 32, true);
+      dv.setUint32(30, 3, true); // BI_BITFIELDS
+      dv.setUint32(54, 0x00ff0000, true);
+      dv.setUint32(58, 0x0000ff00, true);
+      dv.setUint32(62, 0x000000ff, true);
+      dv.setUint32(66, alphaMask, true);
+      return buf;
+    }
+    const withAlpha = await new Bun.Image(bmp32(0xff000000)).metadata();
+    expect(withAlpha).toEqual({ width: 1, height: 1, format: "bmp", space: "srgb", channels: 4, hasAlpha: true });
+    const reserved = await new Bun.Image(bmp32(0)).metadata();
+    expect(reserved).toEqual({ width: 1, height: 1, format: "bmp", space: "srgb", channels: 3, hasAlpha: false });
   });
 
   test.each(["bun", "system"] as const)("BMP→PNG round-trips colour & orientation (backend=%s)", async be => {
@@ -1481,8 +1660,28 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
 
   test.each(["bun", "system"] as const)("GIF: 1×1 minimal (backend=%s)", async be => {
     const g = makeGif(1, 1, [[0xff, 0x80, 0x40]], () => 0);
-    expect(await new Bun.Image(g).metadata()).toEqual({ width: 1, height: 1, format: "gif" });
+    expect(await new Bun.Image(g).metadata()).toEqual({
+      width: 1,
+      height: 1,
+      format: "gif",
+      space: "srgb",
+      channels: 3,
+      hasAlpha: false,
+    });
     expect([...(await gifPixels(g, be)).data.subarray(0, 4)]).toEqual([0xff, 0x80, 0x40, 0xff]);
+  });
+
+  test("GIF: metadata() reports alpha only when the GCE transparency flag is set", async () => {
+    // Matches sharp/libvips: an opaque GIF is 3-channel, a GCE with the
+    // transparent-colour flag makes it 4-channel.
+    const pal: [number, number, number][] = [
+      [255, 0, 0],
+      [0, 255, 0],
+    ];
+    const opaque = await new Bun.Image(makeGif(2, 1, pal, x => x)).metadata();
+    expect(opaque).toEqual({ width: 2, height: 1, format: "gif", space: "srgb", channels: 3, hasAlpha: false });
+    const transparent = await new Bun.Image(makeGif(2, 1, pal, x => x, { trns: 1 })).metadata();
+    expect(transparent).toEqual({ width: 2, height: 1, format: "gif", space: "srgb", channels: 4, hasAlpha: true });
   });
 
   test("GIF: width-growth boundary (forces 3→4→5-bit transitions mid-row)", async () => {
@@ -1548,7 +1747,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     // earlier tests' side-effect on the process-global).
     Bun.Image.backend = "bun";
     const m = await new Bun.Image(g).metadata();
-    expect(m).toEqual({ width: 2, height: 2, format: "gif" });
+    expect(m).toEqual({ width: 2, height: 2, format: "gif", space: "srgb", channels: 3, hasAlpha: false });
     // And actually decode (exercises Bits.drain too).
     const out = await new Bun.Image(g).png().bytes();
     expect(out[0]).toBe(0x89);

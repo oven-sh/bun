@@ -69,7 +69,8 @@ unsafe extern "C" {
         max_pixels: u64,
         out_w: *mut u32,
         out_h: *mut u32,
-        out: *mut u8, // nullable
+        out: *mut u8,            // nullable
+        out_has_alpha: *mut i32, // nullable; only written on the probe phase
     ) -> i32;
 
     #[allow(dead_code)]
@@ -100,10 +101,17 @@ fn map_err(rc: i32) -> BackendError {
     }
 }
 
-/// Dimensions only: ImageIO parses the container header without running the codec.
-pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), BackendError> {
+pub(crate) struct ProbeInfo {
+    pub width: u32,
+    pub height: u32,
+    pub has_alpha: bool,
+}
+
+/// Header only: ImageIO parses the container without running the codec.
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<ProbeInfo, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
+    let mut has_alpha: i32 = 0;
     // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
     match unsafe {
         bun_coregraphics_decode(
@@ -113,9 +121,14 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), Backend
             &raw mut w,
             &raw mut h,
             core::ptr::null_mut(),
+            &raw mut has_alpha,
         )
     } {
-        CG_OK => Ok((w, h)),
+        CG_OK => Ok(ProbeInfo {
+            width: w,
+            height: h,
+            has_alpha: has_alpha != 0,
+        }),
         rc => Err(map_err(rc)),
     }
 }
@@ -133,6 +146,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
             max_pixels,
             &raw mut w,
             &raw mut h,
+            core::ptr::null_mut(),
             core::ptr::null_mut(),
         )
     } {
@@ -153,6 +167,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
             &raw mut w,
             &raw mut h,
             out.as_mut_ptr(),
+            core::ptr::null_mut(),
         )
     } {
         CG_OK => {}

@@ -331,10 +331,68 @@ pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     Ok(())
 }
 
+/// `metadata().space`, using sharp/libvips interpretation names.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Space {
+    Srgb,
+    /// Greyscale; libvips spells it "b-w".
+    Bw,
+    Cmyk,
+    /// 16-bit-per-channel RGB (PNG bit depth 16).
+    Rgb16,
+    /// 16-bit-per-channel greyscale (PNG bit depth 16).
+    Grey16,
+}
+
+impl Space {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Space::Srgb => "srgb",
+            Space::Bw => "b-w",
+            Space::Cmyk => "cmyk",
+            Space::Rgb16 => "rgb16",
+            Space::Grey16 => "grey16",
+        }
+    }
+}
+
+/// Source colour layout for `.metadata()`; the decode pipeline itself is always RGBA8.
+#[derive(Copy, Clone)]
+pub struct ColorInfo {
+    pub space: Space,
+    /// 1 grey, 2 grey+alpha, 3 RGB, 4 RGB+alpha or CMYK (sharp's counting).
+    pub channels: u8,
+    pub has_alpha: bool,
+}
+
 pub(crate) struct Probe {
     pub format: Format,
     pub width: u32,
     pub height: u32,
+    pub color: ColorInfo,
+}
+
+/// Walks PNG chunks up to IDAT (tRNS must precede it per spec) with checked offsets.
+fn png_has_trns(bytes: &[u8]) -> bool {
+    let mut off: usize = 8;
+    loop {
+        let Some(hdr) = bytes.get(off..off + 8) else {
+            return false;
+        };
+        let len = u32::from_be_bytes(hdr[0..4].try_into().expect("infallible: size matches"));
+        match &hdr[4..8] {
+            b"tRNS" => return true,
+            b"IDAT" | b"IEND" => return false,
+            _ => {}
+        }
+        off = match off
+            .checked_add(len as usize)
+            .and_then(|n| n.checked_add(12))
+        {
+            Some(n) => n,
+            None => return false,
+        };
+    }
 }
 
 /// Header-only dimensions probe for `.metadata()`. Decoding the full RGBA for
@@ -345,14 +403,46 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     let w: u32;
     let h: u32;
+    let color: ColorInfo;
     match fmt {
         Format::Png => {
-            // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
-            if bytes.len() < 24 {
+            // sig(8) · IHDR{len(4) type(4) w(4) h(4) depth(1) colour(1) ...}
+            if bytes.len() < 26 {
                 return Err(Error::DecodeFailed);
             }
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
+            let bit_depth = bytes[24];
+            let color_type = bytes[25];
+            // PNG colour types: 0 grey, 2 RGB, 3 indexed, 4 grey+alpha, 6 RGBA.
+            let (base_channels, grey): (u8, bool) = match color_type {
+                0 => (1, true),
+                2 => (3, false),
+                3 => (3, false), // palette entries are RGB
+                4 => (2, true),
+                6 => (4, false),
+                _ => return Err(Error::DecodeFailed),
+            };
+            // Same depth-per-type table as libspng's check_ihdr (PNG spec §11.2.2).
+            if !matches!(
+                (color_type, bit_depth),
+                (0, 1 | 2 | 4 | 8 | 16) | (2 | 4 | 6, 8 | 16) | (3, 1 | 2 | 4 | 8)
+            ) {
+                return Err(Error::DecodeFailed);
+            }
+            let native_alpha = color_type == 4 || color_type == 6;
+            // tRNS transparency counts as a channel, matching libvips/sharp.
+            let has_alpha = native_alpha || png_has_trns(bytes);
+            color = ColorInfo {
+                space: match (grey, bit_depth == 16) {
+                    (true, false) => Space::Bw,
+                    (true, true) => Space::Grey16,
+                    (false, false) => Space::Srgb,
+                    (false, true) => Space::Rgb16,
+                },
+                channels: base_channels + u8::from(has_alpha && !native_alpha),
+                has_alpha,
+            };
         }
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
@@ -372,25 +462,50 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             }
             w = u32::try_from(rw).expect("int cast");
             h = u32::try_from(rh).expect("int cast");
+            // SAFETY: same handle invariant as above.
+            color = match unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_COLORSPACE) } {
+                jpeg::TJCS_GRAY => ColorInfo {
+                    space: Space::Bw,
+                    channels: 1,
+                    has_alpha: false,
+                },
+                jpeg::TJCS_CMYK | jpeg::TJCS_YCCK => ColorInfo {
+                    space: Space::Cmyk,
+                    channels: 4,
+                    has_alpha: false,
+                },
+                _ => ColorInfo {
+                    space: Space::Srgb,
+                    channels: 3,
+                    has_alpha: false,
+                },
+            };
         }
         Format::Webp => {
-            let mut cw: c_int = 0;
-            let mut ch: c_int = 0;
-            // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
-                == 0
-                || cw <= 0
-                || ch <= 0
-            {
+            let f = webp::get_features(bytes).ok_or(Error::DecodeFailed)?;
+            if f.width <= 0 || f.height <= 0 {
                 return Err(Error::DecodeFailed);
             }
-            w = u32::try_from(cw).expect("int cast");
-            h = u32::try_from(ch).expect("int cast");
+            w = u32::try_from(f.width).expect("int cast");
+            h = u32::try_from(f.height).expect("int cast");
+            let has_alpha = f.has_alpha != 0;
+            color = ColorInfo {
+                space: Space::Srgb,
+                channels: if has_alpha { 4 } else { 3 },
+                has_alpha,
+            };
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
             w = ih.width;
             h = ih.height;
+            // Only a V4+ BITFIELDS alpha mask counts; see parse_header.
+            let has_alpha = ih.a_mask != 0;
+            color = ColorInfo {
+                space: Space::Srgb,
+                channels: if has_alpha { 4 } else { 3 },
+                has_alpha,
+            };
         }
         Format::Gif => {
             // sig(6) · LSD: w(u16le) h(u16le) …
@@ -401,6 +516,12 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 as u32;
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
+            let has_alpha = gif::first_frame_transparent(bytes);
+            color = ColorInfo {
+                space: Space::Srgb,
+                channels: if has_alpha { 4 } else { 3 },
+                has_alpha,
+            };
         }
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
@@ -413,9 +534,14 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 }
                 match system_backend::BackendError::split(system_backend::probe(bytes, max_pixels))
                 {
-                    Ok(Some((pw, ph))) => {
-                        w = pw;
-                        h = ph;
+                    Ok(Some(p)) => {
+                        w = p.width;
+                        h = p.height;
+                        color = ColorInfo {
+                            space: Space::Srgb,
+                            channels: if p.has_alpha { 4 } else { 3 },
+                            has_alpha: p.has_alpha,
+                        };
                     }
                     Ok(None) => return Err(Error::UnsupportedOnPlatform),
                     Err(e) => return Err(e),
@@ -435,6 +561,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         format: fmt,
         width: w,
         height: h,
+        color,
     })
 }
 

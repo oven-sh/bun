@@ -117,6 +117,9 @@ pub(crate) struct Context<'a> {
     /// pointer in this file. `manager.lockfile` is incorrect
     pub(crate) lockfile: Option<&'a Lockfile>,
 
+    /// Where the command was run from; relative `--destination`/`--filename` resolve against it.
+    pub(crate) original_cwd: &'a [u8],
+
     pub(crate) bundled_deps: Vec<BundledDep>,
 
     pub(crate) stats: Stats,
@@ -201,6 +204,7 @@ impl PackCommand {
     pub(crate) fn exec_with_manager(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
+        original_cwd: &[u8],
     ) -> crate::Result<()> {
         use bun_install::lockfile::{LoadResult, LoadStep};
 
@@ -273,6 +277,7 @@ impl PackCommand {
             manager,
             command_ctx: ctx,
             lockfile: lockfile_ref,
+            original_cwd,
             bundled_deps: Vec::new(),
             stats: Stats::default(),
         };
@@ -2416,6 +2421,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 let (abs_tarball_dest, _) = tarball_destination(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
+                    ctx.original_cwd,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -2446,6 +2452,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             let (abs_tarball_dest, _) = tarball_destination(
                 opt_pack_destination(ctx.manager),
                 opt_pack_filename(ctx.manager),
+                ctx.original_cwd,
                 abs_workspace_path,
                 package_name,
                 package_version,
@@ -2546,6 +2553,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
         opt_pack_destination(ctx.manager),
         opt_pack_filename(ctx.manager),
+        ctx.original_cwd,
         abs_workspace_path,
         package_name,
         package_version,
@@ -3003,9 +3011,11 @@ fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
         || strings::contains_any(value, b"\\:\0")
 }
 
+/// Returns the tarball path and the length of the directory the caller creates (0 for `--filename`).
 fn tarball_destination<'a>(
     pack_destination: &[u8],
     pack_filename: &[u8],
+    original_cwd: &[u8],
     abs_workspace_path: &[u8],
     package_name: &[u8],
     package_version: &[u8],
@@ -3022,25 +3032,37 @@ fn tarball_destination<'a>(
         Global::crash();
     }
     if !pack_filename.is_empty() {
-        if pack_filename.len() + 1 > dest_buf.len() {
+        // Leave room for the NUL terminator written after the join.
+        let join_buf_len = dest_buf.len() - 1;
+        let Some(tarball_name_len) =
+            resolve_path::join_abs_string_buf_checked::<resolve_path::platform::Auto>(
+                original_cwd,
+                &mut dest_buf[..join_buf_len],
+                &[pack_filename],
+            )
+            .map(<[u8]>::len)
+        else {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
-        }
-        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        let tarball_name_len = pack_filename.len() + 1;
+        };
+        dest_buf[tarball_name_len] = 0;
 
-        // SAFETY: NUL written at pack_filename.len()
-        return (ZStr::from_buf(&dest_buf[..], tarball_name_len - 1), 0);
+        // SAFETY: NUL written at tarball_name_len
+        return (ZStr::from_buf(&dest_buf[..], tarball_name_len), 0);
     } else {
+        let destination_base = if pack_destination.is_empty() {
+            abs_workspace_path
+        } else {
+            original_cwd
+        };
         let (dir_len_trimmed, dir_len_full) = {
             let tarball_destination_dir = resolve_path::join_abs_string_buf::<
                 resolve_path::platform::Auto,
             >(
-                abs_workspace_path, dest_buf, &[pack_destination]
+                destination_base, dest_buf, &[pack_destination]
             );
             (
                 strings::without_trailing_slash(tarball_destination_dir).len(),

@@ -30,7 +30,9 @@ pub(crate) mod memory_cost;
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
+/// Canonical definition lives in `bun_options_types` (T3) so the bundler can
+/// emit dev-server asset URLs without referencing bake.
+pub(crate) use bun_options_types::DEV_SERVER_ASSET_PREFIX as ASSET_PREFIX;
 pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
@@ -44,7 +46,7 @@ pub use super::dev_server_body::{
     TestingBatchEvents, deferred_request, entry_point_list,
 };
 
-/// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
+/// `DevServer.FileKind` — kept in lockstep with `bun_bundler::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -263,8 +265,6 @@ impl GraphTraceState {
             .expect("freeing memory can not fail");
     }
 }
-
-pub(crate) use super::dev_server_body::init;
 
 pub mod assets;
 pub mod incremental_graph;
@@ -1112,8 +1112,11 @@ pub mod directory_watch_store {
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
         barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
-        log_for_resolution_failures(abs_path, graph) => {
-            match (*this).get_log_for_resolution_failures(abs_path, graph) {
+        log_for_resolution_failures(abs_path, target) => {
+            match (*this).get_log_for_resolution_failures(
+                abs_path,
+                bun_bundler::bake_types::TargetExt::bake_graph(target),
+            ) {
                 Ok(log) => log,
                 Err(_) => bun_alloc::out_of_memory(),
             }
@@ -1125,9 +1128,15 @@ bun_bundler::link_impl_DevServerHandle! {
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
+        handle_parse_task_failure(err, target, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(
+                    &err.into(),
+                    bun_bundler::bake_types::TargetExt::bake_graph(target),
+                    abs_path,
+                    &*log,
+                    &mut *bv2,
+                )
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
@@ -1138,24 +1147,31 @@ bun_bundler::link_impl_DevServerHandle! {
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
             (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
-        track_resolution_failure(import_source, specifier, renderer, loader) => {
+        track_resolution_failure(import_source, specifier, target, loader) => {
             (*this)
                 .directory_watchers
-                .track_resolution_failure(import_source, specifier, renderer, loader)
+                .track_resolution_failure(
+                    import_source,
+                    specifier,
+                    bun_bundler::bake_types::TargetExt::bake_graph(target),
+                    loader,
+                )
                 .map_err(Into::into)
         },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
-                use bun_bundler::bake_types::CacheKind;
-                bun_bundler::bake_types::CacheEntry {
-                    kind: match e.kind {
-                        FileKind::Unknown => CacheKind::Unknown,
-                        FileKind::Js => CacheKind::Js,
-                        FileKind::Asset => CacheKind::Asset,
-                        FileKind::Css => CacheKind::Css,
-                    },
-                }
-            })
+        is_file_cached(abs_path, target) => {
+            (*this)
+                .is_file_cached(abs_path, bun_bundler::bake_types::TargetExt::bake_graph(target))
+                .map(|e| {
+                    use bun_bundler::CacheKind;
+                    bun_bundler::CacheEntry {
+                        kind: match e.kind {
+                            FileKind::Unknown => CacheKind::Unknown,
+                            FileKind::Js => CacheKind::Js,
+                            FileKind::Asset => CacheKind::Asset,
+                            FileKind::Css => CacheKind::Css,
+                        },
+                    }
+                })
         },
         asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
         current_bundle_start_data() => {

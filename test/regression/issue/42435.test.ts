@@ -11,12 +11,15 @@ test.skipIf(!isWindows)("FileSink: awaiting write() and flush() makes the bytes 
   for (let i = 0; i < 50; i++) {
     const path = join(String(dir), `${i}.log`);
     const writer = Bun.file(path).writer();
-    const writeResult = writer.write("first\n");
-    const flushResult = writer.flush();
-    expect(writeResult).toBeInstanceOf(Promise);
-    expect(await writeResult).toBe(6);
-    await flushResult;
-    expect(readFileSync(path, "utf8")).toBe("first\n");
-    await writer.end();
+    try {
+      const writeResult = writer.write("first\n");
+      const flushResult = writer.flush();
+      expect(writeResult).toBeInstanceOf(Promise);
+      expect(await writeResult).toBe(6);
+      await flushResult;
+      expect(readFileSync(path, "utf8")).toBe("first\n");
+    } finally {
+      await writer.end();
+    }
   }
 });

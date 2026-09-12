@@ -55,6 +55,7 @@ void* WebWorker__create(
     void* parentVM,
     const BunString* name,
     const BunString* url,
+    const BunString* referrerPath,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -145,11 +146,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     BunString errorMessage = BunStringEmpty;
     BunString name = Bun::toString(m_options.name);
     BunString url = Bun::toString(scriptURL);
+    BunString referrerPath = Bun::toString(m_options.referrerPath);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
         &name,
         &url,
+        &referrerPath,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,

@@ -155,9 +155,8 @@ pub mod argon2 {
         let encoded = vendor::hash_encoded(password, &salt, &config).map_err(|e| map_err(&e))?;
         let bytes = encoded.as_bytes();
 
-        // Error `NoSpaceLeft` if the encoded hash overflows the caller buffer.
         if bytes.len() > out.len() {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+            return Err(crate::Error::Core(bun_core::Error::NoSpaceLeft));
         }
         out[..bytes.len()].copy_from_slice(bytes);
         Ok(&out[..bytes.len()])
@@ -309,7 +308,7 @@ pub mod bcrypt {
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         if out.len() < HASH_LENGTH {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+            return Err(crate::Error::Core(bun_core::Error::NoSpaceLeft));
         }
         // Bun only ever requests `.crypt`. A `.phc` request would need the
         // `$bcrypt$…` PHC serializer, which the Rust `bcrypt` crate does not

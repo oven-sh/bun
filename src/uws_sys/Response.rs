@@ -357,6 +357,12 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// Real OS fd via `us_socket_get_fd`, unlike `get_native_handle` (SSL* for TLS).
+    pub fn get_fd(&mut self) -> Fd {
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        us_socket_t::opaque_mut(self.downcast_socket()).get_fd()
+    }
+
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
@@ -912,6 +918,15 @@ impl AnyResponse {
             AnyResponse::H3(_) | AnyResponse::H2(_) => bun_core::Fd::INVALID,
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
+        }
+    }
+
+    /// Real OS fd, bypassing SSL. H3 has no per-response fd (one UDP socket).
+    pub fn get_fd(self) -> Fd {
+        match self {
+            AnyResponse::H3(_) => bun_core::Fd::INVALID,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_fd(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_fd(),
         }
     }
 

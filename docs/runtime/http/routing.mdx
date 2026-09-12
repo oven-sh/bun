@@ -206,7 +206,9 @@ Bun.serve({
 });
 ```
 
-Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
+Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains a segment that is exactly `.` or `..`, an empty segment, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`. Where `openat2` is unavailable (kernels before 5.6, or a seccomp policy that blocks it), and on macOS and Windows, Bun follows symlinks wherever they point, so a symlink inside `dir` publishes its target even when the target is outside `dir`.
+
+Bun does not filter dotfiles: it serves any regular file under `dir`, including a `.env` file or the contents of a `.git` directory. Point `dir` at a directory that contains only files meant to be public.
 
 <Info>
   Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a

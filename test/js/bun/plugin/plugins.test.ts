@@ -731,6 +731,31 @@ it("import(...) without __esModule", async () => {
   expect(mod).toBe("world");
 });
 
+it("builder methods return the builder only when called as methods", () => {
+  plugin({
+    name: "builder receiver",
+    setup(builder) {
+      const options = { filter: /.*/, namespace: "builder-receiver" };
+      const virtualModule = () => ({ exports: {}, loader: "object" }) as const;
+      expect([
+        builder.onResolve(options, () => undefined),
+        builder.onLoad(options, () => undefined),
+        builder.module("builder-receiver-virtual-module", virtualModule),
+      ]).toEqual([builder, builder, builder]);
+
+      const { onResolve, onLoad, module: defineModule } = builder;
+      // Closed-over bindings make JSC pass the scope object as the raw receiver
+      // of these calls; it must not come back as the return value.
+      const bare = () => [
+        onResolve(options, () => undefined),
+        onLoad(options, () => undefined),
+        defineModule("builder-receiver-virtual-module-bare", virtualModule),
+      ];
+      expect(bare()).toEqual([undefined, undefined, undefined]);
+    },
+  });
+});
+
 it("recursion throws stack overflow", () => {
   expect(() => {
     require("recursion:recursion");

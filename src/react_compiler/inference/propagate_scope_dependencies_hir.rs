@@ -1731,10 +1731,17 @@ struct Decl {
     scope_stack: Vec<ScopeId>, // copy of the scope stack at time of declaration
 }
 
+/// Where a phi sits, and whether `infer_reactive_places` found its value reactive.
+struct PhiDecl {
+    scope_stack: Vec<ScopeId>,
+    reactive: bool,
+}
+
 /// Context for dependency collection.
 struct DependencyCollectionContext<'a> {
     declarations: IdMap<DeclarationId, Decl>,
     reassignments: IdMap<IdentifierId, Decl>,
+    phis: IdMap<IdentifierId, PhiDecl>,
     scope_stack: Vec<ScopeId>,
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
@@ -1751,6 +1758,7 @@ impl<'a> DependencyCollectionContext<'a> {
         Self {
             declarations: IdMap::new(),
             reassignments: IdMap::new(),
+            phis: IdMap::new(),
             scope_stack: Vec::new(),
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
@@ -1786,6 +1794,51 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
+    /// Not in upstream, apart from the optional-chain case. A variable that the scope
+    /// reassigns on some paths keeps its value from before the scope on the others. Only a
+    /// phi reads that value, so upstream does not make it a dependency, and a cache hit
+    /// restores what the variable held in the render that filled the cache.
+    fn visit_phi(&mut self, phi: &crate::hir::Phi, env: &mut Environment) {
+        for (_pred_id, operand) in &phi.operands {
+            if let Some(maybe_optional_chain) = self.temporaries.get(operand.identifier) {
+                self.visit_dependency(maybe_optional_chain.clone(), env);
+                continue;
+            }
+            let Some(current_scope) = self.current_scope() else {
+                continue;
+            };
+            // An operand that neither map holds yet comes from a loop back edge. Its
+            // definition is later in the scope.
+            let (defined_in, reactive) =
+                if let Some(decl) = self.reassignments.get(operand.identifier) {
+                    (&decl.scope_stack, operand.reactive)
+                } else if let Some(phi_decl) = self.phis.get(operand.identifier) {
+                    (&phi_decl.scope_stack, phi_decl.reactive)
+                } else {
+                    continue;
+                };
+            if defined_in.contains(&current_scope) {
+                continue;
+            }
+            self.visit_dependency(
+                ReactiveScopeDependency {
+                    identifier: operand.identifier,
+                    reactive,
+                    path: hir_vec![],
+                    loc: operand.loc,
+                },
+                env,
+            );
+        }
+        self.phis.insert(
+            phi.place.identifier,
+            PhiDecl {
+                scope_stack: self.scope_stack.clone(),
+                reactive: phi.place.reactive,
+            },
+        );
+    }
+
     fn current_scope(&self) -> Option<ScopeId> {
         self.scope_stack.last().copied()
     }
@@ -1807,6 +1860,16 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     fn check_valid_dependency(&self, dep: &ReactiveScopeDependency, env: &Environment) -> bool {
+        self.current_scope()
+            .is_some_and(|scope| self.check_valid_dependency_of(scope, dep, env))
+    }
+
+    fn check_valid_dependency_of(
+        &self,
+        scope: ScopeId,
+        dep: &ReactiveScopeDependency,
+        env: &Environment,
+    ) -> bool {
         // Ref value is not a valid dep
         let ty = &env.types[env.identifiers[dep.identifier.0 as usize].type_.0 as usize];
         if crate::hir::is_ref_value_type(ty) {
@@ -1823,13 +1886,7 @@ impl<'a> DependencyCollectionContext<'a> {
             .get(dep.identifier)
             .or_else(|| self.declarations.get(ident.declaration_id));
 
-        if let Some(current_scope) = self.current_scope() {
-            if let Some(decl) = current_declaration {
-                let scope_range_start = env.scopes[current_scope.0 as usize].range.start;
-                return decl.id < scope_range_start;
-            }
-        }
-        false
+        current_declaration.is_some_and(|decl| decl.id < env.scopes[scope.0 as usize].range.start)
     }
 
     fn visit_operand(&mut self, place: &Place, env: &mut Environment) {
@@ -1914,25 +1971,26 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
+    /// Not in upstream, which records the reassignment on the innermost scope only. An
+    /// enclosing scope (pruned scopes are on the stack too) that starts after the
+    /// declaration needs it as well: when its cache hits, the inner scope does not run, so
+    /// only the enclosing scope can restore the variable. Declarations already reach every
+    /// enclosing scope (`visit_dependency`).
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
-        if let Some(current_scope) = self.current_scope() {
-            let scope = &env.scopes[current_scope.0 as usize];
-            let already = scope.reassignments.iter().any(|id| {
-                env.identifiers[id.0 as usize].declaration_id
-                    == env.identifiers[place.identifier.0 as usize].declaration_id
-            });
-            if !already
-                && self.check_valid_dependency(
-                    &ReactiveScopeDependency {
-                        identifier: place.identifier,
-                        reactive: place.reactive,
-                        path: hir_vec![],
-                        loc: place.loc,
-                    },
-                    env,
-                )
-            {
-                env.scopes[current_scope.0 as usize]
+        let dep = ReactiveScopeDependency {
+            identifier: place.identifier,
+            reactive: place.reactive,
+            path: hir_vec![],
+            loc: place.loc,
+        };
+        let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
+        for &scope_id in &self.scope_stack {
+            let already = env.scopes[scope_id.0 as usize]
+                .reassignments
+                .iter()
+                .any(|id| env.identifiers[id.0 as usize].declaration_id == declaration_id);
+            if !already && self.check_valid_dependency_of(scope_id, &dep, env) {
+                env.scopes[scope_id.0 as usize]
                     .reassignments
                     .push(place.identifier);
             }
@@ -2129,6 +2187,26 @@ fn handle_instruction(
             ctx.visit_operand(&lvalue.place, env);
             ctx.visit_operand(val, env);
         }
+        // Not in upstream, which visits only `value` here. `x++` assigns `x` as much as
+        // `x = x + 1` does, so the scope has to restore `x` when its cache hits.
+        InstructionValue::PrefixUpdate {
+            lvalue, value: val, ..
+        }
+        | InstructionValue::PostfixUpdate {
+            lvalue, value: val, ..
+        } => {
+            ctx.visit_operand(val, env);
+            ctx.visit_reassignment(lvalue, env);
+            let scope_stack_copy = ctx.scope_stack.clone();
+            ctx.declare(
+                lvalue.identifier,
+                Decl {
+                    id,
+                    scope_stack: scope_stack_copy,
+                },
+                env,
+            );
+        }
         _ => {
             // Visit all value operands
             let operands = visitors::each_instruction_value_operand(&instr.value, env);
@@ -2203,11 +2281,7 @@ fn handle_function_deps(
 
         // Record phi operands
         for phi in &block.phis {
-            for (_pred_id, operand) in &phi.operands {
-                if let Some(maybe_optional_chain) = ctx.temporaries.get(operand.identifier) {
-                    ctx.visit_dependency(maybe_optional_chain.clone(), env);
-                }
-            }
+            ctx.visit_phi(phi, env);
         }
 
         for &instr_id in &block.instructions {

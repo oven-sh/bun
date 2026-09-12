@@ -66,6 +66,27 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+### Behaviour that differs from upstream
+
+These are fixes for miscompiles that upstream has too (checked against
+`babel-plugin-react-compiler` 1.0.0 and facebook/react main at 019019be). Each
+site has a comment that starts with "Not in upstream". Keep them on a sync, and
+drop one only when upstream fixes the same case.
+
+The first four are about a `let` that is declared before a reactive scope and
+reassigned inside it. Upstream gives a stale value for each.
+`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock` in
+`test/bundler/transpiler/react-compiler.test.ts` covers them. Upstream tracks
+the first and the fourth in facebook/react#37224.
+
+| Where                                                                                      | What Bun does                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `propagate_scope_dependencies_hir.rs` `visit_phi`, `prune_non_reactive_dependencies.rs`    | A phi in a scope that joins a value from before the scope makes that value a dependency. Without it, a path that does not reassign the variable restores the variable from an old render.                       |
+| `propagate_scope_dependencies_hir.rs` `handle_instruction`, `PrefixUpdate`/`PostfixUpdate` | `x++` registers `x` as a reassignment of the scope, as `x = x + 1` does.                                                                                                                                        |
+| `propagate_scope_dependencies_hir.rs` `visit_reassignment`                                 | A reassignment in a nested (or pruned) scope is also a reassignment of each enclosing scope, which has to restore the variable when its own cache hits.                                                         |
+| `codegen.rs` `codegen_reactive_scope`                                                      | A dependency on a variable that the scope reassigns is copied to a `const` before the scope. The cache stores run after the computation and would store the new value.                                          |
+| `dead_code_elimination.rs` `reference_reassigned_variables`                                | A reassignment that the pass retains keeps the declaration of its variable. Upstream prunes the `let` and prints an assignment to a name that nothing declares. The `react-compiler/DeadStore*` tests cover it. |
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

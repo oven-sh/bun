@@ -44,7 +44,10 @@ the porting reference for the AST-boundary files.
 2. **Apply whole-crate diffs mechanically.** For each hunk under the
    whole-crate section, apply it to the corresponding `src/react_compiler/<dir>/`
    file. The only systematic edit is import paths (`react_compiler_hir::` →
-   `crate::hir::`, etc.); everything else lands verbatim.
+   `crate::hir::`, etc.); everything else lands verbatim. A few sites fix
+   miscompiles that upstream still has. They carry a "Not in upstream" comment
+   and are listed in DESIGN.md under "Behaviour that differs from upstream".
+   Keep them.
 
 3. **Re-port AST-boundary diffs by hand.** For each hunk under the
    AST-boundary section, re-port it into the named Bun file using the

@@ -435,6 +435,20 @@ impl<'a, 'h> Context<'a, 'h> {
         validated
     }
 
+    /// The first `t<n>` that no identifier of the function has. `rename_variables` names
+    /// every other temporary, but the copies `codegen_reactive_scope` makes do not exist
+    /// until codegen.
+    fn fresh_temporary_name(&mut self) -> String {
+        let mut index = 0u32;
+        loop {
+            let name = format!("t{index}");
+            if self.unique_identifiers.insert(name.clone()) {
+                return name;
+            }
+            index += 1;
+        }
+    }
+
     fn record_error(&mut self, detail: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(detail)
     }
@@ -669,19 +683,56 @@ fn codegen_reactive_scope(
         )
     };
 
+    // Not in upstream. The cache stores run after the computation. A dependency on a
+    // variable that the computation reassigns would then store the new value, and the next
+    // comparison would test the value on entry against it. Copy such a dependency to a
+    // `const` before the scope, and compare and store the copy.
+    let reassigned: HashSet<DeclarationId> = scope_reassignments
+        .iter()
+        .map(|id| cx.env.identifiers[id.0 as usize].declaration_id)
+        .collect();
+
     for dep in &deps {
         let index = cx.alloc_cache_index();
+        let dep_decl = cx.env.identifiers[dep.identifier.0 as usize].declaration_id;
+        let value_on_entry = if reassigned.contains(&dep_decl) {
+            let name = store_str(cx.fresh_temporary_name().as_bytes());
+            let copy_ref = cx.cg.ref_for_name(name);
+            statements.push(Stmt::alloc(
+                S::Local {
+                    kind: S::Kind::KConst,
+                    decls: decl_list([G::Decl {
+                        binding: Binding::alloc(
+                            cx.cg.arena,
+                            b::Identifier { r#ref: copy_ref },
+                            loc,
+                        ),
+                        value: Some(codegen_dependency(cx, dep)?),
+                    }]),
+                    ..Default::default()
+                },
+                loc,
+            ));
+            Some(name)
+        } else {
+            None
+        };
+        let dep_expr = |cx: &mut Context| match value_on_entry {
+            Some(name) => Ok(cx.cg.ident_expr(name, loc)),
+            None => codegen_dependency(cx, dep),
+        };
+
         let comparison = Expr::init(
             E::Binary {
                 op: OpCode::BinStrictNe,
                 left: cache_slot(index),
-                right: codegen_dependency(cx, dep)?,
+                right: dep_expr(cx)?,
             },
             loc,
         );
         change_exprs.push(comparison);
 
-        let dep_value = codegen_dependency(cx, dep)?;
+        let dep_value = dep_expr(cx)?;
         cache_store_exprs.push(Expr::init(
             E::Binary {
                 op: OpCode::BinAssign,

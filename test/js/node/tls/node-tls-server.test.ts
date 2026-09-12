@@ -2347,6 +2347,79 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       server.close();
     }
   });
+
+  // Once the handshake is done node stores TLSWrap::GetServername(), which is
+  // the SNI name or `false` (never undefined) when the ClientHello carried
+  // none; the ALPNCallback argument is built from the same call. Node's own
+  // test-https-agent-sni.js branches on `servername !== false`.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1094-L1096
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L243
+  const sniCases: [label: string, servername: string | undefined, expected: string | false][] = [
+    ["the client sent no SNI", undefined, false],
+    ["the client sent SNI", "sni.example.com", "sni.example.com"],
+  ];
+  // @types/node does not declare the property.
+  const servernameOf = (socket: TLSSocket) => (socket as unknown as { servername: unknown }).servername;
+
+  it.each(sniCases)(
+    "socket.servername and the ALPNCallback servername report what the ClientHello carried (%s)",
+    async (_label, servername, expected) => {
+      let alpnServername: unknown = "ALPNCallback did not run";
+      const server = createServer({
+        ...COMMON_CERT,
+        ALPNCallback: ({ servername: offered, protocols }) => {
+          alpnServername = offered;
+          return protocols[0];
+        },
+      });
+      const observed = Promise.withResolvers<{ socket: unknown; alpn: unknown }>();
+      server.on("secureConnection", socket => {
+        observed.resolve({ socket: servernameOf(socket), alpn: alpnServername });
+        socket.end();
+      });
+      server.on("tlsClientError", observed.reject);
+      let client: TLSSocket | undefined;
+      try {
+        const port = await listen(server);
+        // An IP host gets no SNI of its own: only `servername` adds one.
+        client = connect({ port, host: "127.0.0.1", servername, ALPNProtocols: ["a"], rejectUnauthorized: false });
+        client.on("error", observed.reject);
+        expect(await observed.promise).toEqual({ socket: expected, alpn: expected });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    },
+  );
+
+  it.each(sniCases)(
+    "a standalone server-side TLSSocket wrap reports servername after 'secure' (%s)",
+    async (_label, servername, expected) => {
+      const raw = net.createServer();
+      const observed = Promise.withResolvers<unknown>();
+      let secured: TLSSocket | undefined;
+      raw.on("connection", socket => {
+        secured = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
+        secured.on("error", observed.reject);
+        secured.on("secure", () => {
+          observed.resolve(servernameOf(secured!));
+          secured!.end();
+        });
+      });
+      let client: TLSSocket | undefined;
+      try {
+        const port = await listen(raw as unknown as Server);
+        client = connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
+        client.on("error", observed.reject);
+        expect(await observed.promise).toBe(expected);
+      } finally {
+        client?.destroy();
+        secured?.destroy();
+        raw.close();
+      }
+    },
+  );
 });
 
 describe("throwing 'secureConnection' listener", () => {

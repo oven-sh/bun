@@ -84,6 +84,61 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
   }
 });
 
+// Every event-loop tick sanitizes the stack region the previous turns used
+// (Bun__JSC_onLoopTick), so a GC run from a later turn does not conservatively
+// find JSValues those turns left behind in it. That used to happen only on
+// ticks that were about to park (as a side effect of Bun__JSC_onBeforeWait), so
+// a loop kept busy by setImmediate never got it: the finished async function
+// below (its generator, found through a stale slot, still pins `list` and both
+// objects) survived ~17 consecutive Bun.gc(true) calls, until unrelated stack
+// traffic overwrote the slot. The same loop driven by setTimeout(0) parks on
+// every turn and collected it on the first GC.
+describe.concurrent("objects dropped by an earlier turn are collected by the next GC", () => {
+  const yields = {
+    setImmediate: "new Promise(r => setImmediate(r))",
+    setTimeout: "new Promise(r => setTimeout(r, 0))",
+  };
+  for (const garbageYield of Object.keys(yields) as (keyof typeof yields)[]) {
+    for (const loopYield of Object.keys(yields) as (keyof typeof yields)[]) {
+      test(`garbage made across ${garbageYield} turns, GC loop yielding via ${loopYield}`, async () => {
+        const src = `
+          const refs = [];
+          async function makeGarbage() {
+            const list = [];
+            for (let i = 0; i < 2; i++) {
+              const o = { i };
+              list.push(o);
+              refs.push(new WeakRef(o));
+              await ${yields[garbageYield]};
+            }
+            await Promise.all(list.map(o => Promise.resolve(o.i)));
+          }
+          await makeGarbage();
+          let gcs = 0;
+          do {
+            await ${yields[loopYield]};
+            Bun.gc(true);
+            gcs++;
+          } while (gcs < 8 && refs.some(ref => ref.deref() !== undefined));
+          console.log(JSON.stringify({ gcs, alive: refs.filter(ref => ref.deref() !== undefined).length }));
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const { gcs, alive } = JSON.parse(stdout);
+        expect(alive).toBe(0);
+        // The sanitize sits between a tick's immediates and its poll, so garbage
+        // dropped in the timer phase is still on the stack for a GC run from the
+        // next tick's immediates (setTimeout garbage + setImmediate loop takes 2).
+        // A GC leaves the stack sanitized down to its own depth, so the GC after
+        // the next tick can never see it: 2 is a hard bound, unfixed needs ~17.
+        expect(gcs).toBeLessThanOrEqual(2);
+        expect(exitCode).toBe(0);
+      });
+    }
+  }
+});
+
 describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     const src = `

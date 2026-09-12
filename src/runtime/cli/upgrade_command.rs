@@ -743,36 +743,60 @@ impl UpgradeCommand {
                 );
                 Global::exit(1);
             }
-            let save_dir_it = match save_dir_.open_at(&version_name) {
-                Ok(d) => d,
-                Err(err) => {
-                    Output::err_generic(
-                        "Failed to open temporary directory: {}",
-                        (bstr::BStr::new(err.name()),),
-                    );
-                    Global::exit(1);
-                }
-            };
+            let save_dir_it =
+                match save_dir_.open_at_with(&version_name, sys::O::NOFOLLOW | sys::O::CLOEXEC) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        Output::err_generic(
+                            "Failed to open temporary directory: {}",
+                            (bstr::BStr::new(err.name()),),
+                        );
+                        Global::exit(1);
+                    }
+                };
             let save_dir: sys::Dir = save_dir_it;
 
-            // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
-            let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
-            let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
-                Ok(p) => p,
-                Err(err) => {
+            // `mkdirat` made it ours and 0700; anything else was swapped in by another $TMPDIR user.
+            #[cfg(unix)]
+            {
+                let staging = match sys::fstat(save_dir.fd()) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        let _ = save_dir_.delete_tree(&version_name);
+                        Output::err_generic(
+                            "Failed to stat temporary directory: {}",
+                            (bstr::BStr::new(err.name()),),
+                        );
+                        Global::exit(1);
+                    }
+                };
+                // SAFETY: `geteuid` takes no arguments and cannot fail.
+                let euid = unsafe { libc::geteuid() };
+                let ours = (staging.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                    && staging.st_uid == euid
+                    && (staging.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0;
+                // Not ours, so not ours to delete either.
+                if !ours {
                     Output::err_generic(
-                        "Failed to read temporary directory: {}",
-                        (bstr::BStr::new(err.name()),),
+                        "Refusing to unpack the upgrade: another user can write to the staging directory {} in {}.\n\nSet $TMPDIR to a directory that only you can write to, then run `bun upgrade` again.",
+                        (
+                            bstr::BStr::new(&version_name),
+                            bstr::BStr::new(fs::RealFS::tmpdir_path()),
+                        ),
                     );
                     Global::exit(1);
                 }
-            };
+            }
 
-            let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
-            let _ = sys::chdir(tmpdir_z);
+            // The children inherit this cwd; a path would re-resolve to whatever now sits at the name.
+            if let Err(err) = sys::fchdir(save_dir.fd()) {
+                let _ = save_dir_.delete_tree(&version_name);
+                Output::err_generic(
+                    "Failed to enter temporary directory: {}",
+                    (bstr::BStr::new(err.name()),),
+                );
+                Global::exit(1);
+            }
 
             // SAFETY: literal ends with NUL.
             let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
@@ -840,7 +864,6 @@ impl UpgradeCommand {
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
@@ -886,13 +909,12 @@ impl UpgradeCommand {
                 }
                 #[cfg(windows)]
                 {
-                    // Run a powershell script to unzip the file
+                    // Run a powershell script to unzip the file into the inherited cwd.
                     let mut unzip_script = Vec::new();
                     write!(
                         &mut unzip_script,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \".\" -Force",
                         bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
-                        bun_fmt::escape_powershell(bstr::BStr::new(&tmpdir_path_buf[..tmpdir_path_len])),
                     )
                     .expect("oom");
 
@@ -943,7 +965,6 @@ impl UpgradeCommand {
                     let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
@@ -988,7 +1009,6 @@ impl UpgradeCommand {
                     let spawned = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&verify_argv),
                         envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Ignore,
                         stdin: spawn_sync::SyncStdio::Ignore,

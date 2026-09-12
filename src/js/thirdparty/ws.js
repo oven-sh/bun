@@ -30,6 +30,21 @@ function sendAfterClose(state, cb) {
   }
 }
 
+// The native SSLConfig has no `pfx` field; turn a PKCS#12 archive into PEM key/cert.
+function unsealPfx(tls) {
+  if (tls?.pfx == null) return tls;
+  const { processPfxOptions } = require("internal/tls");
+  tls = processPfxOptions(tls);
+  const pfxExtraCAs = tls._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    // A native `ca` replaces the default roots, so extend them here like Node's addCACert.
+    const ca = tls.ca ?? require("node:tls").getCACertificates("default");
+    tls.ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+    tls._pfxExtraCACerts = undefined;
+  }
+  return tls;
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -45,7 +60,7 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
-    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
+    const { rejectUnauthorized, ca, cert, key, pfx, passphrase } = connectOpts;
     if (rejectUnauthorized !== undefined) {
       newTlsOptions.rejectUnauthorized = rejectUnauthorized;
       hasTlsOptions = true;
@@ -60,6 +75,10 @@ function extractAgentOptions(agent) {
     }
     if (key) {
       newTlsOptions.key = key;
+      hasTlsOptions = true;
+    }
+    if (pfx) {
+      newTlsOptions.pfx = pfx;
       hasTlsOptions = true;
     }
     if (passphrase) {
@@ -219,6 +238,7 @@ class BunWebSocket extends EventEmitter {
           tlsOptions = agentTls;
         }
       }
+      tlsOptions = unsealPfx(tlsOptions);
     }
 
     const finishRequest = options?.finishRequest;

@@ -44,6 +44,9 @@ enum class EncodingCallbackType : uint8_t { Protocol,
     Search,
     Hash };
 
+// String::MaxLength, or the lower limit setSyntheticAllocationLimitForTesting sets.
+bool exceedsStringLimit(size_t length);
+
 bool isAbsolutePathname(StringView input, BaseURLStringType inputType);
 ExceptionOr<String> canonicalizeProtocol(StringView, BaseURLStringType valueType);
 String canonicalizeUsername(StringView value, BaseURLStringType valueType);

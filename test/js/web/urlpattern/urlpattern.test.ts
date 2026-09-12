@@ -1,6 +1,9 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
-import { describe, expect, test } from "bun:test";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { totalmem } from "node:os";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -206,4 +209,123 @@ describe("URLPattern", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
   });
+});
+
+// URLPattern builds a pattern string, a regular expression and a canonical URL
+// from input the caller sizes, so an input below the 2147483647 character string
+// limit produces a result above it. Each of those must report an error, not abort.
+//
+// setSyntheticAllocationLimitForTesting lowers the limit these five sites check,
+// which reaches them with 1 MiB. The base path escaper and the pathname join are
+// not here: everything they produce flows into the regexp generator, so under a
+// lowered limit no input can tell their check from its check. The real-limit
+// tests below cover those two.
+describe("string above the synthetic string length limit", () => {
+  const limit = 1024 * 1024;
+  // Built here, before beforeEach lowers the limit.
+  const long = Buffer.alloc(limit, "x").toString();
+  const overHalf = Buffer.alloc(limit / 2 + 16, "x").toString();
+  const outOfMemory = new RangeError("Out of memory");
+  let previousLimit = 0;
+
+  beforeEach(() => {
+    previousLimit = setSyntheticAllocationLimitForTesting(limit);
+  });
+
+  afterEach(() => {
+    setSyntheticAllocationLimitForTesting(previousLimit);
+  });
+
+  // The callbacks return nothing. If one returned a pattern that wrongly got built,
+  // toThrow would format it, which itself passes the lowered limit and throws
+  // "Out of memory", and the test would pass for the wrong reason.
+  test("a generated regular expression past the limit", () => {
+    // The group's value is written twice into the regexp, so half the limit is enough.
+    expect(() => {
+      new URLPattern({ pathname: "{a(" + overHalf + ")b}*" });
+    }).toThrow(outOfMemory);
+  });
+
+  test("a generated pattern string past the limit", () => {
+    // A group's name is in the pattern string and not in the regexp, so only the
+    // pattern string passes the limit.
+    expect(() => {
+      new URLPattern({ pathname: ":" + long });
+    }).toThrow(outOfMemory);
+  });
+
+  // match() turns a URLPatternInit it cannot process into no match, per the
+  // spec, so these report the failure as false and null instead of throwing.
+  test("a protocol that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ protocol: "*" });
+    expect(pattern.test({ protocol: long })).toBe(false);
+    expect(pattern.exec({ protocol: long })).toBe(null);
+  });
+
+  test("a pathname that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ pathname: "*" });
+    expect(pattern.test({ pathname: long })).toBe(false);
+  });
+
+  test("an opaque pathname that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ pathname: "*" });
+    expect(pattern.test({ protocol: "data", pathname: long })).toBe(false);
+  });
+});
+
+// The same two sites at the real limit, which no synthetic limit can stand in for.
+describe("pattern string above the string length limit", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const threw = { stdout: "RangeError Out of memory", stderr: "", exitCode: 0 };
+
+  // The child holds a 2.1 GB pathname. repeat() is faster than Buffer.alloc().toString()
+  // at this size even in a debug build, and it needs half the memory.
+  test.skipIf(totalmem() < 8 * 1024 ** 3)(
+    "the base path joined with a relative pathname throws",
+    async () => {
+      expect(
+        await run(`
+          const basePath = "/" + "x".repeat(1 << 20) + "/";
+          const pathname = "b".repeat(2 ** 31 - (1 << 19));
+          try {
+            new URLPattern({ pathname, baseURL: "https://e.com" + basePath });
+            console.log("no error");
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        `),
+      ).toEqual(threw);
+    },
+    60_000,
+  );
+
+  // The child commits about 6 GB, and escaping 2^30 characters takes minutes in
+  // a debug or ASAN build.
+  test.skipIf(isDebug || isASAN || totalmem() < 16 * 1024 ** 3)(
+    "a base path that escapes past the limit throws",
+    async () => {
+      expect(
+        await run(`
+          const path = "(".repeat(2 ** 30 + 16);
+          try {
+            new URLPattern({ baseURL: "https://e.com/" + path });
+            console.log("no error");
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        `),
+      ).toEqual(threw);
+    },
+    120_000,
+  );
 });

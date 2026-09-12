@@ -49,7 +49,6 @@ impl Mutex {
     /// Tries to acquire the mutex without blocking the caller's thread.
     /// Returns `false` if the calling thread would have to block to acquire it.
     /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
-    #[cfg(debug_assertions)]
     pub fn try_lock(&self) -> bool {
         self.impl_.try_lock()
     }
@@ -234,7 +233,6 @@ unsafe impl Send for WindowsImpl {}
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
     // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
-    #[cfg(debug_assertions)]
     safe fn TryAcquireSRWLockExclusive(
         lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
     ) -> u8;
@@ -248,7 +246,6 @@ impl WindowsImpl {
         }
     }
 
-    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
@@ -299,7 +296,6 @@ pub(crate) struct OsUnfairLock {
 // `os_unfair_lock_unlock` takes the address instead: see `Mutex::unlock_raw`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
-    #[cfg(debug_assertions)]
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
     fn os_unfair_lock_unlock(lock: *mut OsUnfairLock);
@@ -313,7 +309,6 @@ impl DarwinImpl {
         }
     }
 
-    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         os_unfair_lock_trylock(&self.oul)
     }

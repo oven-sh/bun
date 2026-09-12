@@ -455,13 +455,11 @@ impl Write for StderrWriter {
 mod draft {
 
     use core::cell::Cell;
-    use core::ffi::c_char;
     #[cfg(not(windows))]
     use core::ffi::c_int;
     #[cfg(windows)]
     use core::ffi::c_long;
-    #[cfg(not(windows))]
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
     use core::fmt;
     // D101: `core::fmt::Write` intentionally NOT in scope here — `bun_io::Write`
     // (via `super::Write`) supplies `write_fmt` for `BoundedArray<u8,N>`; importing
@@ -612,6 +610,77 @@ mod draft {
     /// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
     /// things that affect crash reporting. See suppressReporting() for intended usage.
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
+
+    /// Dumps state to disk when the process crashes (bake's `DevServer` with
+    /// `BUN_DUMP_STATE_ON_CRASH`). See [`append_pre_crash_handler`].
+    pub trait PreCrashHandler {
+        /// Runs on the crashing thread after the crash report has been printed.
+        /// `self` may be mid-mutation on another thread: only read, trust nothing.
+        fn on_crash(&self);
+    }
+
+    struct PreCrashHandlerEntry {
+        handler: *const c_void,
+        /// `run_pre_crash_handler::<T>` for the `T` that `handler` points to.
+        run: unsafe fn(*const c_void),
+    }
+
+    // SAFETY: `handler` is only dereferenced by `run`, and stays live until
+    // `remove_pre_crash_handler` (the `append_pre_crash_handler` contract).
+    unsafe impl Send for PreCrashHandlerEntry {}
+
+    static PRE_CRASH_HANDLERS: bun_threading::Guarded<Vec<PreCrashHandlerEntry>> =
+        bun_threading::Guarded::new(Vec::new());
+
+    /// # Safety
+    /// `handler` must be the live `*const T` passed to `append_pre_crash_handler::<T>`.
+    unsafe fn run_pre_crash_handler<T: PreCrashHandler>(handler: *const c_void) {
+        // SAFETY: per fn contract.
+        unsafe { (*handler.cast::<T>()).on_crash() }
+    }
+
+    /// Registers `handler` to run if the process crashes. Best effort: it is
+    /// skipped if the crash happens while the list itself is being modified.
+    ///
+    /// # Safety
+    /// `*handler` must stay live at this address until [`remove_pre_crash_handler`].
+    pub unsafe fn append_pre_crash_handler<T: PreCrashHandler>(handler: *const T) {
+        PRE_CRASH_HANDLERS.lock().push(PreCrashHandlerEntry {
+            handler: handler.cast(),
+            run: run_pre_crash_handler::<T>,
+        });
+    }
+
+    /// No-op if `handler` is not registered.
+    pub fn remove_pre_crash_handler<T: PreCrashHandler>(handler: *const T) {
+        let handler: *const c_void = handler.cast();
+        let mut handlers = PRE_CRASH_HANDLERS.lock();
+        if let Some(index) = handlers.iter().position(|entry| entry.handler == handler) {
+            handlers.remove(index);
+        }
+    }
+
+    /// Called once the report is printed, by `crash_handler` and `rust_panic_hook`.
+    fn run_pre_crash_handlers() {
+        static RAN: AtomicBool = AtomicBool::new(false);
+        if RAN.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // The crashing thread may be the one holding the lock.
+        let Some(handlers) = PRE_CRASH_HANDLERS.try_lock() else {
+            return;
+        };
+        if handlers.is_empty() {
+            return;
+        }
+        for entry in handlers.iter() {
+            // SAFETY: `run` was instantiated for the type `handler` points to, and
+            // `handler` is live until removed (`append_pre_crash_handler` contract).
+            unsafe { (entry.run)(entry.handler) };
+        }
+        // The handlers' `note!`/`warn!` output is buffered; the callers abort without flushing.
+        Output::flush();
+    }
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
     #[derive(Clone, Copy)]
@@ -1180,6 +1249,8 @@ mod draft {
                 // Be aware that this function only lets one thread return from it.
                 // This is important so that we do not try to run the following reload logic twice.
                 wait_for_other_thread_to_finish_panicking();
+
+                run_pre_crash_handlers();
 
                 report(trace_str_buf.const_slice());
 
@@ -1840,6 +1911,8 @@ mod draft {
                 let _ = writer.write_all(b"\n");
             }
         }
+
+        run_pre_crash_handlers();
 
         report(trace_str_buf.const_slice());
 

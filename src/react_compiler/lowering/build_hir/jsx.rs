@@ -265,13 +265,17 @@ pub(super) fn lower_jsx_call(
             }
         }
 
-        for prop in obj.properties.iter() {
+        let last_index = obj.properties.len().saturating_sub(1);
+        for (index, prop) in obj.properties.iter().enumerate() {
             if matches!(prop.kind, G::PropertyKind::Spread) {
                 let value = prop.value.as_ref().ok_or_else(|| {
                     todo_err("(BuildHIR::lowerJsxCall) spread without value", loc)
                 })?;
                 let argument = lower_expression_to_temporary(builder, value)?;
                 props.push(JsxAttribute::SpreadAttribute { argument });
+                continue;
+            }
+            if record_accessor_prop(builder, prop)? {
                 continue;
             }
             let Some(key_expr) = prop.key.as_ref() else {
@@ -293,7 +297,11 @@ pub(super) fn lower_jsx_call(
                 continue;
             };
 
-            if name == b"children" {
+            // The visit pass appends the JSX children as the last property.
+            // Any earlier `children` key is an attribute (or came from an
+            // inlined `{...{children}}` spread) that a later key overrides at
+            // runtime, so it stays an attribute and keeps its position.
+            if name == b"children" && index == last_index {
                 lower_jsx_children(builder, value_expr, is_static_children, &mut children)?;
                 continue;
             }
@@ -313,6 +321,9 @@ pub(super) fn lower_jsx_call(
                         })?;
                         let argument = lower_expression_to_temporary(builder, value)?;
                         props.push(JsxAttribute::SpreadAttribute { argument });
+                        continue;
+                    }
+                    if record_accessor_prop(builder, prop)? {
                         continue;
                     }
                     let Some(key_expr) = prop.key.as_ref() else {
@@ -406,6 +417,29 @@ fn lower_jsx_children(
     }
     out.push(lower_expression_to_temporary(builder, value)?);
     Ok(())
+}
+
+/// The visit pass inlines `<a {...{ get g() {} }} />` into the props object, so
+/// a getter or setter can reach here. A `JsxAttribute` holds a value, not an
+/// accessor, so the function is left uncompiled, as `lower_object_method` does
+/// for an accessor in an object literal. Returns true when `prop` is one.
+fn record_accessor_prop(
+    builder: &mut HirBuilder,
+    prop: &G::Property,
+) -> Result<bool, CompilerError> {
+    let kind = match prop.kind {
+        G::PropertyKind::Get => "get",
+        G::PropertyKind::Set => "set",
+        _ => return Ok(false),
+    };
+    builder.record_error(CompilerErrorDetail {
+        category: ErrorCategory::Todo,
+        reason: format!("(BuildHIR::lowerJsxCall) Handle {kind} functions in JSX props"),
+        description: None,
+        loc: convert_loc(prop.key.as_ref().map_or(Loc::EMPTY, |key| key.loc)),
+        suggestions: None,
+    })?;
+    Ok(true)
 }
 
 fn todo_err(reason: &str, loc: Option<SourceLocation>) -> CompilerError {

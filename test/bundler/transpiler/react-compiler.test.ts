@@ -1139,6 +1139,82 @@ describe("bundler", () => {
     },
   });
 
+  // The parser turns `<div children="x">y</div>` into
+  // `jsx("div", { children: "x", children: "y" })`: the JSX children are the
+  // last property, so they replace every earlier `children` key. It also
+  // inlines `{...{ k: v }}` into that object. The compiler reads the element
+  // back from the call, and has to keep each key in place and keep a getter a
+  // getter.
+  itBundled("react-compiler/ChildrenAttributeIsNotAJsxChild", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Attr(p) { return <div children="x">y</div>; }
+        function AttrExpr(p) { return <div children={p.a}>{p.b}</div>; }
+        function TwoAttrs(p) { return <div children="a" children="b" />; }
+        function InlineSpread(p) { return <div {...{ children: "sp" }}>real</div>; }
+        function AttrThenSpread(p) { return <div children="x" {...p} />; }
+        function AttrSpreadChildren(p) { return <div children="x" {...p}>{p.a}{p.b}</div>; }
+        function SpreadThenAttr(p) { return <div {...p} children="x" />; }
+        function Getter(p) { return <i {...{ get g() { return p.a; } }} />; }
+        console.log(JSON.stringify({
+          Attr: Attr({}).p.children,
+          AttrExpr: AttrExpr({ a: 1, b: "x" }).p.children,
+          TwoAttrs: TwoAttrs({}).p.children,
+          InlineSpread: InlineSpread({}).p.children,
+          AttrThenSpread: [AttrThenSpread({ children: "q" }).p.children, AttrThenSpread({}).p.children],
+          AttrSpreadChildren: AttrSpreadChildren({ a: 1, b: 2, children: "q" }).p.children,
+          SpreadThenAttr: SpreadThenAttr({ children: "q" }).p.children,
+          Getter: Getter({ a: 5 }).p.g,
+        }));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout: JSON.stringify({
+        Attr: "y",
+        AttrExpr: "x",
+        TwoAttrs: "b",
+        InlineSpread: "real",
+        AttrThenSpread: ["q", "x"],
+        AttrSpreadChildren: [1, 2],
+        SpreadThenAttr: "x",
+        Getter: 5,
+      }),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const body = (name: string) => {
+        const start = out.indexOf(`function ${name}(`);
+        return out.slice(start, out.indexOf("\nfunction ", start + 1));
+      };
+      // A compiled component reads its memo cache. The getter has no JSX
+      // attribute form, so that one component is left as written.
+      const compiled = [
+        "Attr",
+        "AttrExpr",
+        "TwoAttrs",
+        "InlineSpread",
+        "AttrThenSpread",
+        "AttrSpreadChildren",
+        "SpreadThenAttr",
+        "Getter",
+      ].filter(name => /\$\[\d+\]/.test(body(name)));
+      expect(compiled).toEqual([
+        "Attr",
+        "AttrExpr",
+        "TwoAttrs",
+        "InlineSpread",
+        "AttrThenSpread",
+        "AttrSpreadChildren",
+        "SpreadThenAttr",
+      ]);
+      expect(body("Getter")).toContain("get g()");
+    },
+  });
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this

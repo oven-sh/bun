@@ -2549,28 +2549,31 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
-  // The key-after-spread warning is for the automatic runtime only. With the
-  // default log level a warning makes these calls throw.
-  it("JSX key after spread does not warn when a @jsxRuntime pragma selects classic", () => {
-    const transpiler = new Bun.Transpiler({ loader: "jsx" });
+  describe("JSX key after spread", () => {
     const jsx = `export const el = <div {...obj} key="after" />;`;
-    const output = `export const el = React.createElement("div", {\n  ...obj,\n  key: "after"\n});\n`;
 
-    for (const input of [`/** @jsxRuntime classic */\n${jsx}`, `${jsx}\n/** @jsxRuntime classic */`]) {
-      expect(transpiler.transformSync(input)).toBe(output);
+    // The warning is for the automatic runtime only. With the default log
+    // level a warning makes these calls throw.
+    it.each([
+      ["before the JSX", `/** @jsxRuntime classic */\n${jsx}`],
+      ["after the JSX", `${jsx}\n/** @jsxRuntime classic */`],
+    ])("does not warn with a @jsxRuntime classic pragma %s", (_, input) => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx" });
+      expect(transpiler.transformSync(input)).toBe(
+        `export const el = React.createElement("div", {\n  ...obj,\n  key: "after"\n});\n`,
+      );
       expect(transpiler.scan(input)).toEqual({ exports: ["el"], imports: [] });
-    }
-  });
+    });
 
-  // scanImports runs the parse pass only. It does not transform the JSX, so it
-  // has no fallback to warn about, with any runtime.
-  it("scanImports does not throw on a JSX key after spread", () => {
-    const transpiler = new Bun.Transpiler({ loader: "jsx" });
-    const jsx = `import { obj } from "./obj";\nexport const el = <div {...obj} key="after" />;`;
-
-    for (const input of [jsx, `/** @jsxRuntime classic */\n${jsx}`]) {
+    // scanImports runs the parse pass only. It does not transform the JSX, so it
+    // has no fallback to warn about, with any runtime.
+    it.each([
+      ["the automatic runtime", `import { obj } from "./obj";\n${jsx}`],
+      ["a @jsxRuntime classic pragma", `/** @jsxRuntime classic */\nimport { obj } from "./obj";\n${jsx}`],
+    ])("scanImports does not throw with %s", (_, input) => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx" });
       expect(transpiler.scanImports(input)).toContainEqual({ kind: "import-statement", path: "./obj" });
-    }
+    });
   });
 
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer

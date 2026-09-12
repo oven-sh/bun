@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -424,6 +425,18 @@ describe("bundler", () => {
       jsx: { runtime: "classic" },
       bundleWarnings: { "/index.jsx": [warning] },
       run: { stdout: `["react","div",{"a":1,"key":"k"},[]]` },
+    });
+
+    test("the warning points at the spread before the key", async () => {
+      const source = `export const el = <div {...first} key="k" {...last} />;`;
+      using dir = tempDir("jsx-key-after-spread-location", { "index.jsx": source });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.jsx")],
+        external: ["react", "react/*"],
+      });
+      expect(build.logs.map(({ message, position }) => ({ message, offset: position?.offset }))).toEqual([
+        { message: warning, offset: source.indexOf("first") },
+      ]);
     });
   });
   itBundledDevAndProd("jsx/PragmaMultiple", {

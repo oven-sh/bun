@@ -385,6 +385,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .properties
                         .slice()
                         .iter()
+                        .take(e_.key_prop_index as u32 as usize)
                         .rev()
                         .find(|property| property.kind == G::PropertyKind::Spread)
                         .and_then(|property| property.value)

@@ -405,6 +405,84 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.dir/c.txt", "c");
     });
 
+    // The "copy to a subdirectory of self" guard is a path-string prefix check,
+    // so a destination reached through a symlink that points into the source
+    // tree defeats it and the walker re-enters src on every level until
+    // ENAMETOOLONG, leaving a deep garbage subtree behind. checkParentPaths
+    // now realpath-resolves both sides before comparing.
+    test("rejects symlink-aliased dest that resolves into src", async () => {
+      using dir = tempDir("cp-alias-subdir", {
+        "src/sub/.keep": "",
+      });
+      const base = String(dir);
+      const src = join(base, "src");
+      fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+      // Long component so the unfixed recursion hits ENAMETOOLONG in a handful
+      // of levels instead of hundreds.
+      const destName = Buffer.alloc(200, "d").toString();
+
+      const err = await copyShouldThrow(src, join(base, "alias", destName), { recursive: true });
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
+      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
+    });
+
+    test("rejects symlink-aliased dest with missing intermediate directories", async () => {
+      using dir = tempDir("cp-alias-deep", {
+        "src/sub/.keep": "",
+      });
+      const base = String(dir);
+      const src = join(base, "src");
+      fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+      const destName = Buffer.alloc(200, "d").toString();
+
+      const err = await copyShouldThrow(src, join(base, "alias", "a", "b", destName), { recursive: true });
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
+      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
+    });
+
+    test("rejects relative-symlink-aliased dest that resolves into src", async () => {
+      using dir = tempDir("cp-alias-rel", {
+        "src/sub/.keep": "",
+      });
+      const base = String(dir);
+      const src = join(base, "src");
+      fs.symlinkSync(join("src", "sub"), join(base, "alias"), "junction");
+      const destName = Buffer.alloc(200, "d").toString();
+
+      const err = await copyShouldThrow(src, join(base, "alias", destName), { recursive: true });
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
+      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
+    });
+
+    // Negative control: a symlinked dest that lands outside src must still
+    // copy normally.
+    test("allows symlink-aliased dest that resolves outside src", async () => {
+      using dir = tempDir("cp-alias-outside", {
+        "src/file.txt": "payload",
+        "other/.keep": "",
+      });
+      const base = String(dir);
+      fs.symlinkSync(join(base, "other"), join(base, "alias"), "junction");
+
+      await copy(join(base, "src"), join(base, "alias", "copy"), { recursive: true });
+      expect(fs.readFileSync(join(base, "other", "copy", "file.txt"), "utf8")).toBe("payload");
+    });
+
+    // Negative control: dest reached through a symlink to src's parent lands
+    // as a sibling of src, not inside it; the realpath comparison must not
+    // over-reject this.
+    test("allows symlink-aliased dest that resolves to a sibling of src", async () => {
+      using dir = tempDir("cp-alias-sibling", {
+        "src/file.txt": "payload",
+      });
+      const base = fs.realpathSync(String(dir));
+      fs.symlinkSync(base, join(base, "plink"), "junction");
+
+      await copy(join(base, "src"), join(base, "plink", "pcopy"), { recursive: true });
+      expect(fs.readFileSync(join(base, "pcopy", "file.txt"), "utf8")).toBe("payload");
+      expect(fs.readdirSync(join(base, "src"))).toEqual(["file.txt"]);
+    });
+
     test.if(process.platform === "win32")("should not throw EBUSY when copying the same file on windows", async () => {
       await using basename = tempDir("cp", {
         "hey": "hi",

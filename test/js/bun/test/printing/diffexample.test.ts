@@ -1007,7 +1007,8 @@ describe.concurrent("a value that reaches the same objects many times", () => {
     `);
     expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
     expect(stderr).toContain("expect(received).toEqual(expected)");
-    expect(stderr).toContain("[Object],");
+    // An abbreviated child of an element is a line of its own, with no comma.
+    expect(stderr).toMatch(/^\+\s+\[Object\]$/m);
     expect(stderr).toContain(
       "note: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier",
     );

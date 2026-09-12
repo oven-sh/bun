@@ -1037,6 +1037,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
+        let mut body_from_response = false;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1191,6 +1192,7 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
+                                body_from_response = true;
                             }
                         }
                     }
@@ -1399,7 +1401,9 @@ impl Request {
         req.url.set(href);
 
         // Fetch spec `new Request()` step 36, with the zero-byte rule `fetch()` uses.
-        if matches!(req.method, Method::GET | Method::HEAD)
+        // A body taken from a Response init is a Bun extension outside the spec.
+        if !body_from_response
+            && matches!(req.method, Method::GET | Method::HEAD)
             && req.body_value_mut().has_request_body()
         {
             bail!(Err(global_this.throw_type_error(format_args!(

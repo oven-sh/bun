@@ -1050,10 +1050,9 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
   const twoArg = new Request(twoArgSrc, { headers: { "x-a": "1" } });
   const oneArgSrc = make();
   const oneArg = new Request(oneArgSrc);
-  // Bun extension: a Response as the second argument contributes its body and
-  // method via the sibling Response-source branch in construct_into.
-  // @ts-expect-error method is a Bun extension on ResponseInit
-  const responseSrc = new Response(stream(), { method: "POST" });
+  // Bun extension: a Response as the second argument contributes its body via
+  // the sibling Response-source branch in construct_into.
+  const responseSrc = new Response(stream());
   // @ts-expect-error Bun accepts a Response as init
   const fromResponse = new Request("http://example.com/", responseSrc);
   expect({

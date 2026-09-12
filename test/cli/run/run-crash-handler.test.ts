@@ -151,6 +151,37 @@ test("the crash report lists the CPU features", async () => {
   expect(exitCode).not.toBe(0);
 });
 
+// bun.report decodes the v1/v2 trace string positionally:
+// <platform char><command char><format version char><7-char commit sha><vlq...>.
+// This pins the offset and content of the version and sha segments. The sha
+// length itself is a compile-time assert next to GIT_SHA in the crash handler.
+test("crash report trace string embeds the 7-char commit sha", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    // Unset rather than empty: an unset BUN_CRASH_REPORT_URL prints the
+    // default base, and BUN_ENABLE_CRASH_REPORTING=0 keeps the upload off.
+    env: { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: "0" },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
+
+  // The report URL is printed as <base>/<bun version>/<trace string...>.
+  const base = "https://bun.report/";
+  const start = stderr.indexOf(base);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const reportUrl = stderr.slice(start).split(/\s/, 1)[0];
+  const [, version, metadata] = new URL(reportUrl).pathname.split("/");
+  expect(version.length).toBeGreaterThan(0);
+
+  // metadata[0] is the platform char and metadata[1] the command char (one
+  // byte each), so the format version and sha always start at fixed offsets.
+  expect(metadata[2]).toMatch(/^[12]$/);
+  const expectedSha = Bun.revision ? Bun.revision.slice(0, 7) : "unknown";
+  expect(metadata.slice(3, 10)).toBe(expectedSha);
+  expect(exitCode).not.toBe(0);
+});
+
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
 describe.if(isPosix)("cwd deleted before startup", () => {
   test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {

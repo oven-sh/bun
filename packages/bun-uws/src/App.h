@@ -375,6 +375,7 @@ public:
         bool sendPingsAutomatically = true;
         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
         unsigned short maxLifetime = 0;
+        bool allowAnySecWebSocketKey = false;
         MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
@@ -576,7 +577,7 @@ public:
 
             /* If we have this header set, it's a websocket */
             std::string_view secWebSocketKey = req->getHeader("sec-websocket-key");
-            if (secWebSocketKey.length() == 24) {
+            if (secWebSocketKey.length() == 24 || (behavior.allowAnySecWebSocketKey && behavior.upgrade && secWebSocketKey.length())) {
 
                 /* Emit upgrade handler */
                 if (behavior.upgrade) {

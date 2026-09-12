@@ -1425,6 +1425,17 @@ impl Run<'_> {
             }
         }
 
+        // VM setup already read the project root (`configure_linker`,
+        // `run_env_loader`). A tsconfig.json or package.json there that
+        // fails to parse is in the log now. Print it before the entry
+        // point runs: a rejected entry point exits below without reaching
+        // the end-of-run dump, and the parse error is the real cause of
+        // a `Cannot find module` for a `paths` alias.
+        if log_has_msgs(vm) {
+            dump_build_error(vm);
+            log_clear_msgs(vm);
+        }
+
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.

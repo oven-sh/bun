@@ -1238,6 +1238,11 @@ pub fn enqueue_planned_fixes(manager: &mut PackageManager) -> crate::Result<()> 
                 continue;
             };
             enqueue_pinned_as(manager, live_dep_id, pkg_name, pin.to_version)?;
+            let fixed_rows = &mut manager.fixed_rows;
+            if fixed_rows.bit_length() <= live_dep_id as usize {
+                bun_core::handle_oom(fixed_rows.resize(live_dep_id as usize + 1, false));
+            }
+            fixed_rows.set(live_dep_id as usize);
             manager.summary.update += 1;
         }
     }

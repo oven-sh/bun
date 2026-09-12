@@ -36,6 +36,8 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 ### What is held back
 
 - Bun never widens ranges. A package that depends on `foo@^1.0.0` never gets `foo@2.x`.
+- A transitive dependency that shares the copy your own `package.json` entry resolves to (in the root or in a workspace) stays on that copy and moves with it. With `@types/node: ~20` in your `package.json`, the `@types/node: *` that `@types/ws` declares keeps using your `~20` copy instead of nesting the newest major under `@types/ws`. Bun updates a transitive range on its own when it rejects the version your entry moves to, or when you removed the entry.
+- After resolving, Bun collapses the versions it added onto the fewest that satisfy every range, so it does not add a copy that an existing version could cover. Two dependencies declaring `foo@^1` and `foo@*` share one `1.x` copy, on `bun install` and on `bun update` alike. Versions already in `bun.lock`, your own `package.json` entries, and `bun audit fix` pins are never moved by this.
 - Versions in `patchedDependencies` stay put as long as their range allows. Bun reports them as `kept name@version (patched, v1.2.3 available)`. `--latest` and [`bun audit fix`](/pm/cli/audit#bun-audit-fix) do move them; re-create the patch with [`bun patch`](/pm/cli/patch) afterwards.
 - If a registry request for a transitive package fails, that package keeps its locked version and Bun prints a warning. A failed request for a direct dependency is an error.
 

@@ -652,6 +652,9 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    if manager.subcommand != Subcommand::Dedupe {
+        crate::dedupe::collapse_appended(manager);
+    }
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 

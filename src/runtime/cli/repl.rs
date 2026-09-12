@@ -199,10 +199,12 @@ impl History {
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let Some(path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
             &mut path_buf,
             &[home_path, HISTORY_FILENAME],
-        );
+        ) else {
+            return Ok(());
+        };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {

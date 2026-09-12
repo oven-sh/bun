@@ -240,6 +240,53 @@ describe.concurrent("long import path overflow", () => {
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
   });
+
+  // The other direction: a short import with a tsconfig whose `baseUrl` is
+  // itself longer than a PathBuffer. A relative one is joined with the tsconfig
+  // directory in parse_tsconfig; an absolute one is joined with an exact `paths`
+  // target in match_tsconfig_paths. Every component is a valid name.
+  it.each(["./", "/"])("tsconfig baseUrl longer than PATH_MAX (prefix %s)", async prefix => {
+    const baseUrl = prefix + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    using dir = tempDir("resolve-long-baseurl", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl, paths: { "somebare/y": ["./lib/y.ts"], "somebare/*": ["./lib/*"] } },
+      }),
+      "e.ts": `import x from "somebare/y"; console.log(x);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "e.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Cannot find module 'somebare/y'`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  it("tsconfig extends longer than PATH_MAX", async () => {
+    const parent = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".json";
+    using dir = tempDir("resolve-long-extends", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "tsconfig.json": JSON.stringify({ extends: parent, compilerOptions: {} }),
+      "e.ts": `console.log("ok");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "e.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`

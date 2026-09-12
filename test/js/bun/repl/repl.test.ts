@@ -1864,6 +1864,17 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   });
 });
 
+test("skips the history file when $HOME is longer than PATH_MAX", async () => {
+  // 4220 bytes, each component short enough to be a valid name. The directory
+  // does not exist; the REPL used to abort while joining `$HOME/.bun_repl_history`
+  // into a fixed-size path buffer.
+  const home = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home });
+  expect(outputs).toEqual(["2"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a
 // debug+asan build that is ~4–5s per spawn, so the 5s default is too tight.
 const interactiveTimeout = 20_000;

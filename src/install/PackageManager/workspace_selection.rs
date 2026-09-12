@@ -4,7 +4,7 @@ use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string_buf, join_abs_string_buf_checked, platform};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -103,12 +103,13 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     }
 
     let resolve = |part: &[u8], path_buf: &mut [u8]| -> Box<[u8]> {
-        strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-            original_cwd,
-            path_buf,
-            &[part],
-        ))
-        .into()
+        let Some(joined) =
+            join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
+        else {
+            Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
+            Global::crash();
+        };
+        strings::without_trailing_slash(joined).into()
     };
 
     let base = if remain == b"*" || remain == b"**" {

@@ -197,6 +197,35 @@ server.close();`,
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
   });
 
+  // A PathBuffer holds 98302 bytes on Windows, so the path would fit there and
+  // the build would go on to download the target.
+  test.skipIf(isWindows)(
+    "cross-compile with a cache directory longer than PATH_MAX fails with a clean error",
+    async () => {
+      using dir = tempDir("build-compile-long-cache-dir", {
+        "s.js": `console.log(1);`,
+      });
+      // The cross-compile target binary is cached under $BUN_INSTALL_CACHE_DIR (or
+      // $HOME). 4220 bytes of valid components: the cache path is built (and used
+      // to abort the process) before anything is downloaded.
+      const longDir = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+      const target = "bun-windows-x64";
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "s.js", "--compile", `--target=${target}`, "--outfile", "w"],
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: longDir },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout + stderr).toContain(`Cache directory for '${target}-v`);
+      expect(stdout + stderr).toContain("is too long (File name too long)");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),
   // which by itself takes a good part of the default per-test timeout.
   test.each(["output/nested/app1", "app2", "a/b/c/d/app3"])(

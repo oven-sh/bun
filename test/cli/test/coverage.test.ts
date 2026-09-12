@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -55,6 +55,32 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+// A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+test.skipIf(isWindows)("lcov reporter reports a --coverage-dir longer than PATH_MAX instead of crashing", async () => {
+  // Coverage of a non-test module, so there is a report to write in release
+  // builds too (those skip test files by default).
+  using dir = tempDir("cov-long-dir", {
+    "package.json": "{}",
+    "math.ts": `export function add(a: number, b: number) { return a + b; }`,
+    "a.test.ts": `import { test, expect } from "bun:test"; import { add } from "./math"; test("ok", () => { expect(add(1, 1)).toBe(2); });`,
+  });
+  // 4220 bytes of valid components; joining `<dir>/lcov.info` into a
+  // fixed-size path buffer used to abort the process after the tests had run.
+  const coverageDir = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", `--coverage-dir=${coverageDir}`, "./a.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("Failed to write lcov.info to aaaa");
+  expect(stderr).toContain("ENAMETOOLONG");
+  expect(exitCode).toBe(1);
 });
 
 test("coverage excludes node_modules directory", () => {

@@ -40,6 +40,30 @@ describe("bun", () => {
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
   });
+
+  // `./<long>` and absolute paths were length-checked; the `../` and `~` arm
+  // joined the argument with the cwd into a fixed-size path buffer unchecked.
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows).each([["../"], ["run", "../"]])(
+    "a %s-prefixed path longer than PATH_MAX is a module-not-found error",
+    (...args) => {
+      const prefix = args.pop();
+      const long = prefix + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+      using dir = tempDir("run-long-dotdot", {
+        "package.json": JSON.stringify({ name: "p", scripts: { hi: "echo hi" } }),
+      });
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: String(dir),
+        cmd: [bunExe(), ...args, long],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toBeEmpty();
+      expect(stderr.toString()).toContain(`error: Module not found "${long}"`);
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 test.if(isWindows)("[windows] A file in drive root runs", async () => {

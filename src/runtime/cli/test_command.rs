@@ -897,17 +897,25 @@ impl JunitReporter {
 
         let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
+        let opened = if path.len() >= junit_path_buf.len() {
+            Err(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                    .with_path(path),
+            )
+        } else {
+            junit_path_buf[..path.len()].copy_from_slice(path);
+            junit_path_buf[path.len()] = 0;
 
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
-            Fd::cwd(),
-            zpath,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o664,
-        ) {
+            // SAFETY: junit_path_buf[path.len()] == 0 written above
+            let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
+            File::openat(
+                Fd::cwd(),
+                zpath,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o664,
+            )
+        };
+        match opened {
             bun_sys::Result::Err(err) => {
                 Output::err(
                     crate::Error::JUnitReportFailed,
@@ -1487,24 +1495,22 @@ impl CommandLineReporter {
         }
     }
 
+    /// Errors only from writing `lcov.info`; the caller fails the run.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bun_sys::Result<()> {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return Ok(());
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
-        if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
-        }
+        print_coverage_reports(opts, &reports)
     }
 }
 
@@ -1653,12 +1659,24 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
+    let too_long = || {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+            .with_path(&opts.reports_directory)
+    };
     let mut buf = bun_paths::path_buffer_pool::get();
-    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+    let tmp_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
         &[&opts.reports_directory, &tmpname],
-    );
+    )
+    .ok_or_else(too_long)?;
+    let mut final_buf = bun_paths::path_buffer_pool::get();
+    let final_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+        relative_dir,
+        &mut final_buf,
+        &[&opts.reports_directory, b"lcov.info"],
+    )
+    .ok_or_else(too_long)?;
     let file = File::openat(
         Fd::cwd(),
         tmp_path,
@@ -1668,15 +1686,7 @@ fn write_lcov_report(
     let written = file.write_all(&contents);
     drop(file);
     let moved = match written {
-        Ok(()) => bun_sys::move_file_z(
-            Fd::cwd(),
-            tmp_path,
-            Fd::cwd(),
-            resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                relative_dir,
-                &[&opts.reports_directory, b"lcov.info"],
-            ),
-        ),
+        Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), final_path),
         err => err,
     };
     if moved.is_err() {
@@ -2426,6 +2436,7 @@ impl TestCommand {
         Output::flush();
 
         let mut failed_to_find_any_tests = false;
+        let mut failed_to_write_coverage = false;
 
         if test_files.is_empty() && !pass_with_no_tests_from_filter {
             failed_to_find_any_tests = true;
@@ -2500,7 +2511,14 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                if let Err(err) = reporter.generate_code_coverage(vm, &mut coverage_options) {
+                    Output::err(
+                        err,
+                        "Failed to write lcov.info to {}",
+                        (bstr::BStr::new(&coverage_options.reports_directory),),
+                    );
+                    failed_to_write_coverage = true;
+                }
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2667,6 +2685,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || failed_to_write_coverage
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

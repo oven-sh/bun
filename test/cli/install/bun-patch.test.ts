@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -11,6 +11,42 @@ const platformPath = (path: string) => path;
 setDefaultTimeout(1000 * 60 * 5);
 
 describe("error messages", () => {
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows)("'bun patch' with a path longer than PATH_MAX reports an error", async () => {
+    await using dir = tempDir("bun-patch-long-path", {
+      "package.json": JSON.stringify({ name: "t", workspaces: ["pkgs/*"] }),
+      "pkgs/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    });
+    // 4220 bytes of valid components; joining `<arg>/package.json` into a
+    // fixed-size path buffer used to abort the process.
+    const arg = "node_modules/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    // From the workspace root.
+    let result = await run(String(dir), "patch", arg);
+    expect(result.stderr).toContain(`error: path is too long: "${arg}"`);
+    expect(result.exitCode).toBe(1);
+
+    // From a workspace member: the argument is first rewritten relative to the
+    // root (needs a lockfile that knows the workspace).
+    result = await run(String(dir), "install");
+    expect(result.stderr).not.toContain("error:");
+    expect(result.exitCode).toBe(0);
+    result = await run(join(String(dir), "pkgs", "a"), "patch", arg);
+    expect(result.stderr).toContain(`error: path is too long: "pkgs/a/${arg}"`);
+    expect(result.exitCode).toBe(1);
+  });
+
   test("'bun patch' with no package name shows a usage example", async () => {
     await using dir = tempDir("bun-patch-noarg", {
       "package.json": JSON.stringify({ name: "t" }),

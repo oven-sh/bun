@@ -90,17 +90,16 @@ mod bun_paths {
     pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
     }
-    /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
-    pub(super) fn join_abs_string_buf<'b>(
+    /// `resolve_path::join_abs_string_buf_checked` (value-dispatched).
+    pub(super) fn join_abs_string_buf_checked<'b>(
         cwd: &'b [u8],
         buf: &'b mut [u8],
         parts: &[&[u8]],
         platform: Platform,
-    ) -> &'b [u8] {
-        dispatch_platform!(
-            platform,
-            |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
-        )
+    ) -> Option<&'b [u8]> {
+        dispatch_platform!(platform, |P| {
+            ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
+        })
     }
     pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
         // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
@@ -4027,16 +4026,27 @@ impl<'a> Resolver<'a> {
                 None => return Ok(None),
             };
 
-        if result.has_base_url() {
-            // this might leak
-            if !bun_paths::is_absolute(&result.base_url) {
-                // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-                // copy `abs_buf`'s thread-local result directly instead of
-                // double-copying through the `dirname_store` arena.
-                let abs = self
-                    .fs_ref()
-                    .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
-                result.base_url = Box::from(abs);
+        if result.has_base_url() && !bun_paths::is_absolute(&result.base_url) {
+            // `base_url` owns its bytes, so copy the buffer result into it directly.
+            match self
+                .fs_ref()
+                .abs_buf_checked(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url))
+            {
+                Some(abs) => result.base_url = Box::from(abs),
+                None => {
+                    let _ = self.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Ignoring \"baseUrl\" in {} because it is too long",
+                            bun_core::fmt::quote(key_path)
+                        ),
+                    );
+                    result.base_url = Box::default();
+                    if result.paths.count() > 0 {
+                        result.base_url_for_paths = Box::from(b".".as_slice());
+                    }
+                }
             }
         }
 
@@ -4044,7 +4054,7 @@ impl<'a> Resolver<'a> {
             && (result.base_url_for_paths.is_empty()
                 || !bun_paths::is_absolute(&result.base_url_for_paths))
         {
-            // this might leak
+            // `base_url` is empty or the bounds-checked result from above, so this fits.
             let abs = self
                 .fs_ref()
                 .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
@@ -4780,8 +4790,13 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path =
-                                self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
+                            let Some(abs) = self
+                                .fs_ref()
+                                .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
+                            else {
+                                continue;
+                            };
+                            absolute_original_path = abs;
                         }
 
                         if self
@@ -6492,12 +6507,22 @@ impl<'a> Resolver<'a> {
                     );
                     while !current.extends.is_empty() {
                         let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
+                        let Some(abs_path) = ResolvePath::join_abs_string_buf_checked(
                             ts_dir_name,
                             bufs!(tsconfig_path_abs),
                             &[ts_dir_name, &current.extends],
                             bun_paths::Platform::AUTO,
-                        );
+                        ) else {
+                            let _ = self.log_mut().add_debug_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "tsconfig.json extends {} is too long",
+                                    bun_core::fmt::quote(&current.extends)
+                                ),
+                            );
+                            break;
+                        };
                         let parent_config_maybe: Option<*mut TSConfigJSON> =
                             match self.parse_tsconfig(abs_path, FD::INVALID) {
                                 Ok(v) => v.map(bun_core::heap::into_raw),

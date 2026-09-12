@@ -155,7 +155,11 @@ pub mod api {
     }
 
     impl NpmRegistry {
+        /// `[scheme://][user[:pass]@|:token@]host[:port][/path]`; with a scheme, what `new URL()` reads.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
+            if let Some(registry) = Self::from_whatwg(str) {
+                return registry;
+            }
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
@@ -172,6 +176,46 @@ pub mod api {
             }
 
             registry
+        }
+
+        /// `None` when WTF::URL rejects `str` or finds no host in it (`localhost:4873`).
+        fn from_whatwg(str: &[u8]) -> Option<NpmRegistry> {
+            let url = bun_url::whatwg::Parsed::from_utf8(str)?;
+            if url.hostname().is_empty() {
+                return None;
+            }
+            let username = url.username();
+            let password = url.password();
+            if password.is_empty() {
+                // As written, since `.npmrc` `//host/` credential keys match these bytes.
+                return Some(NpmRegistry {
+                    url: Box::from(str),
+                    ..Default::default()
+                });
+            }
+            // The same `scheme://host/path/` that `URL::href_without_auth` produces.
+            let mut href = url.protocol().to_owned_slice();
+            href.extend_from_slice(b"://");
+            href.extend_from_slice(&url.hostname().to_utf8());
+            href.extend_from_slice(&url.pathname().to_utf8());
+            if !href.ends_with(b"/") {
+                href.push(b'/');
+            }
+            let mut registry = NpmRegistry {
+                url: href.into_boxed_slice(),
+                ..Default::default()
+            };
+            // WTF::URL serializes the credentials percent-encoded; `p@ss` comes back as `p%40ss`.
+            let decode = |s: &bun_core::String| -> Box<[u8]> {
+                bun_url::PercentEncoding::decode_lenient_alloc(&s.to_utf8())
+            };
+            if username.is_empty() {
+                registry.token = decode(&password);
+            } else {
+                registry.username = decode(&username);
+                registry.password = decode(&password);
+            }
+            Some(registry)
         }
 
         pub fn has_credentials(&self) -> bool {

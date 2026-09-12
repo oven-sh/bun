@@ -210,6 +210,57 @@ test("math.pow", () => {
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
 
+// The runtime transpiler folds `0 / 0` and `+"a"` to a NaN value and prints it
+// back by name. No renamer runs on this path, so a binding named `NaN` in the
+// file, or a `with` object, must not capture the printed value.
+describe("folded NaN next to a binding of the same name", () => {
+  async function run(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("parameter, function-expression name and block-scoped binding", async () => {
+    expect(
+      await run(`
+        (function (NaN) { console.log(String(0 / 0), Number.isNaN(0 / 0), 0 / 0 === NaN, Object.keys({ [0 / 0]: 1 })[0]); })(5);
+        const f = function NaN() { return String(+"a"); };
+        console.log(f());
+        { let NaN = 6; console.log(String(0 / 0), NaN); }
+      `),
+    ).toEqual({ stdout: "NaN true false NaN\nNaN\nNaN 6\n", stderr: "", exitCode: 0 });
+  });
+
+  // The NaN sibling of #7263: the folded initializer read the binding in its own TDZ.
+  test.concurrent("module-level const NaN initialized from a folded NaN", async () => {
+    using dir = tempDir("runtime-transpiler-const-nan", {
+      "index.mjs": `export const NaN = 0 / 0;\nconst undefined = void 0;\nconsole.log(String(NaN), String(undefined), Number.isNaN(+"a"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "NaN undefined true\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("with statement object", async () => {
+    expect(
+      await run(
+        `with ({ NaN: 5, undefined: 6, Infinity: 7 }) console.log(String(0 / 0), String(void 0), String(1e999));`,
+      ),
+    ).toEqual({ stdout: "NaN undefined Infinity\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("unterminated string literals in large files", () => {
   test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
     using dir = tempDir("transpiler-long-unterminated-js", {

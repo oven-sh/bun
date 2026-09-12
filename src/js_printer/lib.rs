@@ -1400,6 +1400,33 @@ impl<'a> Options<'a> {
     }
 }
 
+/// Globals the printer spells by name for synthesized values that the file also binds.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ShadowedGlobalNames {
+    pub nan: bool,
+    pub undefined: bool,
+}
+
+impl ShadowedGlobalNames {
+    pub(crate) fn scan(symbols: &js_ast::symbol::Map) -> Self {
+        let mut shadowed = Self::default();
+        for symbol in symbols.symbols_for_source.iter().flatten() {
+            if matches!(
+                symbol.kind,
+                js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Label
+            ) {
+                continue;
+            }
+            match symbol.original_name.slice() {
+                b"NaN" => shadowed.nan = true,
+                b"undefined" => shadowed.undefined = true,
+                _ => {}
+            }
+        }
+        shadowed
+    }
+}
+
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
@@ -1681,6 +1708,11 @@ pub(crate) mod __gated_printer {
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
+        /// Set by `print_ast`, where no bundler renamer moved such a binding aside.
+        pub(crate) shadowed_globals: ShadowedGlobalNames,
+        /// Depth of enclosing `with` bodies, where a bare global name may hit a property.
+        pub(crate) with_nesting: u32,
+
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
         pub(crate) bump: &'a bun_alloc::Arena,
@@ -1803,6 +1835,10 @@ pub(crate) mod __gated_printer {
                             }
                         }
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
+                            v.left_level = Level::Call;
+                        }
+                        // A missing import item prints like `EUndefined`, possibly as "void 0"
+                        ExprData::EImportIdentifier(_) => {
                             v.left_level = Level::Call;
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
@@ -2128,9 +2164,23 @@ pub(crate) mod __gated_printer {
             Level::Comma
         }
 
+        /// A bare `undefined` printed at the current position reads the global.
+        fn undefined_is_global_here(&self) -> bool {
+            self.with_nesting == 0 && !self.shadowed_globals.undefined
+        }
+
+        fn nan_is_global_here(&self) -> bool {
+            self.with_nesting == 0 && !self.shadowed_globals.nan
+        }
+
+        /// Only a bundler renamer reserves `Infinity`. Without one the value prints as `1 / 0`.
+        fn infinity_is_global_here(&self) -> bool {
+            self.with_nesting == 0 && self.options.has_run_symbol_renamer
+        }
+
         #[inline]
         pub(crate) fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            if self.options.minify_syntax {
+            if self.options.minify_syntax || !self.undefined_is_global_here() {
                 if level.gte(Level::Prefix) {
                     self.add_source_mapping(loc);
                     self.print(b"(void 0)");
@@ -4725,11 +4775,12 @@ pub(crate) mod __gated_printer {
 
         /// Whether a number used as a non-computed property name must be printed as a
         /// computed property instead, because `print_number` would render it as
-        /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
+        /// something that is not a valid property name (e.g. "-1", "1/0", "0 / 0").
         pub(crate) fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
+                || (value.is_nan() && !self.nan_is_global_here())
                 || (value == f64::INFINITY
-                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+                    && (self.options.minify_syntax || !self.infinity_is_global_here()))
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -5934,7 +5985,9 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.with_nesting += 1;
                     self.print_body(s.body);
+                    self.with_nesting -= 1;
                 }
                 StmtData::SLabel(s) => {
                     if !self.options.minify_whitespace && self.options.indent.count > 0 {
@@ -6915,12 +6968,31 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
-                self.print_space_before_identifier();
-                self.print(b"NaN");
+                if IS_JSON || self.nan_is_global_here() {
+                    self.print_space_before_identifier();
+                    self.print(b"NaN");
+                } else {
+                    // Not used everywhere: `0 / 0` need not have the global's NaN bit pattern.
+                    let wrap = level.gte(Level::Multiply);
+                    if wrap {
+                        self.print(b"(");
+                    } else {
+                        self.print_space_before_identifier();
+                    }
+                    if self.options.minify_whitespace {
+                        self.print(b"0/0");
+                    } else {
+                        self.print(b"0 / 0");
+                    }
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
             } else if value.is_infinite() {
                 let is_neg_inf = value.is_sign_negative();
-                let wrap = ((!self.options.has_run_symbol_renamer || self.options.minify_syntax)
-                    && level.gte(Level::Multiply))
+                let as_identifier =
+                    IS_JSON || (!self.options.minify_syntax && self.infinity_is_global_here());
+                let wrap = (!as_identifier && level.gte(Level::Multiply))
                     || (is_neg_inf && level.gte(Level::Prefix));
 
                 if wrap {
@@ -6934,8 +7006,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                 }
 
-                // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if as_identifier {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -7028,6 +7099,8 @@ pub(crate) mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
+                shadowed_globals: ShadowedGlobalNames::default(),
+                with_nesting: 0,
             }
         }
 
@@ -7801,6 +7874,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
+    let shadowed_globals = ShadowedGlobalNames::scan(&symbols);
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
@@ -7911,6 +7985,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         source_map_builder,
     );
     printer.was_lazy_export = tree.has_lazy_export;
+    printer.shadowed_globals = shadowed_globals;
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).

@@ -28,6 +28,7 @@ use crate::linker_context::output_file_list_builder::OutputFileList as OutputFil
 use crate::linker_context::prepare_css_asts_for_chunk::{
     PrepareCssAstTask, prepare_css_asts_for_chunk,
 };
+use crate::linker_context::standalone_html_csp;
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
@@ -844,6 +845,23 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             scc[ci] = Some(buffer);
+        }
+
+        // The inlined chunks are final: rewrite each HTML document's CSP `<meta>` to allow them.
+        for ci in 0..chunks.len() {
+            if !matches!(chunks[ci].content, crate::chunk::Content::Html) {
+                continue;
+            }
+            if let Some(resolved) = standalone_html_csp::resolve_for_html_chunk(c, ci, chunks, &scc)
+            {
+                if let crate::CompileResult::Html {
+                    content_security_policies,
+                    ..
+                } = chunks[ci].compile_results_for_chunk.get_mut(0)
+                {
+                    *content_security_policies = resolved;
+                }
+            }
         }
 
         standalone_chunk_contents = Some(scc);

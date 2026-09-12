@@ -180,6 +180,10 @@ pub(crate) trait HTMLProcessorHandler {
     fn on_html_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
         unreachable!()
     }
+    /// `<meta http-equiv="…" content="…">`, with `http_equiv` as written.
+    fn on_meta_http_equiv_tag(&mut self, _element: &mut Element<'_, '_>, _http_equiv: &[u8]) {
+        unreachable!()
+    }
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
@@ -271,7 +275,7 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
 
-const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
+const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 4;
 
 #[inline]
 fn lol_err<E>(_: E) -> Error {
@@ -365,6 +369,19 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 );
                 element_content_handlers.push(element_entry(tag, on_element)?);
             }
+
+            let on_meta: lol_html::ElementHandler<'_> = Box::new(
+                move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
+                    if let Some(http_equiv) = element.get_attribute("http-equiv") {
+                        // SAFETY: see `on_tag` above.
+                        unsafe {
+                            (*this_ptr).on_meta_http_equiv_tag(element, http_equiv.as_bytes())
+                        };
+                    }
+                    Ok(())
+                },
+            );
+            element_content_handlers.push(element_entry("meta[http-equiv][content]", on_meta)?);
         }
 
         let settings = lol_html::Settings {

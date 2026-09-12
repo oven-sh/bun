@@ -2270,6 +2270,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_buf_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_req_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_shutdown_t {}
 unsafe impl bun_core::ffi::Zeroable for Handle {}
 unsafe impl bun_core::ffi::Zeroable for Timer {}
 unsafe impl bun_core::ffi::Zeroable for Pipe {}
@@ -2680,6 +2681,11 @@ unsafe extern "C" {
         read_cb: uv_read_cb,
     ) -> ReturnCode;
     pub fn uv_read_stop(stream: *mut uv_stream_t) -> ReturnCode;
+    pub fn uv_shutdown(
+        req: *mut uv_shutdown_t,
+        handle: *mut uv_stream_t,
+        cb: uv_shutdown_cb,
+    ) -> ReturnCode;
     pub fn uv_write(
         req: *mut uv_write_t,
         handle: *mut uv_stream_t,

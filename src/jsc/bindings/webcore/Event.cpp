@@ -56,19 +56,8 @@ ALWAYS_INLINE Event::Event(EventInterface eventInterface, MonotonicTime createTi
 {
 }
 
-Event::Event(EventInterface eventInterface, IsTrusted isTrusted)
-    : Event { eventInterface, MonotonicTime::now(), {}, isTrusted, CanBubble::No, IsCancelable::No, IsComposed::No }
-{
-}
-
 Event::Event(EventInterface eventInterface, const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed)
     : Event { eventInterface, MonotonicTime::now(), eventType, IsTrusted::Yes, canBubble, isCancelable, isComposed }
-{
-    ASSERT(!eventType.isNull());
-}
-
-Event::Event(EventInterface eventInterface, const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed, MonotonicTime timestamp, IsTrusted isTrusted)
-    : Event { eventInterface, timestamp, eventType, isTrusted, canBubble, isCancelable, isComposed }
 {
     ASSERT(!eventType.isNull());
 }

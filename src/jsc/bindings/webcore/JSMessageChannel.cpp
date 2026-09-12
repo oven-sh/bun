@@ -249,16 +249,4 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<MessageChannel>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageChannel& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-MessageChannel* JSMessageChannel::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSMessageChannel>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

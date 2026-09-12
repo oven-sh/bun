@@ -515,7 +515,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON, (JSGlobalObject 
 }
 
 struct DOMFormDataIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUnion<IDLUSVString, IDLInterface<Blob>>;
 };
@@ -705,18 +704,6 @@ void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMFormData>&& impl)
 {
     return createWrapper<DOMFormData>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-DOMFormData* JSDOMFormData::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSDOMFormData>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 size_t JSDOMFormData::estimatedSize(JSCell* cell, JSC::VM& vm)

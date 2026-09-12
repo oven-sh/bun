@@ -183,4 +183,27 @@ describe("ArrayBufferSink", () => {
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  it("the constructor has the shape the sink codegen gives it", () => {
+    expect(ArrayBufferSink).toBe(Bun.ArrayBufferSink);
+    expect(typeof ArrayBufferSink).toBe("function");
+    expect(ArrayBufferSink.name).toBe("ArrayBufferSink");
+    expect(ArrayBufferSink).toHaveLength(0);
+
+    const constructed = new ArrayBufferSink();
+    expect(Object.prototype.toString.call(constructed)).toBe("[object ArrayBufferSink]");
+    expect(Object.getPrototypeOf(constructed).constructor).toBe(ArrayBufferSink);
+
+    // The constructor is registered as both the call and the construct
+    // target, so a plain call creates a working sink as well.
+    // @ts-expect-error calling without new is allowed at runtime
+    const called: ArrayBufferSink = ArrayBufferSink();
+    expect(Object.prototype.toString.call(called)).toBe("[object ArrayBufferSink]");
+    expect(Object.getPrototypeOf(called)).toBe(Object.getPrototypeOf(constructed));
+
+    for (const sink of [constructed, called]) {
+      sink.write("abc");
+      expect(new TextDecoder().decode(sink.end() as Uint8Array)).toBe("abc");
+    }
+  });
 });

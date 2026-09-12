@@ -903,11 +903,4 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
-
-DOMURL* JSDOMURL::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSDOMURL>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 }

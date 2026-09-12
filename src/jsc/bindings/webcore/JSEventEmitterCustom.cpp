@@ -25,13 +25,6 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
     return createWrapper<EventEmitter>(globalObject, WTF::move(value));
 }
 
-EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
-{
-    if (value.inherits<JSEventEmitter>())
-        return &uncheckedDowncast<JSEventEmitter>(asObject(value))->wrapped();
-    return nullptr;
-}
-
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
     if (!thisValue.isCell()) [[unlikely]] {

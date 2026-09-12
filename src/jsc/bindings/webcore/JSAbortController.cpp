@@ -322,16 +322,4 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<AbortController>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortController& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-AbortController* JSAbortController::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSAbortController>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

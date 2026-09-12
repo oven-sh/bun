@@ -130,11 +130,6 @@ JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObj
     return ptr;
 }
 
-JSC::Structure* JSBakeResponse::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-{
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
-}
-
 JSC::GCClient::IsoSubspace* JSBakeResponse::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSBakeResponse, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeResponse, m_subspaceForBakeResponse));

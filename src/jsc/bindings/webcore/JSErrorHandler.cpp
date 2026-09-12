@@ -45,7 +45,7 @@ namespace WebCore {
 using namespace JSC;
 
 inline JSErrorHandler::JSErrorHandler(JSObject& listener, JSObject& wrapper, bool isAttribute, DOMWrapperWorld& world)
-    : JSEventListener(&listener, &wrapper, isAttribute, CreatedFromMarkup::No, world)
+    : JSEventListener(&listener, &wrapper, isAttribute, world)
 {
 }
 

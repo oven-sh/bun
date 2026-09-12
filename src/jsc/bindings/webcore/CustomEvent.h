@@ -39,8 +39,6 @@ class CustomEvent final : public Event {
 public:
     virtual ~CustomEvent();
 
-    static Ref<CustomEvent> create(IsTrusted = IsTrusted::No);
-
     struct Init : EventInit {
         JSC::JSValue detail;
     };
@@ -53,7 +51,6 @@ public:
     JSValueInWrappedObject& cachedDetail() { return m_cachedDetail; }
 
 private:
-    CustomEvent(IsTrusted);
     CustomEvent(const AtomString& type, const Init& initializer, IsTrusted);
 
     JSValueInWrappedObject m_detail;

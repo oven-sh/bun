@@ -20,8 +20,6 @@ pub struct PluginRunner {
     pub(crate) global_object: BackRef<JSGlobalObject>,
 }
 
-// Re-export the JSC-free static helpers so callers in this crate can keep
-// writing `PluginRunner::could_be_plugin(...)` without naming `bun_bundler`.
 impl PluginRunner {
     /// Borrow the JS global stored by `Bun__onDidAppendPlugin`.
     ///

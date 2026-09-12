@@ -611,6 +611,68 @@ describe("FormData", () => {
     expect(Bun.inspect(formData).length > 0).toBe(true);
   });
 
+  describe("iteration", () => {
+    function filled() {
+      const formData = new FormData();
+      formData.append("a", "1");
+      formData.append("b", "2");
+      formData.append("a", "3");
+      return formData;
+    }
+
+    it("entries(), keys() and values() walk the entries in insertion order", () => {
+      const formData = filled();
+      expect([...formData.entries()]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+        ["a", "3"],
+      ]);
+      expect([...formData.keys()]).toEqual(["a", "b", "a"]);
+      expect([...formData.values()]).toEqual(["1", "2", "3"]);
+    });
+
+    it("the default iterator is entries()", () => {
+      const formData = filled();
+      expect(formData[Symbol.iterator]).toBe(formData.entries);
+      expect([...formData]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+        ["a", "3"],
+      ]);
+    });
+
+    it("iterator results have the shape of a Map iterator", () => {
+      const iterator = filled().entries();
+      expect(Object.prototype.toString.call(iterator)).toBe("[object FormData Iterator]");
+      expect(iterator.next()).toEqual({ value: ["a", "1"], done: false });
+      expect(new FormData().entries().next()).toEqual({ value: undefined, done: true });
+    });
+
+    it("forEach() passes (value, key, formData) and honors thisArg", () => {
+      const formData = filled();
+      const thisArg = {};
+      const calls: unknown[] = [];
+      const returned = formData.forEach(function (this: unknown, value, key, parent) {
+        calls.push([key, value, parent === formData, this === thisArg, arguments.length]);
+      }, thisArg);
+      expect(returned).toBeUndefined();
+      expect(calls).toEqual([
+        ["a", "1", true, true, 3],
+        ["b", "2", true, true, 3],
+        ["a", "3", true, true, 3],
+      ]);
+    });
+
+    it("forEach() rejects a callback that is not a function", () => {
+      const formData = filled();
+      expect(formData.forEach).toHaveLength(1);
+      // @ts-expect-error the callback is required
+      expect(() => formData.forEach()).toThrow(TypeError);
+      // @ts-expect-error the callback has to be callable
+      expect(() => formData.forEach(1)).toThrow(TypeError);
+    });
+  });
+
   describe("non-standard extensions", () => {
     it("should support .length", () => {
       const formData = new FormData();

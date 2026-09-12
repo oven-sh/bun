@@ -116,9 +116,7 @@ public:
     bool isBeingDispatched() const { return eventPhase(); }
 
 protected:
-    explicit Event(EventInterface, IsTrusted = IsTrusted::No);
     Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
-    Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
     Event(EventInterface, const AtomString& type, const EventInit&, IsTrusted);
 
 private:

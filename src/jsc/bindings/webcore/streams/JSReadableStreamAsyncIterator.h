@@ -24,7 +24,6 @@ public:
     static JSReadableStreamAsyncIterator* create(JSC::VM&, JSC::Structure*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;

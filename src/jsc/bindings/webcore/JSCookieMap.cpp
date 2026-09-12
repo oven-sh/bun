@@ -34,18 +34,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-// Define the toWrapped template function for CookieMap
-template<typename ExceptionThrower>
-CookieMap* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exceptionThrower, JSValue value)
-{
-    auto& vm = getVM(&lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* impl = JSCookieMap::toWrapped(vm, value);
-    if (!impl) [[unlikely]]
-        exceptionThrower(lexicalGlobalObject, scope);
-    return impl;
-}
-
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_get);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toSetCookieHeaders);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_has);
@@ -540,7 +528,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toJSON, (JSGlobalObject * 
 
 // Iterator implementation for CookieMap
 struct CookieMapIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUSVString;
 };
@@ -645,18 +632,6 @@ void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
 {
     return createWrapper<CookieMap>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-CookieMap* JSCookieMap::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSCookieMap>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 size_t JSCookieMap::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

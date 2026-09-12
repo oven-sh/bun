@@ -347,9 +347,4 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CustomEvent& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
 }

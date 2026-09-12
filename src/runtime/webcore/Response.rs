@@ -995,22 +995,27 @@ impl Response {
             };
 
             if let Some(arg_init) = args.next_eat() {
-                if arg_init.is_undefined_or_null() {
-                    // no-op
-                } else if arg_init.is_number() {
-                    let status =
-                        Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
-                    response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // cleanup is handled by Init's drop glue on `?` below
-                    response.init.set(init);
-
-                    let status = response.init.get().status_code;
-                    if status != 200 {
-                        let status =
-                            Self::validate_redirect_status_code(global_this, i32::from(status))?;
-                        response.init.with_mut(|i| i.status_code = status);
+                let arg_init = arg_init.unwrap_boxed_primitive(global_this)?;
+                if arg_init.is_undefined() {
+                    // WebIDL `optional unsigned short status = 302`
+                } else if arg_init.is_object() {
+                    // Bun extension: `ResponseInit` (status defaults to 302).
+                    if let Some(init) = Init::init_with_default_status(global_this, arg_init, 302)?
+                    {
+                        response.init.set(init);
                     }
+                    let status = Self::validate_redirect_status_code(
+                        global_this,
+                        i32::from(response.init.get().status_code),
+                    )?;
+                    response.init.with_mut(|i| i.status_code = status);
+                } else {
+                    // WebIDL `unsigned short`: ToNumber, then range-check.
+                    let status = Self::validate_redirect_status_code(
+                        global_this,
+                        arg_init.coerce_to_i32(global_this)?,
+                    )?;
+                    response.init.with_mut(|i| i.status_code = status);
                 }
             }
 
@@ -1231,8 +1236,16 @@ impl Init {
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
+        Self::init_with_default_status(global_this, response_init, 200)
+    }
+
+    fn init_with_default_status(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+        default_status: u16,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
-            status_code: 200,
+            status_code: default_status,
             ..Default::default()
         };
 

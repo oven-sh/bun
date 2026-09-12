@@ -668,9 +668,7 @@ fn lower_simple_assignment(
         Data::EImportIdentifier(ident) => {
             lower_simple_assignment_identifier(builder, ident.ref_, &bin.right, bin.left.loc)
         }
-        // Upstream lowers the right-hand side before the member target. JS
-        // evaluates the target's object and key first, and `a.b = a = c` or
-        // `a[i] = i++` reads a different value when the order is swapped.
+        // Unlike upstream: JS evaluates the target's object and key before the right-hand side.
         Data::EDot(d) => {
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &d.target)?;

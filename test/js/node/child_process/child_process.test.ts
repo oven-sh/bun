@@ -591,6 +591,90 @@ describe("spawn()", () => {
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/7845
+    it.each([
+      [0, 0, 0],
+      [1, 1, 1],
+      [2, 0, 0],
+    ] as const)("accepts the same numeric fd at every slot: [%i, %i, %i]", async (...stdio) => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: [...stdio] });
+      expect(child.stdin).toBeNull();
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+      const [code] = await once(child, "close");
+      expect(code).toBe(0);
+      // Parent's own stdio must not have been closed by the spawn machinery.
+      expect(fs.fstatSync(0)).toBeDefined();
+      expect(fs.fstatSync(1)).toBeDefined();
+      expect(fs.fstatSync(2)).toBeDefined();
+    });
+
+    it("numeric fd is dup'd into the requested slot (stdio: [1, 1, 1])", async () => {
+      // Outer process's fd 1 is a pipe back to us. It spawns an inner child
+      // with stdio: [1, 1, 1], so the inner child's stdout AND stderr both
+      // land on that same pipe.
+      const script = `
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, ["-e",
+          'require("fs").writeSync(1, "OUT "); require("fs").writeSync(2, "ERR")'
+        ], { stdio: [1, 1, 1] });
+        if (r.error) throw r.error;
+        process.exit(r.status ?? 1);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OUT ERR");
+      expect(exitCode).toBe(0);
+    });
+
+    // dup2 ordering hazard: stdio: [2, 0, 0] registers dup2(2,0) then
+    // dup2(0,1)/dup2(0,2), so fd 0 is clobbered before slots 1/2 read it
+    // unless the source fd is saved aside first (libuv does this via
+    // F_DUPFD in uv__process_child_init). Verify the grandchild's fds land
+    // on the ORIGINAL parent fds, not on an earlier slot's dup2 target.
+    it.skipIf(isWindows).each([
+      { stdio: [2, 0, 0], want: { fA: "w1 w2 ", fB: "", fC: "w0 " } },
+      { stdio: [0, 2, 1], want: { fA: "w0 ", fB: "w2 ", fC: "w1 " } },
+      { stdio: [1, 2, 0], want: { fA: "w2 ", fB: "w0 ", fC: "w1 " } },
+      { stdio: ["ignore", "inherit", "inherit", 0], want: { fA: "w3 ", fB: "w1 ", fC: "w2 " } },
+      { stdio: ["ignore", "inherit", "inherit", 0, 1, 2], want: { fA: "w3 ", fB: "w1 w4 ", fC: "w2 w5 " } },
+    ] as const)("stdio: $stdio dups the original parent fds, not an earlier slot's target", ({ stdio, want }) => {
+      using dir = tempDir("spawn-stdio-dup-order", { fA: "", fB: "", fC: "" });
+      // Middle process has fds 0/1/2 bound to three distinct r+w files, then
+      // spawns the grandchild with the test's stdio mapping. The grandchild
+      // writes "w<i> " to each numeric-fd slot.
+      const writes = stdio
+        .map((s, i) => (typeof s === "number" || s === "inherit" ? `fs.writeSync(${i}, "w${i} ");` : ""))
+        .join(" ");
+      const middle = `
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, ["-e",
+          'const fs = require("fs"); ${writes}'
+        ], { stdio: ${JSON.stringify(stdio)} });
+        if (r.error) throw r.error;
+        process.exit(r.status);
+      `;
+      const fds = ["fA", "fB", "fC"].map(f => fs.openSync(path.join(String(dir), f), "r+"));
+      try {
+        const r = spawnSync(bunExe(), ["-e", middle], { env: bunEnv, stdio: fds });
+        expect(r.error).toBeUndefined();
+        expect(r.status).toBe(0);
+      } finally {
+        for (const fd of fds) fs.closeSync(fd);
+      }
+      expect({
+        fA: fs.readFileSync(path.join(String(dir), "fA"), "utf8"),
+        fB: fs.readFileSync(path.join(String(dir), "fB"), "utf8"),
+        fC: fs.readFileSync(path.join(String(dir), "fC"), "utf8"),
+      }).toEqual(want);
+    });
   });
 
   it.skipIf(isWindows)(

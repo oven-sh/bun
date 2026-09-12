@@ -1532,12 +1532,7 @@ impl NonLocalBinding {
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
 /// apply because `Type` is stored in `Drop`-running containers (registry
 /// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
-/// slabs.
-///
-/// `Phi::operands` is shared, not owned. Phis feed phis, so the operands form
-/// a DAG, and the type of one identifier can reach the same phi along many
-/// paths. With an owned `Vec` every path is a separate copy and the resolved
-/// types of a function grow exponentially with the depth of that DAG.
+/// slabs. `Phi::operands` is an `Arc` so that every path to one phi shares it.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,

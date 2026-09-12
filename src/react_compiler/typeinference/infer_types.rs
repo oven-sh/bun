@@ -1047,8 +1047,7 @@ fn resolve_identifier(
     resolver: &mut Resolver<'_>,
 ) {
     let type_id = identifiers[id.0 as usize].type_;
-    // `get` of a resolved type returns an equal type, and an identifier is
-    // visited once per occurrence.
+    // An identifier is visited once per occurrence; `get` of a resolved type changes nothing.
     if !resolver.applied.insert(type_id) {
         return;
     }
@@ -1056,23 +1055,11 @@ fn resolve_identifier(
     types[type_id.0 as usize] = resolved;
 }
 
-// =============================================================================
-// Resolver
-// =============================================================================
-
-/// `Unifier::get` with the results for shared nodes kept, for as long as the
-/// substitutions do not change.
-///
-/// A substitution is stored unresolved, so a phi is `Phi[TypeVar, ..]` and
-/// resolving it walks into the phis that feed it. That is a DAG. Without the
-/// memo a node is resolved once per path that reaches it, and with owned
-/// operands every one of those is a fresh copy: 12 million nodes for a 500
-/// byte component with two loops and a nested `try`.
+/// `Unifier::get` that resolves each variable and each shared phi once while the substitutions cannot change.
 struct Resolver<'a> {
     unifier: &'a Unifier,
     vars: HashMap<TypeId, Type>,
-    /// Keyed by the address of the operand slice. The entry holds the slice,
-    /// so the address cannot be reused while the memo is alive.
+    /// Keyed by operand slice address; the entry holds the `Arc` so the address stays allocated.
     phis: HashMap<*const Type, (Arc<[Type]>, Type)>,
     /// Type slots that `apply_function` has resolved.
     applied: HashSet<TypeId>,
@@ -1140,18 +1127,14 @@ fn too_many_steps() -> CompilerDiagnostic {
     )
 }
 
-/// The nodes one `occurs_check` has walked. The search stops at the first
-/// hit, so a node it reaches again had no hit below it.
+/// Nodes one `occurs_check` has walked; it returns at the first hit, so a revisited node had none.
 #[derive(Default)]
 struct Visited {
     vars: HashSet<TypeId>,
     phis: HashSet<*const Type>,
 }
 
-/// The results of one top-level `try_resolve_type`, for the nodes it can reach
-/// along more than one path. A second walk of a node returns an equal type:
-/// the first walk replaced the substitution of each bound variable below it
-/// with the resolved type, and resolving that again changes nothing.
+/// Results of one top-level `try_resolve_type`; a second walk of a node would return an equal type.
 #[derive(Default)]
 struct Stripped {
     vars: HashMap<TypeId, Type>,
@@ -1163,16 +1146,7 @@ struct Stripped {
 // Unifier
 // =============================================================================
 
-/// How many type nodes `get`, `try_resolve_type` and `occurs_check` may walk
-/// for one function before InferTypes gives up on it.
-///
-/// The memos make a walk linear in the number of distinct nodes. That number
-/// can still be exponential: `try_resolve_type` stores a phi's resolved type
-/// with the references to the variable it is binding removed, so one phi has a
-/// different resolved type under each variable that reaches it through a
-/// cycle. Six locals rotated in a `while (true)` inside a loop take 113 000
-/// steps, eight take 1.4 million, and each one more multiplies that by 3.7.
-/// The largest function in the upstream fixtures takes 719.
+/// Type nodes one function may walk before InferTypes gives it up; the upstream fixtures peak at 719.
 const MAX_RESOLVE_STEPS: u64 = 500_000;
 
 struct Unifier {
@@ -1342,8 +1316,7 @@ impl Unifier {
             }
 
             let mut candidate_type: Option<Type> = None;
-            // The operands are resolved against the same substitutions, so
-            // they share one memo.
+            // Nothing binds between the operands, so they share one memo.
             let mut resolver = Resolver::new(self);
             for operand in operands.iter() {
                 let resolved = resolver.get(operand);

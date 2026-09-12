@@ -1491,7 +1491,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.session_timeout > 0) {
+    /* OpenSSL (so Node) stamps SSL_CTX_set_timeout onto every session;
+     * BoringSSL's SSL_CTX_set_timeout only covers TLS <= 1.2 and keeps the
+     * TLS 1.3 ticket lifetime in a separate knob, so set both. */
     SSL_CTX_set_timeout(ssl_context, options.session_timeout);
+    SSL_CTX_set_session_psk_dhe_timeout(ssl_context, options.session_timeout);
   }
 
   if (options.allow_partial_trust_chain) {

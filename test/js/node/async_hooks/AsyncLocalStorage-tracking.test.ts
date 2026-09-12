@@ -1,40 +1,56 @@
 import { Glob } from "bun";
-import { describe, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBroken, isLinux, nodeExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { basename, join } from "path";
 
+// Every fixture in async-context/ calls one API inside asyncLocalStorage.run() and
+// exits 0 without printing anything if all of its callbacks still see the store.
+// Otherwise it prints "FAIL: ..." (context lost) or "ERROR: ..." (the API itself
+// failed) to stderr and exits 1. Fixtures only talk to servers they start
+// themselves, so none of this depends on the network.
+//
+// Each fixture also runs under node, which proves the fixture itself is valid.
+const node = nodeExe();
+if (!node) throw new Error("node is required to validate the async-context fixtures");
+
+const fixturesDir = join(import.meta.dir, "async-context");
+const fixtures = [...new Glob("async-context-*.js").scanSync(fixturesDir)].sort();
+
+// Fixtures bun still fails. `bun test --todo` runs them and reports any that
+// have started passing.
+const todos = ["async-context-worker_threads-message.js"];
+
+async function run(exe: string, fixture: string, cwd: string) {
+  await using proc = Bun.spawn({
+    cmd: [exe, join(fixturesDir, fixture)],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { exe: basename(exe), fixture, stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+function passed(exe: string, fixture: string) {
+  return { exe: basename(exe), fixture, stdout: "", stderr: "", exitCode: 0, signalCode: null };
+}
+
 describe.concurrent("AsyncLocalStorage passes context to callbacks", () => {
-  let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
+  test("every todo entry names an existing fixture", () => {
+    expect(fixtures).toEqual(expect.arrayContaining(todos));
+  });
 
-  let todos = ["async-context-worker_threads-message.js"];
-  if (isASAN && isBroken && isLinux) {
-    todos.push("async-context-dns-resolveTxt.js");
-  }
+  for (const fixture of fixtures) {
+    const name = fixture.replace(/^async-context-/, "").replace(/\.js$/, "");
 
-  files = files.filter(file => !todos.includes(basename(file)));
+    test.todoIf(todos.includes(fixture))(name, async () => {
+      // Some fixtures create scratch files relative to the cwd.
+      using cwd = tempDir("async-context", {});
 
-  for (const filepath of files) {
-    const file = basename(filepath).replaceAll("async-context-", "").replaceAll(".js", "");
-    test(file, async () => {
-      async function run(exe) {
-        const { exited } = Bun.spawn({
-          cmd: [exe, filepath],
-          stdout: "inherit",
-          stderr: "inherit",
-          env: bunEnv,
-        });
+      const results = await Promise.all([run(bunExe(), fixture, String(cwd)), run(node, fixture, String(cwd))]);
 
-        if (await exited) {
-          throw new Error(`${basename(exe)} failed in ${filepath}`);
-        }
-      }
-
-      await Promise.all([run(bunExe()), run(nodeExe())]);
+      expect(results).toEqual([passed(bunExe(), fixture), passed(node, fixture)]);
     });
-  }
-
-  for (const filepath of todos) {
-    const file = basename(filepath).replaceAll("async-context-", "").replaceAll(".js", "");
-    test.todo(file);
   }
 });

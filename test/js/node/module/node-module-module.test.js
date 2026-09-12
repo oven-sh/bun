@@ -1059,6 +1059,43 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("module.loaded stays false when require() returns an ES module that still evaluates", async () => {
+    // import() evaluates esm.mjs. Its body requires cjs.cjs, and cjs.cjs requires esm.mjs back.
+    // Node throws ERR_REQUIRE_CYCLE_MODULE here. Bun returns the live namespace.
+    using dir = tempDir("require-loaded-cycle", {
+      "main.mjs": `
+        await import("./esm.mjs");
+        console.log(JSON.stringify(globalThis.seenFromCjs));
+      `,
+      "esm.mjs": `
+        import { createRequire } from "node:module";
+        createRequire(import.meta.url)("./cjs.cjs");
+        export const value = 1;
+      `,
+      "cjs.cjs": `
+        const namespace = require("./esm.mjs");
+        let value;
+        try {
+          value = namespace.value;
+        } catch (error) {
+          value = error.name;
+        }
+        globalThis.seenFromCjs = { value, loaded: require.cache[require.resolve("./esm.mjs")].loaded };
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The ReferenceError shows that the body of esm.mjs has not reached its export yet.
+    expect(JSON.parse(stdout)).toEqual({ value: "ReferenceError", loaded: false });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [

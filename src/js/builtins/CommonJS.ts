@@ -138,6 +138,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
 
     mod.exports = moduleExports ?? namespace;
+    // In a require cycle `$requireESM` answers while the module still evaluates.
+    if ($esmNamespaceForCjs(id) === undefined) return mod.exports;
   } else {
     const c = $evaluateCommonJSModule(mod, this);
     if (c && c.indexOf(mod) === -1) {

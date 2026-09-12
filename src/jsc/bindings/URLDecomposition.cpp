@@ -161,6 +161,24 @@ void URLDecomposition::setHostname(StringView host)
         return;
     if (fullURL.hasOpaquePath())
         return;
+
+    // https://url.spec.whatwg.org/#host-state: hostname state override returns on ':' outside '[...]'.
+    bool insideBrackets = false;
+    bool special = fullURL.hasSpecialScheme();
+    for (unsigned i = 0; i < host.length(); ++i) {
+        auto c = host[i];
+        if (c == 0x0009 || c == 0x000A || c == 0x000D)
+            continue;
+        if (c == '/' || c == '?' || c == '#' || (special && c == '\\'))
+            break;
+        if (c == ':' && !insideBrackets)
+            return;
+        if (c == '[')
+            insideBrackets = true;
+        else if (c == ']')
+            insideBrackets = false;
+    }
+
     fullURL.setHost(host);
     if (fullURL.isValid() && hasAcceptableHost(fullURL))
         setFullURL(fullURL);

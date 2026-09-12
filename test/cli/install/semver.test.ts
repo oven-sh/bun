@@ -14,7 +14,8 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import nodeSemver from "semver";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -38,6 +39,22 @@ function testSatisfies(right: any, left: any, expected: boolean) {
   expect(satisfies(leftBuffer, rightBuffer)).toBe(expected);
   expect(satisfies(leftBuffer, right)).toBe(expected);
   expect(satisfies(left, rightBuffer)).toBe(expected);
+}
+
+const u64Max = "18446744073709551615";
+// u64::MAX + 1, then 20 and 30 digits: the answer must not depend on the length.
+const numbersAboveU64Max = ["18446744073709551616", Buffer.alloc(20, "9").toString(), Buffer.alloc(30, "9").toString()];
+
+function versionsWith(big: string) {
+  return [
+    `${big}.0.0`,
+    `1.${big}.0`,
+    `1.0.${big}`,
+    `v1.0.${big}`,
+    `1.0.${big}-beta.1`,
+    `1.0.${big}+build`,
+    `${big}.${big}.${big}`,
+  ];
 }
 
 describe("Bun.semver.order()", () => {
@@ -178,6 +195,24 @@ describe("Bun.semver.order()", () => {
       expect(order(right, left)).toBe(0);
     }
   });
+
+  test("a major, minor or patch number above u64::MAX is an invalid version", () => {
+    // These used to read the number as 0, so "1.0.18446744073709551616" compared equal to "1.0.0".
+    // node-semver throws "Invalid patch version" (its limit is Number.MAX_SAFE_INTEGER).
+    for (const big of numbersAboveU64Max) {
+      for (const version of versionsWith(big)) {
+        expect(() => order(version, "1.0.0")).toThrow(`Invalid SemVer: ${version}\n`);
+        expect(() => order("1.0.0", version)).toThrow(`Invalid SemVer: ${version}\n`);
+      }
+      // order() accepts a wildcard, but not such a number after it.
+      expect(() => order(`1.x.${big}`, "1.0.0")).toThrow(`Invalid SemVer: 1.x.${big}\n`);
+    }
+
+    // u64::MAX itself still fits.
+    expect(order(`1.0.${u64Max}`, "1.0.0")).toBe(1);
+    expect(order(`1.${u64Max}.0`, `1.0.${u64Max}`)).toBe(1);
+    expect(order(`${u64Max}.${u64Max}.${u64Max}`, `${u64Max}.${u64Max}.${u64Max}`)).toBe(0);
+  });
 });
 
 describe("Bun.semver.satisfies()", () => {
@@ -242,8 +277,8 @@ describe("Bun.semver.satisfies()", () => {
   });
 
   test("long version components are not treated as wildcards", () => {
-    // A component >20 bytes must parse to its numeric value (or clamp on overflow),
-    // not fall through to a wildcard. node-semver loose mode agrees with all of these.
+    // A component >20 bytes must parse to its numeric value (or make the range match nothing on
+    // overflow), not fall through to a wildcard. node-semver loose mode agrees with all of these.
     const twenty = Buffer.alloc(20, "9").toString();
     const twentyOne = Buffer.alloc(21, "9").toString();
     for (const big of [twenty, twentyOne]) {
@@ -310,6 +345,129 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies(`~${M1}`, `${M1}.0.0`, true);
     testSatisfies(M1, `${M1}.0.0`, true);
     testSatisfies(`^${M1}`, `${M}.0.0`, false);
+  });
+
+  test("a version with a number above u64::MAX satisfies nothing", () => {
+    // These used to read the number as 0, so "1.0.18446744073709551616" satisfied "1.0.0".
+    // node-semver returns false: the version is invalid.
+    const ranges = ["*", "", "x", ">=0.0.0", `<=${u64Max}.${u64Max}.${u64Max}`, "1.0.0", "^1.0.0", "1.x", ">=1.0.0-0"];
+    for (const big of numbersAboveU64Max) {
+      for (const version of versionsWith(big)) {
+        for (const range of ranges) {
+          testSatisfies(range, version, false);
+        }
+        testSatisfies(version, version, false);
+      }
+    }
+  });
+
+  test("a range with a number above u64::MAX is satisfied by nothing", () => {
+    // These used to read the number as 0, so "^99999999999999999999" was "^0" and "0.5.0" satisfied it.
+    // node-semver throws "Invalid major version" for the whole range, also when the
+    // number is in one "||" alternative only, so satisfies() is false for every version.
+    const rangesWith = (big: string) => [
+      // exact
+      `${big}.0.0`,
+      `=${big}.0.0`,
+      `v${big}.0.0`,
+      `1.${big}.0`,
+      `1.0.${big}`,
+      `1.0.${big}-beta.1`,
+      // primitive comparators
+      `>=${big}.0.0`,
+      `>${big}.0.0`,
+      `<${big}.0.0`,
+      `<=${big}.0.0`,
+      `<=1.0.${big}`,
+      `<1.${big}.0`,
+      `>= ${big}.0.0`,
+      // caret and tilde
+      `^${big}`,
+      `^${big}.2.3`,
+      `^0.${big}`,
+      `^0.0.${big}`,
+      `~${big}`,
+      `~1.${big}`,
+      `~1.0.${big}`,
+      `~>1.${big}`,
+      // partial versions and x-ranges
+      `${big}`,
+      `${big}.x`,
+      `${big}.*.*`,
+      `1.${big}`,
+      `1.${big}.x`,
+      `>=${big}.x`,
+      `<1.${big}.x`,
+      // hyphen ranges, the number on each side
+      `1.0.0 - ${big}.0.0`,
+      `1.0.0 - ${big}`,
+      `1.0.0 - 1.${big}.x`,
+      `${big}.0.0 - 2.0.0`,
+      `0.0.0 - 1.0.${big}`,
+      // the number is in one comparator of an intersection
+      `>=0.0.0 <${big}.0.0`,
+      `<${big}.0.0 >=0.0.0`,
+      `>=1.0.0 <=1.0.${big}`,
+      // the number is in one alternative of a union
+      `1.0.0 || ${big}.0.0`,
+      `${big}.0.0 || 1.0.0`,
+      `* || <${big}.0.0`,
+      `<${big}.0.0 || *`,
+      `^1.0.0 || ^${big}`,
+    ];
+    const versions = [
+      "0.0.0",
+      "0.5.0",
+      "1.0.0",
+      "1.0.5",
+      "2.0.0",
+      `${u64Max}.${u64Max}.${u64Max}`,
+      "0.0.0-0",
+      "1.0.0-beta.1",
+    ];
+    for (const big of numbersAboveU64Max) {
+      for (const range of rangesWith(big)) {
+        for (const version of versions) {
+          testSatisfies(range, version, false);
+        }
+      }
+    }
+
+    // A number after a wildcard has no effect on a range, as in node-semver: "1.x.<big>" is "1.x".
+    for (const big of numbersAboveU64Max) {
+      testSatisfies(`1.x.${big}`, "1.5.0", true);
+      testSatisfies(`1.x.${big}`, "2.0.0", false);
+      testSatisfies(`^1.x.${big}`, "1.5.0", true);
+      testSatisfies(`~1.*.${big}`, "1.5.0", true);
+      testSatisfies(`>=1.x.${big}`, "2.0.0", true);
+      testSatisfies(`>=1.x.${big}`, "0.9.0", false);
+      testSatisfies(`*.${big}`, "1.0.0", true);
+      testSatisfies(`x.${big}.${big}`, "1.0.0", true);
+      testSatisfies(`1.0.0 - 1.x.${big}`, "1.5.0", true);
+      testSatisfies(`1.0.0 - 1.x.${big}`, "2.0.0", false);
+      testSatisfies(`1.x.${big} - 3.0.0`, "2.5.0", true);
+      testSatisfies(`1.x.${big} - 3.0.0`, "3.5.0", false);
+      testSatisfies(`1.*.${big} || 3.0.0`, "3.0.0", true);
+      testSatisfies(`1.*.${big} || 3.0.0`, "2.5.0", false);
+      // The text after that number still belongs to the same comparator: "-2" is a
+      // prerelease here, not the start of the hyphen range "1.x.<big> - 2".
+      testSatisfies(`1.x.${big}-2`, "1.5.0", true);
+      testSatisfies(`1.x.${big}-2`, "2.0.0", false);
+      testSatisfies(`1.x.${big}-2`, "2.5.0", false);
+      testSatisfies(`1.x.${big}-0`, "1.5.0", true);
+      testSatisfies(`^1.x.${big}-2`, "2.5.0", false);
+      testSatisfies(`>=1.x.${big}-2`, "2.5.0", true);
+      testSatisfies(`>=1.x.${big}-2`, "0.9.0", false);
+      testSatisfies(`1.x.${big}+2`, "1.5.0", true);
+      testSatisfies(`1.x.${big}+2`, "2.5.0", false);
+    }
+
+    // u64::MAX itself still fits: the same shapes keep their meaning.
+    testSatisfies(`<${u64Max}.0.0`, "1.0.0", true);
+    testSatisfies(`<=1.0.${u64Max}`, "1.0.5", true);
+    testSatisfies(`1.0.0 - ${u64Max}.0.0`, "2.0.0", true);
+    testSatisfies(`1.0.0 || ${u64Max}.0.0`, "1.0.0", true);
+    testSatisfies(`1.0.0 || ${u64Max}.0.0`, `${u64Max}.0.0`, true);
   });
 
   test("ranges", () => {
@@ -809,6 +967,136 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+});
+
+test("a number above u64::MAX gives the same answers as node-semver (seeded differential)", () => {
+  // Replay a failure with BUN_SEMVER_FUZZ_SEED=<seed>. Soak with BUN_SEMVER_FUZZ_ITERS=<n>.
+  const seed = Number(process.env.BUN_SEMVER_FUZZ_SEED ?? 0x73656d76) >>> 0;
+  const iterations = Number(process.env.BUN_SEMVER_FUZZ_ITERS ?? 100);
+  let state = seed;
+  const next = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T>(list: readonly T[]): T => list[Math.floor(next() * list.length)];
+
+  const small = ["0", "1", "2", "10"];
+  const wildcard = ["x", "X", "*"];
+  const suffix = ["", "", "", "-2", "-0", "-beta.1", "+2"];
+  const comparing = [">=", ">", "<", "<=", "^", "~"];
+  const operator = ["", "", "=", "v", "~>", ...comparing];
+
+  // One to three parts, exactly one of them above u64::MAX. Every shape here gives the same
+  // answer in Bun and node-semver when the number is small. That leaves out two shapes where
+  // they differ for any number: a wildcard as the first part (">x.1"), and a comparator with
+  // no operator inside an intersection (">=1.0.0 2.x").
+  const partial = (wildcards: boolean) => {
+    // The number after a wildcard has no effect, and the text after it stays in the same comparator.
+    if (wildcards && next() < 0.3) {
+      return `${pick(small)}.${pick(wildcard)}.${pick(numbersAboveU64Max)}${pick(suffix)}`;
+    }
+    const length = 1 + Math.floor(next() * 3);
+    const bigAt = Math.floor(next() * length);
+    const parts: string[] = [];
+    for (let i = 0; i < length; i++) {
+      if (i === bigAt) parts.push(pick(numbersAboveU64Max));
+      else if (wildcards && i > 0 && next() < 0.3) parts.push(pick(wildcard));
+      else parts.push(pick(small));
+    }
+    return parts.join(".") + (length === 3 ? pick(suffix) : "");
+  };
+  const plain = () => `${pick(small)}.${pick(small)}.${pick(small)}`;
+  const range = () => {
+    switch (Math.floor(next() * 8)) {
+      case 0:
+        return `${pick(operator)}${partial(true)} || ${pick(operator)}${plain()}`;
+      case 1:
+        return `${pick(operator)}${plain()} || ${pick(operator)}${partial(true)}`;
+      case 2:
+        return `>=${plain()} ${pick(comparing)}${partial(true)}`;
+      case 3:
+        return `${pick(comparing)}${partial(true)} <${plain()}`;
+      case 4:
+        return `${plain()} - ${partial(true)}`;
+      case 5:
+        return `${partial(true)} - ${plain()}`;
+      default:
+        return pick(operator) + partial(true);
+    }
+  };
+
+  const versions = ["0.0.0", "0.1.0", "1.0.0", "1.2.10", "2.0.0", "10.10.10"];
+  const attempt = (fn: () => number) => {
+    try {
+      return fn();
+    } catch {
+      return "throws";
+    }
+  };
+  const disagreements: object[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const r = range();
+    for (const v of versions) {
+      const bun = satisfies(v, r);
+      const node = nodeSemver.satisfies(v, r);
+      if (bun !== node) disagreements.push({ satisfies: [v, r], bun, node });
+    }
+
+    const version = partial(false);
+    const bun = attempt(() => order(version, "1.0.0"));
+    const node = attempt(() => nodeSemver.compare(version, "1.0.0"));
+    if (bun !== node) disagreements.push({ order: [version, "1.0.0"], bun, node });
+    if (satisfies(version, "*") !== nodeSemver.satisfies(version, "*")) {
+      disagreements.push({ satisfies: [version, "*"], bun: satisfies(version, "*") });
+    }
+  }
+  expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
+});
+
+test("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
+  // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
+  const requested: string[] = [];
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      requested.push(pathname);
+      if (pathname !== "/foo") return new Response("not found", { status: 404 });
+      return Response.json({
+        name: "foo",
+        "dist-tags": { latest: "1.0.0" },
+        versions: Object.fromEntries(
+          ["0.5.0", "1.0.0"].map(version => [
+            version,
+            { name: "foo", version, dist: { tarball: new URL(`/foo-${version}.tgz`, req.url).href } },
+          ]),
+        ),
+      });
+    },
+  });
+  using dir = tempDir("semver-number-above-u64-max", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { foo: "^99999999999999999999" },
+    }),
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(
+    'error: No version matching "^99999999999999999999" found for specifier "foo" (but package exists)',
+  );
+  expect(requested).toEqual(["/foo"]);
+  expect(exitCode).toBe(1);
 });
 
 test("a version range with >=256 || comparators does not abort", async () => {

@@ -1,4 +1,5 @@
 use crate::test_runner::expect::JSValueTestExt;
+use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_collections::HashMap;
@@ -103,6 +104,38 @@ pub struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
+/// Forwards at most `remaining` bytes to `inner`, then discards the rest and sets `truncated`.
+/// A write never fails because of the cap, so the formatter's infallible-write call sites hold.
+///
+/// `truncated` is shared with the [`Formatter`] because the formatter only sees this writer
+/// through `AsFmt`/`FmtAdapter`, and `core::fmt::Write` has no way to report truncation.
+struct CappedWriter<'a> {
+    inner: &'a mut dyn bun_io::Write,
+    remaining: usize,
+    truncated: &'a Cell<bool>,
+}
+
+impl bun_io::Write for CappedWriter<'_> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        if buf.len() <= self.remaining {
+            self.remaining -= buf.len();
+            return self.inner.write_all(buf);
+        }
+        // Cut on a UTF-8 boundary so the kept prefix stays valid.
+        let mut take = core::mem::take(&mut self.remaining);
+        while take > 0 && (buf[take] & 0b1100_0000) == 0b1000_0000 {
+            take -= 1;
+        }
+        self.truncated.set(true);
+        self.inner.write_all(&buf[..take])
+    }
+
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 impl JestPrettyFormat {
     pub(crate) fn format<W: bun_io::Write>(
         level: MessageLevel,
@@ -119,13 +152,50 @@ impl JestPrettyFormat {
         let result = {
             let mut bridge = AsFmt::new(&mut *writer);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, None)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
             let _ = writer.flush();
         }
         result
+    }
+
+    /// [`Self::format`], except that at most `max_bytes` reach `writer` and the walk over the
+    /// value stops once they have. Returns whether the output was cut short.
+    pub(crate) fn format_capped<W: bun_io::Write>(
+        level: MessageLevel,
+        global: &JSGlobalObject,
+        vals: &[JSValue],
+        len: usize,
+        writer: &mut W,
+        options: FormatOptions,
+        max_bytes: usize,
+    ) -> JsResult<bool> {
+        let flush = options.flush;
+        let truncated = Cell::new(false);
+        let result = {
+            let mut capped = CappedWriter {
+                inner: &mut *writer,
+                remaining: max_bytes,
+                truncated: &truncated,
+            };
+            let mut bridge = AsFmt::new(&mut capped);
+            let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
+            Self::format_adapted(
+                level,
+                global,
+                vals,
+                len,
+                &mut adapted,
+                options,
+                Some(&truncated),
+            )
+        };
+        if flush {
+            let _ = writer.flush();
+        }
+        result.map(|()| truncated.get())
     }
 
     fn format_adapted(
@@ -135,6 +205,7 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
         options: FormatOptions,
+        output_truncated: Option<&Cell<bool>>,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -146,6 +217,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.output_truncated = output_truncated;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -192,6 +264,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.output_truncated = output_truncated;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -318,6 +391,8 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    /// Set by the [`CappedWriter`] this formatter writes to, once it starts to discard output.
+    pub(crate) output_truncated: Option<&'a Cell<bool>>,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,6 +407,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            output_truncated: None,
         }
     }
 
@@ -424,47 +500,6 @@ impl Tag {
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
         matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
-    }
-
-    /// Map the wider `console_object` `FormatTag` onto this file's `Tag`.
-    /// Variants the test-runner formatter has no dedicated arm for collapse
-    /// onto `Object` so any caller still renders something useful.
-    pub const fn from_format_tag(tag: bun_jsc::FormatTag) -> Tag {
-        use bun_jsc::FormatTag as Ft;
-        match tag {
-            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
-            Ft::String => Tag::String,
-            Ft::Undefined => Tag::Undefined,
-            Ft::Double => Tag::Double,
-            Ft::Integer => Tag::Integer,
-            Ft::Null => Tag::Null,
-            Ft::Boolean => Tag::Boolean,
-            Ft::Array => Tag::Array,
-            Ft::Object => Tag::Object,
-            Ft::Function => Tag::Function,
-            Ft::Class => Tag::Class,
-            Ft::Error => Tag::Error,
-            Ft::TypedArray => Tag::TypedArray,
-            Ft::Map => Tag::Map,
-            Ft::Set => Tag::Set,
-            Ft::Symbol => Tag::Symbol,
-            Ft::BigInt => Tag::BigInt,
-            Ft::GlobalObject => Tag::GlobalObject,
-            Ft::Private => Tag::Private,
-            Ft::Promise => Tag::Promise,
-            Ft::JSON => Tag::JSON,
-            Ft::NativeCode => Tag::NativeCode,
-            Ft::JSX => Tag::JSX,
-            Ft::Event => Tag::Event,
-            Ft::MapIterator
-            | Ft::SetIterator
-            | Ft::CustomFormattedObject
-            | Ft::ToJSON
-            | Ft::GetterSetter
-            | Ft::CustomGetterSetter
-            | Ft::Proxy
-            | Ft::RevokedProxy => Tag::Object,
-        }
     }
 }
 
@@ -1082,10 +1117,10 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // Once an output-capped writer starts discarding, stop traversing:
-        // shared (non-circular) references re-expand at every occurrence, so
-        // a tiny object graph can otherwise expand exponentially (#34178).
-        if writer_.is_truncated() {
+        // The visited map only detects cycles, so a value that is reachable N ways is printed N
+        // times and a small graph of shared references expands exponentially (#34178). Stop the
+        // walk once the sink discards what it is given.
+        if self.output_truncated.is_some_and(Cell::get) {
             self.failed = true;
             return Ok(());
         }
@@ -2661,10 +2696,50 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
+        use bun_jsc::FormatTag as Ft;
+        // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
+        // variants the `write_format` hooks actually emit are reachable
+        // (Boolean / Double / Object / Private / String); the rest collapse
+        // onto `Object` so any future caller still renders something useful.
+        let local = match tag {
+            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
+            Ft::String => Tag::String,
+            Ft::Undefined => Tag::Undefined,
+            Ft::Double => Tag::Double,
+            Ft::Integer => Tag::Integer,
+            Ft::Null => Tag::Null,
+            Ft::Boolean => Tag::Boolean,
+            Ft::Array => Tag::Array,
+            Ft::Object => Tag::Object,
+            Ft::Function => Tag::Function,
+            Ft::Class => Tag::Class,
+            Ft::Error => Tag::Error,
+            Ft::TypedArray => Tag::TypedArray,
+            Ft::Map => Tag::Map,
+            Ft::Set => Tag::Set,
+            Ft::Symbol => Tag::Symbol,
+            Ft::BigInt => Tag::BigInt,
+            Ft::GlobalObject => Tag::GlobalObject,
+            Ft::Private => Tag::Private,
+            Ft::Promise => Tag::Promise,
+            Ft::JSON => Tag::JSON,
+            Ft::NativeCode => Tag::NativeCode,
+            Ft::JSX => Tag::JSX,
+            Ft::Event => Tag::Event,
+            // Variants the test-runner formatter has no dedicated arm for:
+            Ft::MapIterator
+            | Ft::SetIterator
+            | Ft::CustomFormattedObject
+            | Ft::ToJSON
+            | Ft::GetterSetter
+            | Ft::CustomGetterSetter
+            | Ft::Proxy
+            | Ft::RevokedProxy => Tag::Object,
+        };
         let mut sink = bun_io::FmtAdapter::new(writer);
         let global = self.global_this;
         self.format::<_, ENABLE_ANSI_COLORS>(
-            TagResult { tag: Tag::from_format_tag(tag), cell },
+            TagResult { tag: local, cell },
             &mut sink,
             value,
             global,
@@ -2703,21 +2778,15 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        mut w: &mut dyn bun_io::Write,
+        w: &mut dyn bun_io::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        // Dispatch straight into `format` with the byte writer: `&mut dyn
-        // Write` forwards `is_truncated()` to a capped sink, which an
-        // `AsFmt`/`FmtAdapter` round-trip would lose (`core::fmt::Write` has
-        // no truncation concept), defeating the #34178 traversal early-exit.
-        let global = self.global_this;
-        self.format::<&mut dyn bun_io::Write, C>(
-            TagResult { tag: Tag::from_format_tag(tag), cell },
-            &mut w,
-            v,
-            global,
-        )
+        // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
+        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_io::Write` →
+        // `core::fmt::Write` for the trait method's signature.
+        let mut bridge = AsFmt::new(w);
+        <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
     }
 }
 

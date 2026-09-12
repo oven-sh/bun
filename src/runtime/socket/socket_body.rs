@@ -272,6 +272,19 @@ extern "C" fn select_alpn_callback(
     }
 }
 
+/// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
+/// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
+pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_CTX) {
+    if ctx.is_null() {
+        return;
+    }
+    tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
+        SSL_CTX::opaque_ref(ctx),
+        Some(select_alpn_callback),
+        ptr::null_mut(),
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // NewSocket<SSL>
 // ──────────────────────────────────────────────────────────────────────────
@@ -891,6 +904,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             core::ptr::null_mut()
         };
+        install_sni_alpn_selector(ctx_ptr);
         socket.sni_resolve(ctx_ptr, is_error);
         Ok(JSValue::UNDEFINED)
     }

@@ -8,7 +8,7 @@ const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
-const { isAnyArrayBuffer } = require("node:util/types");
+const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -374,24 +374,42 @@ Agent.prototype.createConnection = createConnection;
 // A { buf | pem, passphrase } entry, an ArrayBuffer and a Blob all stringify to "[object ...]".
 const poolKeyObjectIds = new WeakMap<object, number>();
 let poolKeyObjectCount = 0;
-function poolKeyPart(value: unknown, passphrase?: unknown): unknown {
+function poolKeyPart(value: unknown): unknown {
   if (typeof value !== "object" || value === null || $isTypedArrayView(value)) return value;
-  if ($isArray(value)) {
-    return ArrayPrototypeJoin.$call(
-      ArrayPrototypeMap.$call(value, element => poolKeyPart(element, passphrase)),
-      ",",
-    );
-  }
+  // Array.prototype.toString() of the keyed elements: Node's name for an array of strings or Buffers.
+  if ($isArray(value)) return ArrayPrototypeJoin.$call(ArrayPrototypeMap.$call(value, poolKeyPart), ",");
   if (isAnyArrayBuffer(value)) return Buffer.from(value as ArrayBufferLike);
-  const { buf, pem, passphrase: ownPassphrase } = value as { buf?: unknown; pem?: unknown; passphrase?: unknown };
-  // A pfx entry, in the format of Node's getPfxAgentKey() (CVE-2026-56850).
-  if (buf != null) return `:${poolKeyPart(buf)}:${ownPassphrase || passphrase}`;
+  // $isTypedArrayView() is false for a DataView.
+  if (isDataView(value)) {
+    const { buffer, byteOffset, byteLength } = value as DataView;
+    return Buffer.from(buffer, byteOffset, byteLength);
+  }
   // A key entry. Its passphrase only decrypts the pem, so it stays out of the name.
+  const { pem } = value as { pem?: unknown };
   if (pem != null) return poolKeyPart(pem);
   // Any other object (a Blob, a BunFile) has no contents to read here: key it by identity.
   let id = poolKeyObjectIds.get(value);
   if (id === undefined) poolKeyObjectIds.set(value, (id = ++poolKeyObjectCount));
   return `[object #${id}]`;
+}
+
+// Node's getPfxAgentKey() (CVE-2026-56850), with each buf keyed by poolKeyPart().
+type PfxEntry = { buf?: unknown; passphrase?: unknown } | null | undefined;
+function pfxPoolKey(pfx: unknown, passphrase: unknown) {
+  let entries: unknown[];
+  if ($isArray(pfx)) entries = pfx;
+  // Bun also takes one { buf, passphrase } entry outside an array.
+  else if ($isObject(pfx) && !$isTypedArrayView(pfx) && (pfx as PfxEntry)!.buf !== undefined) entries = [pfx];
+  else return poolKeyPart(pfx);
+
+  let key = "";
+  for (let i = 0; i < entries.length; i++) {
+    const value = entries[i] as PfxEntry;
+    const raw = value?.buf || value;
+    const pass = value?.passphrase || passphrase;
+    key += `:${poolKeyPart(raw)}:${pass}`;
+  }
+  return key;
 }
 
 /**
@@ -444,7 +462,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (key) name += poolKeyPart(key);
 
   name += ":";
-  if (pfx) name += poolKeyPart(pfx, passphrase);
+  if (pfx) name += pfxPoolKey(pfx, passphrase);
 
   name += ":";
   if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
@@ -490,9 +508,9 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 
   // Bun-only options: paths that the TLS layer reads the client certificate, its key and the
   // CA from. Node has no such options, so a name without them stays Node's name.
-  if (certFile) name += `:certFile=${certFile}`;
-  if (keyFile) name += `:keyFile=${keyFile}`;
-  if (caFile) name += `:caFile=${caFile}`;
+  if (certFile) name += `:certFile=${JSONStringify(certFile)}`;
+  if (keyFile) name += `:keyFile=${JSONStringify(keyFile)}`;
+  if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
 
   return name;
 };

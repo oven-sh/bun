@@ -161,6 +161,19 @@ describe("https.Agent#getName", () => {
     );
   });
 
+  // The names Node v26.5.1 gives, from getPfxAgentKey().
+  fixedTest("a pfx array has Node's name", () => {
+    assert.strictEqual(
+      name({ pfx: [Buffer.from("a"), { buf: "b", passphrase: "p" }], passphrase: "q" }),
+      "localhost:443::::::::a:q:b:p::::::::::::::",
+    );
+    assert.strictEqual(
+      name({ pfx: [Buffer.from("a"), Buffer.from("b")] }),
+      "localhost:443::::::::a:undefined:b:undefined::::::::::::::",
+    );
+    assert.strictEqual(name({ pfx: Buffer.from("a"), passphrase: "q" }), "localhost:443:::::::a::::::::::::::");
+  });
+
   fixedTest("`pfx: [{ buf, passphrase }]` is keyed by buf and passphrase", () => {
     const buf = read("agent1.pfx");
     const base = name({ pfx: [{ buf, passphrase: "sample" }] });
@@ -191,7 +204,7 @@ describe("https.Agent#getName", () => {
     assert.notStrictEqual(name({ key: [{ pem: read("agent10-key.pem"), passphrase: "a" }] }), base);
   });
 
-  bunTest("equal bytes share a name across string, Buffer, ArrayBuffer and array forms", () => {
+  bunTest("equal bytes share a name across string, Buffer, ArrayBuffer, DataView and array forms", () => {
     const cert = read("agent1-cert.pem");
     const base = name({ cert: cert.toString() });
     assert.strictEqual(name({ cert }), base);
@@ -201,13 +214,20 @@ describe("https.Agent#getName", () => {
       name({ pfx: [{ buf: readArrayBuffer("agent1.pfx"), passphrase: "sample" }] }),
       name({ pfx: [{ buf: read("agent1.pfx"), passphrase: "sample" }] }),
     );
+    const pfx = read("agent1.pfx");
+    assert.strictEqual(name({ pfx: new DataView(pfx.buffer, pfx.byteOffset, pfx.byteLength) }), name({ pfx }));
   });
 
   bunTest("certFile, keyFile and caFile are labelled parts of the name", () => {
     const base = name({});
-    assert.strictEqual(name({ certFile: "a", keyFile: "b", caFile: "c" }), `${base}:certFile=a:keyFile=b:caFile=c`);
+    assert.strictEqual(
+      name({ certFile: "a", keyFile: "b", caFile: "c" }),
+      `${base}:certFile="a":keyFile="b":caFile="c"`,
+    );
     assert.notStrictEqual(name({ certFile: "a" }), name({ keyFile: "a" }));
     assert.notStrictEqual(name({ caFile: "a" }), name({ caFile: "b" }));
+    // A path cannot spell the next part.
+    assert.notStrictEqual(name({ certFile: 'a":keyFile="b' }), name({ certFile: "a", keyFile: "b" }));
   });
 });
 

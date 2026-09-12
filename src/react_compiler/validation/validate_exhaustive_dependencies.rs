@@ -1609,6 +1609,10 @@ fn is_optional_dependency_inferred(
 /// clones where TS shares an object, so it compares every field. Without this
 /// a phi that another phi reaches along many paths holds one copy per path,
 /// and the list grows exponentially with the depth of the control flow.
+///
+/// A `Global` has no field that tells two loads of one global apart, so they
+/// are one entry here and two in TS. `add_dependency` merges globals by name
+/// anyway, so the inferred dependencies are the same.
 fn is_same_dependency(a: &InferredDependency, b: &InferredDependency) -> bool {
     match (a, b) {
         (

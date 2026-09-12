@@ -405,6 +405,8 @@ bun_io::link_impl_EventLoopCtx! {
             (*this).after_event_loop_callback_ctx = ctx;
         },
         pipe_read_scratch() => &raw const *(*this).pipe_read_scratch,
+        // No raw mode on the mini loop: a reader of fd 0 opens its own tty.
+        stdin_tty() => core::ptr::null_mut(),
     }
 }
 

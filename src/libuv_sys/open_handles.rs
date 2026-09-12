@@ -36,6 +36,8 @@ struct Entry {
 enum Kind {
     Pipe,
     Tty,
+    /// `bun_io::StdinTty`: never owned here; closed in place, freed by its owner.
+    StdinTty,
     Process,
 }
 
@@ -76,6 +78,9 @@ pub(super) fn add_pipe(p: *mut Pipe) {
 }
 pub(super) fn add_tty(t: *mut uv_tty_t) {
     add(t.cast(), Kind::Tty);
+}
+pub fn add_stdin_tty(t: *mut uv_tty_t) {
+    add(t.cast(), Kind::StdinTty);
 }
 pub(super) fn add_process(p: *mut Process) {
     add(p.cast(), Kind::Process);
@@ -120,10 +125,13 @@ pub fn set_file_owner(file: *mut c_void, owner: *mut c_void, close: CloseViaOwne
 
 /// `owner` now drives `handle` and closes it via `close(owner)`; pass a
 /// null `owner` to clear. No-op for handles not listed (never initialised
-/// on this thread, already closing, or the process-static stdin tty).
+/// on this thread, already closing) and for the shared stdin tty.
 pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<CloseViaOwner>) {
     OPEN.with(|o| {
         if let Some(e) = o.borrow_mut().handles.get_mut(&handle) {
+            if e.kind == Kind::StdinTty {
+                return;
+            }
             e.owner = owner;
             e.close_via_owner = if owner.is_null() { None } else { close };
         }
@@ -192,6 +200,7 @@ pub fn stop_all_for_vm_teardown() {
             match e.kind {
                 Kind::Pipe => "pipe",
                 Kind::Tty => "tty",
+                Kind::StdinTty => "stdin tty",
                 Kind::Process => "process",
             },
             handle,
@@ -207,8 +216,8 @@ pub fn stop_all_for_vm_teardown() {
             // SAFETY: as above (a leaked Box<Tty> nobody adopted).
             (None, Kind::Tty) => unsafe {
                 unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
-                    // SAFETY: heap `Box<Tty>` (stdin's static tty is never
-                    // listed); `from_uv` recovers the owning box.
+                    // SAFETY: heap `Box<Tty>` (the shared stdin tty is
+                    // `Kind::StdinTty`); `from_uv` recovers the owning box.
                     drop(unsafe { Box::from_raw(super::Tty::from_uv(t)) });
                 }
                 uv_close(
@@ -221,8 +230,9 @@ pub fn stop_all_for_vm_teardown() {
             },
             // A process handle is embedded in its owner and always adopted at
             // spawn; an unowned one cannot be freed safely — close in place.
+            // The stdin tty too: its owner frees it once the loop is closed.
             // SAFETY: listed ⇒ an initialised, not-closing handle on this loop.
-            (None, Kind::Process) => unsafe { uv_close(handle, None) },
+            (None, Kind::StdinTty | Kind::Process) => unsafe { uv_close(handle, None) },
         }
     }
 }

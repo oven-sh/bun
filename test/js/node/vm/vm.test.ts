@@ -912,6 +912,29 @@ test("accepts valid bytecode", () => {
   expect(secondScript.runInThisContext()).toBe(2);
 });
 
+test.concurrent("accepts valid bytecode when the JIT is unavailable", async () => {
+  // JSC runs JIT-less when it cannot map its executable pool: systemd
+  // MemoryDenyWriteExecute=yes, or a low RLIMIT_AS. Constructing a Script with
+  // accepted cachedData used to compile the decoded block with the baseline JIT,
+  // which killed the process there.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Script } = require("node:vm");
+       const cachedData = new Script("40 + 2").createCachedData();
+       const script = new Script("40 + 2", { cachedData });
+       console.log(script.cachedDataRejected, script.runInThisContext());`,
+    ],
+    env: { ...bunEnv, BUN_JSC_useJIT: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("false 42\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("can't use bytecode from a different script", () => {
   const firstScript = new Script("1 + 1;");
   const cachedData = firstScript.createCachedData();

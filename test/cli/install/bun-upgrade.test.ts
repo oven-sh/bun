@@ -124,6 +124,8 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  /** Raw body for the release endpoint. Replaces the generated release object. */
+  releaseBody?: string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
   const server = Bun.serve({
@@ -134,6 +136,9 @@ function startReleaseServer(opts: {
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
         return new Response(opts.zipBody ?? "this is not a real zip archive");
+      }
+      if (opts.releaseBody !== undefined) {
+        return new Response(opts.releaseBody, { headers: { "content-type": "application/json" } });
       }
       return new Response(
         JSON.stringify({
@@ -255,6 +260,29 @@ describe.concurrent(() => {
     );
     expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
     await proc.exited;
+  });
+});
+
+describe.concurrent("non-object release JSON", () => {
+  it.each([
+    ["[]", "array"],
+    ['"bun-v9.9.9"', "string"],
+    ["42", "number"],
+    ["null", "null"],
+  ])("names the JSON type in the error for %s", async (releaseBody, typeName) => {
+    using server = startReleaseServer({ tagName: "bun-v9.9.9", releaseBody });
+    await using proc = spawn({
+      cmd: [bunExe(), "upgrade", "--stable"],
+      cwd: tmpdirSync(),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: server.env,
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`JSON error - expected an object but received ${typeName}`);
+    expect(exitCode).toBe(1);
   });
 });
 

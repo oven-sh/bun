@@ -50,6 +50,34 @@ it("long arrays get cutoff", () => {
   );
 });
 
+// A BigInt depth used to be read through the int32 path, which reinterprets the cell
+// pointer as the depth.
+it("console.dir depth accepts a BigInt", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let o = {}, c = o; for (let i = 0; i < 40; i++) { c.n = {}; c = c.n; }
+       for (const depth of [7n, 7, -1n, -1, 2n ** 70n, Infinity, -(2n ** 70n), 0]) {
+         console.dir(o, { depth, colors: false });
+         console.log("--");
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [big7, num7, bigNeg, numNeg, bigHuge, numInf, bigHugeNeg, num0] = stdout.split("--\n");
+  expect(big7.split("\n").filter(line => line.includes("n:")).length).toBe(8);
+  expect(big7).toBe(num7);
+  expect(bigNeg).toBe(numNeg);
+  expect(bigHuge).toBe(numInf);
+  expect(bigHugeNeg).toBe(num0);
+  expect(exitCode).toBe(0);
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({

@@ -517,9 +517,22 @@ fn message_with_type_and_level_(
         let opts = vals_slice[1];
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
-                if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
+                if depth_prop.is_number() {
                     // Clamp negatives to 0, then truncate (not saturate) to u16.
                     print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
+                } else if depth_prop.is_big_int() {
+                    // Negative clamps to 0, above u16::MAX saturates.
+                    print_options.max_depth =
+                        if depth_prop.is_big_int_in_int64_range(0, i64::from(u16::MAX)) {
+                            depth_prop.coerce_to_int64(global)? as u16
+                        } else if depth_prop
+                            .as_big_int_compare(global, JSValue::js_number_from_int32(0))
+                            == jsc::ComparisonResult::LessThan
+                        {
+                            0
+                        } else {
+                            u16::MAX
+                        };
                 } else if depth_prop.is_null() {
                     print_options.max_depth = u16::MAX;
                 }

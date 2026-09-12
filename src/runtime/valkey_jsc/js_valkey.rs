@@ -491,7 +491,8 @@ impl JSValkeyClient {
             arguments[0].to_bun_string(&global_object)?
         } else {
             let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
+            let from_env = |key: &[u8]| env.get(key).filter(|url| !url.is_empty());
+            match from_env(b"REDIS_URL").or_else(|| from_env(b"VALKEY_URL")) {
                 Some(url) => BunString::borrow_utf8(url),
                 None => BunString::static_("valkey://localhost:6379"),
             }

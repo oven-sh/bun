@@ -24,6 +24,17 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  target: "bun",
+  loader: {
+    ".cfg": "jsonc",
+    ".addon": "napi",
+    ".sqlite": "sqlite",
+    ".db": "sqlite_embedded",
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

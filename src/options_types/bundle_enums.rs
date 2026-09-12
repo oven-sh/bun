@@ -4,7 +4,7 @@
 //!
 //! `Loader` / `Target` / `SideEffects` / `Index` are now canonical in
 //! `bun_ast`; only the `schema::api`-coupled extension methods (`to_api`,
-//! `from_api`, `API_NAMES`) remain here as sealed extension traits.
+//! `from_api`) remain here as sealed extension traits.
 
 use crate::schema::api;
 use bun_ast::{Loader, Target};
@@ -160,38 +160,6 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-bun_core::comptime_string_map! {
-pub static LOADER_API_NAMES: api::Loader = {
-    b"js" => api::Loader::js,
-    b"mjs" => api::Loader::js,
-    b"cjs" => api::Loader::js,
-    b"cts" => api::Loader::ts,
-    b"mts" => api::Loader::ts,
-    b"jsx" => api::Loader::jsx,
-    b"ts" => api::Loader::ts,
-    b"tsx" => api::Loader::tsx,
-    b"css" => api::Loader::css,
-    b"file" => api::Loader::file,
-    b"json" => api::Loader::json,
-    b"jsonc" => api::Loader::json,
-    b"toml" => api::Loader::toml,
-    b"yaml" => api::Loader::yaml,
-    b"json5" => api::Loader::json5,
-    b"xml" => api::Loader::xml,
-    b"wasm" => api::Loader::wasm,
-    b"node" => api::Loader::napi,
-    b"dataurl" => api::Loader::dataurl,
-    b"base64" => api::Loader::base64,
-    b"txt" => api::Loader::text,
-    b"text" => api::Loader::text,
-    b"sh" => api::Loader::file,
-    b"sqlite" => api::Loader::sqlite,
-    b"html" => api::Loader::html,
-    b"md" => api::Loader::md,
-    b"markdown" => api::Loader::md,
-};
-}
-
 /// `schema::api`-coupled methods on [`bun_ast::Loader`].
 pub trait LoaderExt: sealed::Sealed {
     fn to_api(self) -> api::Loader;
@@ -207,9 +175,12 @@ impl LoaderExt for Loader {
             Loader::Tsx => api::Loader::tsx,
             Loader::Css => api::Loader::css,
             Loader::Html => api::Loader::html,
+            // Loader maps (`--loader`, bunfig, `Bun.build`) round-trip through here; this
+            // is the one arm that changes what a name means. The bundler parses `Bunsh`
+            // to an empty module, so an `"sh"` mapping copies the file instead.
             Loader::File | Loader::Bunsh => api::Loader::file,
             Loader::Json => api::Loader::json,
-            Loader::Jsonc => api::Loader::json,
+            Loader::Jsonc => api::Loader::jsonc,
             Loader::Toml => api::Loader::toml,
             Loader::Yaml => api::Loader::yaml,
             Loader::Json5 => api::Loader::json5,
@@ -219,7 +190,8 @@ impl LoaderExt for Loader {
             Loader::Base64 => api::Loader::base64,
             Loader::Dataurl => api::Loader::dataurl,
             Loader::Text => api::Loader::text,
-            Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
+            Loader::Sqlite => api::Loader::sqlite,
+            Loader::SqliteEmbedded => api::Loader::sqlite_embedded,
             Loader::Md => api::Loader::md,
         }
     }

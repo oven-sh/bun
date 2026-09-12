@@ -1025,12 +1025,21 @@ impl Request {
         }
 
         if arguments.is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(global_this.throw_type_error(format_args!(
                 "Failed to construct 'Request': 1 argument required, but only 0 present."
             ))));
         } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
-            bail!(Err(global_this.throw(format_args!(
-                "Failed to construct 'Request': expected non-empty string or object, got undefined"
+            bail!(Err(global_this.throw_type_error(format_args!(
+                "Failed to construct 'Request': expected non-empty string or object, got {}",
+                if arguments[0].is_null() {
+                    "null"
+                } else if arguments[0].is_number() {
+                    "number"
+                } else if arguments[0].is_boolean() {
+                    "boolean"
+                } else {
+                    "undefined"
+                }
             ))));
         }
 
@@ -1055,7 +1064,7 @@ impl Request {
                 fields.insert(Fields::Url);
             }
         } else if !url_or_object_type.is_object() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(global_this.throw_type_error(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
             ))));
         }
@@ -1374,7 +1383,7 @@ impl Request {
         }
 
         if req.url.get().is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            bail!(Err(global_this.throw_type_error(format_args!(
                 "Failed to construct 'Request': url is required."
             ))));
         }

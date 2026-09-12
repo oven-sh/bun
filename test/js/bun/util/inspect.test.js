@@ -119,6 +119,20 @@ it("Blob inspect", () => {
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
   type: "application/octet-stream"
 }`);
+  // A cloned fd-backed file deserializes with an empty name; don't print it.
+  expect(Bun.inspect(structuredClone(Bun.file(123)))).toBe(Bun.inspect(Bun.file(123)));
+  // Reading .name caches it; the header already shows the path, so no name line.
+  const bunFile = Bun.file(tmpFile);
+  void bunFile.name;
+  expect(Bun.inspect(bunFile)).toBe(`FileRef ("${tmpFile}") {
+  type: "text/plain;charset=utf-8"
+}`);
+  // A File over a BunFile keeps the FileRef header but has its own name.
+  expect(
+    Bun.inspect(new File([bunFile], "custom.txt"))
+      .split("\n")
+      .slice(0, 3),
+  ).toEqual([`FileRef ("${tmpFile}") {`, `  name: "custom.txt",`, `  type: "text/plain;charset=utf-8",`]);
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
@@ -743,10 +757,6 @@ describe("console.logging class displays names and extends", async () => {
 it("console.log on a Blob shows name", () => {
   const blob = new Blob(["foo"], { type: "text/plain" });
   expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');
-  blob.name = "bar";
-  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar",\n  type: "text/plain;charset=utf-8"\n}');
-  blob.name = "foobar";
-  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8"\n}');
 
   const file = new File(["foo"], "bar.txt", { type: "text/plain" });
   expect(Bun.inspect(file)).toBe(

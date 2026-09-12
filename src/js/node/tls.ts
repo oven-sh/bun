@@ -708,6 +708,11 @@ const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // the unwrapped native context).
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 
+// One tick after the transport's 'close', so a 'finish' that is already queued is emitted first.
+function destroyWithTransportNT(self, transport) {
+  if (self._handle === transport) self.destroy();
+}
+
 function TLSSocket(socket?, options?) {
   this[ksecureContext] = undefined;
   this.ALPNProtocols = undefined;
@@ -809,6 +814,8 @@ function TLSSocket(socket?, options?) {
       this._handle = socket;
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+      socket.once("close", () => process.nextTick(destroyWithTransportNT, this, socket));
     }
     // For the server wrap, _handle is assigned the upgraded TLS handle by the
     // server-upgrade method below; leaving it unset until then means a synchronous
@@ -897,10 +904,20 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  if (!this._handle) return callback();
+  const handle = this._handle;
+  if (!handle) return callback();
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
+  }
+  // A client-side wrap holds the stream it wraps as its handle until connect() upgrades it.
+  if (handle instanceof Duplex) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+    if (handle instanceof NetSocket && handle.pending) {
+      return handle.once("connect", this._final.bind(this, callback));
+    }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+    return handle.end(() => callback());
   }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);

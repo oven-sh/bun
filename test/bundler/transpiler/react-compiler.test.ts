@@ -1168,6 +1168,94 @@ describe("bundler", () => {
     },
   });
 
+  // A closure reads a `let` that is declared below it (or by its own statement)
+  // and reassigned later. Babel declares such a local with `DeclareContext
+  // HoistedLet` in front of the closure, also when the local is already a
+  // context variable because it is captured and reassigned.
+  //
+  // The fake `c` records the size of every memo cache, so the second element of
+  // each pair is the `_c(n)` of that function. The sizes are the ones
+  // babel-plugin-react-compiler 1.0.0 emits. A function that the compiler
+  // skips has `[]` there.
+  itBundled("react-compiler/ClosureAboveReassignedLet", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { sizes } from "react/compiler-runtime";
+
+        const Row = "row";
+        const wrap = fn => fn;
+
+        function DeclarationReadsLetBelow(p) {
+          function label() {
+            return \`\${n} items\`;
+          }
+          let n = 0;
+          for (const it of p.items) {
+            n += it.qty;
+          }
+          return <b>{label()}</b>;
+        }
+        function ArrowReadsLetBelow(p) {
+          const renderRow = () => <Row items={items} />;
+          let items = p.items;
+          if (p.onlyActive) {
+            items = items.filter(i => i.active);
+          }
+          return <ul>{renderRow()}</ul>;
+        }
+        function ArrowReadsItself(p) {
+          let render = () => <Row again={render} x={p.x} />;
+          render = wrap(render);
+          return <div>{render()}</div>;
+        }
+        function TernaryOnLetBelow(p) {
+          const pick = () => (flag ? p.a : p.b);
+          let flag = p.flag;
+          flag = !flag;
+          return <i>{pick()}</i>;
+        }
+
+        function render(fn, props) {
+          const before = sizes().length;
+          const result = fn(props);
+          return [result.props.children, sizes().slice(before)];
+        }
+        console.log(JSON.stringify({
+          DeclarationReadsLetBelow: render(DeclarationReadsLetBelow, { items: [{ qty: 2 }, { qty: 3 }] }),
+          ArrowReadsLetBelow: render(ArrowReadsLetBelow, {
+            items: [{ id: 1, active: true }, { id: 2, active: false }],
+            onlyActive: true,
+          }),
+          ArrowReadsItself: render(ArrowReadsItself, { x: 7 }),
+          TernaryOnLetBelow: render(TernaryOnLetBelow, { flag: true, a: "a", b: "b" }),
+        }, (key, value) => (typeof value === "function" ? "function" : value)));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const sizes = [];
+        exports.c = size => {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        DeclarationReadsLetBelow: ["5 items", [4]],
+        ArrowReadsLetBelow: [{ type: "row", props: { items: [{ id: 1, active: true }] } }, [3]],
+        ArrowReadsItself: [{ type: "row", props: { again: "function", x: 7 } }, [4]],
+        TernaryOnLetBelow: ["b", [6]],
+      }),
+    },
+  });
+
   // A temporary that has to survive as a variable is "promoted": the compiler
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the

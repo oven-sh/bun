@@ -75,6 +75,10 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* us_create_loop could not get a descriptor the loop needs. Exits with the
+ * file descriptor limit error for EMFILE/ENFILE, crashes for anything else. */
+extern void __attribute__((__noreturn__)) Bun__loopInitFailed(const char *syscall_name, int err);
+
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
  * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The

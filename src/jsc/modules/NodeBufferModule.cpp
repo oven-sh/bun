@@ -3,6 +3,7 @@
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "helpers.h"
+#include "JSBuffer.h"
 #include "JSBufferEncodingType.h"
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
@@ -165,7 +166,9 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    const std::span<const uint8_t> input { view->typedVector(), length };
+    WTF::Vector<uint8_t> storage;
+    const std::span<const uint8_t> input = Bun::stableBytes(globalObject, scope, std::span<const uint8_t> { view->typedVector(), length }, view->isShared(), storage);
+    RETURN_IF_EXCEPTION(scope, {});
     const auto* data = reinterpret_cast<const char*>(input.data());
 
     // Only these two ICU statuses are producible here.

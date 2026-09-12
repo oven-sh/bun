@@ -349,12 +349,13 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     };
 
                     {
-                        // Strip leading "@import" and ".ignored" rules. Any
-                        // "@layer" statement rules interleaved with them are
-                        // preserved, because they carry layer ordering
-                        // information that is not re-emitted elsewhere by
-                        // the bundler (e.g. Tailwind's
-                        // `@layer theme, base, components, utilities;`).
+                        // Strip leading "@import" and ".ignored" rules, and
+                        // the "@layer" statements that precede the first
+                        // "@import": those are `layers_pre_import`, which
+                        // `find_imported_files_in_css_order` already emitted
+                        // as a `Layers` entry ahead of the imported files.
+                        // "@layer" statements after an "@import" are kept,
+                        // because nothing else re-emits them.
                         //
                         // IMPORTANT: `ast` is only a shallow copy of the
                         // per-source stylesheet, so `ast.rules.v.items` still
@@ -368,35 +369,45 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
-                        let mut layer_count: usize = 0;
+                        let mut seen_import = false;
+                        let mut kept_layer_count: usize = 0;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
                             match rule {
-                                BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
+                                BundlerCssRule::Import(_) => seen_import = true,
+                                BundlerCssRule::Ignored => {}
+                                BundlerCssRule::LayerStatement(_) => {
+                                    if seen_import {
+                                        kept_layer_count += 1;
+                                    }
+                                }
                                 _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
                                 }
                             }
                         }
-                        let dropped = prefix_end - layer_count;
+                        let dropped = prefix_end - kept_layer_count;
 
                         if dropped == 0 {
-                            // Prefix is all "@layer" (or empty). Nothing to
-                            // strip — leave `ast.rules.v` untouched.
+                            // Nothing to strip — leave `ast.rules.v` untouched.
                         } else {
-                            // Interleaved case: allocate a fresh rules list
-                            // so we don't mutate the shared backing array.
-                            // Preserve the "@layer" statements from the
-                            // prefix and append the remaining tail.
+                            // Allocate a fresh rules list so we don't mutate
+                            // the shared backing array. Preserve the kept
+                            // "@layer" statements from the prefix and append
+                            // the remaining tail.
                             let mut new_rules: ArenaVec<BundlerCssRule> =
                                 ArenaVec::with_capacity_in(
-                                    layer_count + (original_rules.len() - prefix_end),
+                                    kept_layer_count + (original_rules.len() - prefix_end),
                                     bump,
                                 );
+                            let mut seen_import = false;
                             for rule in &original_rules[0..prefix_end] {
-                                if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                if matches!(rule, BundlerCssRule::Import(_)) {
+                                    seen_import = true;
+                                }
+                                if seen_import && matches!(rule, BundlerCssRule::LayerStatement(_))
+                                {
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /

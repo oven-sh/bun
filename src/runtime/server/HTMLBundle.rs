@@ -158,6 +158,9 @@ pub struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
+    /// The chunk routes the last successful bundle appended to the server.
+    /// `server.reload()` replaces that list; `adopt_assets` carries these over.
+    assets: JsCell<Vec<(Box<[u8]>, RefPtr<StaticRoute>)>>,
 }
 
 pub enum State {
@@ -188,6 +191,10 @@ impl Route {
         cost += mem::size_of::<Route>();
         cost += self.pending_responses.get().len() * mem::size_of::<PendingResponse>();
         cost += self.state.get().memory_cost();
+        // The `StaticRoute`s themselves are counted through the server's static route list.
+        for (path, _) in self.assets.get().iter() {
+            cost += mem::size_of::<(Box<[u8]>, RefPtr<StaticRoute>)>() + path.len();
+        }
         cost
     }
 
@@ -200,7 +207,35 @@ impl Route {
             server: Cell::new(None),
             state: JsCell::new(State::Pending),
             dev_server_id: Cell::new(None),
+            assets: JsCell::new(Vec::new()),
         })
+    }
+
+    /// Takes the chunk routes of `old`, the route for the same `HTMLBundle`
+    /// in the config that `server.reload()` replaces, so the chunk urls in a
+    /// document a client already holds stay served until the next build.
+    /// Returns them for the caller to append to the new config.
+    pub(crate) fn adopt_assets(&self, old: &Route) -> Vec<(Box<[u8]>, RefPtr<StaticRoute>)> {
+        if !std::ptr::eq(self.bundle.as_ptr(), old.bundle.as_ptr()) || !self.assets.get().is_empty()
+        {
+            return Vec::new();
+        }
+        let assets = old.assets.get().clone();
+        self.assets.set(assets.clone());
+        assets
+    }
+
+    /// Registers one chunk of the bundle on the server and records it in
+    /// `assets`.
+    fn append_asset(&self, server: AnyServer, path: &[u8], route: StaticRoute) {
+        let route = RefPtr::new(route);
+        self.assets
+            .with_mut(|assets| assets.push((Box::<[u8]>::from(path), route.clone())));
+        bun_core::handle_oom(server.append_static_route(
+            path,
+            AnyRoute::Static(route),
+            MethodOptional::Any,
+        ));
     }
 
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
@@ -551,6 +586,7 @@ impl Route {
                 // needs it by `&mut` before it is shared. Static routes are keyed
                 // by `dest_path`, so registration order is immaterial.
                 let mut this_html_route: Option<(StaticRoute, Box<[u8]>)> = None;
+                self.assets.set(Vec::new());
 
                 // Create static routes for each output file
                 // Index loop because the SourceMap branch reads a sibling entry.
@@ -623,21 +659,25 @@ impl Route {
                         continue;
                     }
 
-                    bun_core::handle_oom(server.append_static_route(
-                        route_path,
-                        AnyRoute::Static(RefPtr::new(static_route)),
-                        MethodOptional::Any,
-                    ));
+                    self.append_asset(server, route_path, static_route);
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
-                    &html_route_path,
-                    AnyRoute::Static(RefPtr::new(html_route)),
-                    MethodOptional::Any,
-                ));
+                // Not an asset: a reload drops this alias so the page bundles
+                // again. An html route mounted at this path would be replaced
+                // by the alias in the route list and never bundle again.
+                let html_path_has_html_route = server.config().static_routes.iter().any(|entry| {
+                    matches!(entry.route, AnyRoute::Html(_)) && *entry.path == *html_route_path
+                });
+                if !html_path_has_html_route {
+                    bun_core::handle_oom(server.append_static_route(
+                        &html_route_path,
+                        AnyRoute::Static(RefPtr::new(html_route)),
+                        MethodOptional::Any,
+                    ));
+                }
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

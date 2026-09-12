@@ -45,8 +45,14 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     if (!isValidCookiePath(path)) {
         return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
     }
+    if (path.length() > maxAttributeValueLength) {
+        return Exception { TypeError, "Invalid cookie path: longer than 1024 characters, so browsers would ignore it"_s };
+    }
     if (!isValidCookieDomain(domain)) {
         return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+    }
+    if (domain.length() > maxAttributeValueLength) {
+        return Exception { TypeError, "Invalid cookie domain: longer than 1024 characters, so browsers would ignore it"_s };
     }
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
@@ -102,6 +108,9 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 attributeName = trimmedAttribute.convertToASCIILowercase();
                 attributeValue = emptyString();
             }
+
+            if (attributeValue.length() > maxAttributeValueLength)
+                continue;
 
             // RFC 6265 5.2: each attribute is recorded independently, last occurrence wins.
             // Max-Age's precedence over Expires (5.3) governs the computed expiry time, so it

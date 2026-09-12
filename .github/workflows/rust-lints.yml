@@ -26,6 +26,16 @@ on:
       - ".github/actions/setup-bun/**"
       - ".github/rust-matcher.json"
   merge_group:
+  push:
+    # Only the mordant job runs on push, to save its caches where every pull
+    # request can restore them. A cache saved by a pull_request run is scoped
+    # to that pull request's merge ref. A cache saved on main is readable from
+    # every pull request. These two files hold everything the cache keys are
+    # made of: the mordant rev and DYLINT_VERSION.
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - ".github/workflows/rust-lints.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,6 +53,7 @@ jobs:
   clippy:
     name: cargo clippy
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +77,7 @@ jobs:
   miri:
     name: cargo miri test
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,6 +104,7 @@ jobs:
     # example, the parser's suspension bookkeeping or `Arena::compact()`.
     name: lol-html cargo test
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -166,9 +179,12 @@ jobs:
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
 
       - name: Cache the dylint driver and the built mordant library
-        # Both are a pure function of the dylint version and the pinned
-        # revision (which names the nightly they are built for): ~50s and
-        # ~60s of the job. What remains uncached is checking bun itself.
+        # Both are keyed on the dylint version and the pinned revision (which
+        # names the nightly they are built for): ~50s and ~60s of the job. What
+        # remains uncached is checking bun itself. On a miss cargo-dylint builds
+        # the driver in a temp dir with no Cargo.lock, so it resolves the newest
+        # release of every dependency: a compile error in a third-party crate
+        # in that build is a bad upstream release, not this repo.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -188,4 +204,7 @@ jobs:
       - name: Fail on findings over the baseline
         # In baseline mode mordant reports findings over mordant-baseline.toml
         # as warnings and lists them in this file; absent or empty means clean.
+        # Not on push: that run is there to save the caches, and actions/cache
+        # saves only when the job succeeds.
+        if: github.event_name != 'push'
         run: test ! -s target/mordant/over-baseline.txt

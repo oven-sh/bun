@@ -1170,6 +1170,31 @@ export function getFileUrl(filename, line) {
 }
 
 /**
+ * Picks the line to anchor a failed test file's link at: the line of the first
+ * error that `bun test` reported from inside that file. Errors raised in another
+ * file (a helper, node_modules) carry that file's line, which means nothing in
+ * the test file, and errors without a location carry no line at all; both are
+ * skipped. Vendor suites report files relative to the vendored repository while
+ * the runner titles them `vendor/<name>/<file>`, hence the trailing-path match.
+ *
+ * @param {string} testPath
+ * @param {{ file?: string, line?: string | number }[]} [errors] in the order they were reported
+ * @returns {string | number | undefined}
+ */
+export function getErrorLineInFile(testPath, errors = []) {
+  const target = testPath.replace(/\\/g, "/");
+  for (const { file, line } of errors) {
+    if (!file || !line) {
+      continue;
+    }
+    const path = file.replace(/\\/g, "/");
+    if (path === target || target.endsWith(`/${path}`)) {
+      return line;
+    }
+  }
+}
+
+/**
  * @typedef {object} BuildkiteBuild
  * @property {string} id
  * @property {string} commit_id

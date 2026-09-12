@@ -141,6 +141,53 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
 }
 
+// Mirrors `tryCreateAttributes` in JSC's NodesAnalyzeModule.cpp: no `type` key means JavaScript.
+static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributesListNode* attributesList)
+{
+    if (!attributesList)
+        return ScriptFetchParameters::Type::JavaScript;
+    for (auto [key, value] : attributesList->attributes()) {
+        if (*key == vm.propertyNames->type)
+            return ScriptFetchParameters::parseType(value->impl()).value_or(ScriptFetchParameters::Type::JavaScript);
+    }
+    return ScriptFetchParameters::Type::JavaScript;
+}
+
+// The AST node keeps its phase private; the record stores it per imported binding. A bare `import 'm'` is never deferred.
+static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecord, ImportDeclarationNode& importDeclaration)
+{
+    const auto& specifiers = importDeclaration.specifierList()->specifiers();
+    if (specifiers.isEmpty())
+        return AbstractModuleRecord::ModulePhase::Evaluation;
+    auto entry = moduleRecord.importEntries().find(specifiers[0]->localName().impl());
+    if (entry == moduleRecord.importEntries().end())
+        return AbstractModuleRecord::ModulePhase::Evaluation;
+    return entry->value.phase;
+}
+
+// `requestedModules()` is deduplicated by (specifier, type, phase), first wins. Null for `export ... from`.
+static ImportAttributesListNode* findImportAttributesList(VM& vm, JSModuleRecord& moduleRecord, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
+{
+    ScriptFetchParameters::Type requestType = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript;
+    for (StatementNode* statement = node.statements()->firstStatement(); statement; statement = statement->next()) {
+        if (!statement->isModuleDeclarationNode())
+            continue;
+        auto* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
+        if (!moduleDeclaration->isImportDeclarationNode())
+            continue;
+        auto* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
+        if (importDeclaration->moduleName()->moduleName().string() != request.m_specifier.string())
+            continue;
+        ImportAttributesListNode* attributesList = importDeclaration->attributesList();
+        if (importAttributesType(vm, attributesList) != requestType)
+            continue;
+        if (importPhase(moduleRecord, *importDeclaration) != request.m_phase)
+            continue;
+        return attributesList;
+    }
+    return nullptr;
+}
+
 JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     if (m_moduleRequestsArray) {
@@ -200,27 +247,6 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
-    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
-    attributesNodes.reserveInitialCapacity(requests.size());
-
-    for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
-        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
-        if (statement->isModuleDeclarationNode()) {
-            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-            if (moduleDeclaration->isImportDeclarationNode()) {
-                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
-                attributesNodes.append(importDeclaration->attributesList());
-            } else if (moduleDeclaration->hasAttributesList()) {
-                // Necessary to make the indices of `attributesNodes` and `requests` match up
-                attributesNodes.append(nullptr);
-            }
-        }
-    }
-
-    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
-
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
 
@@ -255,6 +281,10 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
                 attributesTypeString = "json"_str;
                 attributesType = JSC::jsString(vm, attributesTypeString);
                 break;
+            case HostDefined:
+                attributesTypeString = request.m_attributes->hostDefinedImportType();
+                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
             default:
                 attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
                 break;
@@ -269,7 +299,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
+        if (ImportAttributesListNode* attributesNode = findImportAttributesList(vm, *moduleRecord, *node, request)) {
             for (auto [key, value] : attributesNode->attributes()) {
                 attributeMap.set(key->string(), value->string());
                 attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));

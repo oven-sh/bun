@@ -916,6 +916,60 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });
+
+  test.each(["nope", "deno", ""])(
+    "--target with an unrecognized value names the flag and echoes %j back",
+    async value => {
+      using dir = tempDir("build-target-err", { "in.js": "console.log(1)" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", `--target=${value}`, "in.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: normalizeBunSnapshot(stderr) }).toEqual({
+        stdout: "",
+        stderr: `error: Invalid value for --target: "${value}". Must be 'browser', 'bun', or 'node'.`,
+      });
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("--bytecode with a non-bun --target echoes the value as the user wrote it", async () => {
+    using dir = tempDir("build-bytecode-target-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--bytecode", "--target=browser", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: normalizeBunSnapshot(stderr) }).toEqual({
+      stdout: "",
+      stderr: "error: target must be 'bun' when bytecode is true. Received: browser",
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  test("--server-components with a client-side --target echoes the value as the user wrote it", async () => {
+    using dir = tempDir("build-server-components-target-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--server-components", "--target=browser", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: normalizeBunSnapshot(stderr) }).toEqual({
+      stdout: "",
+      stderr: "error: Cannot use client-side --target=browser with --server-components",
+    });
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("modules that fail to print", () => {

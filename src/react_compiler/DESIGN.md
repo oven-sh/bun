@@ -96,18 +96,22 @@ each point below.
   reassign the variable leaves it with the value it had on entry. Only a phi
   reads that value, and upstream visits instruction operands only. So the value
   is not a dependency, and a cache hit restores the value of an older render.
-  An operand that neither `reassignments` nor `phis` holds comes from a loop
-  back edge, so its definition is later in the scope. `infer_reactive_places`
-  stops at the first reactive operand of a phi, so the `reactive` flag of a
-  later operand can be unset. Any other place of that identifier vouches for it
-  in `prune_non_reactive_dependencies`, but a parameter that only the phi reads
-  has no other place (`reactive_params`).
-- `check_valid_dependency`. Upstream dates a phi by the first declaration of its
-  variable, so a read of a phi inside the scope becomes a dependency. Codegen
+  `visit_phi` runs in the block loop that already walks the phis. It makes an
+  operand a dependency when `reassignments` dates it before the current scope.
+  An operand that `reassignments` does not hold yet comes from a loop back
+  edge, so its definition is later in the scope.
+- `visit_phi` also records the phi itself in `reassignments`, dated just before
+  its block, with an empty scope stack (nothing reads the scope stack of a
+  `reassignments` entry). Upstream never records a phi, so
+  `check_valid_dependency` dates a read of one by the first declaration of its
+  variable, and a read of a phi inside the scope becomes a dependency. Codegen
   reads a dependency by name before the scope, where the variable still holds
   the value on entry. That is the wrong value, and it throws when the read is
-  `u.profile.name` and the value on entry is null. `visit_phi` has already made
-  the value on entry a dependency when it can reach the phi.
+  `u.profile.name` and the value on entry is null.
+- `apply_reactive_flags_replay` (`infer_reactive_places.rs`) flags every phi
+  operand whose identifier is reactive. Upstream stops at the first reactive
+  operand of a phi, so the flag of a later operand can be unset. `visit_phi`
+  copies that flag into the dependency.
 - `prune_non_reactive_dependencies.rs`, `|| dep.reactive`. The value on entry
   can be a parameter, or a phi that only another phi reads. No place in the
   reactive function carries that identifier, so the set the pass builds never
@@ -125,11 +129,11 @@ each point below.
   `fresh_temporary_name` picks the first unused `t<n>`.
 
 The open upstream fix, facebook/react#37273, adds the same dependency. It
-differs in three ways. It tests `operand.reactive`, with the gap described
-under `visit_phi`. It stores the dependency before the computation, which
-breaks the rule that the cache never holds inputs without outputs (React shares
-the cache between render attempts). It does not pass a reassignment to the
-enclosing scope.
+differs in three ways. It tests `operand.reactive` without the change to
+`apply_reactive_flags_replay`. It stores the dependency before the computation,
+which breaks the rule that the cache never holds inputs without outputs (React
+shares the cache between render attempts). It does not pass a reassignment to
+the enclosing scope.
 
 ### Type mapping (input: lowering)
 

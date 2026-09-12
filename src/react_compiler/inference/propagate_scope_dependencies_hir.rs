@@ -1731,18 +1731,10 @@ struct Decl {
     scope_stack: Vec<ScopeId>, // copy of the scope stack at time of declaration
 }
 
-/// Where a phi sits, and whether `infer_reactive_places` found its value reactive.
-struct PhiDecl {
-    scope_stack: Vec<ScopeId>,
-    reactive: bool,
-}
-
 /// Context for dependency collection.
 struct DependencyCollectionContext<'a> {
     declarations: IdMap<DeclarationId, Decl>,
     reassignments: IdMap<IdentifierId, Decl>,
-    phis: IdMap<IdentifierId, PhiDecl>,
-    reactive_params: HashSet<IdentifierId>,
     scope_stack: Vec<ScopeId>,
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
@@ -1759,8 +1751,6 @@ impl<'a> DependencyCollectionContext<'a> {
         Self {
             declarations: IdMap::new(),
             reassignments: IdMap::new(),
-            phis: IdMap::new(),
-            reactive_params: HashSet::default(),
             scope_stack: Vec::new(),
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
@@ -1794,7 +1784,8 @@ impl<'a> DependencyCollectionContext<'a> {
         // Not in upstream: the enclosing scope has to restore what this scope reassigns.
         if let Some(parent) = self.current_scope() {
             let parent_start = env.scopes[parent.0 as usize].range.start;
-            for id in env.scopes[scope_id.0 as usize].reassignments.clone() {
+            for index in 0..env.scopes[scope_id.0 as usize].reassignments.len() {
+                let id = env.scopes[scope_id.0 as usize].reassignments[index];
                 let decl_id = env.identifiers[id.0 as usize].declaration_id;
                 let declared_before_parent = self
                     .declarations
@@ -1816,45 +1807,42 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     /// Not in upstream: a value from before the scope that reaches a phi in it is a dependency.
-    fn visit_phi(&mut self, phi: &crate::hir::Phi, env: &mut Environment) {
+    fn visit_phi(
+        &mut self,
+        phi: &crate::hir::Phi,
+        before_block: EvaluationOrder,
+        env: &mut Environment,
+    ) {
         for (_pred_id, operand) in &phi.operands {
             if let Some(maybe_optional_chain) = self.temporaries.get(operand.identifier) {
                 self.visit_dependency(maybe_optional_chain.clone(), env);
                 continue;
             }
-            let Some(current_scope) = self.current_scope() else {
+            // An operand that is not declared yet comes from a loop back edge, later in the scope.
+            let (Some(scope), Some(decl)) = (
+                self.current_scope(),
+                self.reassignments.get(operand.identifier),
+            ) else {
                 continue;
             };
-            // An operand that neither map holds yet comes from a loop back edge, later in the scope.
-            let (defined_in, reactive) =
-                if let Some(decl) = self.reassignments.get(operand.identifier) {
-                    // The operand flag can be unset, and a parameter has no other place with it.
-                    let reactive =
-                        operand.reactive || self.reactive_params.contains(&operand.identifier);
-                    (&decl.scope_stack, reactive)
-                } else if let Some(phi_decl) = self.phis.get(operand.identifier) {
-                    (&phi_decl.scope_stack, phi_decl.reactive)
-                } else {
-                    continue;
-                };
-            if defined_in.contains(&current_scope) {
-                continue;
+            if decl.id < env.scopes[scope.0 as usize].range.start {
+                self.visit_dependency(
+                    ReactiveScopeDependency {
+                        identifier: operand.identifier,
+                        reactive: operand.reactive,
+                        path: hir_vec![],
+                        loc: operand.loc,
+                    },
+                    env,
+                );
             }
-            self.visit_dependency(
-                ReactiveScopeDependency {
-                    identifier: operand.identifier,
-                    reactive,
-                    path: hir_vec![],
-                    loc: operand.loc,
-                },
-                env,
-            );
         }
-        self.phis.insert(
+        // A read of this phi inside the scope it sits in is then not a dependency of that scope.
+        self.reassignments.insert(
             phi.place.identifier,
-            PhiDecl {
-                scope_stack: self.scope_stack.clone(),
-                reactive: phi.place.reactive,
+            Decl {
+                id: before_block,
+                scope_stack: Vec::new(),
             },
         );
     }
@@ -1888,15 +1876,6 @@ impl<'a> DependencyCollectionContext<'a> {
         // Object methods are not deps
         if matches!(ty, Type::ObjectMethod) {
             return false;
-        }
-
-        // Not in upstream: a phi inside the scope is a value the scope computes, not an input.
-        if let (Some(phi), Some(current_scope)) =
-            (self.phis.get(dep.identifier), self.current_scope())
-        {
-            if phi.scope_stack.contains(&current_scope) {
-                return false;
-            }
         }
 
         let ident = &env.identifiers[dep.identifier.0 as usize];
@@ -2250,9 +2229,6 @@ fn collect_dependencies(
 
     // Declare params
     for param in &func.params {
-        if param.place().reactive {
-            ctx.reactive_params.insert(param.place().identifier);
-        }
         match param {
             ParamPattern::Place(place) => {
                 ctx.declare(
@@ -2306,8 +2282,14 @@ fn handle_function_deps(
         }
 
         // Record phi operands
-        for phi in &block.phis {
-            ctx.visit_phi(phi, env);
+        if !block.phis.is_empty() {
+            let first = match block.instructions.first() {
+                Some(instr_id) => func.instructions[instr_id.0 as usize].id,
+                None => block.terminal.evaluation_order(),
+            };
+            for phi in &block.phis {
+                ctx.visit_phi(phi, EvaluationOrder(first.0 - 1), env);
+            }
         }
 
         for &instr_id in &block.instructions {

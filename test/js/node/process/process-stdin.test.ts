@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -35,24 +35,22 @@ test.concurrent("file does the right thing", async () => {
 });
 
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {
+  // Nothing but stdin keeps the child alive: it has to stay up until EOF and
+  // get every byte through read() while paused.
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-      const handleReadable = () => {
+      const chunks = [];
+      process.stdin.on("readable", () => {
         let chunk;
-        while ((chunk = process.stdin.read())) {
-          console.log("got chunk", JSON.stringify(chunk));
-        }
-      };
-      
-      process.stdin.on("readable", handleReadable);
+        while ((chunk = process.stdin.read()) !== null) chunks.push(chunk);
+      });
       process.stdin.pause();
-      
-      setTimeout(() => {
-        process.exit(1);
-      }, 1000);
+      process.stdin.on("end", () => {
+        console.log(JSON.stringify({ data: Buffer.concat(chunks).toString(), isPaused: process.stdin.isPaused() }));
+      });
       `,
     ],
     stdin: "pipe",
@@ -61,18 +59,17 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
     env: bunEnv,
   });
 
+  // Whether these reach the child as one chunk or as two depends on when it
+  // starts to read (on Windows the second write leaves one event loop turn
+  // after the first), so the child joins what read() returns.
   proc.stdin.write("abc\n");
   proc.stdin.write("def\n");
   proc.stdin.end();
 
-  await proc.exited;
-
-  expect(await proc.stdout.text()).toMatchInlineSnapshot(`
-    "got chunk {"type":"Buffer","data":[97,98,99,10,100,101,102,10]}
-    "
-  `);
-  expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
-  expect(proc.exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(JSON.stringify({ data: "abc\ndef\n", isPaused: true }) + "\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("stdin with 'data' event handler should NOT receive data when paused", async () => {
@@ -494,9 +491,11 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
     });
     // The child exits under backpressure having accepted only a few KB, so
     // the queued writes here fail with EPIPE; that is the expected outcome.
+    // macOS reports ENOTCONN instead when the child closes its end while a
+    // write is still inside the kernel.
     const chunk = Buffer.alloc(1024 * 1024, 0x78);
     const ignoreEpipe = (e: any) => {
-      if (e?.code !== "EPIPE") throw e;
+      if (e?.code !== "EPIPE" && !(isMacOS && e?.code === "ENOTCONN")) throw e;
     };
     for (let i = 0; i < feedMB; i++) {
       const r = proc.stdin.write(chunk);

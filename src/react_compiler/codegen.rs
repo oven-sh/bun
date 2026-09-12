@@ -380,6 +380,8 @@ struct Context<'a, 'h> {
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
+    /// By callee temporary, as `require("x")()` prints the same callee as `require("x")`.
+    require_call_nodes: IdMap<IdentifierId, Expr>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
 }
@@ -397,6 +399,7 @@ impl<'a, 'h> Context<'a, 'h> {
             declarations: HashSet::new(),
             temp: IdMap::new(),
             object_methods: IdMap::new(),
+            require_call_nodes: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::new(),
         }
@@ -1419,6 +1422,11 @@ fn codegen_instruction_nullable(
                     .insert(lvalue.identifier, (value.clone(), *loc));
                 return Ok(None);
             }
+            InstructionValue::LoadGlobal { binding, .. } => {
+                if let (Some(node), Some(lvalue)) = (binding.require_call_node(), &instr.lvalue) {
+                    cx.require_call_nodes.insert(lvalue.identifier, node);
+                }
+            }
             _ => {}
         }
     }
@@ -1879,6 +1887,9 @@ fn codegen_base_instruction_value(
             }
         }
         InstructionValue::CallExpression { callee, args, .. } => {
+            if let Some(node) = cx.require_call_nodes.get(callee.identifier) {
+                return Ok(*node);
+            }
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {

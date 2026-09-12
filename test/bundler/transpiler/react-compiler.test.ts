@@ -464,6 +464,177 @@ describe("bundler", () => {
     },
   });
 
+  // `require("x")` evaluates a module and `require.resolve("x")` can throw, so
+  // a compiled function has to keep each one a call: where the source has it,
+  // once, in source order. Lowered as a constant, dead code elimination dropped
+  // an unused one, constant propagation moved a used one to its reads, and a
+  // local assigned a different module on each path read the first module.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/RequireIsACall-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, form] of Object.entries(forms)) {
+            globalThis.evaluated = [];
+            let result;
+            try {
+              result = form({ yes: true, no: false });
+              if (typeof result === "function") result = result();
+            } catch (e) {
+              result = "threw " + e;
+            }
+            lines.push(name + "=" + result + " evaluated=" + globalThis.evaluated.join(","));
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.tsx": /* tsx */ `
+          import { useEffect } from "react";
+
+          export function Statement() {
+            useEffect(() => {});
+            require("./side/statement");
+            return "ok";
+          }
+          export function useHandler() {
+            useEffect(() => {});
+            return () => {
+              require("./side/handler");
+              return "ok";
+            };
+          }
+          export function InEffect() {
+            useEffect(() => {
+              require("./side/effect");
+            });
+            return "ok";
+          }
+          export function Conditional({ yes, no }) {
+            useEffect(() => {});
+            if (yes) require("./side/conditional-yes");
+            if (no) require("./side/conditional-no");
+            return "ok";
+          }
+          export function Void() {
+            useEffect(() => {});
+            void require("./side/void");
+            return "ok";
+          }
+          export function Sequence() {
+            useEffect(() => {});
+            const one = (require("./side/sequence"), 1);
+            return String(one);
+          }
+          export function UnusedLocal() {
+            useEffect(() => {});
+            const unused = require("./side/unused-local");
+            return "ok";
+          }
+          export function Ternary({ no }) {
+            useEffect(() => {});
+            const mod = no ? require("./side/ternary-a") : require("./side/ternary-b");
+            return mod.name;
+          }
+          export function IfElse({ no }) {
+            useEffect(() => {});
+            let mod;
+            if (no) {
+              mod = require("./side/if-a");
+            } else {
+              mod = require("./side/if-b");
+            }
+            return mod.name;
+          }
+          export function Order() {
+            useEffect(() => {});
+            const first = require("./side/order-1");
+            const { name } = require("./side/order-2");
+            return first.name + "," + name;
+          }
+          export function Reassigned() {
+            useEffect(() => {});
+            let mod = require("./side/reassigned-1");
+            try {
+              mod = require("./side/reassigned-2");
+            } catch {}
+            return mod.name;
+          }
+          export function ResolveMissing() {
+            useEffect(() => {});
+            try {
+              require.resolve("./side/not-there");
+              return "found";
+            } catch {
+              return "missing";
+            }
+          }
+          export function CallsTheExport({ yes }) {
+            useEffect(() => {});
+            return require("./side/function")(yes);
+          }
+        `,
+        ...Object.fromEntries(
+          [
+            "statement",
+            "handler",
+            "effect",
+            "conditional-yes",
+            "conditional-no",
+            "void",
+            "sequence",
+            "unused-local",
+            "ternary-a",
+            "ternary-b",
+            "if-a",
+            "if-b",
+            "order-1",
+            "reassigned-1",
+            "reassigned-2",
+          ].map(name => [`/side/${name}.js`, `globalThis.evaluated.push("${name}"); exports.name = "${name}";`]),
+        ),
+        "/side/order-2.js": `globalThis.evaluated.push("order-2"); export const name = "order-2";`,
+        "/side/function.js": `globalThis.evaluated.push("function"); module.exports = arg => "called with " + arg;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": /* js */ `
+          export function useEffect(effect) {
+            effect();
+          }
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        // The ssr output mode (target "bun") removes effects, as they do not
+        // run on the server.
+        stdout: `
+          CallsTheExport=called with true evaluated=function
+          Conditional=ok evaluated=conditional-yes
+          IfElse=if-b evaluated=if-b
+          InEffect=ok evaluated=${target === "browser" ? "effect" : ""}
+          Order=order-1,order-2 evaluated=order-1,order-2
+          Reassigned=reassigned-2 evaluated=reassigned-1,reassigned-2
+          ResolveMissing=missing evaluated=
+          Sequence=1 evaluated=sequence
+          Statement=ok evaluated=statement
+          Ternary=ternary-b evaluated=ternary-b
+          UnusedLocal=ok evaluated=unused-local
+          Void=ok evaluated=void
+          useHandler=ok evaluated=handler
+        `,
+      },
+      onAfterBundle(api) {
+        // Every function above compiled: no call takes an inline arrow any more.
+        expect(api.readFile("/out.js")).not.toMatch(/useEffect\(\(\) =>/);
+      },
+    });
+  }
+
   itBundled("react-compiler/BranchBooleanFeatureFlagPreservesDCE", {
     files: {
       "/entry.jsx": /* jsx */ `

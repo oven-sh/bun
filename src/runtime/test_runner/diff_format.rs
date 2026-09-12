@@ -94,20 +94,11 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// `bun_bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
 /// type and `bun_bundler_jsc` is a lower-tier crate that cannot depend on it;
 /// the `extern "C"` symbol resolves the same at link time regardless of which
-/// crate defines it.
-#[unsafe(no_mangle)]
-extern "C" fn zig__renderDiff(
-    expected_ptr: *const core::ffi::c_char,
-    expected_len: usize,
-    received_ptr: *const core::ffi::c_char,
-    received_len: usize,
-) {
-    // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
-    // of length `expected_len` that outlives this call.
-    let expected = unsafe { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
-    // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
-    // of length `received_len` that outlives this call.
-    let received = unsafe { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
+/// crate defines it. The `HOST_EXPORT` marker below makes codegen emit the
+/// `zig__renderDiff` thunk, which turns C++'s `(ptr, len)` pairs into the two
+/// slices and calls this.
+// HOST_EXPORT(zig__renderDiff, c)
+pub fn render_diff(expected: &[u8], received: &[u8]) {
     let formatter = DiffFormatter::from_strings(received, expected, false);
     let _ = bun_core::output::error_writer().print(format_args!("DIFF:\n{}\n", formatter));
 }

@@ -1,4 +1,5 @@
 use core::fmt;
+use std::rc::Rc;
 use crate::test_runner::expect::JSValueTestExt;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
@@ -134,19 +135,17 @@ impl ScopeFunctions {
 fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
+    // R-2: every field is read-only after `create_unbound`, and the body
+    // re-enters JS (get_length / array_iterator / bind / enqueue) which can form
+    // fresh `&ScopeFunctions` to the same object.
+    let Some(this) = frame.this().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    // SAFETY: `from_js` returned non-null; the JS wrapper keeps the boxed
-    // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
-    // R-2: deref as shared (`&*const`) — every field is read-only after
-    // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
-    // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
-    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
-    let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
-    let bun_test_ptr = buntest_strong.get();
+    let buntest_strong =
+        bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
+    let bun_test: &BunTest = &buntest_strong;
 
     let callback_mode: CallbackMode = match this.cfg.self_mode {
         SelfMode::Skip | SelfMode::Todo => CallbackMode::Allow,
@@ -210,9 +209,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     None
                 };
                 this.enqueue_describe_or_test_callback(
-                    // Explicit reborrow: the closure must not move the `&mut`
-                    // (it is reused on later loop iterations).
-                    &mut *bun_test_ptr,
+                    bun_test,
                     global,
                     frame,
                     bound,
@@ -227,7 +224,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         }
     } else {
         this.enqueue_describe_or_test_callback(
-            bun_test_ptr,
+            bun_test,
             global,
             frame,
             args.callback,
@@ -271,15 +268,16 @@ impl<'a> WriteEnd for Write<'a> {
     }
 }
 
-fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in: Option<&DescribeScope>) {
+fn filter_names<R: WriteEnd>(
+    rem: &mut R,
+    description: Option<&[u8]>,
+    parent_in: Option<Rc<DescribeScope>>,
+) {
     const SEP: &[u8] = b" ";
     rem.write_end(description.unwrap_or(b""));
     let mut parent = parent_in;
     while let Some(scope) = parent {
-        // PORTING.md: `BaseScope.parent` is `Option<*const DescribeScope>` (raw backref);
-        // per-use reborrow.
-        // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
-        parent = scope.base.parent.map(|p| unsafe { &*p });
+        parent = scope.base.parent();
         if scope.base.name.is_none() {
             continue;
         }
@@ -291,7 +289,7 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
 impl ScopeFunctions {
     fn enqueue_describe_or_test_callback(
         &self,
-        bun_test: &mut BunTest,
+        bun_test: &BunTest,
         global: &JSGlobalObject,
         frame: &CallFrame,
         callback: Option<JSValue>,
@@ -303,7 +301,7 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         // only allow in collection phase
-        match bun_test.phase {
+        match bun_test.phase.get() {
             bun_test::Phase::Collection => {} // ok
             bun_test::Phase::Execution => {
                 return Err(global.throw(format_args!(
@@ -327,9 +325,9 @@ impl ScopeFunctions {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
                 let name = BunString::from_bytes(description.unwrap_or(b"(unnamed)"));
-                let parent: &DescribeScope = bun_test.collection.active_scope();
-                let parent_id = if parent.base.test_id_for_debugger != 0 {
-                    parent.base.test_id_for_debugger
+                let parent = bun_test.collection.active_scope();
+                let parent_id = if parent.base.test_id_for_debugger.get() != 0 {
+                    parent.base.test_id_for_debugger.get()
                 } else {
                     -1
                 };
@@ -364,46 +362,49 @@ impl ScopeFunctions {
 
         match self.mode {
             Mode::Describe => {
-                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
-                bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
+                let new_scope = bun_test
+                    .collection
+                    .active_scope()
+                    .append_describe(description, base);
+                bun_test
+                    .collection
+                    .enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
-                if let Some(reporter) = bun_test.reporter {
-                    // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-                    let reporter = unsafe { reporter.as_ref() };
+                if let Some(reporter) = bun_test.reporter.get() {
                     if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
-                        debug_assert!(bun_test.collection.filter_buffer.is_empty());
-                        // reshaped for borrowck — clear at end via explicit call below.
+                        let mut filter_buffer = bun_test.collection.filter_buffer.borrow_mut();
+                        debug_assert!(filter_buffer.is_empty());
 
-                        // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                        let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
+                        let active_scope = bun_test.collection.active_scope();
 
                         let mut len = Measure { len: 0 };
-                        filter_names(&mut len, description, Some(active_scope));
+                        filter_names(&mut len, description, Some(Rc::clone(&active_scope)));
                         // Extend by `len.len` zero bytes and
                         // hand back the freshly-appended tail as `&mut [u8]`.
-                        let start = bun_test.collection.filter_buffer.len();
-                        bun_test.collection.filter_buffer.resize(start + len.len, 0);
-                        let slice: &mut [u8] = &mut bun_test.collection.filter_buffer[start..];
+                        let start = filter_buffer.len();
+                        filter_buffer.resize(start + len.len, 0);
+                        let slice: &mut [u8] = &mut filter_buffer[start..];
                         let mut rem = Write { buf: slice };
                         filter_names(&mut rem, description, Some(active_scope));
                         debug_assert!(rem.buf.is_empty());
 
-                        let str = BunString::from_bytes(bun_test.collection.filter_buffer.as_slice());
+                        let str = BunString::from_bytes(filter_buffer.as_slice());
                         group_log::log(format_args!(
                             "matches_filter \"{}\"",
-                            bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
+                            bstr::BStr::new(filter_buffer.as_slice())
                         ));
-                        // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
-                        // `TestRunner` for the process lifetime; single-threaded here so the
-                        // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
+                        // `RegularExpression` is an `opaque_ffi!` ZST handle stored in
+                        // `TestRunner` for the process lifetime; `opaque_mut` is the
+                        // centralised non-null deref.
+                        matches_filter =
+                            bun_jsc::RegularExpression::opaque_mut(filter_regex.as_ptr())
+                                .matches(&str);
 
-                        bun_test.collection.filter_buffer.clear();
+                        filter_buffer.clear();
                     }
                 }
 
@@ -411,14 +412,14 @@ impl ScopeFunctions {
                     base.self_mode = SelfMode::FilteredOut;
                 }
 
-                debug_assert!(!bun_test.collection.locked);
+                debug_assert!(!bun_test.collection.locked.get());
                 group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
                     bstr::BStr::new(description.unwrap_or(b"(unnamed)")),
                     bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                let _ = bun_test.collection.active_scope_mut().append_test(
+                bun_test.collection.active_scope().append_test(
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {
@@ -429,7 +430,7 @@ impl ScopeFunctions {
                     },
                     base,
                     bun_test::AddedInPhase::Collection,
-                )?;
+                );
             }
         }
         Ok(())
@@ -703,7 +704,8 @@ pub(crate) fn parse_arguments(
         if runner.default_timeout_ms != 0 { Some(runner.default_timeout_ms) } else { None }
     });
     let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
+        let v = runner.default_timeout_override.get();
+        if v != u32::MAX { Some(v) } else { None }
     });
     let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
     result.options.timeout = timeout_option_ms.or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);

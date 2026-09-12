@@ -36,6 +36,14 @@ pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
 #[derive(Copy, Clone)]
 pub struct Unaligned<T: Copy>(T);
 
+// SAFETY: `#[repr(C, packed)]` around a single `T: Zeroable` — same bytes, no
+// padding; the all-zero pattern is valid because it is for `T`.
+unsafe impl<T: bytemuck::Zeroable + Copy> bytemuck::Zeroable for Unaligned<T> {}
+// SAFETY: `#[repr(C, packed)]` around a single `T: Pod` — same size, align 1,
+// no padding, every bit pattern valid, `Copy + 'static`; so any byte slice whose
+// length is a multiple of `size_of::<T>()` casts to `&[Unaligned<T>]`.
+unsafe impl<T: bytemuck::Pod> bytemuck::Pod for Unaligned<T> {}
+
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
     pub fn get(self) -> T {

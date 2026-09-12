@@ -158,9 +158,7 @@ cfg_jsc! {
 }
 
 cfg_jsc! {
-    pub mod timers {
-        #[path = "FakeTimers.rs"] pub mod fake_timers;
-    }
+    pub mod timers;
 }
 
 cfg_jsc! {

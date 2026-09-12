@@ -1,7 +1,5 @@
-use core::ffi::c_void;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
@@ -27,14 +25,6 @@ impl Expect {
         expected.ensure_still_alive();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
-        // avoid a struct lifetime param.
-        struct ExpectedEntry {
-            global: *const JSGlobalObject,
-            expected: JSValue,
-            pass: *mut bool,
-        }
-
         // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
         // `[-0]` contains `0`, `[NaN]` does not contain `NaN`.
         if value.js_type_loose().is_array_like() {
@@ -59,41 +49,15 @@ impl Expect {
                 pass = true;
             }
         } else if value.is_iterable(global)? {
-            let mut expected_entry = ExpectedEntry {
-                global: std::ptr::from_ref(global),
-                expected,
-                pass: &raw mut pass,
-            };
-
-            extern "C" fn strict_equal_iterator(
-                _: *mut VM,
-                _: &JSGlobalObject,
-                entry_: *mut c_void,
-                item: JSValue,
-            ) {
-                debug_assert!(!entry_.is_null());
-                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted above.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
-                // stack frame, which outlives the synchronous for_each this callback runs inside.
-                let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
+            value.for_each_iter(global, |global, item| {
+                let Ok(same) = item.is_strict_equal(expected, global) else {
                     return;
                 };
                 if same {
-                    // SAFETY: entry.pass is `&raw mut pass` on the caller's stack, live for the
-                    // duration of for_each; this callback is the sole writer (no aliasing &mut).
-                    unsafe { *entry.pass = true };
+                    pass = true;
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
-            }
-
-            value.for_each(
-                global,
-                (&raw mut expected_entry).cast::<c_void>(),
-                strict_equal_iterator,
-            )?;
+            })?;
         } else {
             return Err(global.throw(format_args!(
                 "Received value must be an array type, or both received and expected values must be strings."

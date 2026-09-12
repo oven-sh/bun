@@ -101,8 +101,8 @@ impl CurrentTime {
 /// fake timers are inactive. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
+// HOST_EXPORT(Bun__FakeTimers__setSystemTime, c)
+pub fn set_system_time(global: &JSGlobalObject, ms: f64) {
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
         return;
     };
@@ -499,8 +499,7 @@ fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 }
 
 // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
-// `JSHostFn` ABI (`unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue`),
-// which is what `JSFunction::create` expects.
+// `JSHostFn` ABI, which is what `JSFunction::create` expects.
 const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("useFakeTimers", 0, __jsc_host_use_fake_timers),
     ("useRealTimers", 0, __jsc_host_use_real_timers),

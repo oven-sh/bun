@@ -1,34 +1,8 @@
-use core::ffi::c_void;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
-
-struct ExpectedEntry<'a> {
-    global_this: &'a JSGlobalObject,
-    expected: JSValue,
-    pass: &'a mut bool,
-}
-
-extern "C" fn same_value_iterator(
-    _: *mut VM,
-    _: &JSGlobalObject,
-    entry_: *mut c_void,
-    item: JSValue,
-) {
-    // SAFETY: entry_ is &mut ExpectedEntry passed through forEach's opaque ctx; non-null for the duration of the iteration.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
-    // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-    let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
-        return;
-    };
-    if eq {
-        *entry.pass = true;
-        // PERF: break out of the `forEach` when a match is found
-    }
-}
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -59,16 +33,16 @@ pub(crate) fn to_be_one_of(
             }
         }
     } else if list_value.is_iterable(global_this)? {
-        let mut expected_entry = ExpectedEntry {
-            global_this,
-            expected,
-            pass: &mut pass,
-        };
-        list_value.for_each(
-            global_this,
-            (&raw mut expected_entry).cast::<c_void>(),
-            same_value_iterator,
-        )?;
+        list_value.for_each_iter(global_this, |global_this, item| {
+            // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
+            let Ok(eq) = item.jest_deep_equals(expected, global_this) else {
+                return;
+            };
+            if eq {
+                pass = true;
+                // PERF: break out of the `forEach` when a match is found
+            }
+        })?;
     } else {
         return Err(global_this.throw(format_args!(
             "Received value must be an array type, or both received and expected values must be strings."

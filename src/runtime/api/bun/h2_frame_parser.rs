@@ -2967,6 +2967,10 @@ impl H2FrameParser {
         }
     }
 
+    fn holds_cork(&self) -> bool {
+        Self::corked().is_some_and(|corked| std::ptr::eq(corked, self.as_ctx_ptr()))
+    }
+
     /// Runs from the deferred tick (never under a write): closes the native socket so the
     /// normal socket-close teardown runs (native callback detach, JS 'close', session
     /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
@@ -2998,6 +3002,10 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            // A later write drained the buffer: the transport recovered, so this tick flushes.
+            self.transport_write_fatal.set(false);
+        }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
@@ -3007,14 +3015,7 @@ impl H2FrameParser {
             // early-return instead of removing a map entry run() still owns.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-            }
+            self.close_transport_after_fatal_write();
             return false;
         }
         if self.pending_header_compression_error.get() {
@@ -3039,7 +3040,15 @@ impl H2FrameParser {
             return false;
         }
         let _ = self.flush();
-        // we will unregister ourselves when the buffer is empty
+        let still_owed = self.holds_cork()
+            || self.transport_write_fatal.get()
+            || self.pending_header_compression_error.get();
+        if self.auto_flusher.get().registered.get() && !still_owed {
+            // Only uncork() releases a registration, and nothing is corked.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            return false;
+        }
         true
     }
 

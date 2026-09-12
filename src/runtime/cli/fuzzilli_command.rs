@@ -96,17 +96,25 @@ impl FuzzilliCommand {
             // Fuzzilli respawns this process constantly, and a killed one cannot clean up.
             // SAFETY: main thread during startup, before any concurrent reader of the environment
             // exists. setenv copies the NUL-terminated strings.
-            unsafe {
+            let defaults_set = unsafe {
                 libc::setenv(
                     c"BUN_CONFIG_REGISTRY".as_ptr(),
                     c"http://127.0.0.1:1/".as_ptr(),
                     0,
+                ) == 0
+                    && libc::setenv(
+                        c"BUN_INSTALL_CACHE_DIR".as_ptr(),
+                        c"/tmp/bun-fuzzilli-install-cache".as_ptr(),
+                        0,
+                    ) == 0
+            };
+            // Without them the child would use the live registry.
+            if !defaults_set {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Could not set BUN_CONFIG_REGISTRY and BUN_INSTALL_CACHE_DIR in the environment: {}",
+                    sys::last_error()
                 );
-                libc::setenv(
-                    c"BUN_INSTALL_CACHE_DIR".as_ptr(),
-                    c"/tmp/bun-fuzzilli-install-cache".as_ptr(),
-                    0,
-                );
+                Global::exit(1);
             }
 
             // Run the temp file

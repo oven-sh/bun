@@ -52,14 +52,21 @@ async function runReprl(programs: string[], env: Record<string, string | undefin
   stdio[102] = Bun.file(file("programs.bin"));
 
   await using proc = Bun.spawn({ cmd: [bunExe(), "fuzzilli"], env, cwd: String(dir), stdio });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const status = fs.readFileSync(file("status.bin"));
   const statuses: number[] = [];
   for (let offset = 4; offset + 4 <= status.length; offset += 4) {
     statuses.push(status.readUInt32LE(offset));
   }
-  return { handshake: status.subarray(0, 4).toString("latin1"), statuses, stdout, exitCode };
+  return {
+    handshake: status.subarray(0, 4).toString("latin1"),
+    statuses,
+    stdout,
+    // The fuzz build prints a [COV] and a [FUZZILLI] banner. Every other line is an error.
+    stderr: stderr.split("\n").filter(line => line && !line.includes("[COV]") && !line.includes("[FUZZILLI]")),
+    exitCode,
+  };
 }
 
 // Fuzzilli picks string literals at random, so a fuzz program can ask for any
@@ -100,7 +107,7 @@ test.skipIf(!isFuzzilliBuild)("bun fuzzilli auto-installs only from BUN_CONFIG_R
   expect(byDefault.stdout).toContain("import: Cannot find package 'd'");
   // Not the cache of the user that runs the fuzzer.
   expect(byDefault.stdout).toContain("cache: /tmp/bun-fuzzilli-install-cache\n");
-  expect(byDefault).toMatchObject({ handshake: "HELO", statuses, exitCode: 0 });
+  expect(byDefault).toMatchObject({ handshake: "HELO", statuses, stderr: [], exitCode: 0 });
 
   // A campaign that sets the variables keeps its values and gets every request.
   const withRegistry = await runReprl(programs, {
@@ -110,5 +117,5 @@ test.skipIf(!isFuzzilliBuild)("bun fuzzilli auto-installs only from BUN_CONFIG_R
   });
   expect(requests).toEqual(["/a", "/b", "/c", "/d"]);
   expect(withRegistry.stdout).toContain(`cache: ${cache}\n`);
-  expect(withRegistry).toMatchObject({ handshake: "HELO", statuses, exitCode: 0 });
+  expect(withRegistry).toMatchObject({ handshake: "HELO", statuses, stderr: [], exitCode: 0 });
 });

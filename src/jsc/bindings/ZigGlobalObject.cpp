@@ -2320,6 +2320,12 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementDevStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::JSReactElement::createDevStructure(init.vm, init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementStoreStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::JSReactElement::createStoreStructure(init.vm, init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownListItemMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
          } },

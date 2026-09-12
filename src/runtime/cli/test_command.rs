@@ -2167,6 +2167,7 @@ impl TestCommand {
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();
         let search_count = scanner.search_count;
+        let unreadable_dirs = scanner.unreadable_dirs;
         drop(scanner);
 
         // When --changed or --shard filters the discovered test files
@@ -2642,6 +2643,13 @@ impl TestCommand {
             }
         }
 
+        if unreadable_dirs > 0 {
+            pretty_error!(
+                "<r><red>error<r>: {} director{} could not be scanned for tests\n",
+                unreadable_dirs,
+                if unreadable_dirs == 1 { "y" } else { "ies" }
+            );
+        }
         pretty_error!("\n");
         Output::flush();
 
@@ -2668,6 +2676,7 @@ impl TestCommand {
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
             || reporter.jest.unhandled_errors_between_tests > 0
+            || unreadable_dirs > 0
         {
             vm.exit_handler.exit_code = 1;
         }

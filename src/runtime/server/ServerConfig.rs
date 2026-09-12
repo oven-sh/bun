@@ -828,6 +828,7 @@ impl ServerConfig {
                         Method::TRACE,
                     ];
                     let mut found = false;
+                    let mut route_name_validated = false;
                     // HEAD must behave like GET without a body (RFC 9110 section 9.3.2),
                     // so a route object with a GET handler and no HEAD entry also answers HEAD.
                     let mut derived_head_route: Option<UserRouteBuilder> = None;
@@ -835,10 +836,21 @@ impl ServerConfig {
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
-                            if !found {
-                                validate_route_name(global, &path)?;
-                            }
                             found = true;
+
+                            if function.is_undefined() {
+                                continue;
+                            }
+                            if function == JSValue::FALSE {
+                                if method == Method::HEAD {
+                                    has_head_route = true;
+                                }
+                                continue;
+                            }
+                            if !route_name_validated {
+                                validate_route_name(global, &path)?;
+                                route_name_validated = true;
+                            }
 
                             if function.is_callable() {
                                 let callback = function.with_async_context_if_needed(global);
@@ -876,6 +888,19 @@ impl ServerConfig {
                                 if method == Method::HEAD {
                                     has_head_route = true;
                                 }
+                            } else {
+                                let ty_str = function.js_type_string(global).to_slice(global);
+                                let received: &[u8] = if function.is_null() {
+                                    b"null"
+                                } else {
+                                    ty_str.slice()
+                                };
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "Invalid value for route {} method {}: received {}. Expected a function, Response, HTMLBundle, BunFile, or false.",
+                                    bun_fmt::quote(&path),
+                                    method.as_str(),
+                                    bstr::BStr::new(received),
+                                )));
                             }
                         }
                     }

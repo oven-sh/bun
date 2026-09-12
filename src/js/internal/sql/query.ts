@@ -128,35 +128,9 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   async #runAsync() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
-
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
-      return;
-    }
-
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(this[_adapter].notTaggedCallError());
-      return;
-    }
-
-    this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.#getQueryHandle();
-
-    if (!handle) {
-      return this;
-    }
-
-    await Promise.$resolve();
-
-    try {
-      return handler(this, handle);
-    } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
-      this.reject(err as Error);
-    }
+    // Enqueue synchronously (same as execute()) so a same-tick close() sees
+    // the query as pending; #run()'s executed-status guard handles re-entry.
+    return this.#run();
   }
 
   get active() {

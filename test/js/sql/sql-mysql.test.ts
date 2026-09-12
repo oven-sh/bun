@@ -1003,6 +1003,14 @@ if (isDockerEnabled()) {
           return expect(await promise).toEqual([{ x: 0 }]);
         });
 
+        // https://github.com/oven-sh/bun/pull/33740
+        test("Connection end does not cancel a query awaited in the same tick", async () => {
+          const sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`select 1 as x`;
+          const [rows] = await Promise.all([sql`select 1 as x`.then(r => r), sql.end()]);
+          expect(rows).toEqual([{ x: 1 }]);
+        });
+
         test("Connection destroyed", async () => {
           const sql = new SQL(getOptions());
           process.nextTick(() => sql.end({ timeout: 0 }));

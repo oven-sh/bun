@@ -99,15 +99,16 @@ test.skipIf(!isFuzzilliBuild)("bun fuzzilli auto-installs only from BUN_CONFIG_R
   expect(byDefault.stdout).toContain("uncaught:ResolveMessage: Cannot find package 'c'");
   expect(byDefault.stdout).toContain("import: Cannot find package 'd'");
   // Not the cache of the user that runs the fuzzer.
-  expect(byDefault.stdout).toMatch(/^cache: \/.+/m);
+  expect(byDefault.stdout).toContain("cache: /tmp/bun-fuzzilli-install-cache\n");
   expect(byDefault).toMatchObject({ handshake: "HELO", statuses, exitCode: 0 });
 
-  // A campaign that sets the variable gets every request.
+  // A campaign that sets the variables keeps its values and gets every request.
   const withRegistry = await runReprl(programs, {
     ...env,
     BUN_CONFIG_REGISTRY: registry.url.href,
     BUN_INSTALL_CACHE_DIR: String(cache),
   });
   expect(requests).toEqual(["/a", "/b", "/c", "/d"]);
+  expect(withRegistry.stdout).toContain(`cache: ${cache}\n`);
   expect(withRegistry).toMatchObject({ handshake: "HELO", statuses, exitCode: 0 });
 });

@@ -4737,6 +4737,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut unsupported_transfer_coding = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
@@ -4824,8 +4825,8 @@ impl<'a> HTTPClient<'a> {
                             Some(Encoding::Chunked) => {
                                 self.state.transfer_encoding = Encoding::Chunked;
                             }
-                            Some(_) => {}
-                            None => return Err(crate::Error::UnsupportedTransferEncoding),
+                            Some(Encoding::Identity) => {}
+                            Some(_) | None => unsupported_transfer_coding = true,
                         }
                     }
                 }
@@ -5219,6 +5220,9 @@ impl<'a> HTTPClient<'a> {
                 // undrained body bytes so it must be closed, not pooled.
                 self.state.flags.allow_keepalive = false;
                 return Ok(ShouldContinue::Finished);
+            }
+            if unsupported_transfer_coding && self.state.transfer_encoding != Encoding::Chunked {
+                return Err(crate::Error::UnsupportedTransferEncoding);
             }
             Ok(ShouldContinue::ContinueStreaming)
         } else {

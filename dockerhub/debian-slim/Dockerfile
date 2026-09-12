@@ -57,10 +57,14 @@ RUN apt-get update -qq \
 
 FROM debian:trixie-slim
 
-# Install CA certificates so tools that verify TLS (e.g. apt over HTTPS on
-# Debian 13) have a trust store. The base image ships none.
+# Debian 13 ships neither ca-certificates (needed for apt over HTTPS and other
+# TLS-verifying tools) nor adduser (addgroup/adduser, widely used in downstream
+# Dockerfiles to create a non-root user). Install both so images behave like
+# the previous Debian 12 base.
 RUN apt-get update -qq \
-    && apt-get install -qq --no-install-recommends ca-certificates \
+    && apt-get install -qq --no-install-recommends \
+      adduser \
+      ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

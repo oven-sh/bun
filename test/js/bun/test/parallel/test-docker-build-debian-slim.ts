@@ -20,13 +20,22 @@ if (isDockerEnabled()) {
     expect(build.exitCode).toBe(0);
 
     // https://github.com/oven-sh/bun/issues/33135
+    // https://github.com/oven-sh/bun/issues/25441
     const check = Bun.spawn({
-      cmd: [docker, "run", "--rm", tag, "sh", "-c", "test -s /etc/ssl/certs/ca-certificates.crt && echo HAS_CA_CERTS"],
+      cmd: [
+        docker,
+        "run",
+        "--rm",
+        tag,
+        "sh",
+        "-c",
+        "test -s /etc/ssl/certs/ca-certificates.crt && echo HAS_CA_CERTS && command -v addgroup >/dev/null && command -v adduser >/dev/null && echo HAS_ADDUSER",
+      ],
       stdio: ["ignore", "pipe", "inherit"],
       env: bunEnv,
     });
     const [stdout, exitCode] = await Promise.all([check.stdout.text(), check.exited]);
-    expect(stdout.trim()).toBe("HAS_CA_CERTS");
+    expect(stdout.trim().split("\n")).toEqual(["HAS_CA_CERTS", "HAS_ADDUSER"]);
     expect(exitCode).toBe(0);
   } finally {
     Bun.spawnSync({ cmd: [docker, "rmi", "-f", tag], stdio: ["ignore", "ignore", "ignore"], env: bunEnv });

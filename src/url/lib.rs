@@ -119,9 +119,11 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
+        /// Percent-encoded (ASCII), like JS `url.username`.
         pub fn username(&self) -> String {
             URL__username(self)
         }
+        /// Percent-encoded (ASCII), like JS `url.password`.
         pub fn password(&self) -> String {
             URL__password(self)
         }
@@ -1430,6 +1432,28 @@ impl PercentEncoding {
     pub fn decode_into(out: &mut [u8], input: &[u8]) -> Result<u32, DecodeError> {
         let mut w = bun_core::fmt::SliceCursor::new(out);
         Self::decode(&mut w, input)
+    }
+
+    /// <https://url.spec.whatwg.org/#percent-decode>: raw bytes out, a `%` without two hex digits is kept.
+    pub fn decode_whatwg(input: &[u8]) -> Vec<u8> {
+        let mut out: Vec<u8> = Vec::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(i) = strings::index_of_char_usize(rest, b'%') {
+            out.extend_from_slice(&rest[..i]);
+            rest = &rest[i..];
+            if rest.len() >= 3 && rest[1].is_ascii_hexdigit() && rest[2].is_ascii_hexdigit() {
+                out.push(
+                    (strings::to_ascii_hex_value(rest[1]) << 4)
+                        | strings::to_ascii_hex_value(rest[2]),
+                );
+                rest = &rest[3..];
+            } else {
+                out.push(b'%');
+                rest = &rest[1..];
+            }
+        }
+        out.extend_from_slice(rest);
+        out
     }
 
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(

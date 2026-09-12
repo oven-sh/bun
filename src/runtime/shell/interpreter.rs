@@ -332,7 +332,7 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
-    /// Set by [`Interpreter::reject_with_pending_exception`].
+    /// Set by [`Interpreter::take_failure`].
     pub(crate) const fn failed(self) -> bool {
         self.0 & 0b100 != 0
     }

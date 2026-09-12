@@ -1078,4 +1078,53 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // A rewritten `src`/`href` is a URL, so an output file name with a space,
+  // `#`, `%` or a non-ASCII byte in it is percent-encoded. A browser then
+  // requests the file that exists instead of cutting the name at `#`.
+  itBundled("html/percent-encodes-rewritten-urls", {
+    outdir: "out/",
+    files: {
+      "/my page.html": /* html */ `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.js"></script>
+    <script src="https://cdn.example.com/lib%20v1.js?a=b#c"></script>
+  </head>
+  <body>
+    <img src="./my photo.png">
+    <img src="./shot #1.png">
+    <img src="./100%.png">
+    <img src="./ünï (1)+@2x.png">
+  </body>
+</html>`,
+      "/styles.css": "body { color: red }",
+      "/app.js": "console.log('app')",
+      "/my photo.png": "photo",
+      "/shot #1.png": "shot",
+      "/100%.png": "percent",
+      "/ünï (1)+@2x.png": "unicode",
+    },
+    entryPoints: ["/my page.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/my page.html");
+      const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]);
+      expect(urls).toEqual([
+        "https://cdn.example.com/lib%20v1.js?a=b#c",
+        expect.stringMatching(/^\.\/my%20page-[a-z0-9]+\.css$/),
+        expect.stringMatching(/^\.\/my%20page-[a-z0-9]+\.js$/),
+        expect.stringMatching(/^\.\/my%20photo-[a-z0-9]+\.png$/),
+        expect.stringMatching(/^\.\/shot%20%231-[a-z0-9]+\.png$/),
+        expect.stringMatching(/^\.\/100%25-[a-z0-9]+\.png$/),
+        expect.stringMatching(/^\.\/%C3%BCn%C3%AF%20\(1\)\+@2x-[a-z0-9]+\.png$/),
+      ]);
+      // Each encoded URL decodes to a file that the build wrote.
+      for (const url of urls.slice(1)) {
+        expect(new URL(url, "http://example.test/").pathname).toBe(url.slice(1));
+        api.assertFileExists("out/" + decodeURIComponent(url.slice(2)));
+      }
+    },
+  });
 });

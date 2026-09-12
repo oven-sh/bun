@@ -21,6 +21,26 @@ pub struct Stream {
     // instead of `Arc<T>`.
     pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
     pub ended: bool,
+    /// The length the caller declared for this body (see
+    /// [`content_length_for_framing`]). `Some` frames the body with
+    /// `Content-Length` and the producer fills `buffer` with exactly this many
+    /// raw bytes; `None` frames it with `Transfer-Encoding: chunked` and the
+    /// producer writes chunk-encoded bytes. Decided once by the producer so the
+    /// request head and the body bytes never disagree.
+    pub content_length: Option<u64>,
+}
+
+/// Parses a caller `Content-Length` value that a [`Stream`] body can be framed
+/// with: one non-empty run of ASCII digits that fits a `u64`. The body goes on
+/// the wire unframed behind this count, so it has to be a count the producer can
+/// honor byte for byte. `FetchHeaders` trims OWS and joins two caller rows into
+/// `5, 7`, so every other form (`5, 7`, `+5`, `0x5`, `5.0`, `-1`, `abc`, a
+/// count wider than `u64`) is a value no body can match and yields `None`.
+pub fn content_length_for_framing(value: &[u8]) -> Option<u64> {
+    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::parse_unsigned::<u64>(value, 10).ok()
 }
 
 impl Stream {

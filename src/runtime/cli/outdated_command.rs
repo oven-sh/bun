@@ -173,6 +173,9 @@ impl OutdatedCommand {
                 );
                 (ids, true)
             } else {
+                if manager.lockfile.packages.len() == 0 {
+                    return Ok(());
+                }
                 let root_pkg_id = manager
                     .root_package_id
                     .get(&manager.lockfile, manager.workspace_name_hash);

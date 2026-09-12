@@ -2385,6 +2385,19 @@ function expectInteractiveDryRun(stdout: string, ...rows: string[]) {
   expect(stdout).not.toContain("Would update");
 }
 
+test.concurrent("`bun update -i` on a bun.lock without packages offers nothing", async () => {
+  const { packageDir: dir } = await registry.createTestDir({
+    files: {
+      "package.json": stringify(pkgJson({ "a-dep": "^1.0.1" })),
+      "bun.lock": JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "foo" } } }),
+    },
+  });
+  const { stdout, stderr, exitCode } = await runInteractive(dir, "");
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")).toStrictEqual([expect.stringContaining("bun update --interactive "), ""]);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("`bun update -i --prod --dry-run` lists only dependencies", async () => {
   const { dir } = await staleSiblings(DEV_A_DEP);
   const before = await lockText(dir);

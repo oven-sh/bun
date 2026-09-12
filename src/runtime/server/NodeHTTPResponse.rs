@@ -66,6 +66,7 @@ pub struct NodeHTTPResponse {
     /// access.
     pub(crate) raw_request_headers: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<usize>,
+    pub(crate) bytes_read: Cell<usize>,
 
     pending_pinned_write: Cell<PendingPinnedWrite>,
     /// Owns the bytes referenced by `pending_pinned_write`: either a
@@ -1592,6 +1593,8 @@ impl NodeHTTPResponse {
             last
         );
 
+        self.bytes_read
+            .set(self.bytes_read.get().saturating_add(chunk.len()));
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.append_slice(chunk));
         if last {
@@ -1716,6 +1719,8 @@ impl NodeHTTPResponse {
             last as u8
         );
 
+        self.bytes_read
+            .set(self.bytes_read.get().saturating_add(chunk.len()));
         if last {
             self.capture_request_trailers();
         }
@@ -2447,6 +2452,10 @@ impl NodeHTTPResponse {
     ) -> JSValue {
         JSValue::js_number(self.bytes_written.get() as f64)
     }
+
+    pub(crate) fn get_bytes_read(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+        JSValue::js_number(self.bytes_read.get() as f64)
+    }
 }
 
 impl NodeHTTPResponse {
@@ -2673,6 +2682,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
+        bytes_read: Cell::new(request_ref.headers_byte_length()),
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));
 

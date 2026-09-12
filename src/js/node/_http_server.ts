@@ -744,6 +744,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             const promise = $newPromise();
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
+            // Head bytes arrive in the initial parse burst, before #onData is wired.
+            socket[kBytesRead] = (socket[kBytesRead] ?? 0) + head.length;
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
             // regardless of shouldUpgradeCallback.
             http_req.upgrade = true;
@@ -964,6 +966,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          // Head bytes arrive in the initial parse burst, before #onData is wired.
+          socket[kBytesRead] = (socket[kBytesRead] ?? 0) + upgradeHead.length;
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
@@ -1296,6 +1300,7 @@ function replyMissingHostHeader(socket) {
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
+const kBytesRead = Symbol("kBytesRead");
 const kEnableStreaming = Symbol("kEnableStreaming");
 // Upgrade request whose body is still being parsed: reading the raw socket also
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
@@ -1467,7 +1472,6 @@ function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket } = require("node:net");
   NodeHTTPServerSocket = class Socket extends NetSocket {
-    bytesRead = 0;
     connecting = false;
     timeout = 0;
     parser = null;
@@ -1475,6 +1479,7 @@ function getNodeHTTPServerSocket() {
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
+    [kBytesRead] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
     server: Server;
@@ -1523,6 +1528,14 @@ function getNodeHTTPServerSocket() {
       }
     }
 
+    get bytesRead() {
+      // kBytesRead only ever holds tunnel chunks and close-time folds, so the sum never double-counts.
+      return (this[kHandle]?.response?.getBytesRead?.() ?? 0) + (this[kBytesRead] ?? 0);
+    }
+    set bytesRead(value) {
+      this[kBytesRead] = value;
+    }
+
     get bytesWritten() {
       const handle = this[kHandle];
       return handle
@@ -1565,6 +1578,8 @@ function getNodeHTTPServerSocket() {
     #onData(chunk, last) {
       this._unrefTimer();
       if (chunk) {
+        // Tunnel-mode (CONNECT/Upgrade) chunks bypass the response counter; count them here.
+        this[kBytesRead] = (this[kBytesRead] ?? 0) + chunk.length;
         this.push(chunk);
       }
       if (last) {
@@ -1589,6 +1604,8 @@ function getNodeHTTPServerSocket() {
       }
     }
     #closeHandle(handle, callback, err?: Error) {
+      // Fold the response count into kBytesRead; #onClose then sees kHandle undefined and adds nothing.
+      this[kBytesRead] = (this[kBytesRead] ?? 0) + (handle.response?.getBytesRead?.() ?? 0);
       this[kHandle] = undefined;
       // Capture the in-flight response before detachSocket() can clear it: a
       // synchronous res.destroy() inside the request handler runs detachSocket()
@@ -1603,6 +1620,8 @@ function getNodeHTTPServerSocket() {
       // freeParser equivalent: runs before 'close' listeners so they observe the
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
+      // Fold the response count into kBytesRead so it survives the handle being cleared.
+      this[kBytesRead] = (this[kBytesRead] ?? 0) + (this[kHandle]?.response?.getBytesRead?.() ?? 0);
       this[kHandle] = null;
       this.server?.[kTrackedConnections]?.delete(this);
       const timer = this[kSocketTimeoutTimer];

@@ -122,3 +122,39 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
   expect(stdout.trim()).toBe("leaf");
   expect(exitCode).toBe(0);
 });
+
+// ${configDir} in an extended base expands to the directory of the config
+// that started the chain (the leaf), the same as tsc. The base's own
+// directory also holds a matching file so a wrong anchor is visible.
+test("tsconfig 'extends' expands ${configDir} in the base with the leaf's directory", async () => {
+  using dir = tempDir("tsconfig-extends-configdir", {
+    "packages/tsconfig-base/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        paths: { "~/*": ["${configDir}/src/*"] },
+      },
+    }),
+    "packages/tsconfig-base/src/lib/util.ts": `export const where = "base";`,
+    "packages/app/tsconfig.json": JSON.stringify({
+      extends: "../tsconfig-base/tsconfig.json",
+    }),
+    "packages/app/src/lib/util.ts": `export const where = "app";`,
+    "packages/app/src/main.ts": `
+      import { where } from "~/lib/util";
+      console.log(where);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "src/main.ts"],
+    env: bunEnv,
+    cwd: path.join(String(dir), "packages", "app"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("app");
+  expect(exitCode).toBe(0);
+});

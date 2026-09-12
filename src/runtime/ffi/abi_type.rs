@@ -141,7 +141,7 @@ static ABI_TABLE: [AbiRow; 22] = {
     /* U64Fast   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
     /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
     /* NapiEnv   */ r(b"napi_env",   None,                                    None),
-    /* NapiValue */ r(b"napi_value", None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
+    /* NapiValue */ r(b"napi_value", None,                                    None),
     /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
     /* BufferLen */ r(b"uint64_t",   None,                                    None),
     ]
@@ -260,6 +260,12 @@ impl fmt::Display for ToJSFormatter<'_> {
             None => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
+                // NULL is `undefined`, as in Node; its raw bits would be the empty JSValue.
+                ABIType::NapiValue => write!(
+                    writer,
+                    "({sym} ? ((EncodedJSValue) {{.asNapiValue = {sym} }}) : ValueUndefined)",
+                    sym = BStr::new(self.symbol)
+                ),
                 ABIType::Buffer => writer.write_str("0"),
                 _ => unreachable!(),
             },

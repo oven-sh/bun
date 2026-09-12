@@ -41,6 +41,19 @@ describe.concurrent("bun pm version", () => {
       env: bunEnv,
     }).exited;
 
+    // Signing needs a key that the machine running the test may not have.
+    await Bun.spawn({
+      cmd: ["git", "config", "commit.gpgsign", "false"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
+    await Bun.spawn({
+      cmd: ["git", "config", "tag.gpgsign", "false"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
     await Bun.spawn({
       cmd: ["git", "add", "package.json"],
       cwd: testDir,
@@ -337,6 +350,29 @@ describe.concurrent("bun pm version", () => {
       expect(tagOutput).toContain("v1.0.1");
 
       const { output: logOutput } = await runCommand(["git", "log", "--oneline"], testDir1);
+      expect(logOutput).toContain("v1.0.1");
+    });
+
+    it("creates git commits and tags inside a linked worktree", async () => {
+      const mainDir = await setupGitTest();
+      const worktreeDir = join(tempDirWithFiles(`version-${i++}`, { ".keep": "" }), "worktree");
+
+      const { code: addCode } = await runCommand(["git", "worktree", "add", worktreeDir, "-b", "release"], mainDir);
+      expect(addCode).toBe(0);
+
+      // A linked worktree has a `.git` file, not a `.git` directory.
+      expect(await Bun.file(join(worktreeDir, ".git")).text()).toStartWith("gitdir:");
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch"], worktreeDir);
+
+      expect(error.trim()).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], worktreeDir);
+      expect(tagOutput).toContain("v1.0.1");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--oneline"], worktreeDir);
       expect(logOutput).toContain("v1.0.1");
     });
 

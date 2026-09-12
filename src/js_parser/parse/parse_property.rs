@@ -23,6 +23,23 @@ use js_ast::{
 use js_lexer::T;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// A `declare`/`abstract` field emits nothing, so it is normally dropped at
+    /// parse time. With `experimentalDecorators`, tsc still applies the field's
+    /// decorators, so `lower_class` needs the field kept around as a
+    /// `PropertyKind::Declare`/`Abstract` marker to emit `__legacyDecorateClassTS`.
+    /// Standard decorators have no such rule (tsc reports TS1206 and drops the
+    /// member), and `lower_decorators.rs` would treat the marker as a real field.
+    fn keeps_legacy_decorated_ambient_field(
+        &self,
+        prop: &G::Property,
+        opts: &PropertyOpts,
+    ) -> bool {
+        prop.kind == PropertyKind::Normal
+            && prop.value.is_none()
+            && opts.ts_decorators.len() > 0
+            && !self.options.features.standard_decorators
+    }
+
     fn parse_method_expression(
         &mut self,
         kind: PropertyKind,
@@ -420,17 +437,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && raw == b"declare"
                                         {
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(_prop) =
+                                            if let Some(mut prop) =
                                                 p.parse_property(kind, opts, None)?
+                                                && p.keeps_legacy_decorated_ambient_field(
+                                                    &prop, opts,
+                                                )
                                             {
-                                                let mut prop = _prop;
-                                                if prop.kind == PropertyKind::Normal
-                                                    && prop.value.is_none()
-                                                    && opts.ts_decorators.len() > 0
-                                                {
-                                                    prop.kind = PropertyKind::Declare;
-                                                    return Ok(Some(prop));
-                                                }
+                                                prop.kind = PropertyKind::Declare;
+                                                return Ok(Some(prop));
                                             }
 
                                             p.discard_scopes_up_to(scope_index);
@@ -446,17 +460,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         {
                                             opts.is_ts_abstract = true;
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(prop) =
+                                            if let Some(mut prop) =
                                                 p.parse_property(kind, opts, None)?
+                                                && p.keeps_legacy_decorated_ambient_field(
+                                                    &prop, opts,
+                                                )
                                             {
-                                                if prop.kind == PropertyKind::Normal
-                                                    && prop.value.is_none()
-                                                    && opts.ts_decorators.len() > 0
-                                                {
-                                                    let mut prop_ = prop;
-                                                    prop_.kind = PropertyKind::Abstract;
-                                                    return Ok(Some(prop_));
-                                                }
+                                                prop.kind = PropertyKind::Abstract;
+                                                return Ok(Some(prop));
                                             }
                                             p.discard_scopes_up_to(scope_index);
                                             return Ok(None);

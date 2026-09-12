@@ -30,7 +30,7 @@ const {
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
-const PromiseReject = Promise.$reject;
+const PromiseReject = Promise.$reject.bind(Promise);
 
 async function checkPaths(src, dest, opts) {
   if (opts.filter && !(await opts.filter(src, dest))) {

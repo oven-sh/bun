@@ -23,8 +23,8 @@ use bun_which::which;
 
 pub(crate) struct PmVersionCommand;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VersionType {
+#[derive(Clone, Copy)]
+enum Bump {
     Patch,
     Minor,
     Major,
@@ -32,38 +32,40 @@ enum VersionType {
     Preminor,
     Premajor,
     Prerelease,
-    Specific,
-    FromGit,
 }
 
-impl VersionType {
-    fn from_string(str: &[u8]) -> Option<VersionType> {
+impl Bump {
+    fn from_string(str: &[u8]) -> Option<Bump> {
         if str == b"patch" {
-            return Some(VersionType::Patch);
+            return Some(Bump::Patch);
         }
         if str == b"minor" {
-            return Some(VersionType::Minor);
+            return Some(Bump::Minor);
         }
         if str == b"major" {
-            return Some(VersionType::Major);
+            return Some(Bump::Major);
         }
         if str == b"prepatch" {
-            return Some(VersionType::Prepatch);
+            return Some(Bump::Prepatch);
         }
         if str == b"preminor" {
-            return Some(VersionType::Preminor);
+            return Some(Bump::Preminor);
         }
         if str == b"premajor" {
-            return Some(VersionType::Premajor);
+            return Some(Bump::Premajor);
         }
         if str == b"prerelease" {
-            return Some(VersionType::Prerelease);
-        }
-        if str == b"from-git" {
-            return Some(VersionType::FromGit);
+            return Some(Bump::Prerelease);
         }
         None
     }
+}
+
+#[derive(Clone, Copy)]
+enum VersionArg<'a> {
+    Bump(Bump),
+    Specific(&'a [u8]),
+    FromGit,
 }
 
 impl PmVersionCommand {
@@ -80,7 +82,7 @@ impl PmVersionCommand {
             return Ok(());
         }
 
-        let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
+        let version_arg = Self::parse_version_argument(positionals[1]);
 
         Self::verify_git(&package_json_dir, pm)?;
 
@@ -179,8 +181,7 @@ impl PmVersionCommand {
 
         let new_version_str = Self::calculate_new_version(
             current_version.unwrap_or(b"0.0.0"),
-            version_type,
-            new_version,
+            version_arg,
             pm.options.preid,
             &package_json_dir,
         )?;
@@ -321,14 +322,17 @@ impl PmVersionCommand {
         Ok(())
     }
 
-    fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
-        if let Some(vtype) = VersionType::from_string(arg) {
-            return (vtype, None);
+    fn parse_version_argument(arg: &[u8]) -> VersionArg<'_> {
+        if let Some(bump) = Bump::from_string(arg) {
+            return VersionArg::Bump(bump);
+        }
+        if arg == b"from-git" {
+            return VersionArg::FromGit;
         }
 
         let version = Semver::Version::parse(Semver::SlicedString::init(arg, arg));
         if version.valid {
-            return (VersionType::Specific, Some(arg));
+            return VersionArg::Specific(arg);
         }
 
         Output::err_generic("Invalid version argument: \"{}\"", (BStr::new(arg),));
@@ -395,19 +399,10 @@ impl PmVersionCommand {
 
         let preid = pm.options.preid;
 
-        let patch_version =
-            Self::calculate_new_version(current_version, VersionType::Patch, None, preid, cwd)?;
-        let minor_version =
-            Self::calculate_new_version(current_version, VersionType::Minor, None, preid, cwd)?;
-        let major_version =
-            Self::calculate_new_version(current_version, VersionType::Major, None, preid, cwd)?;
-        let prerelease_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Prerelease,
-            None,
-            preid,
-            cwd,
-        )?;
+        let patch_version = Self::bump_version(current_version, Bump::Patch, preid)?;
+        let minor_version = Self::bump_version(current_version, Bump::Minor, preid)?;
+        let major_version = Self::bump_version(current_version, Bump::Major, preid)?;
+        let prerelease_version = Self::bump_version(current_version, Bump::Prerelease, preid)?;
         // `defer ctx.allocator.free(...)` — handled by Drop.
 
         bun_core::pretty!(
@@ -420,27 +415,9 @@ impl PmVersionCommand {
         );
 
         if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
-            let prepatch_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Prepatch,
-                None,
-                preid,
-                cwd,
-            )?;
-            let preminor_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Preminor,
-                None,
-                preid,
-                cwd,
-            )?;
-            let premajor_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Premajor,
-                None,
-                preid,
-                cwd,
-            )?;
+            let prepatch_version = Self::bump_version(current_version, Bump::Prepatch, preid)?;
+            let preminor_version = Self::bump_version(current_version, Bump::Preminor, preid)?;
+            let premajor_version = Self::bump_version(current_version, Bump::Premajor, preid)?;
 
             bun_core::pretty!(
                 "  <cyan>prepatch<r>   <d>{0} → {1}<r>\n  <cyan>preminor<r>   <d>{0} → {2}<r>\n  <cyan>premajor<r>   <d>{0} → {3}<r>\n",
@@ -451,13 +428,8 @@ impl PmVersionCommand {
             );
         }
 
-        let beta_prerelease_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Prerelease,
-            None,
-            b"beta",
-            cwd,
-        )?;
+        let beta_prerelease_version =
+            Self::bump_version(current_version, Bump::Prerelease, b"beta")?;
 
         bun_core::pretty!(
             "  <cyan>from-git<r>   <d>Use version from latest git tag<r>\n\
@@ -484,19 +456,18 @@ impl PmVersionCommand {
 
     fn calculate_new_version(
         current_str: &[u8],
-        version_type: VersionType,
-        specific_version: Option<&[u8]>,
+        version_arg: VersionArg<'_>,
         preid: &[u8],
         cwd: &[u8],
     ) -> Result<Vec<u8>, AllocError> {
-        if version_type == VersionType::Specific {
-            return Ok(specific_version.unwrap().to_vec());
+        match version_arg {
+            VersionArg::Specific(version) => Ok(version.to_vec()),
+            VersionArg::FromGit => Self::get_version_from_git(cwd),
+            VersionArg::Bump(bump) => Self::bump_version(current_str, bump, preid),
         }
+    }
 
-        if version_type == VersionType::FromGit {
-            return Self::get_version_from_git(cwd);
-        }
-
+    fn bump_version(current_str: &[u8], bump: Bump, preid: &[u8]) -> Result<Vec<u8>, AllocError> {
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
         if !current.valid {
             Output::err_generic(
@@ -527,19 +498,19 @@ impl PmVersionCommand {
         };
         // `defer allocator.free(prerelease_id)` — handled by Drop.
 
-        Self::increment_version(current_str, &current, version_type, &prerelease_id)
+        Self::increment_version(current_str, &current, bump, &prerelease_id)
     }
 
     fn increment_version(
         current_str: &[u8],
         current: &Semver::version::ParseResult<u64>,
-        version_type: VersionType,
+        bump: Bump,
         preid: &[u8],
     ) -> Result<Vec<u8>, AllocError> {
         let mut new_version = current.version.min();
 
-        match version_type {
-            VersionType::Patch => {
+        match bump {
+            Bump::Patch => {
                 return Ok(fmt_bytes(format_args!(
                     "{}.{}.{}",
                     new_version.major,
@@ -547,17 +518,17 @@ impl PmVersionCommand {
                     new_version.patch + 1
                 )));
             }
-            VersionType::Minor => {
+            Bump::Minor => {
                 return Ok(fmt_bytes(format_args!(
                     "{}.{}.0",
                     new_version.major,
                     new_version.minor + 1
                 )));
             }
-            VersionType::Major => {
+            Bump::Major => {
                 return Ok(fmt_bytes(format_args!("{}.0.0", new_version.major + 1)));
             }
-            VersionType::Prepatch => {
+            Bump::Prepatch => {
                 if !preid.is_empty() {
                     return Ok(fmt_bytes(format_args!(
                         "{}.{}.{}-{}.0",
@@ -575,7 +546,7 @@ impl PmVersionCommand {
                     )));
                 }
             }
-            VersionType::Preminor => {
+            Bump::Preminor => {
                 if !preid.is_empty() {
                     return Ok(fmt_bytes(format_args!(
                         "{}.{}.0-{}.0",
@@ -591,7 +562,7 @@ impl PmVersionCommand {
                     )));
                 }
             }
-            VersionType::Premajor => {
+            Bump::Premajor => {
                 if !preid.is_empty() {
                     return Ok(fmt_bytes(format_args!(
                         "{}.0.0-{}.0",
@@ -602,7 +573,7 @@ impl PmVersionCommand {
                     return Ok(fmt_bytes(format_args!("{}.0.0-0", new_version.major + 1)));
                 }
             }
-            VersionType::Prerelease => {
+            Bump::Prerelease => {
                 if current.version.tag.has_pre() {
                     let current_prerelease = current.version.tag.pre.slice(current_str);
                     let identifier: &[u8] = if !preid.is_empty() {
@@ -671,12 +642,7 @@ impl PmVersionCommand {
                     }
                 }
             }
-            _ => {}
         }
-        Ok(fmt_bytes(format_args!(
-            "{}.{}.{}",
-            new_version.major, new_version.minor, new_version.patch
-        )))
     }
 
     fn is_git_clean(cwd: &[u8]) -> Result<bool, AllocError> {

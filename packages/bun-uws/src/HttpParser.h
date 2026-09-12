@@ -1384,7 +1384,12 @@ struct HttpResponseData;
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-                if constexpr (!ConsumeMinimally) {
+                /* The ConsumeMinimally (fallback buffer) pass leaves the body to
+                 * consumePostPadded, which streams it from the caller's data only
+                 * while remainingStreamingBytes is non-zero. A Content-Length: 0
+                 * message has to get its fin chunk here in either pass, as the
+                 * no-body branch below does. */
+                if (!ConsumeMinimally || remainingStreamingBytes == 0) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;

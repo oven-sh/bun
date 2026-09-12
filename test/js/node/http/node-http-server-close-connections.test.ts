@@ -227,6 +227,66 @@ describe("closeIdleConnections", () => {
     }
   });
 
+  test("reaps a connection whose 'Content-Length: 0' request head arrived in two reads", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    server.keepAliveTimeout = 60_000;
+    try {
+      const port = await listen(server);
+      const { client, gotConnection } = await openConnection(server, port);
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      const responses = () => received.split("\r\n\r\nok").length - 1;
+
+      // The first response proves that the read which carried the start of the
+      // second head has been parsed. The parser buffers that partial head and
+      // completes the request from its buffer, a separate path from a head
+      // that arrives in one read.
+      client.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\nPOST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n");
+      const [serverSocket] = await gotConnection;
+      while (responses() < 1) await once(client, "data");
+      client.write("\r\n");
+      while (responses() < 2) await once(client, "data");
+
+      // Both requests are complete and answered: the connection is idle.
+      server.closeIdleConnections();
+      expect(serverSocket.destroyed).toBe(true);
+      await waitClose(client);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  test("reaps a connection that the server half-closed after a 'Connection: close' response", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const port = await listen(server);
+      const gotConnection = once(server, "connection");
+      // allowHalfOpen: the client does not answer the server's FIN, so the
+      // connection stays half-closed.
+      const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      client.on("error", () => {});
+      client.on("data", () => {});
+      try {
+        await once(client, "connect");
+        const [serverSocket] = await gotConnection;
+        const serverFin = once(client, "end");
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await serverFin;
+
+        // Node.js has destroyed the socket by now. Bun keeps it until the peer
+        // closes, so the sweep must count it as idle.
+        server.closeIdleConnections();
+        expect(serverSocket.destroyed).toBe(true);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("keeps a connection with pipelined responses still queued (unlike Node.js)", async () => {
     const responses: ServerResponse[] = [];
     const { promise: bothDispatched, resolve: onBothDispatched } = Promise.withResolvers<void>();
@@ -439,6 +499,31 @@ describe("closeAllConnections", () => {
     const server = createServer();
     expect(() => server.closeAllConnections()).not.toThrow();
     expect(() => server.closeIdleConnections()).not.toThrow();
+  });
+});
+
+describe("close()", () => {
+  // close() keeps its own idle sweep. Inside the turn that dispatched the
+  // request the native handle still reports the request as incomplete, so the
+  // closeIdleConnections() rule would spare this connection.
+  test("from a response 'finish' listener closes the connection that carried the request", async () => {
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<Error | undefined>();
+    const server = createServer((req, res) => {
+      res.on("finish", () => server.close(onClosed));
+      res.end("ok");
+    });
+    server.keepAliveTimeout = 60_000;
+    try {
+      const port = await listen(server);
+      const { client } = await openConnection(server, port);
+      const clientClosed = waitClose(client);
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect(await closed).toBeUndefined();
+      await clientClosed;
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
   });
 });
 

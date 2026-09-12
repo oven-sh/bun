@@ -257,6 +257,12 @@ impl Options {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
     }
 
+    /// `--force` re-downloads and re-verifies instead of trusting an extraction-cache
+    /// hit, unless `--offline`/`--prefer-offline` asked to resolve from the cache.
+    pub fn force_refetch_cache(&self) -> bool {
+        self.enable.force_install() && self.offline == OfflineMode::Online
+    }
+
     /// Resolve the registry scope for a (possibly @-scoped) package name.
     ///
     /// Hoisted onto `Options` so callers that already hold a borrow of

@@ -2759,6 +2759,12 @@ BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmI
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
+JSC_DEFINE_CUSTOM_GETTER(getNodeModuleConstructorPrivateGlobal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    return JSValue::encode(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Mimick the behavior of class Foo {} for a regular JSFunction.
@@ -2894,6 +2900,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
+    // Must stay eager: `jsFunctionLoad` reads it with getDirect().
+    putDirectBuiltinFunction(vm, this, builtinNames.requireCommonJSModulePrivateName(), commonJSRequireCommonJSModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirect(vm, builtinNames.overriddenModuleLoadPrivateName(), jsUndefined(), 0);
+    putDirectCustomAccessor(vm, builtinNames.nodeModuleConstructorPrivateName(), JSC::CustomGetterSetter::create(vm, getNodeModuleConstructorPrivateGlobal, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

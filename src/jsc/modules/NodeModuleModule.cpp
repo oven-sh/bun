@@ -771,9 +771,91 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Default `Module._load(request, parent, isMain)`; `isMain` is ignored (documented in nodejs-compat).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue request = callFrame->argument(0);
+    JSValue parent = callFrame->argument(1);
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(request);
+
+    auto* parentModule = dynamicDowncast<Bun::JSCommonJSModule>(parent);
+    if (parentModule) [[likely]] {
+        if (callFrame->argumentCount() > 3) {
+            args.append(callFrame->uncheckedArgument(3));
+        }
+    } else {
+        // A throwaway module anchors resolution; `parent` itself is recorded as `module.parent`, as in Node.
+        WTF::String from;
+        if (parent.isObject()) {
+            auto* parentObject = parent.getObject();
+            auto anchor = parentObject->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!anchor || !anchor.isString()) {
+                anchor = parentObject->getIfPropertyExists(globalObject, vm.propertyNames->id);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            if (anchor && anchor.isString()) {
+                from = anchor.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+        parentModule = Bun::JSCommonJSModule::create(globalObject, from, JSC::constructEmptyObject(globalObject), true, JSC::jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+        args.append(callFrame->argument(3));
+        args.append(parent);
+    }
+
+    JSValue requireFunction = globalObject->getDirect(vm, builtinNames(vm).requireCommonJSModulePrivateName());
+    ASSERT(requireFunction.isCallable());
+    ASSERT(!args.hasOverflowed());
+    RELEASE_AND_RETURN(scope,
+        JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, requireFunction,
+            JSC::getCallData(requireFunction), parentModule, args)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeModuleUnderscoreLoad,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(
+        globalObject->m_moduleUnderscoreLoadFunction.getInitializedOnMainThread(
+            globalObject));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setNodeModuleUnderscoreLoad,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = lexicalGlobalObject->vm();
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &jsFunctionLoad) {
+                    isOriginal = true;
+                }
+            }
+        }
+        globalObject->m_moduleUnderscoreLoadFunction.set(vm, globalObject, value.asCell());
+        globalObject->putDirect(vm,
+            builtinNames(vm).overriddenModuleLoadPrivateName(),
+            (isOriginal || !value.isCallable()) ? JSC::jsUndefined() : value, 0);
+    }
+
+    return true;
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
@@ -948,7 +1030,7 @@ _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
 _initPaths              JSBuiltin                         Function|Builtin 0
-_load                   jsFunctionLoad                    Function 1
+_load                   nodeModuleUnderscoreLoad          CustomAccessor
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
@@ -1140,6 +1222,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic);
             init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_moduleUnderscoreLoadFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* loadFunction = JSFunction::create(
+                init.vm, init.owner, 3, "_load"_s,
+                jsFunctionLoad, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic);
+            init.set(loadFunction);
         });
 
     globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(

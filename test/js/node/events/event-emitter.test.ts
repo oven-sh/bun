@@ -293,6 +293,69 @@ describe("EventEmitter", () => {
     expect(EventEmitter.prototype.removeListener).toBe(EventEmitter.prototype.off);
   });
 
+  // Node mutates the stored listener array in place (push / spliceOne), so
+  // capturing `_events[type]` and then adding or removing keeps the same array
+  // reference. A copy-on-write scheme allocates a fresh array per call instead,
+  // turning N adds (or a tail-first drain of N listeners) into O(N^2) work.
+  // https://github.com/oven-sh/bun/issues/3770
+  // https://github.com/oven-sh/bun/issues/3734
+  test("on/removeListener mutate the stored listener array in place", () => {
+    const ee = new EventEmitter() as any;
+    ee.setMaxListeners(0);
+    const f1 = () => {};
+    const f2 = () => {};
+    const f3 = () => {};
+    const f4 = () => {};
+    ee.on("x", f1);
+    ee.on("x", f2);
+    const list = ee._events.x;
+    expect(Array.isArray(list)).toBe(true);
+
+    ee.on("x", f3);
+    expect(ee._events.x).toBe(list);
+    expect(list).toEqual([f1, f2, f3]);
+
+    ee.prependListener("x", f4);
+    expect(ee._events.x).toBe(list);
+    expect(list).toEqual([f4, f1, f2, f3]);
+
+    ee.removeListener("x", f3);
+    expect(ee._events.x).toBe(list);
+    expect(list).toEqual([f4, f1, f2]);
+
+    ee.removeListener("x", f4);
+    expect(ee._events.x).toBe(list);
+    expect(list).toEqual([f1, f2]);
+  });
+
+  // The in-place mutation above is only safe because emit() marks the array it
+  // is iterating: a listener that adds or removes on the same event gets a
+  // fresh copy, so the running loop still sees its original snapshot. This
+  // also has to hold across a nested emit() of the same event, which must not
+  // clear the outer emit()'s mark when it finishes.
+  test("nested emit + removeListener inside a listener preserves the outer emit snapshot", () => {
+    const ee = new EventEmitter();
+    const calls: string[] = [];
+    let depth = 0;
+    const a = () => calls.push("a" + depth);
+    const b = () => {
+      calls.push("b" + depth);
+      if (depth === 0) {
+        depth = 1;
+        ee.emit("x");
+        depth = 0;
+        ee.removeListener("x", c);
+      }
+    };
+    const c = () => calls.push("c" + depth);
+    ee.on("x", a);
+    ee.on("x", b);
+    ee.on("x", c);
+    ee.emit("x");
+    expect(calls).toEqual(["a0", "b0", "a1", "b1", "c1", "c0"]);
+    expect(ee.listeners("x")).toEqual([a, b]);
+  });
+
   test("prependListener", () => {
     const myEmitter = new EventEmitter();
     const order: number[] = [];

@@ -1094,7 +1094,7 @@ fn lower_update(
             // `(old = o.p, o.p = old + 1, old)` keeps the update in its place
             // among the other operands.
             if !prefix && value_is_used && builder.is_nested_function() {
-                let old_value = builder.declare_temporary_at_entry(member_loc);
+                let old_value = builder.declare_temporary(member_loc);
                 return lower_in_sequence_block(builder, loc, |builder| {
                     lower_member_update(
                         builder,
@@ -1155,7 +1155,7 @@ fn lower_member_update(
     let lowered_property = lowered.property;
     let mut prev_value = lower_value_to_temporary(builder, lowered.value)?;
     if let Some(old_value) = old_value {
-        lower_value_to_temporary(
+        prev_value = lower_value_to_temporary(
             builder,
             InstructionValue::StoreLocal {
                 lvalue: LValue {
@@ -1164,13 +1164,6 @@ fn lower_member_update(
                 },
                 value: prev_value,
                 type_annotation: None,
-                loc: member_loc,
-            },
-        )?;
-        prev_value = lower_value_to_temporary(
-            builder,
-            InstructionValue::LoadLocal {
-                place: old_value.clone(),
                 loc: member_loc,
             },
         )?;

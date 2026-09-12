@@ -1,8 +1,18 @@
 import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { existsSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -2997,5 +3007,81 @@ it("bun add --trust keeps the new package when another --trust package is alread
       "a-scripted": "file:./a-scripted",
       "b-scripted": "file:./b-scripted",
     },
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/4553
+// `-g` used to chdir into the default global directory before any bunfig was read,
+// so `[install] globalDir` was ignored no matter which file it came from.
+describe("bun add -g honors [install] globalDir from bunfig", () => {
+  const projectPackageJson = JSON.stringify({ name: "project", version: "0.0.1" });
+
+  type ConfigSource = { file: string; args?: string[]; env?: Record<string, string> };
+  const configSources: Record<string, (root: string) => ConfigSource> = {
+    "--config=<path>": root => ({
+      file: join(root, "config.toml"),
+      args: [`--config=${join(root, "config.toml")}`],
+    }),
+    "$HOME/.bunfig.toml": root => ({ file: join(root, "home", ".bunfig.toml") }),
+    "$XDG_CONFIG_HOME/.bunfig.toml": root => ({
+      file: join(root, "xdg", ".bunfig.toml"),
+      env: { XDG_CONFIG_HOME: join(root, "xdg") },
+    }),
+    "./bunfig.toml of the directory bun add -g runs in": root => ({ file: join(root, "project", "bunfig.toml") }),
+  };
+
+  it.each(Object.keys(configSources))("via %s", async sourceName => {
+    using dir = tempDir("add-g-globaldir", {
+      "home/.keep": "",
+      "xdg/.keep": "",
+      "project/package.json": projectPackageJson,
+      "custom-global/package.json": JSON.stringify({ name: "custom-global" }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    const root = String(dir);
+    const home = join(root, "home");
+    const project = join(root, "project");
+    const customGlobal = join(root, "custom-global");
+    const source = configSources[sourceName](root);
+    await writeFile(
+      source.file,
+      `[install]\nglobalDir = ${JSON.stringify(customGlobal)}\nglobalBinDir = ${JSON.stringify(join(root, "custom-bin"))}\n`,
+    );
+
+    const testEnv: Record<string, string> = { ...(env as Record<string, string>), HOME: home, USERPROFILE: home };
+    for (const key of [
+      "BUN_INSTALL",
+      "BUN_INSTALL_GLOBAL_DIR",
+      "BUN_INSTALL_BIN",
+      "XDG_CONFIG_HOME",
+      "XDG_CACHE_HOME",
+    ]) {
+      delete testEnv[key];
+    }
+    Object.assign(testEnv, source.env);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", `file:${join(root, "dep")}`, ...(source.args ?? [])],
+      cwd: project,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed dep@");
+    expect({
+      globalDependencies: Object.keys((await file(join(customGlobal, "package.json")).json()).dependencies ?? {}),
+      installedIntoGlobalDir: existsSync(join(customGlobal, "node_modules", "dep", "package.json")),
+      defaultGlobalDirCreated: existsSync(join(home, ".bun", "install", "global")),
+      projectPackageJson: await file(join(project, "package.json")).text(),
+    }).toEqual({
+      globalDependencies: ["dep"],
+      installedIntoGlobalDir: true,
+      defaultGlobalDirCreated: false,
+      projectPackageJson,
+    });
+    expect(exitCode).toBe(0);
   });
 });

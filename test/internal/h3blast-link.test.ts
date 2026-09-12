@@ -11,7 +11,7 @@
 import { Glob, which } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isLinux, tempDir, tls } from "harness";
-import { cpSync, existsSync, readFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -64,11 +64,16 @@ function unusable(profile: string): string | null {
   return null;
 }
 
-// Copies the package so that nothing lands in the source tree and a binary left
-// over from a manual `make` cannot satisfy the build. Then runs `make` in the copy.
+// Runs `make` in a copy of the package, so that nothing lands in the source tree.
 async function runMake(dir: string, profile: string) {
   cpSync(join(pkg, "Makefile"), join(dir, "Makefile"));
   cpSync(join(pkg, "src"), join(dir, "src"), { recursive: true });
+  // What a build against another profile leaves behind: an archive (here an
+  // empty one) and a binary, both newer than the sources. The archive path is
+  // the same for every profile, so `make` must not take them as up to date.
+  mkdirSync(join(dir, "build"));
+  writeFileSync(join(dir, "build", "libdeps.a"), "!<arch>\n");
+  writeFileSync(join(dir, "h3blast"), "");
   await using proc = Bun.spawn({
     cmd: [make!, `ROOT=${repoRoot}`, `PROFILE=${profile}`],
     cwd: dir,

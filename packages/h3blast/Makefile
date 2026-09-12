@@ -23,7 +23,9 @@ SRCS := src/h3blast.c src/boringssl_hooks.c
 
 all: $(BIN)
 
-$(LIBDEPS):
+# Archived again on every run: PROFILE picks the objects and a Bun rebuild
+# replaces them, and neither shows in this file's age.
+$(LIBDEPS): FORCE
 	@if [ ! -d "$(OBJ)/lsquic" ]; then \
 		echo "error: no dep objects found under $(OBJ)"; \
 		echo "       run 'bun run build:$(PROFILE)' in the repo root first"; \
@@ -31,6 +33,7 @@ $(LIBDEPS):
 	fi
 	@mkdir -p build
 	@echo "  AR    $@"
+	@rm -f $@
 	@find $(DEP_DIRS) -name '*.o' | xargs ar rcs $@
 	@if nm -u $@ | grep -q __asan_init; then \
 		rm -f $@; \
@@ -48,4 +51,6 @@ $(BIN): $(SRCS) $(LIBDEPS)
 clean:
 	rm -f $(BIN) $(LIBDEPS)
 
-.PHONY: all clean
+FORCE:
+
+.PHONY: all clean FORCE

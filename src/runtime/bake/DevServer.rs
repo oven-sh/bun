@@ -4167,6 +4167,10 @@ pub(super) fn finalize_bundle(
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
     for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
+        // A CSS module's stub: its records are the stylesheet's, which the CSS loop below handles.
+        if input_file_loaders[part_range.source_index.get() as usize].is_css() {
+            continue;
+        }
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,
@@ -5062,10 +5066,7 @@ impl DevServer {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct CacheEntry {
-    pub(crate) kind: FileKind,
-}
+pub use bun_bundler::bake_types::CacheEntry;
 
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
@@ -5081,13 +5082,12 @@ impl DevServer {
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
                 if !g.stale_files.is_set(index) {
-                    return Some(CacheEntry {
-                        kind: g
-                            .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).expect("int cast"),
-                            ))
-                            .file_kind(),
-                    });
+                    return g
+                        .get_file_by_index(incremental_graph::FileIndex::init(
+                            u32::try_from(index).expect("int cast"),
+                        ))
+                        .cache_kind()
+                        .map(|kind| CacheEntry { kind });
                 }
                 return None;
             }};

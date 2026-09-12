@@ -57,19 +57,33 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
-    for record in ast.import_records.as_mut_slice() {
-        if record.path.is_disabled {
-            continue;
-        }
-        if record.source_index.is_valid()
-            && loaders[record.source_index.get() as usize] == Loader::Css
-        {
-            record.path.is_disabled = true;
-            continue;
-        }
-        // Make sure the printer gets the resolved path
-        if record.source_index.is_valid() {
-            record.path = sources[record.source_index.get() as usize].path;
+    // A CSS file's own records belong to the CSS chunk (another thread); its stub imports nothing.
+    if ast.css.is_none() {
+        let targets = c.graph.ast.items_target();
+        for record in ast.import_records.as_mut_slice() {
+            if record.path.is_disabled {
+                continue;
+            }
+            if record.source_index.is_valid() {
+                let imported = record.source_index.get() as usize;
+                let is_css = loaders[imported] == Loader::Css;
+                // A plain stylesheet reaches the page through a <link> tag, not the module registry.
+                if is_css
+                    && !crate::is_client_css_module(
+                        targets[imported],
+                        sources[imported].path.pretty,
+                    )
+                {
+                    record.path.is_disabled = true;
+                    continue;
+                }
+                // Make sure the printer gets the resolved path
+                record.path = sources[imported].path;
+                // A CSS module's class-name map is a registry module; link it at runtime like JS.
+                if is_css {
+                    record.source_index = bun_ast::Index::INVALID;
+                }
+            }
         }
     }
 
@@ -78,17 +92,21 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
         match &stmt.data {
             StmtData::SImport(st) => {
                 let record = &mut ast.import_records[st.import_record_index as usize];
-                if record.path.is_disabled {
-                    continue;
-                }
+                let has_bindings =
+                    !st.star_name_loc.is_empty() || st.items.len() > 0 || st.default_name.is_some();
 
-                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                    // Barrel optimization: this import was deferred (unused submodule).
-                    // Don't add to dep array, but declare the namespace ref as an
-                    // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
-                    let items_len = st.items.len();
-                    if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
+                // Nothing to link to (stylesheet, `browser: false` path, deferred barrel import): bind an empty module.
+                let is_deferred = record.flags.contains(ImportRecordFlags::IS_UNUSED);
+                if record.path.is_disabled || is_deferred {
+                    if has_bindings {
+                        let mut namespace = E::Object::default();
+                        if !is_deferred {
+                            namespace.put(
+                                bump,
+                                b"default",
+                                Expr::init(E::Object::default(), stmt.loc),
+                            )?;
+                        }
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
@@ -102,7 +120,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             },
                                             stmt.loc,
                                         ),
-                                        value: Some(Expr::init(E::Object::default(), stmt.loc)),
+                                        value: Some(Expr::init(namespace, stmt.loc)),
                                     }]),
                                     ..Default::default()
                                 },
@@ -115,8 +133,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 let is_builtin = record.tag == ImportRecordTag::Builtin
                     || record.tag == ImportRecordTag::Bun
                     || record.tag == ImportRecordTag::Runtime;
-                let is_bare_import =
-                    st.star_name_loc.is_empty() && st.items.len() == 0 && st.default_name.is_none();
+                let is_bare_import = !has_bindings;
 
                 if is_builtin {
                     if !is_bare_import {

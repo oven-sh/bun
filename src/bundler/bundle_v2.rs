@@ -390,7 +390,10 @@ pub mod bv2_impl {
             Unknown = 0,
             Js = 1,
             Asset = 2,
+            /// A stylesheet the page loads through a `<link>` tag; a JS import of it binds nothing.
             Css = 3,
+            /// A stylesheet plus an HMR module, keyed by the file's path, that exports its class names.
+            CssModule = 4,
         }
         #[derive(Copy, Clone)]
         pub struct CacheEntry {
@@ -5512,6 +5515,7 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
+            let mut css_module_stubs: Vec<Index> = Vec::new();
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
@@ -5659,6 +5663,22 @@ pub mod bv2_impl {
                     }
                 }
 
+                // A client CSS module also ships a module with its class-name map in the JS chunk.
+                for entry_point in start.css_entry_points.keys() {
+                    let idx = entry_point.get() as usize;
+                    // SAFETY: `idx < ast.len()`; see the column aliasing note above.
+                    let part_count = unsafe { (*parts_col.add(idx)).len() };
+                    if part_count > 1
+                        && crate::is_client_css_module(
+                            asts.items_target()[idx],
+                            sources[idx].path.pretty,
+                        )
+                    {
+                        js_files.push(*entry_point);
+                        css_module_stubs.push(*entry_point);
+                    }
+                }
+
                 // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
                 // this function. Erase the `&self` lifetime via `*const` so the borrow on
                 // `self.arena()` does not extend across the `&mut self` calls below
@@ -5698,6 +5718,12 @@ pub mod bv2_impl {
                     .linker
                     .load(bundle_ptr, ep, scbs, js_reachable_files)
                     .map_err(|_| AllocError)?;
+            }
+
+            // This pipeline skips `generate_code_for_lazy_export`, so fill the class-name maps here.
+            for source_index in &css_module_stubs {
+                self.linker
+                    .populate_css_module_lazy_export(source_index.get())?;
             }
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets

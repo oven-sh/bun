@@ -515,12 +515,10 @@ impl Tag {
         )
     }
 
+    /// Not `Event`: its generic arm re-enters `print_as::<Object>` with the same value.
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(
-            self,
-            Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX | Tag::Event
-        )
+        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
     }
 
     /// What a container prints as after the walk spent `FormatOptions::shared_reference_budget`.

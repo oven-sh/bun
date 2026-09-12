@@ -915,6 +915,17 @@ test("a difference after the first 1 MiB of a value without shared references is
   expect(message.slice(-120)).toContain('\n- LAST-B"\n+ LAST-A"\n\n- Expected  - 1\n+ Received  + 1');
 });
 
+test("a plain Event prints its properties, not [Circular]", () => {
+  let message = "";
+  try {
+    expect(new Event("close")).toEqual(1);
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).not.toContain("[Circular]");
+  expect(message).toContain('+ Event {\n+   "isTrusted": false,\n+ }');
+});
+
 // https://github.com/oven-sh/bun/issues/34178
 // The formatter prints [Circular] only for a cycle, so it prints a value that is reachable N ways
 // N times. In this graph each level holds the level below twice: 16 levels reach the leaf 65,536

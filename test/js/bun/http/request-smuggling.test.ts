@@ -353,6 +353,39 @@ test("rejects empty-valued Content-Length followed by smuggled Content-Length", 
   expect(seen).not.toContain("GET /admin");
 });
 
+test("frames a Content-Length with leading zeros by its digits", async () => {
+  // RFC 9110 8.6: Content-Length = 1*DIGIT, so leading zeros are valid. This
+  // 19-byte value is 5: the body is "hello" and the pipelined GET is served.
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname} body=${await req.text()}`);
+      return new Response("OK");
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const client = net.connect(server.port, "127.0.0.1", () => {
+    client.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello" +
+        "GET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+  });
+  let raw = "";
+  client.on("data", data => {
+    raw += data;
+    if (raw.match(/HTTP\/1\.1 200/g)?.length === 2) resolve(raw);
+  });
+  client.on("error", reject);
+  client.on("close", () => resolve(raw));
+  const response = await promise;
+  client.destroy();
+
+  expect(seen.sort()).toEqual(["GET /b body=", "POST /a body=hello"]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
 test("accepts valid Transfer-Encoding: chunked", async () => {
   let receivedBody = "";
 

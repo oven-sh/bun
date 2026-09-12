@@ -325,6 +325,8 @@ private:
          * default serve the request - it never aborts or suspends the handshake. */
         (void) abort_handshake;
         (void) socket;
+        /* The listener closed before this ClientHello: nowhere left to register a name. */
+        if (!ls) return nullptr;
         auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
         httpContext->getSocketContextData()->missingServerNameHandler(hostname);
         /* The handler is expected to have registered the name via

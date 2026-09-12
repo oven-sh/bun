@@ -89,6 +89,7 @@ public:
     void* secret_handle;
     void* glib_handle;
     void* gobject_handle;
+    void* gio_handle;
 
     // GLib function pointers
     void (*g_error_free)(GError* error);
@@ -101,6 +102,11 @@ public:
     void (*g_list_free_full)(GList* list, void (*free_func)(gpointer));
     guint (*g_str_hash)(gpointer v);
     gboolean (*g_str_equal)(gpointer v1, gpointer v2);
+
+    // GObject / GIO function pointers (GCancellable)
+    void (*g_object_unref)(gpointer object);
+    void* (*g_cancellable_new)(void);
+    void (*g_cancellable_cancel)(void* cancellable);
 
     // libsecret function pointers
     gboolean (*secret_password_store_sync)(const SecretSchema* schema,
@@ -142,12 +148,13 @@ public:
         : secret_handle(nullptr)
         , glib_handle(nullptr)
         , gobject_handle(nullptr)
+        , gio_handle(nullptr)
     {
     }
 
     bool load()
     {
-        if (secret_handle && glib_handle && gobject_handle) return true;
+        if (secret_handle && glib_handle && gobject_handle && gio_handle) return true;
 
         // Load GLib
         glib_handle = dlopen("libglib-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL);
@@ -162,8 +169,17 @@ public:
         if (!gobject_handle) {
             gobject_handle = dlopen("libgobject-2.0.so", RTLD_LAZY | RTLD_GLOBAL);
             if (!gobject_handle) {
-                dlclose(glib_handle);
-                glib_handle = nullptr;
+                unload();
+                return false;
+            }
+        }
+
+        // Load GIO (GCancellable). libsecret links it, so it is present wherever libsecret is.
+        gio_handle = dlopen("libgio-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL);
+        if (!gio_handle) {
+            gio_handle = dlopen("libgio-2.0.so", RTLD_LAZY | RTLD_GLOBAL);
+            if (!gio_handle) {
+                unload();
                 return false;
             }
         }
@@ -171,20 +187,12 @@ public:
         // Load libsecret
         secret_handle = dlopen("libsecret-1.so.0", RTLD_LAZY | RTLD_LOCAL);
         if (!secret_handle) {
-            dlclose(glib_handle);
-            dlclose(gobject_handle);
-            glib_handle = nullptr;
-            gobject_handle = nullptr;
+            unload();
             return false;
         }
 
         if (!load_functions()) {
-            dlclose(secret_handle);
-            dlclose(glib_handle);
-            dlclose(gobject_handle);
-            secret_handle = nullptr;
-            glib_handle = nullptr;
-            gobject_handle = nullptr;
+            unload();
             return false;
         }
 
@@ -192,6 +200,16 @@ public:
     }
 
 private:
+    void unload()
+    {
+        for (void** handle : { &secret_handle, &gio_handle, &gobject_handle, &glib_handle }) {
+            if (*handle) {
+                dlclose(*handle);
+                *handle = nullptr;
+            }
+        }
+    }
+
     bool load_functions()
     {
         // Load GLib functions
@@ -205,6 +223,11 @@ private:
         g_list_free_full = (void (*)(GList*, void (*)(gpointer)))dlsym(glib_handle, "g_list_free_full");
         g_str_hash = (guint (*)(gpointer))dlsym(glib_handle, "g_str_hash");
         g_str_equal = (gboolean (*)(gpointer, gpointer))dlsym(glib_handle, "g_str_equal");
+
+        // Load GObject / GIO functions
+        g_object_unref = (void (*)(gpointer))dlsym(gobject_handle, "g_object_unref");
+        g_cancellable_new = (void* (*)(void))dlsym(gio_handle, "g_cancellable_new");
+        g_cancellable_cancel = (void (*)(void*))dlsym(gio_handle, "g_cancellable_cancel");
 
         // Load libsecret functions
         secret_password_store_sync = (gboolean (*)(const SecretSchema*, const gchar*, const gchar*, const gchar*, void*, GError**, ...))
@@ -222,7 +245,7 @@ private:
         secret_item_get_attributes = (GHashTable * (*)(SecretItem*)) dlsym(secret_handle, "secret_item_get_attributes");
         secret_item_load_secret_sync = (gboolean (*)(SecretItem*, void*, GError**))dlsym(secret_handle, "secret_item_load_secret_sync");
 
-        return g_error_free && g_free && g_hash_table_new && g_hash_table_destroy && g_hash_table_lookup && g_hash_table_insert && g_list_free && secret_password_store_sync && secret_password_lookup_sync && secret_password_clear_sync && secret_password_free;
+        return g_error_free && g_free && g_hash_table_new && g_hash_table_destroy && g_hash_table_lookup && g_hash_table_insert && g_list_free && g_object_unref && g_cancellable_new && g_cancellable_cancel && secret_password_store_sync && secret_password_lookup_sync && secret_password_clear_sync && secret_password_free;
     }
 };
 
@@ -237,6 +260,38 @@ static LibsecretFramework* libsecretFramework()
         }
     });
     return framework->secret_handle ? &framework.get() : nullptr;
+}
+
+// Dekker-style handshake: the pool thread publishes the token then reads the
+// cancel flag, the JS thread sets the flag then reads the token (both seq_cst),
+// so a cancel that races the start of the call is never lost.
+void* Cancellation::gcancellable()
+{
+    if (void* existing = m_gcancellable.load()) return existing;
+    auto* framework = libsecretFramework();
+    if (!framework) return nullptr;
+    void* cancellable = framework->g_cancellable_new();
+    m_gcancellable.store(cancellable);
+    if (m_cancelRequested.load()) {
+        framework->g_cancellable_cancel(cancellable);
+    }
+    return cancellable;
+}
+
+void Cancellation::cancel()
+{
+    m_cancelRequested.store(true);
+    if (void* cancellable = m_gcancellable.load()) {
+        // Non-null means the pool thread created it, so the framework is loaded.
+        libsecretFramework()->g_cancellable_cancel(cancellable);
+    }
+}
+
+Cancellation::~Cancellation()
+{
+    if (void* cancellable = m_gcancellable.load()) {
+        libsecretFramework()->g_object_unref(cancellable);
+    }
 }
 
 // Define our simple schema for Bun secrets
@@ -269,7 +324,7 @@ static void updateError(Error& err, GError* gerror)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Cancellation& cancellation)
 {
     Error err;
 
@@ -282,7 +337,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     // Empty string means delete - call deletePassword instead
     if (password.length() == 0) {
-        deletePassword(service, name, err);
+        deletePassword(service, name, err, cancellation);
         // Convert delete result to setPassword semantics
         // Delete errors (like NotFound) should not be propagated for empty string sets
         if (err.type == ErrorType::NotFound) {
@@ -301,7 +356,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         nullptr, // Let libsecret handle collection creation automatically
         labelUtf8.data(),
         password.data(),
-        nullptr, // cancellable
+        cancellation.gcancellable(),
         &gerror,
         "service", service.data(),
         "account", name.data(),
@@ -319,7 +374,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err, Cancellation& cancellation)
 {
     err = Error {};
 
@@ -334,7 +389,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
 
     gchar* raw_password = framework->secret_password_lookup_sync(
         get_bun_schema(),
-        nullptr, // cancellable
+        cancellation.gcancellable(),
         &gerror,
         "service", service.data(),
         "account", name.data(),
@@ -363,7 +418,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     return result;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const CString& service, const CString& name, Error& err, Cancellation& cancellation)
 {
     err = Error {};
 
@@ -378,7 +433,7 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
 
     gboolean result = framework->secret_password_clear_sync(
         get_bun_schema(),
-        nullptr, // cancellable
+        cancellation.gcancellable(),
         &gerror,
         "service", service.data(),
         "account", name.data(),

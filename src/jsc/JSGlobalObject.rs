@@ -334,6 +334,13 @@ impl JSGlobalObject {
         JSGlobalObject__setTimeZone(self, time_zone)
     }
 
+    /// The live `process.env` object (also `Bun.env` and `import.meta.env`).
+    /// Reads through it see runtime writes from JS. `bun_vm().env_loader()`
+    /// does not: it is the snapshot taken at startup.
+    pub fn process_env(&self) -> JsResult<JSValue> {
+        crate::cpp::JSGlobalObject__processEnv(self)
+    }
+
     #[inline]
     pub fn to_js_value(&self) -> JSValue {
         // JSValue is #[repr(transparent)] over the encoded pointer-width word; a

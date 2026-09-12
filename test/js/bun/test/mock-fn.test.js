@@ -1119,6 +1119,23 @@ describe("spyOn", () => {
       expect(obj.value).toBe(1);
     });
 
+    // Builtins from a static table are writable and not configurable, like the methods of a sealed object.
+    test("works on writable, non-configurable builtins and on a sealed object", () => {
+      const sealed = Object.seal({ m: () => 1 });
+      for (const [target, key] of [
+        [Bun, "file"],
+        [Response, "json"],
+        [sealed, "m"],
+      ]) {
+        expect(Object.getOwnPropertyDescriptor(target, key)).toMatchObject({ writable: true, configurable: false });
+        const original = target[key];
+        const spy = spyOn(target, key);
+        expect(target[key]).toBe(spy);
+        spy.mockRestore();
+        expect(target[key]).toBe(original);
+      }
+    });
+
     test("throws when spying on a WebAssembly GC reference", () => {
       // (type $s (struct (field (mut i32))))
       // (func (export "mk") (result (ref null $s)) struct.new_default $s)

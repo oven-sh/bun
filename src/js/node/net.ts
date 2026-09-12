@@ -1444,6 +1444,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
+    // A TLS engine that failed before it opened has no connect pending, so afterConnect would drop the failure.
+    if (self[kupgraded]) {
+      if (!self.destroyed) self.destroy(new ExceptionWithHostPort(error.errno, "connect"));
+      return;
+    }
     req!.oncomplete(error.errno, self._handle, req, true, true);
   },
 };
@@ -1948,7 +1953,7 @@ Socket.prototype.connect = function connect(...args) {
       else this.readableFlowing = false;
     } else {
       process.nextTick(() => {
-        // An already-open handle (fd, wrapped duplex) starts reading here unless
+        // An already-open handle (fd, wrapped stream) starts reading here unless
         // the user paused; read(0) does that without switching to flowing mode.
         // A pending connect gets this from afterConnect instead, so a pause()
         // that lands before then is still honored:
@@ -2013,12 +2018,8 @@ Socket.prototype.connect = function connect(...args) {
     }
     // start using existing connection
     if (connection) {
-      // A generic duplex transport is already established, so this socket is
-      // not "connecting" - only the TLS layer is pending, which
-      // secureConnecting tracks. Node reports false here. A provided
-      // net.Socket keeps its existing accounting (its own connect lifecycle
-      // drives this flag).
-      if (!(connection instanceof Socket)) {
+      // Node's rule (no 'connect' follows for a socket wrapped after it connected): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+      if (!(connection instanceof Socket) || (connection._handle && !connection.connecting)) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
@@ -3385,11 +3386,7 @@ function afterConnect(status, handle, req, readable, writable) {
 
   $debug("afterConnect", status, readable, writable);
 
-  // A pre-open error on a user-supplied duplex (tls.connect({ socket })) can
-  // clear `connecting` before the queued StartTLS task fires this callback.
-  // The socket is already being torn down, so bail out instead of asserting:
-  // this both avoids the debug $assert abort and stops the late callback from
-  // proceeding to touch a handle that the error path already freed.
+  // Node asserts `connecting` here. A connect that was settled some other way has nothing left to do.
   if (!self.connecting) return;
   self.connecting = false;
   self._sockname = null;

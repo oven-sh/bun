@@ -38,6 +38,10 @@ bench("xxHash3 (short)", () => {
   Bun.hash.xxHash3(shortStr);
 });
 
+bench("xxHash128 (short)", () => {
+  Bun.hash.xxHash128(shortStr);
+});
+
 bench("murmur32v3 (short)", () => {
   Bun.hash.murmur32v3(shortStr);
 });
@@ -84,6 +88,10 @@ bench("xxHash64 (128 KB)", () => {
 
 bench("xxHash3 (128 KB)", () => {
   Bun.hash.xxHash3(longStr);
+});
+
+bench("xxHash128 (128 KB)", () => {
+  Bun.hash.xxHash128(longStr);
 });
 
 bench("murmur32v3 (128 KB)", () => {

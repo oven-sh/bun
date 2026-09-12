@@ -132,7 +132,7 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/image_resize.cpp",
   // Third highway TU — same foreach_target.h include-guard reason as
   // image_resize.cpp: it must expand its own per-ISA namespaces so
-  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
+  // HWY_EXPORT(HashLongLoop) resolves the N_AVX2/N_AVX3/etc. variants.
   "src/jsc/bindings/xxhash3.cpp",
   // Fourth highway TU — same foreach_target.h include-guard reason.
   "src/jsc/bindings/highway_sourcemap.cpp",

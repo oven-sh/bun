@@ -110,6 +110,8 @@ unsafe extern "C" {
 
     fn highway_xxhash3_64(input: *const u8, len: usize, seed: u64) -> u64;
 
+    fn highway_xxhash3_128(input: *const u8, len: usize, seed: u64, out: *mut u64);
+
     fn highway_xxhash32(input: *const u8, len: usize, seed: u32) -> u32;
 
     fn highway_xxhash64(input: *const u8, len: usize, seed: u64) -> u64;
@@ -786,6 +788,16 @@ pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
     // the kernel takes the `len == 0` branch and never dereferences the
     // pointer. The kernel only reads `input` and writes nothing through it.
     unsafe { highway_xxhash3_64(input.as_ptr(), input.len(), seed) }
+}
+
+/// XxHash3 128-bit (`XXH3_128bits_withSeed`). Returns `(high64 << 64) | low64`.
+#[inline(always)]
+pub fn xxhash3_128(seed: u64, input: &[u8]) -> u128 {
+    let mut out = [0u64; 2];
+    // SAFETY: `input.ptr/len` are a valid readable range (never read when empty).
+    // The kernel writes exactly `out[0]` and `out[1]`.
+    unsafe { highway_xxhash3_128(input.as_ptr(), input.len(), seed, out.as_mut_ptr()) };
+    (u128::from(out[1]) << 64) | u128::from(out[0])
 }
 
 /// XxHash32 one-shot. Bit-identical to the xxHash reference.

@@ -2912,6 +2912,9 @@ export function printEnvironment() {
           spawnSync([shell, "-c", "df"], { stdio: "inherit" });
         }
       });
+      if (isBareMetalAgent()) {
+        printHostHealth();
+      }
     }
     if (isLinux) {
       startGroup("Memory", () => {
@@ -3018,6 +3021,178 @@ export function getLoggedInUserCountOrDetails() {
 
     return message;
   }
+}
+
+/**
+ * Whether this Buildkite job runs on a bare-metal box that serves the next job
+ * from the same kernel: the macOS minis scripts/agent.mjs registers, tagged
+ * `ephemeral=false`. Cloud agents are `ephemeral=true` and leave after one job,
+ * and the darwin tart agents (`tart=true`) boot a fresh guest for every job.
+ *
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {boolean}
+ */
+export function isBareMetalAgent(env = process.env) {
+  return env["BUILDKITE_AGENT_META_DATA_EPHEMERAL"] === "false" && env["BUILDKITE_AGENT_META_DATA_TART"] !== "true";
+}
+
+/**
+ * A few lines about the host for the job log: uptime and load, memory and swap,
+ * the process table, and on macOS the kernel's network buffer and TCP retransmit
+ * counters. Every probe is best effort.
+ *
+ * This is what #33728 needed from a darwin mini whose artifact downloads had
+ * started to time out: `bun-profile` processes from earlier jobs parked in an
+ * uninterruptible `sendfile(2)` sleep (state `U`, or `E` once exit() hung on
+ * their sockets), each pinning kernel socket buffers until the mbuf pool was
+ * empty and every transfer on the box crawled. SIGKILL pends on such a
+ * process, so it survives the end of its job and only a reboot clears it.
+ * Two things in the output point at that: processes in those states, and a
+ * binary under the agent's build directory with an `etime` older than this job.
+ *
+ * @returns {string[]}
+ */
+export function getHostHealthSnapshot() {
+  if (isWindows) {
+    return [];
+  }
+  const run = command => {
+    const { error, stdout } = spawnSync(command, { timeout: 5_000 });
+    return error ? undefined : stdout.trim();
+  };
+  const read = path => {
+    try {
+      return readFileSync(path, "utf-8");
+    } catch {
+      return undefined;
+    }
+  };
+  const gib = bytes => `${(bytes / 1024 ** 3).toFixed(1)}G`;
+  const lines = [];
+
+  let upSeconds;
+  let load;
+  if (isMacOS) {
+    const bootSeconds = parseInt(/sec = (\d+)/.exec(run(["sysctl", "-n", "kern.boottime"]) || "")?.[1] || "");
+    if (bootSeconds) upSeconds = Date.now() / 1000 - bootSeconds;
+    load = run(["sysctl", "-n", "vm.loadavg"])?.replace(/[{}]/g, "").trim();
+  } else {
+    upSeconds = parseFloat(read("/proc/uptime") || "");
+    load = read("/proc/loadavg")?.split(" ").slice(0, 3).join(" ");
+  }
+  if (upSeconds || load) {
+    lines.push(`up ${upSeconds ? (upSeconds / 3600).toFixed(1) : "?"} h, load average: ${load || "?"}`);
+  }
+
+  if (isMacOS) {
+    const memsize = parseInt(run(["sysctl", "-n", "hw.memsize"]) || "");
+    const vmStat = run(["vm_stat"]) || "";
+    const pageSize = parseInt(/page size of (\d+) bytes/.exec(vmStat)?.[1] || "") || 16384;
+    const pages = name => parseInt(new RegExp(`^Pages ${name}:\\s+(\\d+)`, "m").exec(vmStat)?.[1] || "") || 0;
+    if (memsize && vmStat) {
+      lines.push(
+        `memory: ${gib(memsize)} total, ${gib(pages("free") * pageSize)} free, ` +
+          `${gib(pages("inactive") * pageSize)} inactive, ${gib(pages("wired down") * pageSize)} wired, ` +
+          `${gib(pages("occupied by compressor") * pageSize)} compressed`,
+      );
+    }
+    const swap = run(["sysctl", "-n", "vm.swapusage"]);
+    if (swap) lines.push(`swap: ${swap.replace(/\s+/g, " ")}`);
+  } else {
+    const meminfo = read("/proc/meminfo") || "";
+    const kib = name => parseInt(new RegExp(`^${name}:\\s+(\\d+)`, "m").exec(meminfo)?.[1] || "") || 0;
+    if (meminfo) {
+      lines.push(
+        `memory: ${gib(kib("MemTotal") * 1024)} total, ${gib(kib("MemAvailable") * 1024)} available, ` +
+          `swap ${gib((kib("SwapTotal") - kib("SwapFree")) * 1024)} used of ${gib(kib("SwapTotal") * 1024)}`,
+      );
+    }
+  }
+
+  // `-e`, not `-ax`: busybox ps (alpine) has no `-x`. `comm` is the executable
+  // as exec'd, a full path on macOS. A busybox built without FEATURE_PS_TIME
+  // rejects `etime`; the process rows matter more than that column.
+  let ps = run(["ps", "-eo", "pid=,ppid=,user=,stat=,etime=,rss=,comm="]);
+  let rowPattern = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(.*)$/;
+  if (ps === undefined) {
+    ps = run(["ps", "-eo", "pid=,ppid=,user=,stat=,rss=,comm="]);
+    rowPattern = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)()\s+(\d+)\s+(.*)$/;
+  }
+  const procs = (ps || "")
+    .split("\n")
+    .map(line => rowPattern.exec(line))
+    .filter(Boolean)
+    .map(([, pid, ppid, user, stat, etime, rss, comm]) => ({
+      pid: parseInt(pid),
+      ppid: parseInt(ppid),
+      user,
+      stat,
+      etime: etime || "?",
+      rss: parseInt(rss),
+      comm: comm.trim(),
+    }));
+  if (procs.length) {
+    const describe = ({ pid, stat, etime, rss, comm }) =>
+      `  pid ${pid} stat ${stat} up ${etime} rss ${Math.round(rss / 1024)}M ${comm}`;
+    const me = getUsername();
+    const mine = procs.filter(({ user }) => user === me);
+    lines.push(`processes: ${procs.length} total, ${mine.length} for ${me}`);
+
+    // macOS: U is an uninterruptible wait, E is a process stuck in exit(). Linux:
+    // D is an uninterruptible wait, Z a zombie nobody reaped. Our own zombies are
+    // children we killed a moment ago and have not reaped yet.
+    const stuck = procs.filter(
+      ({ stat, ppid }) =>
+        (isMacOS ? /^U|E/.test(stat) : /^[DZ]/.test(stat)) && !(/^Z/.test(stat) && ppid === process.pid),
+    );
+    lines.push(`processes in an uninterruptible wait or stuck exiting: ${stuck.length}`);
+    lines.push(...stuck.slice(0, 20).map(describe));
+
+    const buildPath = getEnv("BUILDKITE_BUILD_PATH", false);
+    if (buildPath) {
+      const leftovers = procs.filter(({ comm }) => comm.startsWith(buildPath));
+      lines.push(`processes running a binary under ${buildPath}: ${leftovers.length}`);
+      lines.push(
+        ...leftovers
+          .filter(p => !stuck.includes(p))
+          .slice(0, 20)
+          .map(describe),
+      );
+    }
+  }
+
+  if (isMacOS) {
+    const mbufs = run(["netstat", "-m"]) || "";
+    for (const line of mbufs.split("\n")) {
+      if (/mbufs in use|clusters in use|requests for memory/.test(line)) lines.push(`netstat -m: ${line.trim()}`);
+    }
+    const tcp = run(["netstat", "-s", "-p", "tcp"]) || "";
+    for (const line of tcp.split("\n")) {
+      if (/retransmit|rexmit|connections dropped|completely duplicate/.test(line)) {
+        lines.push(`netstat -s -p tcp: ${line.trim()}`);
+      }
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * One `--- Host health` group with getHostHealthSnapshot(). The runner prints it
+ * in every job's header on a bare-metal agent, where the state of the kernel
+ * carries over from job to job, and from any agent when the artifact download
+ * stalls.
+ */
+export function printHostHealth() {
+  const lines = getHostHealthSnapshot();
+  if (!lines.length) {
+    return;
+  }
+  startGroup("Host health", () => {
+    for (const line of lines) {
+      console.log(line);
+    }
+  });
 }
 
 /** @typedef {keyof typeof emojiMap} Emoji */

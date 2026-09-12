@@ -1497,6 +1497,33 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSValue::encode(jsUndefined());
 }
 
+enum class SpyWrite : uint8_t {
+    ReplaceValue,
+    DefineAccessor,
+};
+
+// putDirect() and putDirectAccessor() skip the [[DefineOwnProperty]] invariants.
+static bool canWriteSpy(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* object, JSC::PropertyName propertyKey, SpyWrite write)
+{
+    JSC::PropertyDescriptor own;
+    bool hasOwn = object->getOwnPropertyDescriptor(globalObject, propertyKey, own);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    if (!hasOwn) {
+        bool canAddProperty = object->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!canAddProperty)
+            throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because the object is not extensible"_s));
+        return canAddProperty;
+    }
+
+    bool canReplaceValue = own.isDataDescriptor() && own.writable();
+    bool canRedefine = own.configurable() || (write == SpyWrite::ReplaceValue && canReplaceValue);
+    if (!canRedefine)
+        throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because it is not configurable"_s));
+    return canRedefine;
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1566,6 +1593,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (!canWriteSpy(globalObject, scope, object, propertyKey, SpyWrite::ReplaceValue)) {
+                return {};
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
@@ -1592,6 +1621,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (!canWriteSpy(globalObject, scope, object, propertyKey, SpyWrite::DefineAccessor)) {
+                return {};
             } else if (auto index = parseIndex(propertyKey)) {
                 // For indexed properties, set the mock directly instead of wrapping in GetterSetter
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);

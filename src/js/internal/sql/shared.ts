@@ -65,8 +65,8 @@ type ArrayType =
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
 class SQLArrayParameter {
   serializedValues: string;
-  arrayType: ArrayType;
-  constructor(serializedValues: string, arrayType: ArrayType) {
+  arrayType: ArrayType | undefined;
+  constructor(serializedValues: string, arrayType: ArrayType | undefined) {
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }

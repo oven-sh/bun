@@ -88,6 +88,10 @@ public:
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
+    /* node:http server compat: whether a request message is currently being
+     * received on this connection (Node's parser.last_message_start_ != 0). */
+    bool hasIncompleteRequest() const;
+
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
      * in flight are queued here (in arrival order) and become the connection's

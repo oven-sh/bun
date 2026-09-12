@@ -10,10 +10,11 @@ import {
   isMacOS,
   isMusl,
   isWindows,
+  mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -1647,7 +1648,215 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+
+  // https://github.com/oven-sh/bun/issues/10690: addons whose Windows build names node.exe in its import
+  // tables without node-gyp's win_delay_load_hook redirecting it to the host process. process.dlopen
+  // points those imports at bun.exe before the addon's DllMain runs. On other platforms the same
+  // fixtures are ordinary addons and this is a plain load check.
+  describe("addon that imports node.exe without win_delay_load_hook", () => {
+    // table: which PE directory names node.exe. ctor: registers via napi_module_register from a static
+    // initializer (node_api.h < 18.17), i.e. calls into "node.exe" from inside DllMain. missing: also
+    // imports a node.exe export bun.exe does not have.
+    const fixtures = {
+      no_delay_load_hook_addon: { table: "delay", ctor: false, missing: false },
+      regular_node_exe_import_addon: { table: "import", ctor: false, missing: false },
+      no_delay_load_hook_ctor_addon: { table: "delay", ctor: true, missing: false },
+      regular_node_exe_import_ctor_addon: { table: "import", ctor: true, missing: false },
+      regular_node_exe_import_missing_addon: { table: "import", ctor: false, missing: true },
+    } as const;
+    type Fixture = keyof typeof fixtures;
+    const fixtureNames = Object.keys(fixtures) as Fixture[];
+    const addonPath = (target: Fixture) => join(__dirname, `napi-app/build/Debug/${target}.node`);
+    const notDelayLoadedHint = "has a load-time (not delay-loaded) import of node.exe";
+
+    // Loads `target` in a child whose DLL search path either contains exactly one node.exe (the
+    // ABI-matching one) or none at all: PATH is a single directory and cwd is an empty temp dir.
+    async function load(target: Fixture, options: { nodeOnPath: boolean; env?: Record<string, string> }) {
+      using dir = tempDir("napi-node-exe-import", {});
+      const PATH = options.nodeOnPath ? dirname(await nodeExeMatchingAbi()) : String(dir);
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { console.log(require(${JSON.stringify(addonPath(target))}).hello()); } catch (e) { console.log(e.code + ": " + e.message); process.exit(1); }`,
+        ],
+        env: mergeWindowEnvs([bunEnv, options.env ?? {}, { PATH }]),
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const loaded = { stdout: "hello", stderr: "", exitCode: 0 };
+
+    it.skipIf(!isWindows)("fixtures have the intended PE import shapes", () => {
+      // A fixture that drifted into a shape Bun always handled would make the loads below pass vacuously.
+      for (const target of fixtureNames) {
+        const { table, ctor, missing } = fixtures[target];
+        const pe = peImports(readFileSync(addonPath(target)));
+        const expected = expect.arrayContaining([
+          "napi_create_function",
+          ...(ctor ? ["napi_module_register"] : []),
+          ...(missing ? ["OpenSSL_version_num"] : []),
+        ]);
+        expect({ target, imports: pe.imports["node.exe"], delayImports: pe.delayImports["node.exe"] }).toEqual({
+          target,
+          imports: table === "import" ? expected : undefined,
+          delayImports: table === "delay" ? expected : undefined,
+        });
+        if (!ctor) expect(pe.imports["node.exe"] ?? pe.delayImports["node.exe"]).not.toContain("napi_module_register");
+      }
+    });
+
+    it.each(fixtureNames)("%s: node.exe on PATH", async target => {
+      const result = await load(target, { nodeOnPath: true });
+      if (isWindows && fixtures[target].missing) {
+        // The loader bound this slot to the real node.exe; the load must fail rather than leave it there.
+        expect(result.stdout).toStartWith("ERR_DLOPEN_FAILED: Cannot load native addon ");
+        expect(result.stdout).toEndWith(
+          `${target}.node imports 'OpenSSL_version_num' from node.exe, which Bun does not provide`,
+        );
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual(loaded);
+      }
+    });
+
+    it.skipIf(!isWindows).each(fixtureNames)("%s: no node.exe on the DLL search path", async target => {
+      const result = await load(target, { nodeOnPath: false });
+      if (fixtures[target].table === "delay") {
+        // Never looks for node.exe on disk: the delay-load module handle is preset to bun.exe.
+        expect(result).toEqual(loaded);
+      } else {
+        // Nothing to redirect until the loader has mapped the module, and it cannot without a node.exe.
+        expect(result.stdout).toStartWith("ERR_DLOPEN_FAILED: LoadLibrary failed: ");
+        expect(result.stdout).toContain(`${target}.node ${notDelayLoadedHint}`);
+        expect(result.exitCode).toBe(1);
+      }
+    });
+
+    // The redirect normally happens from a loader notification, before DllMain. With that disabled it
+    // happens after LoadLibrary returns, which still covers everything but the static-initializer shapes.
+    it.skipIf(!isWindows)("post-LoadLibrary fallback", async () => {
+      const env = { BUN_FEATURE_FLAG_DISABLE_ADDON_DLL_NOTIFICATION: "1" };
+      expect(await load("regular_node_exe_import_addon", { nodeOnPath: true, env })).toEqual(loaded);
+      expect(await load("no_delay_load_hook_addon", { nodeOnPath: true, env })).toEqual(loaded);
+      expect(await load("no_delay_load_hook_addon", { nodeOnPath: false, env })).toEqual(loaded);
+      const missing = await load("regular_node_exe_import_missing_addon", { nodeOnPath: true, env });
+      expect(missing.stdout).toEndWith("imports 'OpenSSL_version_num' from node.exe, which Bun does not provide");
+      expect(missing.exitCode).toBe(1);
+    });
+
+    it("re-dlopen and Workers", async () => {
+      const targets = fixtureNames.filter(target => !fixtures[target].missing);
+      const script = /* js */ `
+        const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
+        const { basename } = require("path");
+        const targets = ${JSON.stringify(targets.map(addonPath))};
+        function loadAll(tag) {
+          return targets.map(p => {
+            const first = require(p);
+            const second = { exports: {} };
+            process.dlopen(second, p);
+            return tag + " " + basename(p) + " " + first.hello() + " " + second.exports.hello();
+          });
+        }
+        if (isMainThread) {
+          for (const line of loadAll("main")) console.log(line);
+          let pending = 2;
+          for (const i of [0, 1]) {
+            const worker = new Worker(__filename, { workerData: i });
+            worker.on("message", lines => { for (const line of lines) console.log(line); });
+            worker.on("exit", code => { if (code !== 0) process.exit(10 + i); if (--pending === 0) console.log("done"); });
+          }
+        } else {
+          parentPort.postMessage(loadAll("worker" + workerData));
+        }
+      `;
+      using dir = tempDir("napi-node-exe-import", { "main.js": script });
+      await using proc = spawn({
+        cmd: [bunExe(), "main.js"],
+        env: mergeWindowEnvs([bunEnv, { PATH: dirname(await nodeExeMatchingAbi()) }]),
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = (tag: string) => targets.map(t => `${tag} ${t}.node hello hello`);
+      expect({ lines: stdout.trim().split(/\r?\n/).sort(), stderr, exitCode }).toEqual({
+        lines: [...expected("main"), ...expected("worker0"), ...expected("worker1"), "done"].sort(),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
+
+/**
+ * Symbols a PE32+ image imports, by lower-cased DLL name, from its import directory and from its
+ * delay-load import directory.
+ */
+function peImports(image: Buffer): { imports: Record<string, string[]>; delayImports: Record<string, string[]> } {
+  const ntHeaders = image.readUInt32LE(0x3c);
+  expect(image.toString("latin1", ntHeaders, ntHeaders + 4)).toBe("PE\0\0");
+  const numberOfSections = image.readUInt16LE(ntHeaders + 6);
+  const sizeOfOptionalHeader = image.readUInt16LE(ntHeaders + 20);
+  const optionalHeader = ntHeaders + 24;
+  expect(image.readUInt16LE(optionalHeader)).toBe(0x20b); // PE32+
+
+  const sections = Array.from({ length: numberOfSections }, (_, i) => {
+    const header = optionalHeader + sizeOfOptionalHeader + i * 40;
+    const virtualSize = image.readUInt32LE(header + 8);
+    const virtualAddress = image.readUInt32LE(header + 12);
+    const sizeOfRawData = image.readUInt32LE(header + 16);
+    const pointerToRawData = image.readUInt32LE(header + 20);
+    return { virtualAddress, size: Math.max(virtualSize, sizeOfRawData), pointerToRawData };
+  });
+  const fileOffset = (rva: number): number => {
+    const section = sections.find(s => rva >= s.virtualAddress && rva < s.virtualAddress + s.size);
+    if (!section) throw new Error(`RVA 0x${rva.toString(16)} is outside every section`);
+    return rva - section.virtualAddress + section.pointerToRawData;
+  };
+  const cString = (rva: number): string => {
+    const start = fileOffset(rva);
+    return image.toString("latin1", start, image.indexOf(0, start));
+  };
+  // IMAGE_THUNK_DATA64[], zero-terminated: high bit set = import by ordinal, else the RVA of
+  // { u16 hint; char name[] }.
+  const names = (rva: number): string[] => {
+    const result: string[] = [];
+    for (let offset = fileOffset(rva); ; offset += 8) {
+      const entry = image.readBigUInt64LE(offset);
+      if (entry === 0n) return result;
+      result.push(entry >> 63n ? `#${entry & 0xffffn}` : cString(Number(entry) + 2));
+    }
+  };
+  // The data directory starts 112 bytes into a PE32+ optional header, 8 bytes ({ rva, size }) per entry.
+  const directoryRva = (index: number): number =>
+    index < image.readUInt32LE(optionalHeader + 108) ? image.readUInt32LE(optionalHeader + 112 + index * 8) : 0;
+
+  const imports: Record<string, string[]> = {};
+  for (let rva = directoryRva(1); rva !== 0; rva += 20) {
+    // IMAGE_IMPORT_DESCRIPTOR: OriginalFirstThunk, TimeDateStamp, ForwarderChain, Name, FirstThunk.
+    const descriptor = fileOffset(rva);
+    const name = image.readUInt32LE(descriptor + 12);
+    if (name === 0) break;
+    imports[cString(name).toLowerCase()] = names(image.readUInt32LE(descriptor));
+  }
+  const delayImports: Record<string, string[]> = {};
+  for (let rva = directoryRva(13); rva !== 0; rva += 32) {
+    // IMAGE_DELAYLOAD_DESCRIPTOR: Attributes, DllNameRVA, ModuleHandleRVA, ImportAddressTableRVA,
+    // ImportNameTableRVA, ... Attributes bit 0 (RvaBased) is what every linker since VC7 emits and
+    // what process.dlopen requires.
+    const descriptor = fileOffset(rva);
+    const dllName = image.readUInt32LE(descriptor + 4);
+    if (dllName === 0) break;
+    expect(image.readUInt32LE(descriptor) & 1).toBe(1);
+    delayImports[cString(dllName).toLowerCase()] = names(image.readUInt32LE(descriptor + 16));
+  }
+  return { imports, delayImports };
+}
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
 // the other tests' subprocesses and doesn't add load to the --compile tests.

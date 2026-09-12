@@ -101,10 +101,13 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       try {
         value = await (0, eval)(params.expression);
       } catch (e) {
-        return reply({
-          result: { type: "object", subtype: "error" },
-          exceptionDetails: { text: "Uncaught", exception: { description: String(e) } },
-        });
+        // Same shape Chrome sends: an Error is a RemoteObject with subtype
+        // "error" whose description is V8's `${name}: ${message}\n    at ...`.
+        const exception =
+          e instanceof Error
+            ? { type: "object", subtype: "error", className: e.name, description: e.stack }
+            : { type: typeof e, value: e };
+        return reply({ result: exception, exceptionDetails: { text: "Uncaught", exception } });
       }
       if (value === NO_REPLY) return;
       if (value === undefined) return reply({ result: { type: "undefined" } });

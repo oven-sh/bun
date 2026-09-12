@@ -708,6 +708,7 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
 // a JSC-side trace (which would show ChromeBackend.cpp, not page frames).
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
+    auto& vm = g->vm();
     auto root = JSON::Value::parseJSON(
         StringView::fromLatin1(std::span<const Latin1Character>(
             reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size())));
@@ -718,31 +719,44 @@ static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char
     // exception.value (thrown string) → the string itself.
     // text ("Uncaught (in promise)") → fallback only.
     WTF::String stack;
+    bool isErrorObject = false;
     if (auto exc = d->getObject("exception"_s)) {
+        isErrorObject = exc->getString("subtype"_s) == "error"_s;
         stack = exc->getString("description"_s);
         if (stack.isEmpty()) stack = exc->getString("value"_s);
     }
     if (stack.isEmpty()) stack = d->getString("text"_s);
     if (stack.isEmpty()) stack = "JavaScript exception"_s;
 
-    // Message: first line past "ErrorName: " prefix. V8's first line is
-    // Error.prototype.toString() which is `${name}: ${message}` (or just
-    // `${name}` if message empty). Frame parsing is V8StackTraceIterator's
-    // job; we only need the message here.
-    auto nl = stack.find('\n');
-    auto firstLine = (nl == WTF::notFound) ? stack : stack.substring(0, nl);
-    auto colon = firstLine.find(": "_s);
-    auto message = (colon != WTF::notFound && colon < 32)
-        ? firstLine.substring(colon + 2)
-        : firstLine;
+    // An Error's description is `${name}: ${message}` (the message may span lines), then "\n    at" frames.
+    WTF::String name;
+    WTF::String message = stack;
+    if (isErrorObject) {
+        auto framesAt = stack.find("\n    at "_s);
+        auto header = framesAt == WTF::notFound ? stack : stack.left(framesAt);
+        auto colon = header.find(": "_s);
+        auto candidate = colon == WTF::notFound ? header : header.left(colon);
+        bool looksLikeName = !candidate.isEmpty() && candidate.find([](UChar c) -> bool { return isASCIIWhitespace(c); }) == WTF::notFound;
+        if (looksLikeName) {
+            name = candidate;
+            message = colon == WTF::notFound ? emptyString() : header.substring(colon + 2);
+        } else {
+            message = header;
+        }
+    }
 
     unsigned line = static_cast<unsigned>(d->getInteger("lineNumber"_s).value_or(0));
     unsigned col = static_cast<unsigned>(d->getInteger("columnNumber"_s).value_or(0));
     WTF::String url = d->getString("url"_s);
 
-    return ErrorInstance::create(g, WTF::move(message), ErrorType::Error,
+    ErrorType type = pageErrorType(name);
+    auto* error = ErrorInstance::create(g, WTF::move(message), type,
         LineColumn { line + 1, col + 1 }, // CDP 0-based → JS 1-based
         WTF::move(url), WTF::move(stack));
+    // A page-side subclass has no class here; keep its name so String(error) still matches.
+    if (type == ErrorType::Error && !name.isEmpty() && name != "Error"_s)
+        error->putDirect(vm, vm.propertyNames->name, jsString(vm, name), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return error;
 }
 
 // Per-method result handlers. Each knows the schema of its result object
@@ -1475,7 +1489,8 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
     // Same "await (expr)" wrap as WKWebView: forces expression context,
     // unwraps thenables. Chrome's awaitPromise does the await part; we
     // just need the paren-wrap for statement-sequence rejection consistency.
-    auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
+    // The newline ends a trailing `// comment` in the script before our `)`.
+    auto body = makeString("(async()=>{return await ("_s, script, "\n)})()"_s);
     return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
         Method::RuntimeEvaluate, id,
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))

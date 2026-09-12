@@ -943,6 +943,27 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
+/// Is the next entry in this thread's timer heap due within `window_ms`?
+fn has_timer_due_within(window_ms: i64) -> bool {
+    let timers = crate::jsc_hooks::timer_all();
+    if timers.is_null() {
+        return false;
+    }
+    // SAFETY: live per-thread `All`; single JS thread; null-checked above.
+    let Some(min) = (unsafe { &*timers }).timers.peek() else {
+        return false;
+    };
+    // SAFETY: `peek()` returns a live heap node.
+    let next = unsafe { &(*min).next };
+    let deadline =
+        bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(window_ms);
+    !bun_core::Timespec {
+        sec: next.sec,
+        nsec: next.nsec,
+    }
+    .greater(&deadline)
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2965,6 +2986,7 @@ impl TestCommand {
 
             vm.event_loop_ref().tick();
 
+            let mut pending_work_note = false;
             'blk: {
                 // Check if bun_test is available and has tests to run
                 let Some(buntest_strong) = bun_test_root.clone_active_file() else {
@@ -3003,9 +3025,21 @@ impl TestCommand {
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                // One bounded macrotask pass so a due timer's throw/rejection books
+                // as "Unhandled error between tests" instead of being orphaned at
+                // exit. Two ticks so a `setTimeout(fn, 0)` (clamped to 1ms) can
+                // become due; each poll is bounded by the nearest heap deadline
+                // when within 20ms, or made non-blocking via wakeup otherwise.
+                for pass in 0..2 {
+                    if pass != 0 && !vm.has_pending_loop_work() {
+                        break;
+                    }
+                    if !has_timer_due_within(20) {
+                        vm.wakeup();
+                    }
+                    vm.event_loop_ref().auto_tick();
+                    vm.event_loop_ref().tick();
+                }
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
@@ -3014,6 +3048,14 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
+                // Default serial mode only: --isolate tears down per-file handles,
+                // and a --parallel worker's own IPC socket would count as work.
+                pending_work_note = first_last.last
+                    && repeat_index + 1 == repeat_count
+                    && !vm.test_isolation_enabled
+                    && reporter.worker_ipc_file_idx.is_none()
+                    && !should_drain_event_loop()
+                    && vm.has_pending_loop_work();
                 drop(buntest_strong);
             }
 
@@ -3022,6 +3064,14 @@ impl TestCommand {
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
+            }
+
+            // After ::endgroup:: so the note is not folded into the last file's
+            // collapsed log group in GitHub Actions.
+            if pending_work_note {
+                bun_core::note!(
+                    "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
+                );
             }
 
             if !vm.test_isolation_enabled {

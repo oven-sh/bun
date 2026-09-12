@@ -2092,3 +2092,147 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A failure that surfaces from a macrotask armed by the last test used to be
+// orphaned: the runner printed the summary and exited before the timer could
+// run. One bounded macrotask pass after the last test catches it as an
+// "Unhandled error between tests"; a handle that is still pending after that
+// pass is surfaced as a note without being waited on.
+describe.concurrent("bun test post-run drain", () => {
+  async function run(fixture: string, env: Record<string, string> = {}) {
+    using dir = tempDir("post-run-drain", { "drain.test.ts": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "drain.test.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a throw from a setTimeout(0) armed by the last test fails the run", async () => {
+    const { stderr, exitCode } = await run(`
+      import { test } from "bun:test";
+      test("arms a late timer", () => {
+        setTimeout(() => { throw new Error("late macrotask failure"); }, 0);
+      });
+    `);
+    expect(stderr).toContain("late macrotask failure");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("1 error");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a rejection from a setTimeout(0) armed by the last test fails the run", async () => {
+    const { stderr, exitCode } = await run(`
+      import { test } from "bun:test";
+      test("arms a late timer", () => {
+        setTimeout(() => Promise.reject(new Error("late macrotask rejection")), 0);
+      });
+    `);
+    expect(stderr).toContain("late macrotask rejection");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a setImmediate armed by the last test still runs and its failure is caught", async () => {
+    const { stderr, exitCode } = await run(`
+      import { test } from "bun:test";
+      test("arms a late immediate", () => {
+        setImmediate(() => { throw new Error("late immediate failure"); });
+      });
+    `);
+    expect(stderr).toContain("late immediate failure");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a not-yet-due timer is noted, not waited on", async () => {
+    const start = performance.now();
+    const { stderr, exitCode } = await run(`
+      import { test } from "bun:test";
+      test("arms a far-future timer", () => {
+        setTimeout(() => { throw new Error("never fires"); }, 60_000).unref();
+        setTimeout(() => { throw new Error("never fires"); }, 60_000);
+      });
+    `);
+    const elapsed = performance.now() - start;
+    expect(stderr).not.toContain("never fires");
+    expect(stderr).toContain("still pending after the last test finished");
+    // The 60s timer must not be waited on. 30s is far below 60s and far above
+    // any debug-build startup cost.
+    expect(elapsed).toBeLessThan(30_000);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file with no pending work does not print the note", async () => {
+    const { stderr, exitCode } = await run(`
+      import { test, expect } from "bun:test";
+      test("clean", () => { expect(1).toBe(1); });
+    `);
+    expect(stderr).not.toContain("still pending");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the note prints once at the end of a multi-file run, not per file", async () => {
+    using dir = tempDir("post-run-drain-multi", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("leaks a timer", () => { setTimeout(() => {}, 60_000); });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("clean", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Loop liveness is VM-wide, so the note cannot say which file scheduled
+    // the handle; it must not print once per remaining file either.
+    const notes = stderr.split("still pending after the last test finished").length - 1;
+    expect(notes).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("under GitHub Actions the note prints after the last ::endgroup::", async () => {
+    const { stderr, exitCode } = await run(
+      `
+      import { test } from "bun:test";
+      test("leaks a timer", () => { setTimeout(() => {}, 60_000); });
+    `,
+      { GITHUB_ACTIONS: "true" },
+    );
+    const endgroup = stderr.lastIndexOf("::endgroup::");
+    const note = stderr.indexOf("still pending after the last test finished");
+    expect(endgroup).toBeGreaterThan(-1);
+    expect(note).toBeGreaterThan(endgroup);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a --parallel worker does not attribute its IPC socket to a test", async () => {
+    using dir = tempDir("post-run-drain-parallel", {
+      "a.test.ts": `import { test } from "bun:test"; test("clean a", () => {});`,
+      "b.test.ts": `import { test } from "bun:test"; test("clean b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel", "--no-isolate", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("still pending");
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+});

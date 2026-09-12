@@ -1230,6 +1230,193 @@ describe("bundler", () => {
     },
   });
 
+  // Dead code elimination keeps some stores to a local that nothing reads: the
+  // last instruction of a catch handler or of a `for..of` head, and a store
+  // whose own value is used (`f(v = 2)`). It pruned `let v` all the same. The
+  // first store left then became the declaration, in a scope that did not
+  // enclose the other stores: `ReferenceError: v is not defined`.
+  const stubReactWithEffect = { ...stubReact, "/node_modules/react/index.js": `exports.useEffect = () => {};` };
+  const deadStoreForms = {
+    "/entry.js": /* js */ `
+      import * as forms from "./forms";
+      const props = { bad: "{bad", items: [1, 2], call() {} };
+      const lines = [];
+      for (const [name, form] of Object.entries(forms)) {
+        try {
+          lines.push(name + "=" + JSON.stringify(form(props).p));
+        } catch (e) {
+          lines.push(name + " threw " + e);
+        }
+      }
+      console.log(lines.join("\\n"));
+    `,
+    "/forms.jsx": /* jsx */ `
+      import { useEffect } from "react";
+
+      export function NestedTry(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = 1;
+          }
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+      export function SequentialTry(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 1;
+        }
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+      export function DestructureInHandler(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          [v] = p.items;
+        }
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          [v] = p.items;
+        }
+        return <div />;
+      }
+      export function HandlerThenArgument(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 1;
+        }
+        p.call((v = 2));
+        return <div />;
+      }
+      export function HandlerThenLogical(p) {
+        useEffect(() => {});
+        let v;
+        if (p.items) {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = 1;
+          }
+        }
+        p.items && (v = 2);
+        return <div />;
+      }
+      // The one read of \`v\` folds to "final".
+      export function EveryReadFolded(p) {
+        useEffect(() => {});
+        let v = "init";
+        try {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = "a";
+          }
+          JSON.parse(p.bad);
+        } catch {
+          v = "b";
+        }
+        v = "final";
+        return <div>{v}</div>;
+      }
+      // With \`let v\` kept, the compiler leaves these two alone: it does not
+      // take a \`for..of\` or \`for..in\` that assigns an outer local.
+      export function ForOfThenArgument(p) {
+        let v;
+        for (v of p.items) p.call();
+        p.call((v = 2));
+        return <div />;
+      }
+      export function ForInThenHandler(p) {
+        let v;
+        for (v in p.items) p.call();
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+    `,
+    ...stubReactWithEffect,
+  };
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/DeadStoreKeepsItsDeclaration-${target}`, {
+      files: deadStoreForms,
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          DestructureInHandler={}
+          EveryReadFolded={"children":"final"}
+          ForInThenHandler={}
+          ForOfThenArgument={}
+          HandlerThenArgument={}
+          HandlerThenLogical={}
+          NestedTry={}
+          SequentialTry={}
+        `,
+      },
+      onAfterBundle(api) {
+        // Every form that calls useEffect compiled: the compiler outlines the
+        // empty effect callback (client) or drops the effect (ssr), so no
+        // call takes `() => {}` any more.
+        expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+      },
+    });
+  }
+
+  // Same cause. In client mode the store left in the `for` update was then a
+  // reassignment, inside a memo scope, of a local with no declaration:
+  // `panic: Expected identifier to be initialized`.
+  itBundled("react-compiler/DeadStoreInForUpdateKeepsItsDeclaration", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect } from "react";
+
+        function App(p) {
+          useEffect(() => {});
+          let v;
+          for (let i = 0; i < 2; v = i++) p.call(i);
+          for (let j = 0; j < 2; v = j++) p.call(j);
+          return <div />;
+        }
+        const calls = [];
+        App({ call: i => calls.push(i) });
+        console.log(calls.join());
+      `,
+      ...stubReactWithEffect,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: { stdout: "0,1,0,1" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

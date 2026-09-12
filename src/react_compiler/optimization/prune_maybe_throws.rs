@@ -21,7 +21,7 @@ use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
 /// Prune `MaybeThrow` terminals for blocks that cannot throw, then clean up the CFG.
-pub fn prune_maybe_throws(
+pub(crate) fn prune_maybe_throws(
     func: &mut HirFunction,
     functions: &mut [HirFunction],
 ) -> Result<(), CompilerDiagnostic> {

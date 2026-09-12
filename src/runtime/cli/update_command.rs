@@ -8,7 +8,7 @@ use crate::command::Context;
 pub(crate) struct UpdateCommand;
 
 impl UpdateCommand {
-    pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Context) -> Result<(), crate::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
 
         if cli.interactive {

@@ -78,11 +78,9 @@ impl BackendError {
     }
 }
 
-bun_core::named_error_set!(BackendError);
-
 bun_core::oom_from_alloc!(BackendError);
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;
     // IWICStream::InitializeFromMemory takes a DWORD count; the checked cast
     // below is a process abort, not silent truncation.

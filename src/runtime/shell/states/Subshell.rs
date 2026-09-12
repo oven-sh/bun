@@ -1,28 +1,24 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
 pub struct Subshell {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
-    pub io: IO,
-    pub state: SubshellState,
-    pub exit_code: ExitCode,
+    pub(crate) io: IO,
+    pub(crate) state: SubshellState,
+    pub(crate) exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
 pub enum SubshellState {
     #[default]
     Idle,
-    Expanding,
     Exec,
-    WaitWriteErr,
     Done,
 }
 
@@ -38,7 +34,7 @@ impl Subshell {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
-            base: Base::new(StateKind::Subshell, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
@@ -98,31 +94,12 @@ impl Subshell {
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)
             }
-            SubshellState::Expanding | SubshellState::Exec => Yield::suspended(),
-            SubshellState::WaitWriteErr => Yield::suspended(),
+            SubshellState::Exec => Yield::suspended(),
             SubshellState::Done => {
                 let exit = interp.as_subshell(this).exit_code;
                 interp.child_done(parent, this, exit)
             }
         }
-    }
-
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        this: NodeId,
-        _written: usize,
-        _err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_subshell(this).state,
-            SubshellState::WaitWriteErr
-        ));
-        let (parent, exit) = {
-            let me = interp.as_subshell_mut(this);
-            me.state = SubshellState::Done;
-            (me.base.parent, me.exit_code)
-        };
-        interp.child_done(parent, this, exit)
     }
 
     pub(crate) fn child_done(
@@ -151,6 +128,5 @@ impl Subshell {
             ShellExecEnv::deinit_impl(me.base.shell);
             me.base.shell = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 }

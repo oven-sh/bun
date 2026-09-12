@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import net from "node:net";
+import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {
   const stream = new ReadableStream({
@@ -520,11 +522,11 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
-// The tee behind Request/Response.clone() structured-clones every chunk for the
-// second branch. That clone must copy only the bytes the view covers: cloning the
-// whole backing ArrayBuffer retains the larger shared buffer fetch() slices from.
+// The tee behind Request/Response.clone() enqueues the same chunk object into both
+// branches (cloneForBranch2 = false, matching Node and browsers). The cloned branch
+// must not hold a copy of the chunk at all.
 test.each(["Request", "Response"])(
-  "%s.clone() chunk clones do not retain the chunk's whole backing buffer",
+  "%s.clone(): the cloned branch receives the same chunk object, not a copy",
   async kind => {
     const backing = new Uint8Array(1 << 20);
     const chunk = backing.subarray(17, 17 + 64);
@@ -544,12 +546,12 @@ test.each(["Request", "Response"])(
     const clonedChunk = clonedRead.value as Uint8Array<ArrayBuffer>;
 
     expect(originalBytes).toEqual(chunk);
-    expect(clonedChunk).toEqual(chunk);
-    expect(clonedChunk.buffer.byteLength).toBe(64);
+    expect(clonedChunk).toBe(chunk);
+    expect(clonedChunk.buffer).toBe(backing.buffer);
   },
 );
 
-test("fetch().clone(): chunks buffered for the unread clone own exactly their bytes", async () => {
+test("fetch().clone(): chunks buffered for the unread clone share the original branch's buffers", async () => {
   const total = 8 * 1024 * 1024;
   const chunk = new Uint8Array(64 * 1024).fill(42);
   await using server = Bun.serve({
@@ -571,20 +573,21 @@ test("fetch().clone(): chunks buffered for the unread clone own exactly their by
   const response = await fetch(server.url);
   const clone = response.clone();
 
-  // Read the original to completion: the cache-a-copy pattern. Everything the
-  // clone will ever emit is now sitting in its queue.
-  const original = await response.bytes();
-  expect(original.byteLength).toBe(total);
-
+  // Drain both branches in lockstep: the clone must receive the exact same chunk
+  // object the original branch does (no per-chunk copy).
+  const r0 = response.body!.getReader();
+  const r1 = clone.body!.getReader();
   let bytes = 0;
-  let backing = 0;
-  for await (const teed of clone.body!) {
-    bytes += teed.byteLength;
-    backing += teed.buffer.byteLength;
+  while (true) {
+    const [a, b] = await Promise.all([r0.read(), r1.read()]);
+    if (a.done) {
+      expect(b.done).toBe(true);
+      break;
+    }
+    expect(b.value).toBe(a.value);
+    bytes += a.value!.byteLength;
   }
-  // fetch() delivers chunks as views into a larger shared receive buffer; the
-  // clones queued for the second branch must not each retain a copy of it.
-  expect({ bytes, backing }).toEqual({ bytes: total, backing: total });
+  expect(bytes).toBe(total);
 });
 
 // clone() on a locked-stream body must throw a single catchable TypeError.
@@ -862,6 +865,326 @@ describe("clone() throws when the body is disturbed or locked", () => {
   });
 });
 
+// https://fetch.spec.whatwg.org/#concept-body-clone: clone() tees the body
+// stream and *replaces* this's body stream with one tee branch. If `.body`
+// was observed before the clone, the original's `.body` must become a fresh
+// branch carrying every byte; the pre-clone stream object becomes the (now
+// locked) tee source. The `if (res.body) { cache.put(res.clone()); use
+// res.body }` middleware shape depends on this.
+describe.concurrent("clone() after `.body` was observed returns a fresh tee branch for both sides", () => {
+  async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
+    let n = 0;
+    for await (const chunk of stream) n += chunk.byteLength;
+    return n;
+  }
+
+  type Observed = { before: ReadableStream; after: ReadableStream; cloned: Request | Response };
+
+  function observeThenClone(target: Request | Response): Observed {
+    const before = target.body!;
+    expect(before.locked).toBe(false);
+    expect(target.bodyUsed).toBe(false);
+
+    const cloned = target.clone();
+    const after = target.body!;
+
+    // Spec: .body is a new tee branch; the pre-clone stream is the tee
+    // source and is now locked.
+    expect(after).not.toBe(before);
+    expect(before.locked).toBe(true);
+    expect(target.bodyUsed).toBe(false);
+    return { before, after, cloned };
+  }
+
+  async function checkBytes({ after, cloned }: Observed, n: number) {
+    const [origBytes, cloneBytes] = await Promise.all([drain(after), drain(cloned.body!)]);
+    expect({ origBytes, cloneBytes }).toEqual({ origBytes: n, cloneBytes: n });
+  }
+
+  // Each body type hits a different internal representation at clone() time:
+  //   - fetch() with the full body buffered → InternalBlob, then .body
+  //     materializes a Blob-backed stream (the reported bug)
+  //   - new Response(string) → WTFStringImpl, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(Uint8Array) → Blob, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(ReadableStream) → Locked with a user stream already
+  //     rooted in the JS-side stream slot
+  //   - new Response(Bun.file()) → Blob over a file store, then .body
+  //     materializes a file-backed stream
+  //   - new Response(Bun.file().stream()) → Locked with an unread
+  //     file-backed stream
+  const N = 8192;
+  const payload = Buffer.alloc(N, "a");
+  const fileDir = tempDirWithFiles("body-clone-observe", { "payload.bin": payload });
+  const cases: Array<[string, () => Promise<Request | Response>]> = [
+    ["Response with a Bun.file() body", async () => new Response(Bun.file(join(fileDir, "payload.bin")))],
+    [
+      "Response with a Bun.file() stream body",
+      async () => new Response(Bun.file(join(fileDir, "payload.bin")).stream()),
+    ],
+    [
+      "fetch() Response with a buffered body",
+      async () => {
+        // `using` on the outer server closes it after fetch() returns; the
+        // whole body has been received by then.
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(payload, { headers: { "content-length": String(N) } }),
+        });
+        return await fetch(server.url);
+      },
+    ],
+    ["Response with a string body", async () => new Response(payload.toString("latin1"))],
+    ["Response with a Uint8Array body", async () => new Response(payload)],
+    [
+      "Response with a user ReadableStream body",
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+        ),
+    ],
+    [
+      "Request with a string body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: payload.toString("latin1"),
+        }),
+    ],
+    [
+      "Request with a user ReadableStream body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+          // @ts-expect-error duplex
+          duplex: "half",
+        }),
+    ],
+  ];
+
+  for (const [label, make] of cases) {
+    test(`${label}: reading .body after observe+clone yields the full payload on both sides`, async () => {
+      await checkBytes(observeThenClone(await make()), N);
+    });
+
+    test(`${label}: .text() after observe+clone yields the full payload on both sides`, async () => {
+      const target = await make();
+      void target.body; // observe only; no reader, no lock
+      const cloned = target.clone();
+      const [origText, cloneText] = await Promise.all([target.text(), cloned.text()]);
+      expect(origText.length).toBe(N);
+      expect(cloneText.length).toBe(N);
+    });
+  }
+
+  // `routes:` handlers receive a BunRequest subclass whose own `clone` is a
+  // separate native entry point (JSBunRequest::clone -> Request__clone); it
+  // must repoint the source's cached `.body` the same way.
+  test("Bun.serve routes: BunRequest observe+clone yields a fresh tee branch carrying the full payload", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/p/:id": async (req: Request) => {
+          try {
+            await checkBytes(observeThenClone(req), N);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      },
+    });
+    await fetch(new URL("/p/1", server.url), { method: "POST", body: payload });
+    await promise;
+  });
+
+  test("fetch() Response: second clone after observe still yields full payload", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(payload),
+    });
+    const response = await fetch(server.url);
+    void response.body;
+    const c1 = response.clone();
+    void response.body;
+    const c2 = response.clone();
+    const [orig, b1, b2] = await Promise.all([drain(response.body!), drain(c1.body!), drain(c2.body!)]);
+    expect({ orig, b1, b2 }).toEqual({ orig: N, b1: N, b2: N });
+  });
+});
+
+// The two-arg `new Request(src, init)` constructor tees the source body via a
+// separate path from single-arg / .clone(); with a user ReadableStream body
+// (migrated into the source wrapper's stream cache at construction) it must
+// consult that cache instead of teeing the now-empty native slot, or the
+// derived request's body is a branch of a disconnected stream and reads hang.
+// After the tee, the source's cached stream must also be repointed to its own
+// branch so reading the source still works.
+test("new Request(src, init) with a user ReadableStream body: both derived and source read the bytes", async () => {
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+  // @ts-expect-error duplex
+  const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
+  const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
+
+  const twoArgSrc = make();
+  const twoArg = new Request(twoArgSrc, { headers: { "x-a": "1" } });
+  const oneArgSrc = make();
+  const oneArg = new Request(oneArgSrc);
+  // Bun extension: a Response as the second argument contributes its body via
+  // the sibling Response-source branch in construct_into.
+  const responseSrc = new Response(stream());
+  // @ts-expect-error Bun accepts a Response as init
+  const fromResponse = new Request("http://example.com/", responseSrc);
+  expect({
+    twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
+    oneArg: { derived: await bytes(oneArg), src: await bytes(oneArgSrc) },
+    fromResponse: { derived: await bytes(fromResponse), src: await bytes(responseSrc) },
+  }).toEqual({
+    twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
+  });
+});
+
+// The readers and Bun.serve move an unread Bun.file()/Blob stream back into
+// the Blob it came from, type included. clone() must do the same instead of
+// teeing it into two plain JS streams, or the clone (and, once `.body` was
+// observed, the original too) answers differently from an un-cloned body.
+describe("clone() of a body over an unread native stream keeps the Blob behind it", () => {
+  const dir = tempDirWithFiles("body-clone-type", { "page.html": "<p>hi</p>" });
+  const file = () => Bun.file(join(dir, "page.html"));
+  const typed = () => new Blob(["<p>hi</p>"], { type: "text/html;charset=utf-8" });
+
+  async function typesAndText(original: Request | Response) {
+    const clone = original.clone();
+    const [a, b] = await Promise.all([original.blob(), clone.blob()]);
+    return { original: [a.type, await a.text()], clone: [b.type, await b.text()] };
+  }
+  const expected = {
+    original: ["text/html;charset=utf-8", "<p>hi</p>"],
+    clone: ["text/html;charset=utf-8", "<p>hi</p>"],
+  };
+
+  test("Response over Bun.file().stream()", async () => {
+    expect(await typesAndText(new Response(file().stream()))).toEqual(expected);
+  });
+
+  test("Request over Bun.file().stream()", async () => {
+    expect(await typesAndText(new Request("http://example.com/", { method: "POST", body: file().stream() }))).toEqual(
+      expected,
+    );
+  });
+
+  test("Response over Bun.file() after .body was observed", async () => {
+    const response = new Response(file());
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(await typesAndText(response)).toEqual(expected);
+  });
+
+  test("Response over a typed Blob after .body was observed", async () => {
+    const response = new Response(typed());
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(await typesAndText(response)).toEqual(expected);
+  });
+
+  test("the stream given to the constructor is locked after clone() and .body is a fresh stream", async () => {
+    const stream = file().stream();
+    const response = new Response(stream);
+    expect(response.body).toBe(stream);
+    const clone = response.clone();
+    expect(stream.locked).toBe(true);
+    expect(response.body).not.toBe(stream);
+    expect(await Promise.all([response.text(), clone.text()])).toEqual(["<p>hi</p>", "<p>hi</p>"]);
+  });
+
+  test("Bun.serve sends the file's Content-Type for a cloned Response over Bun.file().stream()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/clone" ? new Response(file().stream()).clone() : new Response(file().stream()),
+    });
+    const results: Record<string, [string | null, string]> = {};
+    for (const path of ["/direct", "/clone"]) {
+      const res = await fetch(new URL(path, server.url));
+      results[path] = [res.headers.get("content-type"), await res.text()];
+    }
+    expect(results).toEqual({
+      "/direct": ["text/html;charset=utf-8", "<p>hi</p>"],
+      "/clone": ["text/html;charset=utf-8", "<p>hi</p>"],
+    });
+  });
+
+  // A pipe yields its bytes once, so two Blobs over it would compete for
+  // them. A body over such a store is read as one stream and teed instead,
+  // whether it was given as a stream or as the Blob itself, and both bodies
+  // see the whole input.
+  async function cloneInChild(bodyExpr: string, args: string[] = []) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = new Response(${bodyExpr});
+         const c = r.clone();
+         const [a, b] = await Promise.all([r.text(), c.text()]);
+         console.log(JSON.stringify([a, b]));`,
+        ...args,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("hello ");
+    await proc.stdin.flush();
+    proc.stdin.write("world");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const bothBodiesReadStdin = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
+
+  test("a body over Bun.stdin.stream() is still teed", async () => {
+    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesReadStdin);
+  });
+
+  test("a body over Bun.stdin itself is teed, not duped", async () => {
+    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
+  });
+
+  // The same store kind reached by path: stat says it is not a regular file.
+  test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
+    const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await writer.exited).toBe(0);
+  });
+});
+
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
   // The Response and its clones share one underlying body store. Consuming a clone
   // with a different Content-Type must not change (or invalidate) the type of a Blob
@@ -909,4 +1232,320 @@ test("Blob type from a consumed Response keeps the original content-type after c
 
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
+});
+
+describe("Response.clone() of a stream body shares chunk references between tee branches", () => {
+  // Node, Chrome, and Firefox enqueue the same chunk object into both tee branches when cloning
+  // a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an N-deep clone
+  // chain into O(N * body bytes) of retained memory.
+  test("deep clone chain does not retain O(depth * bytes)", async () => {
+    // A 4 MB streaming body cloned 50 deep previously retained ~50 separate copies of every
+    // 64 KB chunk (~200 MB). With shared chunk references only one copy of the body bytes is
+    // live at a time.
+    const script = `
+      const MB = 1 << 20, DEPTH = 50, SIZE = 4 * MB;
+      let pulled = 0;
+      const src = new ReadableStream({
+        pull(c) {
+          if (pulled >= SIZE) { c.close(); return; }
+          c.enqueue(new Uint8Array(65536));
+          pulled += 65536;
+        },
+      });
+      const base = process.memoryUsage().rss;
+      let cur = new Response(src);
+      const chain = [cur];
+      for (let i = 0; i < DEPTH; i++) { cur = cur.clone(); chain.push(cur); }
+      const read = (await chain.at(-1).arrayBuffer()).byteLength;
+      const rssDeltaMB = (process.memoryUsage().rss - base) / MB;
+      console.log(JSON.stringify({ read, rssDeltaMB }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { read, rssDeltaMB } = JSON.parse(stdout);
+    expect(read).toBe(4 << 20);
+    // Before the fix: ~200 MB. After: well under 50 MB even on debug+ASAN builds.
+    const threshold = isASAN || isDebug ? 120 : 80;
+    expect(rssDeltaMB).toBeLessThan(threshold);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A `Bun.serve` handler that calls `req.clone()` and responds without reading
+// either body. The server stops feeding the request body once the response
+// ends, so it must also settle the native byte stream behind the tee: an
+// unsettled pull kept its promise GC-protected, and with it both tee branches,
+// the reader, and the controllers of every such request, forever.
+describe("Bun.serve: clone() of an incoming request whose body nobody reads", () => {
+  test("does not leak the teed body streams", async () => {
+    const requests = 100;
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const body = Buffer.alloc(256, "a").toString();
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          // BunRequest has its own native clone entry point.
+          "/bun-request": req => {
+            req.clone();
+            return new Response("k");
+          },
+        },
+        fetch(req) {
+          // Tee through the stream that the body getter already materialized.
+          if (req.url.endsWith("/observed")) req.body;
+          req.clone();
+          return new Response("k");
+        },
+      });
+      const paths = ["/plain", "/observed", "/bun-request"];
+      const hit = async path => {
+        const res = await fetch(new URL(path, server.url), { method: "POST", body });
+        if ((await res.text()) !== "k") throw new Error("bad response for " + path);
+      };
+      const counts = () => {
+        Bun.gc(true);
+        Bun.gc(true);
+        const stats = heapStats();
+        return {
+          ReadableStream: stats.objectTypeCounts.ReadableStream ?? 0,
+          StreamTeeState: stats.objectTypeCounts.StreamTeeState ?? 0,
+          protectedPromise: stats.protectedObjectTypeCounts.Promise ?? 0,
+        };
+      };
+      for (const path of paths) await hit(path);
+      const before = counts();
+      for (const path of paths) for (let i = 0; i < ${requests}; i++) await hit(path);
+      const after = counts();
+      const delta = {};
+      for (const key in before) delta[key] = after[key] - before[key];
+      console.log(JSON.stringify(delta));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0 || !stdout.startsWith("{")) {
+      throw new Error(`fixture failed (exit code ${exitCode}):\n${stderr}\n${stdout}`);
+    }
+    // Leaking retained 3 ReadableStream + 1 StreamTeeState + 1 protected Promise
+    // per request (x 3 paths x `requests`); a settled tee is collectable at once.
+    const delta = JSON.parse(stdout);
+    expect(delta.ReadableStream).toBeWithin(-10, 10);
+    expect(delta.StreamTeeState).toBeWithin(-4, 4);
+    expect(delta.protectedPromise).toBeWithin(-4, 4);
+  });
+
+  // The two ways the server stops feeding a body that has not arrived: the
+  // handler responds first, or the client goes away first. Either must reject
+  // a read parked on the clone's branch instead of leaving it pending forever.
+  async function serveCloneReader(park: boolean) {
+    let state = "handler not reached";
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/state") return new Response(state);
+        state = "pending";
+        req
+          .clone()
+          .text()
+          .then(
+            text => (state = `resolved: ${JSON.stringify(text)}`),
+            e => (state = `rejected: ${e?.name}: ${e?.message}`),
+          );
+        return park ? new Promise<Response>(() => {}) : new Response("k");
+      },
+    });
+    const readState = async () => (await fetch(new URL("/state", server.url))).text();
+    // Announce a body but never send it.
+    const received = Promise.withResolvers<string>();
+    let data = "";
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, chunk) {
+          data += chunk.toString();
+          const bodyAt = data.indexOf("\r\n\r\n");
+          if (bodyAt !== -1 && data.length > bodyAt + 4) received.resolve(data);
+        },
+        close() {
+          // The abort case ends the socket itself and never reads `response`.
+          received.resolve(data);
+        },
+        error(_socket, err) {
+          received.reject(err);
+        },
+      },
+    });
+    socket.write("POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\n");
+    return { server, socket, response: received.promise, readState };
+  }
+
+  test("a read started on the clone rejects once the response ends ahead of the body", async () => {
+    const { server, socket, response, readState } = await serveCloneReader(false);
+    await using _server = server;
+    using _socket = socket;
+    expect(await response).toMatch(/^HTTP\/1\.1 200 OK\r\n[\s\S]*\r\n\r\nk$/);
+    // The server settled the stream before it returned to the event loop, so
+    // the very next request already observes the rejection.
+    expect(await readState()).toBe("rejected: AbortError: The connection was closed.");
+  });
+
+  test("a read started on the clone rejects when the client disconnects before sending the body", async () => {
+    const { server, socket, readState } = await serveCloneReader(true);
+    await using _server = server;
+    using _socket = socket;
+    // The handler is parked; wait until it has run, then drop the connection.
+    let state = await readState();
+    for (let i = 0; i < 200 && state === "handler not reached"; i++) state = await readState();
+    expect(state).toBe("pending");
+    socket.end();
+    // The abort is processed on the server's next loop turn; poll with a bound
+    // instead of sleeping. Unfixed builds never leave "pending".
+    for (let i = 0; i < 200 && state === "pending"; i++) state = await readState();
+    expect(state).toBe("rejected: AbortError: The connection was closed.");
+  });
+});
+
+// After `clone()` the body points at a tee branch instead of the native byte
+// stream. When the body fails mid-stream, a read parked on either branch must
+// reject with the error a read on an un-cloned body gets. The original's branch
+// used to be cancelled instead of errored, so its reader ended with
+// `{ done: true }` on a truncated body.
+describe("clone() of a body that fails mid-stream", () => {
+  const announced = 64 * 1024;
+  const sent = 16 * 1024;
+  const payload = Buffer.alloc(sent, "a");
+  const chunkedPayload = Buffer.concat([Buffer.from(sent.toString(16) + "\r\n"), payload, Buffer.from("\r\n")]);
+
+  async function drain(body: ReadableStream<Uint8Array>, onBytes: (received: number) => void) {
+    const reader = body.getReader();
+    let received = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return { received, outcome: "done" };
+        received += value.byteLength;
+        onBytes(received);
+      }
+    } catch (e: any) {
+      return { received, outcome: "rejected", error: `${e?.name}: ${e?.message}` };
+    }
+  }
+
+  // POST a first body part to a handler that clones the request and drains one
+  // side. Once the handler holds those bytes, `fail(client)` breaks the body.
+  async function serveUpload(
+    side: "original" | "clone",
+    opts: { framing: string; firstPart: Buffer; maxRequestBodySize?: number; fail(client: net.Socket): void },
+  ) {
+    const partial = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<Awaited<ReturnType<typeof drain>>>();
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      maxRequestBodySize: opts.maxRequestBodySize,
+      async fetch(req) {
+        const clone = req.clone();
+        const body = (side === "original" ? req : clone).body!;
+        result.resolve(await drain(body, received => received >= sent && partial.resolve()));
+        return new Response("k");
+      },
+      error(err) {
+        result.reject(err);
+        return new Response("handler threw", { status: 500 });
+      },
+    });
+    const client = net.connect(server.port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write(
+        `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`,
+      );
+      client.write(opts.firstPart);
+      // A drain that ends before `sent` bytes arrived settles `result` instead.
+      await Promise.race([partial.promise, result.promise]);
+      opts.fail(client);
+      return await result.promise;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when the client disconnects",
+    async side => {
+      const result = await serveUpload(side, {
+        framing: `Content-Length: ${announced}`,
+        firstPart: payload,
+        fail: client => client.destroy(),
+      });
+      expect(result).toEqual({ received: sent, outcome: "rejected", error: "AbortError: The connection was closed." });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when a chunked body outgrows maxRequestBodySize",
+    async side => {
+      const result = await serveUpload(side, {
+        // No Content-Length, so only the streamed byte count can enforce the cap.
+        framing: "Transfer-Encoding: chunked",
+        firstPart: chunkedPayload,
+        maxRequestBodySize: sent + 1024,
+        fail: client => client.write(chunkedPayload),
+      });
+      expect(result).toEqual({
+        received: sent,
+        outcome: "rejected",
+        error: "Error: Request body exceeded maxRequestBodySize",
+      });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "fetch(): a reader on the %s response rejects when the server disconnects",
+    async side => {
+      const hangup = Promise.withResolvers<void>();
+      const accepted: net.Socket[] = [];
+      const server = net.createServer(socket => {
+        accepted.push(socket);
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${announced}\r\n\r\n`,
+          );
+          socket.write(payload);
+          hangup.promise.then(() => socket.destroy());
+        });
+      });
+      const listening = Promise.withResolvers<void>();
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      try {
+        const res = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+        const clone = res.clone();
+        const body = (side === "original" ? res : clone).body!;
+        const result = await drain(body, received => received >= sent && hangup.resolve());
+        expect(result).toEqual({
+          received: sent,
+          outcome: "rejected",
+          error: expect.stringContaining("The socket connection was closed unexpectedly"),
+        });
+      } finally {
+        for (const socket of accepted) socket.destroy();
+        server.close();
+      }
+    },
+  );
 });

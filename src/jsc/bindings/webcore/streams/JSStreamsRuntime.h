@@ -1,9 +1,11 @@
-// JSStreamsRuntime — the ONE per-global cell holding every piece of per-global Web Streams
-// state: the two CLOSED handler-function lists, the per-realm queuing-strategy `size`
-// functions, and the cached Structures of every internal (prototype-less) cell class. It is
-// reached through ONE LazyProperty on Zig::GlobalObject (`globalObject->streamsRuntime()`);
-// do NOT add per-function fields to ZigGlobalObject. Every handler / size function /
-// Structure is a LazyProperty materialized on first use via `m_NAME.get(this)`.
+// JSStreamsRuntime — the ONE per-global container holding every piece of per-global Web
+// Streams state: the two CLOSED handler-function lists, the per-realm queuing-strategy
+// `size` functions, and the cached Structures of every internal (prototype-less) cell class.
+// Not a GC cell: a plain struct held BY VALUE on Zig::GlobalObject (visited via
+// `JSStreamsRuntime::visit` from the global's visitChildren) and reached through
+// `globalObject->streamsRuntime()`; do NOT add per-function fields to ZigGlobalObject. Every
+// handler / size function / Structure is a LazyProperty<JSGlobalObject, T> materialized on
+// first use.
 //
 // THE TWO CALLABLE MECHANISMS — the ONLY two. Anything else (a per-stream JSFunction, ANY
 // capturing JSNativeStdFunction) is FORBIDDEN in this subsystem.
@@ -21,32 +23,36 @@
 //   NEVER called directly; it is wrapped per use-site in
 //   `JSC::JSBoundFunction::create(vm, global, target, jsUndefined(), {contextCell}, ...)`
 //   and STORED ON an object we do not control (the native source handle, the JSSink
-//   controller, the ResumableSink). `boundFunctionCall` PREPENDS the bound args, so the
-//   target receives
+//   controller). `boundFunctionCall` PREPENDS the bound args, so the target receives
 //        handler(contextCell, ...callArgs)              // context at argument(0)
-//   — the OPPOSITE position. A function may belong to EXACTLY ONE of the two lists.
+//   — the OPPOSITE position.
 //
-// Both handler lists are CLOSED: adding a handler requires a new macro entry here plus a
-// JSC_DEFINE_HOST_FUNCTION in the owner .cpp; it changes no signature.
+// [method-convention] — FOR_EACH_WEB_STREAMS_METHOD_HANDLER. The shared function is stored
+//   as the pull / cancel / close of an internal JSDirectStreamSource whose `this` is the
+//   context cell, so it is invoked as
+//        handler.call(contextCell, ...callArgs)         // context at thisValue()
+//   with no per-stream wrapper at all.
+//
+// A function may belong to EXACTLY ONE of the three lists. All are CLOSED: adding a handler
+// requires a new macro entry here plus a JSC_DEFINE_HOST_FUNCTION in the owner .cpp; it
+// changes no signature.
 #pragma once
 
 #include "root.h"
 #include "StreamsForward.h"
 
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Structure.h>
+#include <utility>
 
 namespace WebCore {
-
-class JSDirectStreamController;
 
 // [reaction-convention] handlers, grouped by the .cpp that OWNS the body.
 // Signature of every entry:  name(JSC::JSValue resolutionValue, contextCell at argument(1)).
 
 // owner: WebStreamsMisc.cpp — the shared "fulfillment step that returns undefined" / no-op
-// reaction (readableStreamCancel; readDirectStream's `.then(noop)`). context: unused.
+// reaction (readableStreamCancel, tee's reader-closed watch). context: unused.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_MISC(V) \
     V(onReturnUndefined)
 
@@ -81,7 +87,8 @@ class JSDirectStreamController;
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
-// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement).
+// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement), and
+// onAsyncIterableSourceCancelRejected, whose context is the reason cancel() threw into the iterator.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     V(onAsyncIterableSourceNextFulfilled)                              \
     V(onAsyncIterableSourceFlushFulfilled)                             \
@@ -89,7 +96,8 @@ class JSDirectStreamController;
     V(onAsyncIterableSourceEndFulfilled)                               \
     V(onAsyncIterableSourceCleanupSettled)                             \
     V(onAsyncIterableSourceErrorRethrow)                               \
-    V(onAsyncIterableSourceErrorSwallowed)
+    V(onAsyncIterableSourceErrorSwallowed)                             \
+    V(onAsyncIterableSourceCancelRejected)
 
 // owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,
 // EXCEPT onAsyncIteratorReturnAfterOngoingSettled and onAsyncIteratorCancelFulfilled, whose
@@ -102,7 +110,7 @@ class JSDirectStreamController;
     V(onAsyncIteratorRejectMicrotask)
 
 // owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation, EXCEPT
-// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, m_currentWrite
+// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, currentWrite
 // promise} and whose argument is the chunk (the pipe's deferred sink write job).
 // onPipeWriteSettled is registered as BOTH the fulfillment and the rejection handler of
 // every write-request promise (the pipe must react to every one).
@@ -134,8 +142,8 @@ class JSDirectStreamController;
     V(onWSSinkWriteRejected)
 
 // owner: TransformStreamOperations.cpp. context = the JSTransformStream, EXCEPT
-// onTSSinkWriteBackpressureChangeFulfilled, whose context is an
-// InternalFieldTuple{transformStream, chunk}.
+// onTSSinkAbortCancel{Fulfilled,Rejected} and onTSSourceCancel{Fulfilled,Rejected},
+// whose context is an InternalFieldTuple{transformStream, reason}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V) \
     V(onTSSinkWriteBackpressureChangeFulfilled)                \
     V(onTSSinkAbortCancelFulfilled)                            \
@@ -158,25 +166,29 @@ class JSDirectStreamController;
 //   onNativePull*: context = the JSNativeStreamSourceAdapter.
 //   onNativeSourceCallCloseMicrotask: the native source's `queueMicrotask(callClose)` job;
 //     context = the adapter.
+//   onNativeSourceHandleClosedMicrotask: the native handle reported close (ReadableStream.rs on_close); context = the adapter.
+//   onReadDirectStreamPull{Fulfilled,Rejected}: readDirectStream's pull() settled. context = the native sink controller.
 //   onReadStreamIntoSink*: context = the JSReadStreamIntoSinkOperation.
-//   onResumableSink*: context = the JSResumableSinkPumpOperation.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V) \
     V(onNativePullFulfilled)                                \
     V(onNativePullRejected)                                 \
     V(onNativeSourceCallCloseMicrotask)                     \
+    V(onNativeSourceHandleClosedMicrotask)                  \
+    V(onReadDirectStreamPullFulfilled)                      \
+    V(onReadDirectStreamPullRejected)                       \
     V(onReadStreamIntoSinkReadManyFulfilled)                \
-    V(onReadStreamIntoSinkReadFulfilled)                    \
-    V(onReadStreamIntoSinkFlushFulfilled)                   \
-    V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkReadFulfilled)                         \
-    V(onResumableSinkReadRejected)                          \
-    V(onResumableSinkEndMicrotask)
+    V(onReadStreamIntoSinkChunk)                            \
+    V(onReadStreamIntoSinkClose)                            \
+    V(onReadStreamIntoSinkRejected)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
-// onDirectPullRejected is THE one reaction registered WITH a real (fresh, unhandled) result
-// promise — the unhandledRejection is load-bearing.
+//   onDirectEndOfTickFlush: the end-of-tick auto-flush job, scheduled via
+//     process.nextTick(handler, undefined, controller) — it still uses the
+//     reaction-convention context position (argument 1).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
-    V(onDirectPullRejected)
+    V(onDirectPullFulfilled)                                       \
+    V(onDirectPullRejected)                                        \
+    V(onDirectEndOfTickFlush)
 
 // owner: JSReadableStreamDefaultReader.cpp (readMany). context = the reader.
 //   onReadManyPullFulfilled: controller.$pull()'s fulfillment.
@@ -239,22 +251,6 @@ class JSDirectStreamController;
 // [bound-convention] targets, grouped by the .cpp that OWNS the body.
 // Signature of every entry:  name(contextCell at argument(0), ...callArgs).
 
-// owner: BunStreamSource.cpp.
-//   boundOnNativeSourceClose(adapter) / boundOnNativeSourceDrain(adapter, chunk): stored as
-//     handle.onClose / handle.onDrain.
-//   boundReadDirectStreamOnClose(state, streamOrUndefined, reason): readDirectStream's
-//     JSSink onClose.
-//   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
-//   boundResumableSinkDrain(op) / boundResumableSinkCancel(op, unused, reason): stored on
-//     the native ResumableSink via setHandlers.
-#define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
-    V(boundOnNativeSourceClose)                                 \
-    V(boundOnNativeSourceDrain)                                 \
-    V(boundReadDirectStreamOnClose)                             \
-    V(boundReadStreamIntoSinkOnClose)                           \
-    V(boundResumableSinkDrain)                                  \
-    V(boundResumableSinkCancel)
-
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_DIRECT_CONTROLLER(V) \
@@ -281,20 +277,20 @@ class JSDirectStreamController;
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V) \
     V(boundPipeAbortAlgorithm)
 
-// owner: BunAsyncIterableSource.cpp — the async-iterable direct source's three methods.
-// Bound context (argument 0) = the JSAsyncIteratorSourceOperation.
-#define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ASYNC_ITERABLE_SOURCE(V) \
-    V(boundAsyncIterableSourcePull)                                        \
-    V(boundAsyncIterableSourceCancel)                                      \
-    V(boundAsyncIterableSourceClose)
-
 // THE closed [bound-convention] list.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(V)               \
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V)        \
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_DIRECT_CONTROLLER(V) \
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ONE_SHOT(V)          \
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V)              \
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ASYNC_ITERABLE_SOURCE(V)
+    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_PIPE(V)
+
+// [method-convention] handlers. Signature of every entry: name(...callArgs), context at thisValue().
+
+// owner: BunAsyncIterableSource.cpp — the async-iterable direct source's pull(controller) /
+// cancel(reason) / close(). `this` = the JSAsyncIteratorSourceOperation.
+#define FOR_EACH_WEB_STREAMS_METHOD_HANDLER(V) \
+    V(asyncIterableSourcePull)                 \
+    V(asyncIterableSourceCancel)               \
+    V(asyncIterableSourceClose)
 
 // The native trampolines behind every handler. Each is DEFINED (JSC_DEFINE_HOST_FUNCTION)
 // in its owner .cpp above; JSStreamsRuntime.cpp only wraps them in shared JSFunctions.
@@ -302,6 +298,7 @@ class JSDirectStreamController;
     JSC_DECLARE_HOST_FUNCTION(jsWebStreamsHandler_##name);
 FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_HOST_FUNCTION)
 FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_HOST_FUNCTION)
+FOR_EACH_WEB_STREAMS_METHOD_HANDLER(WEB_STREAMS_DECLARE_HANDLER_HOST_FUNCTION)
 #undef WEB_STREAMS_DECLARE_HANDLER_HOST_FUNCTION
 
 // The per-realm queuing-strategy size functions (owner: WebStreamsMisc.cpp).
@@ -319,59 +316,58 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(crossRealmTransformStateStructure, JSCrossRealmTransformState)         \
     V(fromIterableContextStructure, JSStreamFromIterableContext)             \
     V(directStreamControllerStructure, JSDirectStreamController)             \
+    V(directStreamSourceStructure, JSDirectStreamSource)                     \
     V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)       \
-    V(directSinkCloseStateStructure, JSDirectSinkCloseState)                 \
     V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
-    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)     \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
     V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)
 
-// Non-destructible: LazyProperty members only (plus the end-of-tick flush list, a
-// WriteBarrier container mutated and visited under this cell's lock).
-class JSStreamsRuntime final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+class JSStreamsRuntime final {
+    WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 
-    // Zig::GlobalObject holds ONE LazyProperty whose initializer calls this.
-    static JSStreamsRuntime* create(JSC::VM&, Zig::GlobalObject*);
-    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
+public:
+#define WEB_STREAMS_STRUCTURE_INDEX_ENTRY(memberName, ClassName) memberName,
+    enum class InternalStructure : uint8_t {
+        FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_STRUCTURE_INDEX_ENTRY)
+            Count
+    };
+#undef WEB_STREAMS_STRUCTURE_INDEX_ENTRY
+
+    // Index of every handler in m_handlers, in macro order (all three lists).
+    // clang-format off
+#define WEB_STREAMS_HANDLER_INDEX_ENTRY(name) name,
+    enum class Handler : uint8_t {
+        FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        FOR_EACH_WEB_STREAMS_METHOD_HANDLER(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        Count
+    };
+#undef WEB_STREAMS_HANDLER_INDEX_ENTRY
+    // clang-format on
+
+    JSStreamsRuntime() = default;
+    void initialize(Zig::GlobalObject*);
 
     // The one accessor everything uses: `defaultGlobalObject(global)->streamsRuntime()`
     // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
 
-    // End-of-tick flush service for JS-facing direct controllers: the runtime (a
-    // global-lifetime, non-destructible cell) is the only pointer registered with the
-    // event loop's deferred task queue; armed controllers are rooted by m_endOfTickFlushes.
-    void armEndOfTickFlush(JSC::JSGlobalObject*, JSDirectStreamController*);
-    WTF::Vector<JSC::WriteBarrier<JSDirectStreamController>> m_endOfTickFlushes;
-    bool m_endOfTickFlushTaskRegistered { false };
+    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY handler
+    // LazyProperty (both macro lists), the two size-function LazyProperties, and every
+    // LazyProperty in FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE. Safe on a
+    // default-constructed instance (LazyProperty::visit is a no-op for m_pointer == 0).
+    template<typename Visitor>
+    void visit(Visitor&);
 
-    DECLARE_INFO;
-    // visitChildrenImpl MUST visit: EVERY m_<handler> LazyProperty (both macro lists), the
-    // two size-function LazyProperties, and every LazyProperty in
-    // FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE.
-    DECLARE_VISIT_CHILDREN;
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
-
-    // The shared handler functions. Each LazyProperty gets its initializer in finishCreation
-    // and materializes the JSFunction on the FIRST get(this) — never eagerly.
+    // The shared handler functions. Each LazyProperty materializes the JSFunction on FIRST
+    // use; the global is the owner passed to `init.owner`.
 #define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name) \
-    JSC::JSFunction* name() const { return m_##name.get(this); }
+    JSC::JSFunction* name() const { return m_handlers[static_cast<size_t>(Handler::name)].getInitializedOnMainThread(m_globalObject); }
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
+    FOR_EACH_WEB_STREAMS_METHOD_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_HANDLER_ACCESSOR
 
     // The per-realm queuing-strategy size functions (spec: same function object per realm;
@@ -388,25 +384,37 @@ public:
     // The readMany `{value, size, done}` result shape, so results are built with
     // putDirectOffset instead of three transitioning putDirects.
     JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+    static constexpr JSC::PropertyOffset readManyResultValueOffset = 0;
+    static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
+    static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
+
+    // `{ done, value }` of a readMany() result: the slots while `result` has readManyResultStructure, else `get(done)` then `get(value)` (both empty if either throws).
+    std::pair<JSC::JSValue, JSC::JSValue> readManyResult(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:
-    JSStreamsRuntime(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&, Zig::GlobalObject*);
+    JSC::JSGlobalObject* m_globalObject { nullptr };
 
-#define WEB_STREAMS_DECLARE_HANDLER_MEMBER(name) \
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_##name;
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-#undef WEB_STREAMS_DECLARE_HANDLER_MEMBER
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_handlers[static_cast<size_t>(Handler::Count)];
 
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_countQueuingStrategySizeFunction;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_countQueuingStrategySizeFunction;
 
-#define WEB_STREAMS_DECLARE_STRUCTURE_MEMBER(memberName, ClassName) \
-    JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_##memberName;
-    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_MEMBER)
-#undef WEB_STREAMS_DECLARE_STRUCTURE_MEMBER
-    JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_readManyResultStructure;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_internalStructures[static_cast<size_t>(InternalStructure::Count)];
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
+
+inline std::pair<JSC::JSValue, JSC::JSValue> JSStreamsRuntime::readManyResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+{
+    if (result->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id()) [[likely]]
+        return { result->getDirect(readManyResultDoneOffset), result->getDirect(readManyResultValueOffset) };
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue done = result->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue value = result->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { done, value };
+}
 
 } // namespace WebCore

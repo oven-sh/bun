@@ -159,7 +159,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
         },
       });
       const [raw, tls] = socket.upgradeTLS({
-        tls: tlsCert,
+        tls: { ...tlsCert, ca: tlsCert.cert },
         socket: {
           drain(s) {
             s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
@@ -187,6 +187,72 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   // they all pin and the count stays ≥ baseline + 10.
   const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
   expect(count).toBeLessThanOrEqual(baseline + 2);
+});
+
+test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {
+  // UpgradedDuplex keeps the origin stream and its four native listener
+  // thunks reachable via WriteBarrier slots on the JSTLSSocket wrapper.
+  // Holding each as a separate Strong handle makes every TLS-over-duplex
+  // connection add five HandleSet entries that live as long as the native
+  // struct, independent of the wrapper's GC lifetime.
+  //
+  // heapStats().protectedObjectTypeCounts reports HandleSet-rooted values by
+  // class, so with Strong handles N live upgrades contribute +4N Function and
+  // +N origin objects; with visited slots they contribute none (the
+  // wrapper's own self-reference is the only per-upgrade Strong).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const tls = require("node:tls");
+        const { Duplex } = require("node:stream");
+        const { heapStats } = require("bun:jsc");
+
+        const protectedCounts = () => {
+          const c = heapStats().protectedObjectTypeCounts;
+          return { Function: c.Function ?? 0, Object: c.Object ?? 0 };
+        };
+
+        // Warm up so lazy module state doesn't skew the delta.
+        const warm = tls.connect({
+          socket: new Duplex({ read() {}, write(_c, _e, cb) { cb(); } }),
+          rejectUnauthorized: false,
+        });
+
+        Bun.gc(true);
+        const before = protectedCounts();
+
+        const N = 20;
+        const live = [];
+        for (let i = 0; i < N; i++) {
+          const origin = new Duplex({ read() {}, write(_c, _e, cb) { cb(); } });
+          live.push(tls.connect({ socket: origin, rejectUnauthorized: false }));
+        }
+
+        Bun.gc(true);
+        const after = protectedCounts();
+
+        console.log(JSON.stringify({
+          N,
+          fn: after.Function - before.Function,
+          obj: after.Object - before.Object,
+        }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { N, fn, obj } = JSON.parse(stdout.trim());
+  // Without the visited slots these are fn≈4N and obj≈N. A small constant
+  // slack absorbs any unrelated Strong created during the loop.
+  expect(fn).toBeLessThan(N);
+  expect(obj).toBeLessThan(N);
+  expect(exitCode).toBe(0);
+  void stderr;
 });
 
 test("node:net reconnect after connectError does not accumulate wrappers", async () => {
@@ -230,3 +296,54 @@ test("node:net reconnect after connectError does not accumulate wrappers", async
   expect(exitCode).toBe(0);
   void stderr;
 }, 30_000);
+
+// Windows routes `unix:` through WindowsNamedPipeContext. A connect that fails
+// before libuv queues it (here: a TLS config that cannot build a context)
+// reports the error through `handle_connect_error` while the socket is still
+// detached, so that path releases nothing. The attempt ref taken in
+// `connect_inner` must be released by the caller, as the POSIX path does.
+test.skipIf(!isWindows)(
+  "a named-pipe connect that fails synchronously does not leak the native socket",
+  async () => {
+    const script = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const socket = { open() {}, data() {}, close() {}, error() {}, connectError() {} };
+    const opts = {
+      unix: "\\\\\\\\.\\\\pipe\\\\bun-missing-" + process.pid,
+      tls: { cert: "not a cert", key: "not a key" },
+    };
+    async function run(n) {
+      for (let i = 0; i < n; i += 100) {
+        await Promise.all(Array.from({ length: 100 }, () => Bun.connect({ ...opts, socket }).catch(() => {})));
+      }
+      for (let k = 0; k < 3; k++) {
+        Bun.gc(true);
+        await new Promise(r => setImmediate(r));
+      }
+    }
+    // Live mimalloc pages: allocator bookkeeping, independent of OS reclamation.
+    function pageCount() {
+      return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+    }
+    await run(4000);
+    const before = pageCount();
+    await run(4000);
+    const after = pageCount();
+    console.log(JSON.stringify({ before, after, delta: after - before }));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref each run of 4000 leaks about 16 pages
+    // (release) and many more under debug. With it the delta is heap noise.
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

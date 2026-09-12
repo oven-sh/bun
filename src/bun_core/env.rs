@@ -3,13 +3,12 @@ pub use crate::build_options;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum BuildTarget {
+enum BuildTarget {
     Native,
     Wasm,
-    Wasi,
 }
 
-pub(crate) const BUILD_TARGET: BuildTarget = {
+const BUILD_TARGET: BuildTarget = {
     if cfg!(target_family = "wasm") {
         BuildTarget::Wasm
     } else {
@@ -17,11 +16,10 @@ pub(crate) const BUILD_TARGET: BuildTarget = {
     }
 };
 
-pub(crate) const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
+const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
 pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-pub(crate) const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
-pub(crate) const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
-pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
+const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
+pub(crate) const IS_BROWSER: bool = IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on
@@ -34,17 +32,17 @@ pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// semantics; that matches a bare `cargo build` landing in `release`-like
 /// behaviour and keeps IDE diagnostics closer to what ships.
 pub const IS_DEBUG: bool = cfg!(bun_debug);
-pub(crate) const IS_TEST: bool = cfg!(test);
+const IS_TEST: bool = cfg!(test);
 // Android is a Linux kernel target, but Rust splits the two into separate
 // `target_os` values, so this const has to OR them — otherwise `OS` (below)
 // panics at const-eval on the `*-linux-android` cross targets and Linux-only
 // code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
-pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
+const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
-pub(crate) const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
-pub(crate) const IS_X64: bool = cfg!(target_arch = "x86_64");
+const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
@@ -53,17 +51,9 @@ pub const CI_ASSERT: bool =
 pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
-pub const BASELINE: bool = build_options::BASELINE;
-/// Only `BASELINE` gates SIMD.
-pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
     const_str_slice(build_options::SHA, 0, 9)
-} else {
-    ""
-};
-pub const GIT_SHA_SHORTER: &str = if !build_options::SHA.is_empty() {
-    const_str_slice(build_options::SHA, 0, 6)
 } else {
     ""
 };
@@ -105,19 +95,9 @@ pub enum OperatingSystem {
     Wasm,
 }
 
-/// OS tag for the targets Bun builds for.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum StdOsTag {
-    Macos,
-    Linux,
-    Freebsd,
-    Windows,
-}
-
 impl OperatingSystem {
     /// user-facing name with capitalization
-    pub const fn display_string(self) -> &'static str {
+    pub(crate) const fn display_string(self) -> &'static str {
         match self {
             Self::Mac => "macOS",
             Self::Linux => "Linux",
@@ -128,23 +108,13 @@ impl OperatingSystem {
     }
 
     /// same format as `process.platform`
-    pub const fn name_string(self) -> &'static str {
+    pub(crate) const fn name_string(self) -> &'static str {
         match self {
             Self::Mac => "darwin",
             Self::Linux => "linux",
             Self::Freebsd => "freebsd",
             Self::Windows => "win32",
             Self::Wasm => "wasm",
-        }
-    }
-
-    pub const fn std_os_tag(self) -> StdOsTag {
-        match self {
-            Self::Mac => StdOsTag::Macos,
-            Self::Linux => StdOsTag::Linux,
-            Self::Freebsd => StdOsTag::Freebsd,
-            Self::Windows => StdOsTag::Windows,
-            Self::Wasm => unreachable!(),
         }
     }
 
@@ -197,10 +167,6 @@ pub const OS: OperatingSystem = if IS_MAC {
     panic!("Please add your OS to the OperatingSystem enum")
 };
 
-/// `process.platform`-style name for the host OS (`"win32"` on Windows).
-/// NB: Android targets resolve to `"linux"` here — for the user-facing
-/// `"android"` string see `bun_core::Global::os_name`.
-pub const OS_NAME_NODE: &str = OS.name_string();
 /// npm-package / release-archive segment for the host OS (`"windows"` on Windows).
 pub const OS_NAME_NPM: &str = OS.npm_name();
 

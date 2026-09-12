@@ -1,4 +1,7 @@
 name: VSCode Extension Publish
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -13,12 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.18"
+          bun-version: "1.3.14"
 
       - name: Install dependencies (root)
         run: bun install
@@ -28,7 +33,9 @@ jobs:
         working-directory: packages/bun-vscode
 
       - name: Set Version
-        run: bun pm version ${{ github.event.inputs.version }} --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bun pm version "$VERSION" --no-git-tag-version --allow-same-version
         working-directory: packages/bun-vscode
 
       - name: Build (inspector protocol)
@@ -46,7 +53,7 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCODE_EXTENSION }}
         working-directory: packages/bun-vscode/extension
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bun-vscode-${{ github.event.inputs.version }}.vsix
           path: packages/bun-vscode/extension/bun-vscode-${{ github.event.inputs.version }}.vsix

@@ -7,23 +7,36 @@
 #include "root.h"
 #include "StreamsForward.h"
 
-#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
 namespace WebCore {
 
 // A read request: chunk steps / close steps / error steps.
-class JSReadRequest final : public JSC::JSNonFinalObject {
+class JSReadRequest final : public JSC::JSInternalFieldObjectImpl<1> {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSInternalFieldObjectImpl<1>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+
+    enum class Field : uint32_t {
+        // Promise kind: the JSPromise reader.read() returned.
+        // PipeTo: the JSStreamPipeToOperation. DefaultTee/ByteTee: the JSStreamTeeState.
+        // AsyncIterator: the JSReadableStreamAsyncIterator.
+        Context = 0,
+    };
 
     static JSReadRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
+    static size_t allocationSize(Checked<size_t> inlineCapacity)
+    {
+        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
+        return sizeof(JSReadRequest);
+    }
+
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_context.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -46,10 +59,10 @@ public:
     // "error steps, given e"
     void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
 
-    // Promise kind: the JSPromise reader.read() returned.
-    // PipeTo: the JSStreamPipeToOperation. DefaultTee/ByteTee: the JSStreamTeeState.
-    // AsyncIterator: the JSReadableStreamAsyncIterator.
-    JSC::WriteBarrier<JSC::Unknown> m_context;
+    const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
+    JSC::JSValue context() const { return internalField(Field::Context).get(); }
 
 private:
     JSReadRequest(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadRequestKind);
@@ -59,18 +72,30 @@ private:
 };
 
 // A read-into request. NOTE: its close steps take a chunk (or undefined).
-class JSReadIntoRequest final : public JSC::JSNonFinalObject {
+class JSReadIntoRequest final : public JSC::JSInternalFieldObjectImpl<1> {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSInternalFieldObjectImpl<1>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+
+    enum class Field : uint32_t {
+        // Promise kind: the JSPromise byobReader.read(view) returned.
+        // ByteTee: the JSStreamTeeState.
+        Context = 0,
+    };
 
     static JSReadIntoRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadIntoRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
+    static size_t allocationSize(Checked<size_t> inlineCapacity)
+    {
+        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
+        return sizeof(JSReadIntoRequest);
+    }
+
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_context.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -91,9 +116,10 @@ public:
     // "error steps, given e"
     void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
 
-    // Promise kind: the JSPromise byobReader.read(view) returned.
-    // ByteTee: the JSStreamTeeState.
-    JSC::WriteBarrier<JSC::Unknown> m_context;
+    const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
+    JSC::JSValue context() const { return internalField(Field::Context).get(); }
 
 private:
     JSReadIntoRequest(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadIntoRequestKind);

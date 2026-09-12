@@ -47,8 +47,20 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHKDF::identifier() const
 
 void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    if (!length || *length % 8) {
-        exceptionCallback(OperationError, ""_s);
+    if (!length) {
+        exceptionCallback(OperationError, "length cannot be null"_s);
+        return;
+    }
+    if (*length % 8) {
+        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
+        return;
+    }
+
+    // Node caps info at 1024 bytes (OpenSSL 3.x EVP_PKEY_CTX_add1_hkdf_info);
+    // BoringSSL imposes no such limit, so match Node explicitly.
+    constexpr size_t maximumInfoLength = 1024;
+    if (downcast<CryptoAlgorithmHkdfParams>(parameters).info.length() > maximumInfoLength) {
+        exceptionCallback(OperationError, "algorithm.info must be at most 1024 bytes"_s);
         return;
     }
 
@@ -64,12 +76,12 @@ void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, cons
         exceptionCallback(NotSupportedError, ""_s);
         return;
     }
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
-        exceptionCallback(SyntaxError, ""_s);
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
+        exceptionCallback(SyntaxError, "Unsupported key usage for a HKDF key"_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "HKDF keys are not extractable"_s);
         return;
     }
 

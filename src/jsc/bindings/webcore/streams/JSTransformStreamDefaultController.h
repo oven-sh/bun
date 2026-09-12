@@ -31,6 +31,7 @@ public:
     // visitChildrenImpl MUST visit: m_stream, m_finishPromise, m_transformer,
     // m_transformMethod, m_flushMethod, m_cancelMethod, m_algorithmContext.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

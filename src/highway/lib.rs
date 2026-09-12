@@ -2,9 +2,47 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 unsafe extern "C" {
-    fn highway_char_frequency(text: *const u8, text_len: usize, freqs: *mut i32, delta: i32);
-
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_last_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_index_of_not_char(haystack: *const u8, haystack_len: usize, value: u8) -> usize;
+
+    fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    #[cfg(not(miri))]
+    fn highway_memmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> *const u8;
+
+    // These three return `usize::MAX` for not-found (the empty needle matches at
+    // 0 / `haystack_len` respectively).
+    #[cfg(not(miri))]
+    fn highway_memrmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> usize;
+
+    #[cfg(not(miri))]
+    fn highway_memmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
+
+    #[cfg(not(miri))]
+    fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -38,6 +76,13 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize;
+
+    fn highway_last_index_of_any_char(
         text: *const u8,
         text_len: usize,
         chars: *const u8,
@@ -97,10 +142,27 @@ unsafe extern "C" {
         inout_state: *mut u64,
         out_flags: *mut u32,
     ) -> usize;
+
+    fn highway_xml_index_chunk(
+        input: *const u8,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        inout_state: *mut u64,
+    ) -> usize;
+
+    fn highway_xml_index16_chunk(
+        input: *const u16,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        inout_state: *mut u64,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
-// ptr/len shims around the `extern "C"` highway_* dispatch stubs; inlining
+// ptr/len shims around the `extern "C"` highway_* dispatch stubs (plus, for the
+// single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
 // LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
@@ -108,36 +170,227 @@ unsafe extern "C" {
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
 
-/// Count frequencies of [a-zA-Z0-9_$] characters in a string
-/// Updates the provided frequency array with counts (adds delta for each occurrence)
-#[inline(always)]
-pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
-    if text.is_empty() || delta == 0 {
-        return;
-    }
+/// Below the narrowest vector the kernels dispatch to (16 lanes: NEON, SSE4)
+/// they do at most one (masked) vector op or just their scalar tail, so for
+/// haystacks this short the FFI hop plus the dispatch-table call dominates —
+/// do those bytes inline. Also keeps cold call sites from dragging an FFI
+/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+const SCALAR_CUTOFF: usize = 16;
 
-    // SAFETY: text.ptr/len are a valid readable range; freqs is a valid 64-elem writable array.
-    unsafe {
-        highway_char_frequency(text.as_ptr(), text.len(), freqs.as_mut_ptr(), delta);
+/// Miri cannot call foreign functions, and the workspace denies std's search
+/// methods everywhere else, so under Miri (`bun run rust:miri`) the search
+/// wrappers below take their scalar path at every length. Kernels with no
+/// scalar form here (hashing, hex, sourcemaps, lexer scans) stay FFI-only:
+/// reaching one from a Miri-tested crate is a loud, immediate error.
+#[inline(always)]
+fn scalar_only(len: usize) -> bool {
+    cfg!(miri) || len < SCALAR_CUTOFF
+}
+
+/// Scalar substring search for Miri. Callers have already handled the empty
+/// needle and `haystack.len() < needle.len()`.
+#[cfg(miri)]
+fn scalar_memmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// Reverse [`scalar_memmem`]: start index of the last occurrence.
+#[cfg(miri)]
+fn scalar_memrmem<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    (0..=haystack.len() - needle.len())
+        .rev()
+        .find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// The single-byte kernels return `haystack_len` for "not found".
+#[inline(always)]
+fn found_at(result: usize, haystack_len: usize) -> Option<usize> {
+    if result == haystack_len {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// The `mem*mem*` kernels return `usize::MAX` for "not found".
+#[cfg(not(miri))]
+#[inline(always)]
+fn match_at(result: usize) -> Option<usize> {
+    if result == usize::MAX {
+        None
+    } else {
+        Some(result)
     }
 }
 
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
-    if haystack.is_empty() {
-        return None;
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|&b| b == needle);
     }
-
     // SAFETY: haystack.ptr/len are a valid readable range.
     let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
 
-    if result == haystack.len() {
+#[inline(always)]
+pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().rposition(|&b| b == needle);
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] == needle));
+    found
+}
+
+/// Index of the first byte that is not `value` (i.e. the length of the leading
+/// run of `value`), or `None` if every byte is `value`.
+#[inline(always)]
+pub fn index_of_not_char(haystack: &[u8], value: u8) -> Option<usize> {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|&b| b != value);
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_not_char(haystack.as_ptr(), haystack.len(), value) };
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| haystack[i] != value));
+    found
+}
+
+#[inline(always)]
+pub fn count_char(haystack: &[u8], needle: u8) -> usize {
+    if scalar_only(haystack.len()) {
+        return haystack.iter().filter(|&&b| b == needle).count();
+    }
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
+}
+
+#[inline(always)]
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
         return None;
     }
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let p = unsafe {
+            highway_memmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        if p.is_null() {
+            None
+        } else {
+            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+        }
+    }
+}
 
-    debug_assert!(haystack[result] == needle);
+/// Start index of the last occurrence of `needle` in `haystack`. An empty
+/// needle matches at `haystack.len()`.
+#[inline(always)]
+pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges.
+        let result = unsafe {
+            highway_memrmem(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
+}
 
-    Some(result)
+#[inline(always)]
+pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
+}
+
+/// Start index of the last occurrence of `needle`. An empty needle matches at
+/// `haystack.len()`.
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memrmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges (`&[u16]` is 2-byte aligned).
+        let result = unsafe {
+            highway_memrmem16(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+            )
+        };
+        let found = match_at(result);
+        debug_assert!(found.is_none_or(|i| haystack[i..].starts_with(needle)));
+        found
+    }
 }
 
 #[inline(always)]
@@ -278,8 +531,12 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
 
 #[inline(always)]
 pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
-    if haystack.is_empty() || chars.is_empty() {
+    if chars.is_empty() {
         return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if scalar_only(haystack.len()) {
+        return haystack.iter().position(|b| chars.contains(b));
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
@@ -311,6 +568,32 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     Some(result)
+}
+
+/// `chars.len()` must be in 2..=16 (single-byte callers use [`last_index_of_char`]).
+#[inline(always)]
+pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    if chars.is_empty() {
+        return None;
+    }
+    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    if scalar_only(haystack.len()) {
+        return haystack.iter().rposition(|b| chars.contains(b));
+    }
+
+    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    let result = unsafe {
+        highway_last_index_of_any_char(
+            haystack.as_ptr(),
+            haystack.len(),
+            chars.as_ptr(),
+            chars.len(),
+        )
+    };
+
+    let found = found_at(result, haystack.len());
+    debug_assert!(found.is_none_or(|i| chars.contains(&haystack[i])));
+    found
 }
 
 // `&[u16]` requires
@@ -379,8 +662,9 @@ pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
     written
 }
 
-/// UTF-16 variant of [`decode_hex`]. Code units above 0xFF are treated as
-/// invalid characters (they stop decoding), never truncated to a byte.
+/// UTF-16 variant of [`decode_hex`]. Each code unit is decoded by its low
+/// byte, as Node's `Buffer` hex decoder does: U+FF41 decodes as `'A'`, and a
+/// unit whose low byte is not a hex digit stops decoding.
 #[inline(always)]
 pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());
@@ -625,6 +909,48 @@ pub fn json_structural_index_chunk(
         )
     };
     (n, flags)
+}
+
+/// XML structural index (stage 1) for one chunk of a document.
+#[inline(always)]
+pub fn xml_structural_index_chunk(
+    chunk: &[u8],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    state: &mut [u64; 3],
+) -> usize {
+    assert!(out.len() >= chunk.len() + 64);
+    // SAFETY: `out` has room for one index per byte plus a full trailing block (asserted above).
+    unsafe {
+        highway_xml_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            state.as_mut_ptr(),
+        )
+    }
+}
+
+/// [`xml_structural_index_chunk`] over UTF-16 code units (positions in units).
+#[inline(always)]
+pub fn xml_structural_index16_chunk(
+    chunk: &[u16],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    state: &mut [u64; 3],
+) -> usize {
+    assert!(out.len() >= chunk.len() + 64);
+    // SAFETY: `out` has room for one index per unit plus a full trailing block (asserted above).
+    unsafe {
+        highway_xml_index16_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            state.as_mut_ptr(),
+        )
+    }
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

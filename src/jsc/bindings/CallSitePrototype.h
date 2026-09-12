@@ -17,7 +17,7 @@ public:
 
     static CallSitePrototype* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
     {
-        CallSitePrototype* callSitePrototype = new (NotNull, JSC::allocateCell<CallSitePrototype>(vm)) CallSitePrototype(vm, structure);
+        CallSitePrototype* callSitePrototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(CallSitePrototype))) CallSitePrototype(vm, structure);
         callSitePrototype->finishCreation(vm, globalObject);
         return callSitePrototype;
     }
@@ -32,7 +32,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:

@@ -81,6 +81,115 @@ describe("ReadStream.prototype.setRawMode", () => {
       returnsThis: true,
     });
   });
+
+  // Raw mode is per-stream in libuv (each uv_tty_t holds its own mode and its
+  // own saved termios), so a second tty.ReadStream on the same fd must not be
+  // able to restore the terminal out from under the stream that raw'd it.
+  // Bun used to keep one process-wide mode + termios snapshot, which turned
+  // `setRawMode(false)` on a never-raw stream into a real tcsetattr.
+  test.skipIf(isWindows)("a second ReadStream's setRawMode does not disturb process.stdin", async () => {
+    const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+    const ECHO = 0x8;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const waiters: { marker: string; resolve: () => void }[] = [];
+
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk: Uint8Array) {
+        buffer += decoder.decode(chunk, { stream: true });
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (buffer.includes(waiters[i].marker)) {
+            waiters[i].resolve();
+            waiters.splice(i, 1);
+          }
+        }
+      },
+    });
+
+    const isRaw = () => (terminal.localFlags & (ICANON | ECHO)) === 0;
+    const observed: Record<string, boolean> = { beforeSpawn: isRaw() };
+
+    // Each phase announces itself, then blocks on stdin so the parent can read
+    // termios while the child is still alive, and releases on the ack byte.
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tty = require("node:tty");
+          const { TTY } = process.binding("tty_wrap");
+          const say = s => process.stdout.write(s + "\\n");
+          const ack = () => new Promise(resolve => process.stdin.once("data", () => resolve()));
+          (async () => {
+            process.stdin.resume();
+            process.stdin.setRawMode(true);
+            say("P1"); await ack();
+
+            const second = new tty.ReadStream(0);
+            second.setRawMode(false); // never raw: must be a no-op
+            say("P2"); await ack();
+
+            second.setRawMode(true);
+            second.setRawMode(false); // restores its own snapshot, which was already raw
+            say("P3"); await ack();
+
+            new TTY(0).setRawMode(0); // same, through the tty_wrap binding
+            say("P4"); await ack();
+
+            process.stdin.setRawMode(false); // the stream that raw'd it restores cooked
+            say("P5"); await ack();
+            process.exit(0);
+          })();
+        `,
+      ],
+      env: bunEnv,
+      terminal,
+    });
+
+    // A child that dies early must reject the phase waits rather than hang them.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
+    });
+    exitedEarly.catch(() => {});
+
+    const phase = (marker: string) => {
+      const seen = buffer.includes(marker)
+        ? Promise.resolve()
+        : new Promise<void>(resolve => waiters.push({ marker, resolve }));
+      return Promise.race([seen, exitedEarly]);
+    };
+
+    await phase("P1");
+    observed.afterStdinRaw = isRaw();
+    terminal.write("\n");
+
+    await phase("P2");
+    observed.afterSecondStreamCooked = isRaw();
+    terminal.write("\n");
+
+    await phase("P3");
+    observed.afterSecondStreamRoundTrip = isRaw();
+    terminal.write("\n");
+
+    await phase("P4");
+    observed.afterTTYWrapCooked = isRaw();
+    terminal.write("\n");
+
+    await phase("P5");
+    observed.afterStdinCooked = isRaw();
+    terminal.write("\n");
+
+    expect(observed).toEqual({
+      beforeSpawn: false,
+      afterStdinRaw: true,
+      afterSecondStreamCooked: true,
+      afterSecondStreamRoundTrip: true,
+      afterTTYWrapCooked: true,
+      afterStdinCooked: false,
+    });
+    expect(await proc.exited).toBe(0);
+  });
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

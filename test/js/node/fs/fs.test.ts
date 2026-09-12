@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -6,6 +6,7 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isGlibc,
   isIntelMacOS,
   isLinux,
   isPosix,
@@ -14,7 +15,6 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
-import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
   constants,
@@ -88,7 +88,10 @@ function tmpdirTestMkdir(): string {
   if (!res?.includes(now)) {
     expect(res).toInclude("fs.test.ts");
   }
-  expect(res).not.toInclude("1234");
+  // res is the first directory created (the ${now} segment). Check the last
+  // path segment rather than a "1234" substring, which can occur in Date.now().
+  expect(path.basename(res!)).not.toBe("1234");
+  expect(path.basename(res!)).not.toBe("hi");
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }
@@ -290,7 +293,7 @@ it("fs.readv returns object", async done => {
 });
 
 it("fs.writev returns object", async done => {
-  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  await using outpath = tempDir("fswritevtest", { "a.txt": "b" });
   const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
   fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
@@ -428,6 +431,78 @@ describe("FileHandle", () => {
 
     expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
+
+  // Node.js closes a FileHandle's fd in its native finalizer and raises
+  // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
+  // without close(). Bun must reclaim the fd and surface the same diagnostic.
+  it.concurrent.skipIf(isWindows)(
+    "FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE",
+    async () => {
+      const fixture = /* js */ `
+        const fsp = require("node:fs/promises");
+        const fs = require("node:fs");
+        const os = require("node:os");
+        const path = require("node:path");
+        const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+        const nfds = () => fs.readdirSync(fdDir).length;
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-"));
+        const N = 50;
+        const diags = [];
+        process.on("uncaughtException", e => diags.push({ code: e.code, message: e.message }));
+
+        (async () => {
+          const before = nfds();
+          await (async () => {
+            for (let i = 0; i < N; i++) await fsp.open(path.join(dir, "f" + i), "w");
+          })();
+          // force GC until every leaked fd is reclaimed and every diagnostic lands
+          for (let i = 0; i < 40 && (nfds() - before > 0 || diags.length < N); i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+          const afterGC = nfds();
+          const sample = diags[0] ?? {};
+
+          // properly closed handles must not trip the finalizer
+          const marker = diags.length;
+          await (async () => {
+            for (let i = 0; i < N; i++) await (await fsp.open(path.join(dir, "g" + i), "w")).close();
+          })();
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+
+          console.log(JSON.stringify({
+            leakedAfterGC: afterGC - before,
+            diagCount: diags.length,
+            sampleCode: sample.code,
+            sampleHasFd: typeof sample.message === "string" && sample.message.includes("File descriptor: "),
+            falsePositives: diags.length - marker,
+          }));
+          fs.rmSync(dir, { recursive: true, force: true });
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+        result: {
+          leakedAfterGC: 0,
+          diagCount: 50,
+          sampleCode: "ERR_INVALID_STATE",
+          sampleHasFd: true,
+          falsePositives: 0,
+        },
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("fdatasyncSync", () => {
@@ -477,6 +552,48 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
+describe("append with flag a+ writes at end of file", () => {
+  const seed = "0123456789";
+  const expected = "0123456789AB";
+
+  it("writeFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    writeFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("promises.writeFile", async () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    await promises.writeFile(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("appendFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    fs.appendFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("openSync + writeSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    const fd = openSync(path, "a+");
+    try {
+      writeSync(fd, "AB");
+      // a+ (unlike a) also grants read access.
+      const buf = Buffer.alloc(expected.length);
+      expect(readSync(fd, buf, 0, buf.length, 0)).toBe(expected.length);
+      expect(buf.toString()).toBe(expected);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+});
+
 it.concurrent("await readdir #3931", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
@@ -500,6 +617,52 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
       writeFileSync(path, line, options);
       expect(readFileSync(path, "utf8")).toBe(str);
     }
+  }
+});
+
+// On Windows `fs.writeFileSync(path, ...)` opens via bun_sys::openat
+// (NtCreateFile), so this exercises the O_CREAT/O_EXCL/O_TRUNC -> create
+// disposition mapping in openat_windows_impl directly. On POSIX it is the
+// plain openat(2) flag behavior. Every row matches Node.
+describe("writeFileSync numeric open-flag matrix", () => {
+  const { O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND } = constants;
+
+  type Outcome = "ZZ23456789" | "ZZ" | "0123456789ZZ" | "ENOENT" | "EEXIST";
+  const cases: [number, string, { exists: Outcome; missing: Outcome }][] = [
+    // access | disposition flags ...           label                          over existing   over missing
+    [O_WRONLY, "WRONLY", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT, "WRONLY|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_WRONLY | O_TRUNC, "WRONLY|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_TRUNC, "WRONLY|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL, "WRONLY|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, "WRONLY|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR, "RDWR", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT, "RDWR|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_RDWR | O_TRUNC, "RDWR|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT | O_TRUNC, "RDWR|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL, "RDWR|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC, "RDWR|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND, "WRONLY|APPEND", { exists: "0123456789ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND, "WRONLY|CREAT|APPEND", { exists: "0123456789ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND | O_TRUNC, "WRONLY|APPEND|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, "WRONLY|CREAT|APPEND|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+  ];
+
+  function probe(flag: number, seeded: boolean): string {
+    using dir = tempDir("wf-flag-matrix", seeded ? { "f.txt": "0123456789" } : {});
+    const p = join(String(dir), "f.txt");
+    try {
+      writeFileSync(p, "ZZ", { flag });
+      return readFileSync(p, "utf8");
+    } catch (e: any) {
+      return e.code;
+    }
+  }
+
+  for (const [flag, name, expected] of cases) {
+    it(`${name} (O_${name.replace(/\|/g, " | O_")})`, () => {
+      expect({ exists: probe(flag, true), missing: probe(flag, false) }).toEqual(expected);
+    });
   }
 });
 
@@ -588,18 +751,80 @@ describe("writeFile with a non-truncating flag", () => {
     writeFileSync(path, "ZZ", { flag });
     expect(readFileSync(path, "utf8")).toBe("ZZ");
   });
+});
 
-  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
-  // open rather than afterwards. Skipped on Windows: openat() there picks its
-  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
-  // yields "0123456789ZZ" on main. Separate bug, separate fix.
-  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
-    const path = join(tmpdirSync(), "append-truncating.txt");
+describe("appendFile honors an exclusive append flag", () => {
+  it("appendFileSync with flag 'ax' fails with EEXIST on an existing file", () => {
+    const path = join(tmpdirSync(), "exclusive.txt");
     writeFileSync(path, "0123456789");
-    writeFileSync(path, "ZZ", {
-      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
+    let err: any;
+    try {
+      fs.appendFileSync(path, "ZZ", { flag: "ax" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EEXIST");
+    expect(err.syscall).toBe("open");
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+
+  it("fs.appendFile with flag 'ax+' fails with EEXIST on an existing file", async () => {
+    const path = join(tmpdirSync(), "exclusive-callback.txt");
+    writeFileSync(path, "0123456789");
+    const { promise, resolve } = Promise.withResolvers<any>();
+    fs.appendFile(path, "ZZ", { flag: "ax+" }, err => resolve(err));
+    const err = await promise;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EEXIST");
+    expect(err.syscall).toBe("open");
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+
+  it("promises.appendFile with flag 'ax' rejects with EEXIST on an existing file", async () => {
+    const path = join(tmpdirSync(), "exclusive-promise.txt");
+    writeFileSync(path, "0123456789");
+    await expect(promises.appendFile(path, "ZZ", { flag: "ax" })).rejects.toMatchObject({
+      code: "EEXIST",
+      syscall: "open",
     });
-    expect(readFileSync(path, "utf8")).toBe("ZZ");
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+});
+
+describe("appendFile honors an explicit 'w' flag", () => {
+  // Node: `if (!options.flag || isFd(path)) options.flag = 'a'`. An explicit
+  // 'w'/'w+' must truncate; only the unset default becomes 'a'.
+  it("appendFileSync with flag 'w' truncates instead of appending", () => {
+    const path = join(tmpdirSync(), "append-w.txt");
+    writeFileSync(path, "abc");
+    fs.appendFileSync(path, "d", { flag: "w" });
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("fs.appendFile with flag 'w' truncates instead of appending", async () => {
+    const path = join(tmpdirSync(), "append-w-cb.txt");
+    writeFileSync(path, "abc");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    fs.appendFile(path, "d", { flag: "w" }, resolve);
+    expect(await promise).toBeNull();
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("promises.appendFile with flag 'w' truncates instead of appending", async () => {
+    const path = join(tmpdirSync(), "append-w-promise.txt");
+    writeFileSync(path, "abc");
+    await promises.appendFile(path, "d", { flag: "w" });
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("appendFileSync without a flag still defaults to appending", () => {
+    const path = join(tmpdirSync(), "append-default.txt");
+    writeFileSync(path, "abc");
+    fs.appendFileSync(path, "d");
+    expect(readFileSync(path, "utf8")).toBe("abcd");
+    fs.appendFileSync(path, "e", {});
+    expect(readFileSync(path, "utf8")).toBe("abcde");
   });
 });
 
@@ -752,6 +977,27 @@ describe("copyFileSync", () => {
     expect(() => {
       copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
     }).toThrow();
+  });
+
+  it("throws ENOENT with syscall, path and dest for a destination in a missing directory", async () => {
+    const tempdir = tmpdirTestMkdir();
+    const src = import.meta.path;
+    const dest = join(tempdir, "does-not-exist", "copyFileSync.js");
+    const expected = expect.objectContaining({ code: "ENOENT", syscall: "copyfile", path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
+  });
+
+  // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
+  // in the Win32→errno table, so this is the UNKNOWN path.
+  it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {
+    const src = import.meta.path;
+    const dest = "\\\\localhost\\bun-test-no-such-share$\\copyFileSync.js";
+    const expected = expect.objectContaining({ code: "EUNKNOWN", syscall: "copyfile", errno: -4094, path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
   });
 
   if (process.platform === "linux") {
@@ -929,7 +1175,7 @@ it("promises.readFile", async () => {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
-      expect(e.errno).toBe(-2);
+      expect(e.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(e.path).toBe("/i-dont-exist");
     }
   }
@@ -1091,6 +1337,51 @@ describe("promises.readFile", async () => {
       "out": "asci",
     },
     {
+      "encoding": "base64",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA==",
+    },
+    {
+      "encoding": "base64",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
+      "encoding": "base64url",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [106, 199, 34],
+      },
+      "out": "asci",
+    },
+    {
+      "encoding": "base64url",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA",
+    },
+    {
+      "encoding": "base64url",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
       "encoding": "hex",
       "text": "ascii",
       "correct": {
@@ -1121,19 +1412,8 @@ describe("promises.readFile", async () => {
 
   it("& fs.promises.writefile encodes & decodes", async () => {
     const results = [];
-    for (let encoding of [
-      "utf8",
-      "utf-8",
-      "utf16le",
-      "latin1",
-      "binary",
-      "base64",
-      /* TODO: "base64url", */ "hex",
-    ] as const) {
+    for (let encoding of ["utf8", "utf-8", "utf16le", "latin1", "binary", "base64", "base64url", "hex"] as const) {
       for (let text of ["ascii", "utf16 🍇 🍈 🍉 🍊 🍋", "👍"]) {
-        if (encoding === "base64" && !isAscii(Buffer.from(text)))
-          // TODO: output does not match Node.js, and it's not a problem with readFile specifically.
-          continue;
         const correct = Buffer.from(text, encoding);
         const outfile = join(
           tmpdir(),
@@ -1320,7 +1600,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(-2);
+    expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
   }
 });
 
@@ -1328,12 +1608,88 @@ it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
     try {
-      expect(err?.errno).toBe(-2);
+      expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {
       done(e);
     }
+  });
+});
+
+describe("mkdtemp empty prefix", () => {
+  // Node.js rejects an empty prefix with EINVAL; previously Bun would create
+  // a bare six-random-character directory in the process cwd.
+  it("mkdtempSync('') throws EINVAL", () => {
+    expect(() => mkdtempSync("")).toThrow(expect.objectContaining({ code: "EINVAL", syscall: "mkdtemp" }));
+  });
+
+  it("mkdtemp('') callback receives EINVAL", async () => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    mkdtemp("", (err, folder) => resolve(err));
+    const err = await promise;
+    expect(err).toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+
+  it("fs.promises.mkdtemp('') rejects with EINVAL", async () => {
+    await expect(promises.mkdtemp("")).rejects.toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+});
+
+describe("mkdtemp encoding option", () => {
+  const base = tmpdirSync();
+  const prefix = join(base, "mkenc-dé-");
+  const prefixBytes = Buffer.from(prefix, "utf8");
+
+  it("sync: 'buffer' returns a Buffer of the path bytes", () => {
+    const result = mkdtempSync(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(result.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("sync: string shorthand 'buffer'", () => {
+    const result = mkdtempSync(prefix, "buffer");
+    expect(Buffer.isBuffer(result)).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("sync: '%s' re-encodes the path", encoding => {
+    const result = mkdtempSync(prefix, { encoding });
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, encoding);
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(decoded.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("sync: default utf8 still returns a string", () => {
+    const result = mkdtempSync(prefix);
+    expect(typeof result).toBe("string");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("callback: 'buffer' returns a Buffer", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    mkdtemp(prefix, { encoding: "buffer" }, (err, folder) => (err ? reject(err) : resolve(folder)));
+    const result = await promise;
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("promises: 'hex' re-encodes the path", async () => {
+    const result = await promises.mkdtemp(prefix, "hex");
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, "hex");
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("promises: 'buffer' returns a Buffer", async () => {
+    const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 });
 
@@ -1498,6 +1854,55 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
     signalCode: null,
   });
 });
+
+// After the first subtask failed, the walker kept scheduling a subtask for every
+// directory it found and only settled once that frontier drained. Two symlinks
+// back to the root make the frontier 2^41 directories (the kernel follows 40
+// symlinks before ELOOP), so the promise and the callback never settled.
+it.skipIf(isWindows)(
+  "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
+  async () => {
+    using dir = tempDir("readdir-recursive-loop", {
+      "a/b/keep.txt": "x",
+    });
+    const root = String(dir);
+    // Opening this one with O_DIRECTORY fails with ELOOP at once.
+    fs.symlinkSync(join(root, "bad"), join(root, "bad"));
+    fs.symlinkSync(".", join(root, "loop1"));
+    fs.symlinkSync(".", join(root, "loop2"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const root = ${JSON.stringify(root)};
+          const viaPromise = await fs.promises.readdir(root, { recursive: true }).then(
+            r => "resolved " + r.length,
+            e => "rejected " + e.code,
+          );
+          console.log("promise", viaPromise);
+          const { promise, resolve } = Promise.withResolvers();
+          fs.readdir(root, { recursive: true }, (e, r) => resolve(e ? "rejected " + e.code : "resolved " + r.length));
+          console.log("callback", await promise);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
@@ -1680,21 +2085,411 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+// Node defaults an explicit `undefined` len to 0 on every truncate entry point
+// (`if (len === undefined) len = 0` in truncateSync, `len = 0` default params
+// elsewhere), while `null` still fails validateInteger.
+describe.concurrent("truncate with an undefined len", () => {
+  const file = (name: string, dir: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, "hello world");
+    return p;
+  };
+
+  it("truncateSync(path, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("sync.txt", String(dir));
+    fs.truncateSync(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("promises.truncate(path, undefined) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("promise.txt", String(dir));
+    await _promises.truncate(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("truncate(path, undefined, cb) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("callback.txt", String(dir));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.truncate(p, undefined, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("ftruncateSync(fd, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("fsync.txt", String(dir));
+    const fd = openSync(p, "r+");
+    try {
+      ftruncateSync(fd, undefined);
+      expect(fstatSync(fd).size).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("null is still rejected with ERR_INVALID_ARG_TYPE", async () => {
+    using dir = tempDir("fs-truncate-null", {});
+    const p = file("null.txt", String(dir));
+    expect(() => fs.truncateSync(p, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    await expect(() => _promises.truncate(p, null as any)).toThrowWithCodeAsync(TypeError, "ERR_INVALID_ARG_TYPE");
+    const fd = openSync(p, "r+");
+    try {
+      expect(() => ftruncateSync(fd, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("hello world");
+  });
+});
+
+// The `fs.*Sync` functions bound straight to the native binding parse their
+// arguments in Rust (`args::*::from_js` in node_fs.rs), where an absent argument
+// and an explicit `undefined` arrive differently. Node treats them the same for
+// every optional argument, so each row must produce the same outcome both ways.
+describe("explicit undefined behaves like an absent optional argument", () => {
+  type Ctx = {
+    dir: string;
+    file: () => string;
+    fresh: (prefix: string) => string;
+    withFd: <T>(flags: string, f: (fd: number) => T) => T;
+  };
+  const makeCtx = (dir: string): Ctx => {
+    let n = 0;
+    const fresh = (prefix: string) => join(dir, `${prefix}${n++}`);
+    const file = () => {
+      const p = fresh("f");
+      writeFileSync(p, "hello world");
+      return p;
+    };
+    const withFd = <T>(flags: string, f: (fd: number) => T): T => {
+      const fd = openSync(file(), flags);
+      try {
+        return f(fd);
+      } finally {
+        closeSync(fd);
+      }
+    };
+    return { dir, file, fresh, withFd };
+  };
+  // Strings (fresh paths from mkdtempSync, readlinkSync) differ between the two
+  // calls by construction, so only their type is compared.
+  const outcome = (f: () => unknown) => {
+    try {
+      const v = f();
+      return { ok: typeof v === "string" ? "string" : v };
+    } catch (e: any) {
+      return { code: e.code };
+    }
+  };
+
+  const rows: [string, (c: Ctx) => unknown, (c: Ctx) => unknown][] = [
+    ["accessSync(path[, mode])", c => fs.accessSync(c.file()), c => fs.accessSync(c.file(), undefined)],
+    [
+      "appendFileSync(path, data[, options])",
+      c => fs.appendFileSync(c.file(), "x"),
+      c => fs.appendFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "copyFileSync(src, dest[, mode])",
+      c => copyFileSync(c.file(), c.fresh("c")),
+      c => copyFileSync(c.file(), c.fresh("c"), undefined),
+    ],
+    [
+      "cpSync(src, dest[, options])",
+      c => fs.cpSync(c.file(), c.fresh("cp")),
+      c => fs.cpSync(c.file(), c.fresh("cp"), undefined),
+    ],
+    ["existsSync(path)", c => existsSync(c.file()), c => existsSync(c.file(), undefined as any)],
+    [
+      "fstatSync(fd[, options]).size",
+      c => c.withFd("r", fd => fstatSync(fd).size),
+      c => c.withFd("r", fd => fstatSync(fd, undefined).size),
+    ],
+    [
+      "ftruncateSync(fd[, len])",
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd);
+          return fstatSync(fd).size;
+        }),
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd, undefined);
+          return fstatSync(fd).size;
+        }),
+    ],
+    ["lstatSync(path[, options]).size", c => lstatSync(c.file()).size, c => lstatSync(c.file(), undefined).size],
+    ["mkdirSync(path[, options])", c => mkdirSync(c.fresh("m")), c => mkdirSync(c.fresh("m"), undefined)],
+    ["mkdtempSync(prefix[, options])", c => mkdtempSync(c.fresh("t")), c => mkdtempSync(c.fresh("t"), undefined)],
+    [
+      "opendirSync(path[, options])",
+      c => fs.opendirSync(c.dir).closeSync(),
+      c => fs.opendirSync(c.dir, undefined).closeSync(),
+    ],
+    ["openSync(path[, flags])", c => closeSync(openSync(c.file())), c => closeSync(openSync(c.file(), undefined))],
+    [
+      "openSync(path, flags[, mode])",
+      c => closeSync(openSync(c.file(), "r")),
+      c => closeSync(openSync(c.file(), "r", undefined)),
+    ],
+    ["readdirSync(path[, options]).length", c => readdirSync(c.dir).length, c => readdirSync(c.dir, undefined).length],
+    [
+      "readFileSync(path[, options]).length",
+      c => readFileSync(c.file()).length,
+      c => readFileSync(c.file(), undefined).length,
+    ],
+    [
+      "readlinkSync(path[, options])",
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l);
+      },
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l, undefined);
+      },
+    ],
+    [
+      "readSync(fd, buffer[, options])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2))),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), undefined)),
+    ],
+    [
+      "readSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2)),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2, undefined)),
+    ],
+    [
+      "readvSync(fd, buffers[, position])",
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)])),
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)], undefined)),
+    ],
+    ["realpathSync(path[, options])", c => realpathSync(c.dir), c => realpathSync(c.dir, undefined)],
+    [
+      "realpathSync.native(path[, options])",
+      c => realpathSync.native(c.dir),
+      c => realpathSync.native(c.dir, undefined),
+    ],
+    [
+      "rmdirSync(path[, options])",
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d);
+      },
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d, undefined);
+      },
+    ],
+    ["rmSync(path[, options])", c => rmSync(c.file()), c => rmSync(c.file(), undefined)],
+    ["statSync(path[, options]).size", c => statSync(c.file()).size, c => statSync(c.file(), undefined).size],
+    [
+      "statfsSync(path[, options]).bsize",
+      c => typeof statfsSync(c.dir).bsize,
+      c => typeof statfsSync(c.dir, undefined).bsize,
+    ],
+    [
+      "symlinkSync(target, path[, type])",
+      c => symlinkSync(c.file(), c.fresh("s")),
+      c => symlinkSync(c.file(), c.fresh("s"), undefined),
+    ],
+    [
+      "truncateSync(path[, len])",
+      c => {
+        const p = c.file();
+        fs.truncateSync(p);
+        return statSync(p).size;
+      },
+      c => {
+        const p = c.file();
+        fs.truncateSync(p, undefined);
+        return statSync(p).size;
+      },
+    ],
+    [
+      "writeFileSync(path, data[, options])",
+      c => writeFileSync(c.file(), "x"),
+      c => writeFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "writeSync(fd, buffer[, offset])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"))),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset[, length])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2, undefined)),
+    ],
+    [
+      "writeSync(fd, string[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, "ab")),
+      c => c.withFd("r+", fd => writeSync(fd, "ab", undefined)),
+    ],
+    [
+      "writevSync(fd, buffers[, position])",
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")])),
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")], undefined)),
+    ],
+  ];
+
+  it.each(rows)("%s", (_label, absent, explicit) => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => explicit(c))).toEqual(outcome(() => absent(c)));
+  });
+
+  // Node coerces a positional read `length` with `length |= 0`, so `undefined`
+  // reads 0 bytes. Bun validates it as an integer instead and throws
+  // ERR_OUT_OF_RANGE 'The value of "length" is out of range. It must be an
+  // integer. Received NaN'. The 3-argument form is the options overload in
+  // Node, so the comparison is against an explicit 0.
+  it.failing("readSync(fd, buffer, offset, undefined) reads 0 bytes like readSync(fd, buffer, offset, 0)", () => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, undefined)))).toEqual(
+      outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 0))),
+    );
+  });
+});
+
+describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
+  // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
+  // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
+  // the whole array to one syscall and got EINVAL for any count > 1024.
+  const n = 2000;
+  const makeWriteBufs = () => Array.from({ length: n }, (_, i) => Buffer.from([i & 0xff]));
+  const expectedBytes = Buffer.from(Array.from({ length: n }, (_, i) => i & 0xff));
+  // libuv caps readv at IOV_MAX on POSIX; Windows libuv reads every buffer.
+  const readvCap = isWindows ? n : 1024;
+
+  it("writevSync writes every buffer", () => {
+    using dir = tempDir("writev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      expect(writevSync(fd, makeWriteBufs())).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("writevSync with position writes every buffer", () => {
+    using dir = tempDir("pwritev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      writeSync(fd, Buffer.from("head"), 0, 4, 0);
+      expect(writevSync(fd, makeWriteBufs(), 4)).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(file);
+    expect(out.subarray(0, 4).toString()).toBe("head");
+    expect(out.subarray(4).equals(expectedBytes)).toBe(true);
+  });
+
+  it("fs.writev (callback) writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-cb", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, makeWriteBufs(), (err, written) => (err ? reject(err) : resolve(written)));
+      expect(await promise).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("FileHandle.writev writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-fh", {});
+    const file = join(String(dir), "out");
+    const fh = await _promises.open(file, "w");
+    try {
+      const { bytesWritten } = await fh.writev(makeWriteBufs());
+      expect(bytesWritten).toBe(n);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("readvSync caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("readv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("readvSync with position caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("preadv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.concat([Buffer.from("xxx"), Buffer.alloc(n, 7)]));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers, 3)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle.readv caps at IOV_MAX instead of failing", async () => {
+    using dir = tempDir("readv-iovmax-fh", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fh = await _promises.open(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      const { bytesRead } = await fh.readv(buffers, 0);
+      expect(bytesRead).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      await fh.close();
+    }
+  });
+});
+
 describe("writeSync", () => {
-  it("works with bigint", () => {
-    const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
+  it("treats a bigint position as the current offset", () => {
+    // Node's fs.write does `if (typeof position !== 'number') position = null`
+    // for the buffer overload; GetOffset then returns -1. fs.read accepts
+    // bigint positions, but fs.write does not.
+    const dest = join(tmpdir(), "writeSync-bigint-position.txt");
     rmSync(dest, { force: true });
 
     const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from("AAAA"));
     writeSync(writefd, Buffer.from([0x10]), 0, 1, 400n as any);
     closeSync(writefd);
 
-    const fd = openSync(dest, "r");
-    const out = Buffer.alloc(1);
-    const bytes = readSync(fd, out, 0, 1, 400 as any);
-    expect(bytes).toBe(1);
-    expect(out[0]).toBe(0x10);
-    closeSync(fd);
+    expect(readFileSync(dest, "latin1")).toBe("AAAA\x10");
     rmSync(dest, { force: true });
   });
 
@@ -1753,6 +2548,144 @@ describe("writeSync", () => {
         bytes: [...expected],
       });
     }
+  });
+});
+
+// Node's native GetOffset (src/node_file.cc) returns -1 ("current file offset")
+// unless IsSafeJsInt(value) holds. A NaN/±Infinity/fractional/out-of-range
+// position must not become offset 0: that is what caused createWriteStream's
+// short-write retry loop (pos = undefined + n -> NaN) to overwrite the head of
+// the file on a partial write.
+describe.each([
+  ["NaN", NaN],
+  ["Infinity", Infinity],
+  ["-Infinity", -Infinity],
+  ["1.5", 1.5],
+  ["MAX_SAFE_INTEGER+1", Number.MAX_SAFE_INTEGER + 1],
+  ["5n", 5n],
+] as [string, any][])("fs.write with position=%s uses the current file offset", (_label, position) => {
+  it("writeSync(fd, buffer, offset, length, position)", () => {
+    using dir = tempDir("fs-write-pos-buf", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      writeSync(fd, Buffer.from("XX"), 0, 2, position);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXX");
+  });
+
+  it("writeSync(fd, string, position)", () => {
+    using dir = tempDir("fs-write-pos-str", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      writeSync(fd, "YY", position);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAYY");
+  });
+
+  it("fs.write(fd, buffer, offset, length, position, cb)", async () => {
+    using dir = tempDir("fs-write-pos-cb", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.write(fd, Buffer.from("ZZ"), 0, 2, position, (err, n) => (err ? reject(err) : resolve(n)));
+      expect(await promise).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAZZ");
+  });
+
+  it("writevSync(fd, buffers, position)", () => {
+    using dir = tempDir("fs-writev-pos", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      expect(writevSync(fd, [Buffer.from("V"), Buffer.from("V")], position as any)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAVV");
+  });
+
+  it("readvSync(fd, buffers, position)", () => {
+    using dir = tempDir("fs-readv-pos", { "in.txt": "ABCDEFGHIJ" });
+    const fd = openSync(join(String(dir), "in.txt"), "r");
+    try {
+      readSync(fd, Buffer.alloc(3), 0, 3, null);
+      const b = Buffer.alloc(3);
+      expect(readvSync(fd, [b], position as any)).toBe(3);
+      expect(b.toString()).toBe("DEF");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle.write(buffer, offset, length, position)", async () => {
+    using dir = tempDir("fs-fh-write-pos", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "AAAAAAAAAA");
+    const fh = await promises.open(p, "r+");
+    try {
+      await fh.read(Buffer.alloc(10), 0, 10, null);
+      await fh.write(Buffer.from("WW"), 0, 2, position);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAWW");
+  });
+
+  it("FileHandle.writev(buffers, position)", async () => {
+    using dir = tempDir("fs-fh-writev-pos", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "AAAAAAAAAA");
+    const fh = await promises.open(p, "r+");
+    try {
+      await fh.read(Buffer.alloc(10), 0, 10, null);
+      await fh.writev([Buffer.from("QQ")], position);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAQQ");
+  });
+});
+
+describe("fs.readv/writev with a non-number position uses the current file offset", () => {
+  it.each([null, undefined, "3", {}, true] as const)("writevSync position=%p", position => {
+    using dir = tempDir("fs-writev-nonnum", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      expect(writevSync(fd, [Buffer.from("XY")], position as any)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXY");
+  });
+
+  it("writevSync with a non-negative integer position is still positional", () => {
+    using dir = tempDir("fs-writev-int", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "0123456789");
+    const fd = openSync(p, "r+");
+    try {
+      readSync(fd, Buffer.alloc(4), 0, 4, null);
+      expect(writevSync(fd, [Buffer.from("XY")], 8)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("01234567XY");
   });
 });
 
@@ -1846,7 +2779,7 @@ describe("readFile", () => {
   });
 
   it("works with flags", async () => {
-    const mydir = tempDirWithFiles("fs-read", {});
+    await using mydir = tempDir("fs-read", {});
     console.log(mydir);
 
     for (const [flag, code] of [
@@ -1989,6 +2922,11 @@ describe("open flag string validation matches node", () => {
     "xyz",
     "",
     true,
+    // Node has no options-object form for open(): the second argument is always
+    // the flags, so an object is just an invalid flags value. Only `{}` is listed
+    // here because a populated object is rendered multi-line by the native error
+    // inspector, where node (and util.inspect) render it on one line.
+    {},
   ];
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
@@ -2028,6 +2966,26 @@ describe("open flag string validation matches node", () => {
       code: "ERR_INVALID_ARG_VALUE",
     });
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("rejects an options object as the flags argument across open, openSync and promises.open", async () => {
+    // Only the code is asserted: a populated object is rendered multi-line by the
+    // native error inspector, where node renders it on one line.
+    using dir = tempDir("fs-flags-object", { "existing.txt": "x" });
+    const file = join(String(dir), "existing.txt");
+    for (const flags of [{}, { flags: "r" }, { flags: "w", mode: 0o666 }]) {
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => openSync(file, flags)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => fs.open(file, flags, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      await expect(promises.open(file, flags)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+    }
+    // The file must be untouched: the old behavior silently opened it.
+    expect(readFileSync(file, "utf8")).toBe("x");
   });
 
   it("readFileSync and writeFileSync reject uppercase flag option", () => {
@@ -2174,6 +3132,29 @@ describe("writeFileSync", () => {
   });
 });
 
+describe("writeFile/appendFile data argument", () => {
+  it("rejects a String wrapper object on the sync and callback paths, like node", () => {
+    // Node only accepts primitive strings here (`new String("x")` is an
+    // object), unlike most other string-or-buffer arguments, which unwrap it.
+    // The callback forms validate before scheduling anything, so they throw
+    // synchronously too. (fs.promises.* is different: there node accepts any
+    // iterable, which a String object is.)
+    using dir = tempDir("fs-data-string-object", {});
+    const file = (name: string) => join(String(dir), name);
+    const data = new String("data") as any;
+
+    expect(() => writeFileSync(file("write-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFileSync(file("append-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFile(file("write-cb.txt"), data, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFile(file("append-cb.txt"), data, () => {})).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+
+    expect(readdirSync(String(dir))).toEqual([]);
+  });
+});
+
 function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) {
   for (let i = 0; i < 9999; i++) {
     if (fn.apply(target) !== result) {
@@ -2293,6 +3274,33 @@ it("readlink", () => {
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+describe("readlink encoding option", () => {
+  const base = tmpdirSync();
+  const link = join(base, "lnk");
+  let targetBytes: Buffer;
+  beforeAll(() => {
+    symlinkSync(join(base, "tgt-dé"), link);
+    targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  });
+
+  it("'buffer' returns a Buffer", () => {
+    expect(Buffer.isBuffer(targetBytes)).toBe(true);
+    expect(targetBytes.includes(Buffer.from("tgt-dé", "utf8"))).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("'%s' re-encodes the target", encoding => {
+    const result = readlinkSync(link, { encoding });
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString(encoding));
+  });
+
+  it("default utf8 still returns a string", () => {
+    const result = readlinkSync(link);
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString("utf8"));
+  });
+});
+
 // On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
 // and POSIX readlink() may return exactly buf.len (truncated). Bun used to
 // write the NUL terminator at buf[rc] which would be one past the end of the
@@ -2365,6 +3373,35 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
@@ -2537,6 +3574,63 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // A recursive rm holds a view of the cwd for the whole walk. On Windows the
+  // cwd is a real handle that process.chdir() closes and replaces, and the
+  // closed value is reissued to the next object created. That view used to be
+  // an owning Dir: when the walk ended after a chdir it no longer matched the
+  // current cwd handle and was closed, which closed the object that had the
+  // old value by then (here: events created right after the chdir, in the
+  // crash reports the handle of a worker thread).
+  it.if(isWindows)(
+    "recursive rm on the thread pool does not close the old cwd handle after process.chdir()",
+    async () => {
+      using dir = tempDir("rm-across-chdir", {
+        "fixture.js": /* js */ `
+        import { dlopen } from "bun:ffi";
+        import fs from "node:fs";
+        import path from "node:path";
+        const k32 = dlopen("kernel32.dll", {
+          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
+          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const WAIT_OBJECT_0 = 0;
+
+        const tree = path.resolve("tree");
+        fs.mkdirSync(tree);
+        for (let i = 0; i < 1500; i++) fs.writeFileSync(path.join(tree, String(i).padStart(5, "0")), "");
+        const elsewhere = path.resolve("elsewhere");
+        fs.mkdirSync(elsewhere);
+
+        // The walk runs on a thread pool thread and takes its view of the cwd
+        // when it starts. Wait until it has started deleting.
+        const removal = fs.promises.rm(tree, { recursive: true });
+        const sentinels = ["00000", "00500", "01000", "01499"].map(name => path.join(tree, name));
+        while (sentinels.every(file => fs.existsSync(file))) await Bun.sleep(1);
+        // Retire the cwd handle the walk is holding a view of, then give its
+        // value to objects whose state we can check: signaled events.
+        process.chdir(elsewhere);
+        const events = [];
+        for (let i = 0; i < 1024; i++) events.push(Number(k32.CreateEventW(null, 1, 1, null)));
+        await removal;
+        const closed = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0).length;
+        for (const event of events) k32.CloseHandle(event);
+        if (closed) throw new Error("rm closed " + closed + " handle(s) it did not own");
+        console.log("PASS");
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 describe("rmdir", () => {
@@ -2603,21 +3697,23 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
-    await promises.rm(path, { recursive: true, force: true });
+    await promises.rmdir(path, { recursive: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
-  it("throws for recursive: true like node", () => {
-    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-    try {
-      mkdirSync(path, { recursive: true });
-    } catch (e) {}
-    expect(existsSync(path)).toBe(true);
-    expect(() => {
-      rmdir(join(path, "../../"), { recursive: true }, () => {});
-    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    rmSync(join(path, "../../"), { recursive: true, force: true });
-    expect(existsSync(path)).toBe(false);
+  // Node 26 removed rmdir's `recursive` option (DEP0147). Bun keeps accepting
+  // it and removes the tree the way `rm` does, because packages still call it.
+  it("removes a non-empty tree with recursive: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(join(String(dir), "a"), { recursive: true }, resolve);
+    expect(await promise).toBeNull();
+    expect(readdirSync(String(dir))).toEqual(["e"]);
+  });
+  it("reports ENOENT for a missing path with recursive: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb-missing", {});
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(join(String(dir), "missing"), { recursive: true }, resolve);
+    expect(await promise).toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -2640,17 +3736,14 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  it("throws for recursive: true like node", () => {
-    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-    try {
-      mkdirSync(path, { recursive: true });
-    } catch (e) {}
-    expect(existsSync(path)).toBe(true);
-    expect(() => rmdirSync(join(path, "../../"), { recursive: true })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
-    rmSync(join(path, "../../"), { recursive: true, force: true });
-    expect(existsSync(path)).toBe(false);
+  it("removes a non-empty tree with recursive: true", () => {
+    using dir = tempDir("rmdirsync-recursive", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+    const a = join(String(dir), "a");
+    expect(() => rmdirSync(a, { recursive: false })).toThrow(expect.objectContaining({ syscall: "rmdir" }));
+    expect(existsSync(join(a, "b/c.txt"))).toBe(true);
+    rmdirSync(a, { recursive: true, maxRetries: 1, retryDelay: 0 });
+    expect(readdirSync(String(dir))).toEqual(["e"]);
+    expect(() => rmdirSync(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 });
 
@@ -2816,6 +3909,41 @@ describe("createReadStream", () => {
     },
     { timeout: 100 },
   );
+
+  // https://github.com/oven-sh/bun/issues/30919
+  it("async iterator rejects with ERR_STREAM_PREMATURE_CLOSE when destroy() is called during iteration", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+
+    let chunks = 0;
+    let caught: any = undefined;
+    try {
+      for await (const _ of stream) {
+        chunks++;
+        stream.destroy();
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(chunks).toBe(1);
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
+  });
+
+  // https://github.com/oven-sh/bun/pull/30920
+  it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    stream.on("data", () => {});
+    stream.on("error", reject);
+    stream.on("close", () => resolve());
+
+    await promise;
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+    expect(stream.fd).toBeNull();
+  });
 });
 
 describe("fs.WriteStream", () => {
@@ -2907,6 +4035,145 @@ describe("fs.WriteStream", () => {
     // @ts-ignore-next-line
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
+  });
+
+  // Node.js defers closing the fd until in-flight IO completes (kIsPerformingIO / kIoDone).
+  it("_destroy waits for in-flight _write before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWrite!: () => void;
+    const writeStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write-start");
+        writeStarted.resolve();
+        finishWrite = () => {
+          events.push("write-cb");
+          cb(null, len, buf);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.write(Buffer.from("hello"));
+    await writeStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWrite();
+    await closed.promise;
+
+    expect(events).toEqual(["write-start", "write-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  it("_destroy waits for in-flight _writev before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWritev!: () => void;
+    const writevStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write: fs.write,
+      writev(fd: number, buffers: Buffer[], pos: number, cb: Function) {
+        events.push("writev-start");
+        writevStarted.resolve();
+        let total = 0;
+        for (const b of buffers) total += b.length;
+        finishWritev = () => {
+          events.push("writev-cb");
+          cb(null, total, buffers);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writevStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWritev();
+    await closed.promise;
+
+    expect(events).toEqual(["writev-start", "writev-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  // options.fs with write but no writev: corked writes must fall back to _write,
+  // not sync-throw inside _writev and strand kIsPerformingIO (hanging destroy()).
+  it("options.fs without writev falls back to _write for corked writes and destroy() closes", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    const writeDone = Promise.withResolvers<void>();
+    let pending = 2;
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write");
+        fs.write(fd, buf, off, len, pos, (...a: any[]) => {
+          cb(...a);
+          if (--pending === 0) writeDone.resolve();
+        });
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    expect(stream._writev).toBeNull();
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writeDone.promise;
+    stream.destroy();
+    await closed.promise;
+
+    expect(events).toEqual(["write", "write", "close", "close-event"]);
+    expect(readFileSync(join(pathToDir, "out.txt"), "utf8")).toBe("aabb");
   });
 });
 
@@ -3093,6 +4360,100 @@ describe("createWriteStream", () => {
     expect(readFileSync(streamPath, "utf8")).toBe("first line\nsecond line\n");
   });
 
+  // A short write from the kernel (ENOSPC, RLIMIT_FSIZE, EDQUOT) makes
+  // writeAll retry with pos = undefined + n -> NaN. fs.write used to coerce a
+  // NaN position to 0, so the retried tail was pwritten at the HEAD of the
+  // file and the loop reported success. Reproduced here with a custom fs.write
+  // that returns a short count.
+  it("short write does not overwrite the head of the file", async () => {
+    using dir = tempDir("cws-short-write", {});
+    const p = join(String(dir), "out.bin");
+    const data = Buffer.concat([
+      Buffer.alloc(4, "A"),
+      Buffer.alloc(4, "B"),
+      Buffer.alloc(4, "C"),
+      Buffer.alloc(4, "D"),
+    ]);
+
+    const writes: Array<{ length: number; position: unknown }> = [];
+    const stream = createWriteStream(p, {
+      fs: {
+        open: fs.open,
+        close: fs.close,
+        fsync: fs.fsync,
+        // writev intentionally omitted so only the writeAll path is exercised.
+        write(fd: number, buffer: Buffer, offset: number, length: number, position: unknown, cb: any) {
+          writes.push({ length, position });
+          // First call: accept 4 bytes out of 16; subsequent calls accept all.
+          const take = writes.length === 1 ? 4 : length;
+          return fs.write(fd, buffer, offset, take, position as any, cb);
+        },
+      } as any,
+    });
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    stream.on("error", e => (events.push("error:" + (e as NodeJS.ErrnoException).code), resolve()));
+    stream.on("finish", () => events.push("finish"));
+    stream.on("close", resolve);
+    stream.write(data);
+    stream.end();
+    await promise;
+
+    expect({
+      events,
+      bytesWritten: stream.bytesWritten,
+      contents: readFileSync(p, "utf8"),
+      writes,
+    }).toEqual({
+      events: ["finish"],
+      bytesWritten: 16,
+      contents: "AAAABBBBCCCCDDDD",
+      // The retry must keep position undefined (current offset), not NaN.
+      writes: [
+        { length: 16, position: undefined },
+        { length: 12, position: undefined },
+      ],
+    });
+  });
+
+  it.skipIf(!isLinux)("surfaces EFBIG when RLIMIT_FSIZE truncates a write", async () => {
+    using dir = tempDir("cws-efbig", {});
+    const out = join(String(dir), "out.bin");
+    const script = `
+      const fs = require("node:fs");
+      const MB = 1 << 20;
+      const big = Buffer.concat([..."ABCD"].map(c => Buffer.alloc(MB, c)));
+      const s = fs.createWriteStream(${JSON.stringify(out)});
+      const ev = [];
+      s.on("error", e => ev.push("error:" + e.code));
+      s.on("finish", () => ev.push("finish"));
+      s.on("close", () => {
+        const b = fs.readFileSync(${JSON.stringify(out)});
+        console.log(JSON.stringify({ ev, bytesWritten: s.bytesWritten, size: b.length, head: b.subarray(0, 8).toString() }));
+      });
+      s.write(big);
+      s.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 2048; exec "${bunExe()}" -e '${script.replace(/'/g, "'\\''")}'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = JSON.parse(stdout.trim());
+    // `ulimit -f` block size is 512 (dash/busybox) or 1024 (bash); assert the
+    // invariant, not the exact clamp point.
+    expect({
+      stderr,
+      ev: result.ev,
+      head: result.head,
+      sizeMatchesBytesWritten: result.size === result.bytesWritten,
+      exitCode,
+    }).toEqual({ stderr: "", ev: ["error:EFBIG"], head: "AAAAAAAA", sizeMatchesBytesWritten: true, exitCode: 0 });
+    expect(result.size).toBeWithin(1, 4 << 20);
+  });
+
   it("should emit open and call close callback", done => {
     const ws = createWriteStream(join(tmpdir(), "fs"));
     ws.on("open", data => {
@@ -3139,7 +4500,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
+  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -3566,17 +4927,13 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    it("throws for recursive: true like node", async () => {
-      const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-      try {
-        await mkdir(path, { recursive: true });
-      } catch (e) {}
-      expect(await exists(path)).toBe(true);
-      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
-        code: "ERR_INVALID_ARG_VALUE",
-      });
-      await rm(join(path, "../../"), { recursive: true, force: true });
-      expect(await exists(path)).toBe(false);
+    it("removes a non-empty tree with recursive: true", async () => {
+      using dir = tempDir("rmdir-recursive-promises", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+      const a = join(String(dir), "a");
+      await expect(rmdir(a, { recursive: false })).rejects.toMatchObject({ syscall: "rmdir" });
+      await rmdir(a, { recursive: true });
+      expect(readdirSync(String(dir))).toEqual(["e"]);
+      await expect(rmdir(a, { recursive: true })).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
@@ -3848,6 +5205,39 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, "-1.5", "-1.5");
+
+    const stats = fs.statSync(tmp);
+    expect(stats.atime.getTime()).toBe(-1500);
+    expect(stats.mtime.getTime()).toBe(-1500);
+
+    // rem_euclid rounds to exactly 1.0 here; must not produce tv_nsec == 1e9 (EINVAL)
+    fs.utimesSync(tmp, "-1e-17", "-1e-17");
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+  });
+
+  it("treats negative number timestamps as the current time", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    // known-old precondition so the assertion below proves the call did something
+    fs.utimesSync(tmp, 0, 0);
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+
+    // fs timestamp granularity can be coarser than Date.now()
+    const before = Date.now() - 1000;
+    fs.utimesSync(tmp, -1.5, -1.5);
+
+    const stats = fs.statSync(tmp);
+    expect(stats.mtime.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stats.atime.getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it("works with whole numbers", () => {
@@ -4238,6 +5628,66 @@ it("new Stats", () => {
   expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
+// On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
+// libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
+it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+  using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // 1969-12-20T10:13:19.750Z; kernel stores this as {sec: -1000001, nsec: 750000000}.
+  const preEpoch = new Date(-1_000_000_250);
+  fs.utimesSync(f, preEpoch, preEpoch);
+
+  const st = statSync(f, { bigint: true });
+  expect({
+    atimeNs: st.atimeNs,
+    mtimeNs: st.mtimeNs,
+    atimeMs: st.atimeMs,
+    mtimeMs: st.mtimeMs,
+  }).toEqual({
+    atimeNs: -1_000_000_250_000_000n,
+    mtimeNs: -1_000_000_250_000_000n,
+    atimeMs: -1_000_000_250n,
+    mtimeMs: -1_000_000_250n,
+  });
+  // Documented invariant: xtimeNs / 1_000_000n === xtimeMs
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+  expect(st.mtime.toISOString()).toBe("1969-12-20T10:13:19.750Z");
+
+  // A small negative offset just below the epoch.
+  fs.utimesSync(f, new Date(-500), new Date(-500));
+  const st2 = statSync(f, { bigint: true });
+  expect({ atimeNs: st2.atimeNs, mtimeNs: st2.mtimeNs }).toEqual({
+    atimeNs: -500_000_000n,
+    mtimeNs: -500_000_000n,
+  });
+  expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
+});
+
+it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+  using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // sec = 13_569_465_600 (> i64::MAX / 1e9); ext4/btrfs/XFS-bigtime store this exactly.
+  const far = new Date("2400-01-01T00:00:00.000Z");
+  fs.utimesSync(f, far, far);
+  const st = statSync(f, { bigint: true });
+
+  // The invariant must hold regardless of what the filesystem stored.
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+
+  // Round-trip check via the independent non-bigint (f64) path; APFS stores i64 ns
+  // and clamps year-2400 at exactly i64::MAX, so only FSes that store wider sec run this.
+  if (statSync(f).mtimeMs === far.getTime()) {
+    expect({ mtimeNs: st.mtimeNs, atimeNs: st.atimeNs }).toEqual({
+      mtimeNs: 13_569_465_600_000_000_000n,
+      atimeNs: 13_569_465_600_000_000_000n,
+    });
+  }
+});
+
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("no such file or directory");
@@ -4556,6 +6006,14 @@ it("fs.mkdirSync recursive: false should error when the directory already exists
   expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
 });
 
+it("fs.statfs on a missing path fails with ENOENT and syscall statfs", async () => {
+  const missing = join(tmpdirTestMkdir(), "does-not-exist");
+  const expected = expect.objectContaining({ code: "ENOENT", syscall: "statfs" });
+  expect(() => statfsSync(missing)).toThrow(expected);
+  await expect(promisify(fs.statfs)(missing)).rejects.toThrow(expected);
+  await expect(fs.promises.statfs(missing)).rejects.toThrow(expected);
+});
+
 it("fs.statfsSync should work", () => {
   const stats = statfsSync(import.meta.path);
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
@@ -4620,6 +6078,241 @@ it("fs.statfs (callback) should work with bigint", async () => {
     expect(stats.bsize > 0n).toBe(true);
     expect(stats.blocks > 0n).toBe(true);
   }
+});
+
+// Regression for oven-sh/bun#31510: the non-bigint statfs path stored block
+// counts as i32, so values above i32::MAX (e.g. `bavail` on a filesystem past
+// ~8 TiB) wrapped negative. We can't mount a multi-TiB filesystem in CI, so we
+// LD_PRELOAD a shim that makes `statfs(2)` report large block counts and a
+// sentinel `bsize` (proving the shim actually interposed). glibc-only: the
+// shim relies on ELF symbol interposition and a libc `struct statfs` layout.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves values above i32::MAX (#31510)", () => {
+  const TYPE = 0x9123683e; // BTRFS_SUPER_MAGIC, > i32::MAX: .type also wrapped negative
+  const BSIZE = 12288; // sentinel (3 * 4096): proves the shim ran
+  const BLOCKS = 3747442852; // > i32::MAX
+  const BFREE = 3248532185; // > i32::MAX
+  const BAVAIL = 3248532185; // > i32::MAX
+
+  using dir = tempDir("statfs-i32", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <sys/statfs.h>
+#include <string.h>
+
+// glibc declares statfs() with \`struct statfs *\` and statfs64() with
+// \`struct statfs64 *\`; both share these field names, so fill via a macro to
+// keep each prototype type-correct.
+#define FILL(buf) do { \\
+  memset((buf), 0, sizeof(*(buf))); \\
+  (buf)->f_type = ${TYPE}ULL; \\
+  (buf)->f_bsize = ${BSIZE}ULL; \\
+  (buf)->f_blocks = ${BLOCKS}ULL; \\
+  (buf)->f_bfree = ${BFREE}ULL; \\
+  (buf)->f_bavail = ${BAVAIL}ULL; \\
+} while (0)
+
+int statfs(const char *path, struct statfs *buf) { (void)path; FILL(buf); return 0; }
+int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); return 0; }
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build statfs shim:\n${compile.stderr.toString()}`);
+  }
+
+  const script = `console.log(JSON.stringify((() => {
+    const s = require("fs").statfsSync(process.cwd());
+    return { type: s.type, bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
+  })()));`;
+
+  const existing = bunEnv.LD_PRELOAD;
+  const proc = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+  });
+
+  const stdout = proc.stdout.toString().trim();
+  expect(proc.stderr.toString()).toBe("");
+
+  const result = JSON.parse(stdout);
+  // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
+  expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+  expect(proc.exitCode).toBe(0);
+});
+
+// A subdirectory can be removed between the moment the recursive walk lists it
+// in its parent and the moment the walk reads it. The walk skipped the
+// subdirectory when its open failed with ENOENT, but when the removal landed
+// after the open, the kernel reported ENOENT from getdents64(2) and the whole
+// call failed (readdirSync blamed the root). libc's readdir(3), and so node,
+// report that ENOENT as the end of the directory; bun reads with the raw
+// syscall and sees it. A concurrent deleter is not deterministic, so
+// LD_PRELOAD a shim that plays one from inside getdents64: the marked
+// directories are really removed and the kernel itself produces the ENOENT.
+// bun issues getdents64 through libc's syscall(), which is the interposable
+// symbol on this path. glibc-only, same as the statfs shim above.
+it.skipIf(!isGlibc || !cc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
+  using dir = tempDir("readdir-vanishing-subdir", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static long (*next_syscall)(long, ...);
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  if (nr == SYS_getdents64) {
+    int fd = (int)a1;
+    char link[64], target[PATH_MAX];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, target, sizeof target - 1);
+    if (n > 0) {
+      target[n] = 0;
+      const char *base = strrchr(target, '/');
+      base = base ? base + 1 : target;
+      if (strcmp(base, "vanish-before-read") == 0) {
+        // Removed before the first read: that read fails with ENOENT.
+        rmdir(target);
+      } else if (strcmp(base, "vanish-mid-read") == 0) {
+        // Removed once the first read handed out its entries: the read that
+        // would report the end of the directory fails with ENOENT instead.
+        // (After the rmdir the link reads "... (deleted)", so this branch
+        // is not taken again.)
+        long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+        if (rc > 0) {
+          unlinkat(fd, "inner.txt", 0);
+          rmdir(target);
+        }
+        return rc;
+      }
+    }
+  }
+  return next_syscall(nr, a1, a2, a3, a4, a5, a6);
+}
+`,
+    "child.js": `
+const fs = require("node:fs");
+const path = require("node:path");
+
+function makeTree(root) {
+  fs.mkdirSync(path.join(root, "keep", "deeper"), { recursive: true });
+  fs.writeFileSync(path.join(root, "keep", "deeper", "file.txt"), "x");
+  fs.mkdirSync(path.join(root, "vanish-before-read"));
+  fs.mkdirSync(path.join(root, "vanish-mid-read"));
+  fs.writeFileSync(path.join(root, "vanish-mid-read", "inner.txt"), "x");
+  return root;
+}
+function makeDoomedRoot(parent) {
+  const root = path.join(parent, "vanish-before-read");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+const names = entries => entries.map(String).sort();
+const direntNames = (root, entries) =>
+  entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
+const outcome = async fn => {
+  try {
+    return await fn();
+  } catch (e) {
+    return { code: e.code, path: e.path };
+  }
+};
+
+(async () => {
+  const out = {};
+  let root = makeTree("sync");
+  out.sync = await outcome(() => names(fs.readdirSync(root, { recursive: true })));
+  out.syncLeft = fs.readdirSync(root);
+
+  root = makeTree("sync-types");
+  out.syncTypes = await outcome(() => direntNames(root, fs.readdirSync(root, { recursive: true, withFileTypes: true })));
+  out.syncTypesLeft = fs.readdirSync(root);
+
+  root = makeTree("async");
+  out.async = await outcome(async () => names(await fs.promises.readdir(root, { recursive: true })));
+  out.asyncLeft = fs.readdirSync(root);
+
+  root = makeTree("async-types");
+  out.asyncTypes = await outcome(async () =>
+    direntNames(root, await fs.promises.readdir(root, { recursive: true, withFileTypes: true })),
+  );
+  out.asyncTypesLeft = fs.readdirSync(root);
+
+  // Only subdirectories are skipped. A read error on the root itself is still
+  // returned, recursive or not.
+  root = makeDoomedRoot("root-sync");
+  out.rootSync = await outcome(() => fs.readdirSync(root, { recursive: true }));
+  root = makeDoomedRoot("root-async");
+  out.rootAsync = await outcome(() => fs.promises.readdir(root, { recursive: true }));
+  root = makeDoomedRoot("root-plain");
+  out.rootPlain = await outcome(() => fs.readdirSync(root));
+  console.log(JSON.stringify(out));
+})();
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build readdir race shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const walked = [
+    "keep",
+    "keep/deeper",
+    "keep/deeper/file.txt",
+    "vanish-before-read",
+    "vanish-mid-read",
+    "vanish-mid-read/inner.txt",
+  ];
+  // The `*Left` lists prove that the shim removed both marked directories
+  // while the walk ran. If it did not interpose, they are still there.
+  expect(JSON.parse(stdout)).toEqual({
+    sync: walked,
+    syncLeft: ["keep"],
+    syncTypes: walked,
+    syncTypesLeft: ["keep"],
+    async: walked,
+    asyncLeft: ["keep"],
+    asyncTypes: walked,
+    asyncTypesLeft: ["keep"],
+    rootSync: { code: "ENOENT", path: path.join("root-sync", "vanish-before-read") },
+    rootAsync: { code: "ENOENT", path: path.join("root-async", "vanish-before-read") },
+    rootPlain: { code: "ENOENT", path: path.join("root-plain", "vanish-before-read") },
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("fs.Stat constructor", () => {
@@ -5035,15 +6728,22 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     buf.buffer.transfer();
     expect(buf.buffer.detached).toBe(true);
 
-    // A rejected call must not leave the buffers held either.
-    const other = new Uint8Array(new ArrayBuffer(8));
-    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    // A non-number position is treated as "current offset" (Node.js behavior);
+    // the buffer is still pinned for the duration of the async write.
+    const other = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+    const second = Promise.withResolvers<number>();
+    fs.writev(fd, [other], "not a position" as any, (err, n) => (err ? second.reject(err) : second.resolve(n)));
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(false);
+    expect(await second.promise).toBe(8);
     other.buffer.transfer();
     expect(other.buffer.detached).toBe(true);
   } finally {
     closeSync(fd);
   }
-  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+  // The first writev was positional (pwritev at 0) so the file offset is still
+  // 0 when the second, non-positional writev runs.
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
 it("fs.write keeps the source buffer attached while the write is in flight", async () => {
@@ -5091,6 +6791,104 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(buf.buffer.detached).toBe(true);
 
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
+// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
+// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
+  // The unfixed build segfaults on the pool thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        const encoded = new TextEncoder().encode(process.execPath);
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
+          const path = new Uint8Array(ab);
+          path.set(encoded);
+          const pending = fs.promises.stat(path);
+          ab.resize(0);
+          if (!((await pending).size > 0)) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A sync call reads the path after the option getters ran. It reads the bytes captured at call time
+// when a getter shrinks the buffer.
+it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
+  using dir = tempDir("fs-resizable-path", {});
+  // The unfixed build segfaults on the main thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        import path from "node:path";
+        const dir = process.cwd();
+        function resizablePath(p) {
+          const bytes = new TextEncoder().encode(p);
+          const ab = new ArrayBuffer(bytes.length, { maxByteLength: 1 << 16 });
+          new Uint8Array(ab).set(bytes);
+          return ab;
+        }
+
+        const written = path.join(dir, "written.txt");
+        {
+          const ab = resizablePath(written);
+          fs.writeFileSync(new Uint8Array(ab), "sync-write", {
+            get flag() {
+              ab.resize(0);
+              return "w";
+            },
+          });
+          console.log("writeFileSync:", fs.readFileSync(written, "utf8"));
+        }
+        {
+          const ab = resizablePath(written);
+          const text = fs.readFileSync(new DataView(ab), {
+            get encoding() {
+              ab.resize(0);
+              return "utf8";
+            },
+          });
+          console.log("readFileSync:", text);
+        }
+        {
+          const made = path.join(dir, "made");
+          const ab = resizablePath(made);
+          fs.mkdirSync(ab, {
+            get recursive() {
+              ab.resize(0);
+              return true;
+            },
+          });
+          console.log("mkdirSync:", fs.statSync(made).isDirectory());
+        }
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("writeFileSync: sync-write\nreadFileSync: sync-write\nmkdirSync: true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
@@ -5172,4 +6970,240 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 
   expect(detachedDuringOptions).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("hello world");
+});
+
+describe("fs.close on stdio descriptors", () => {
+  it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
+    using dir = tempDir("fs-close-stdio", {
+      "redirect-fixture.mjs": `
+        import fs from "node:fs";
+        fs.writeSync(2, "PRE.");
+        fs.closeSync(2);
+        const fd = fs.openSync(process.argv[2], "w");
+        // On POSIX, open() returns the lowest free descriptor. fd 2 was just
+        // closed, so reopening must hand it back.
+        process.stdout.write(String(fd));
+        fs.writeSync(2, "POST.");
+      `,
+    });
+    const redirected = path.join(String(dir), "redirected.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "redirect-fixture.mjs"), redirected],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("2");
+    // Writes after the reopen land in the new file; the original stderr pipe
+    // only keeps the byte written before the close.
+    expect(stderr).toBe("PRE.");
+    expect(readFileSync(redirected, "utf8")).toBe("POST.");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // descriptor is never really closed and the second close cannot raise EBADF.
+  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
+    using dir = tempDir("fs-close-stdio-dbl", {
+      "double-close-fixture.mjs": `
+        import fs from "node:fs";
+        fs.closeSync(2);
+        try {
+          fs.closeSync(2);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "double-close-fixture.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("EBADF");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A throw inside a node-style async callback must surface as an
+// uncaughtException, as in node, where these callbacks run off the libuv
+// request completion rather than from a promise reaction.
+describe("a throw from a node-style callback is an uncaughtException", () => {
+  const dir = tempDirWithFiles("callback-throw-uncaught", { "file.txt": "hello" });
+  const file = JSON.stringify(join(dir, "file.txt"));
+  const dirLit = JSON.stringify(dir);
+
+  async function runScript(source: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    // Drain stderr too so a noisy child can't fill the pipe and deadlock.
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  const cases: Array<[string, string]> = [
+    ["fs.exists", `require("fs").exists("/definitely/not/here", () => { throw new Error("boom"); })`],
+    ["fs.stat", `require("fs").stat("/definitely/not/here", () => { throw new Error("boom"); })`],
+    ["fs.stat (success)", `require("fs").stat(${file}, () => { throw new Error("boom"); })`],
+    ["fs.readFile", `require("fs").readFile(${file}, () => { throw new Error("boom"); })`],
+    ["fs.readdir", `require("fs").readdir(${dirLit}, () => { throw new Error("boom"); })`],
+    ["fs.open", `require("fs").open("/definitely/not/here", "r", () => { throw new Error("boom"); })`],
+    ["fs.access", `require("fs").access(${file}, () => { throw new Error("boom"); })`],
+    ["fs.realpath", `require("fs").realpath(${file}, () => { throw new Error("boom"); })`],
+    [
+      "fs.close",
+      `const fs = require("fs"); fs.open(${file}, "r", (e, fd) => fs.close(fd, () => { throw new Error("boom"); }))`,
+    ],
+    [
+      "fs.read",
+      `const fs = require("fs"); fs.open(${file}, "r", (e, fd) => fs.read(fd, Buffer.alloc(4), 0, 4, 0, () => { throw new Error("boom"); }))`,
+    ],
+    // Both symlink overloads: the 4-argument form takes a different path.
+    ["fs.symlink (3-arg)", `require("fs").symlink(${file}, ${dirLit} + "/l3", () => { throw new Error("boom"); })`],
+    [
+      "fs.symlink (4-arg)",
+      `require("fs").symlink(${file}, ${dirLit} + "/l4", "file", () => { throw new Error("boom"); })`,
+    ],
+    ["dns.lookup", `require("dns").lookup("localhost", () => { throw new Error("boom"); })`],
+    ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`],
+    ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
+  ];
+
+  it.each(cases)("%s", async (_name, snippet) => {
+    const { stdout, exitCode } = await runScript(`
+      process.on("uncaughtException", e => { console.log("UNCAUGHT:" + e.message); process.exit(0); });
+      process.on("unhandledRejection", e => { console.log("REJECTED:" + (e && e.message)); process.exit(0); });
+      setTimeout(() => { console.log("NOTHING"); process.exit(0); }, 5000);
+      ${snippet};
+    `);
+    expect(stdout).toBe("UNCAUGHT:boom");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps a non-throwing callback in the same place in the event loop", async () => {
+    const { stdout, exitCode } = await runScript(`
+      const fs = require("fs");
+      const log = [];
+      fs.stat(${file}, (err, st) => {
+        log.push("fs-cb:" + (err === null) + ":" + st.isFile());
+        process.nextTick(() => log.push("tick-from-fs-cb"));
+      });
+      setImmediate(() => log.push("setImmediate"));
+      process.on("exit", () => console.log(log.join(",")));
+    `);
+    expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");
+    expect(exitCode).toBe(0);
+  });
+
+  it("is transparent to fs.Dir callbacks", async () => {
+    const { stdout, exitCode } = await runScript(`
+      const odir = require("fs").mkdtempSync(require("os").tmpdir() + "/cb-throw-opendir-");
+      require("fs").writeFileSync(odir + "/file.txt", "x");
+      require("fs").opendir(odir, (err, dir) => {
+        if (err) throw err;
+        dir.read((e, ent) => {
+          console.log(ent && ent.name);
+          dir.close(() => console.log("closed"));
+        });
+      });
+    `);
+    expect(stdout.split("\n")).toEqual(["file.txt", "closed"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
+    const { stdout, exitCode } = await runScript(`
+      require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
+      setTimeout(() => console.log("quiet"), 50);
+    `);
+    expect(stdout).toBe("quiet");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("fs.Utf8Stream", () => {
+  // A write started from the reopen 'ready' listener is still in flight when the
+  // reopen path announces 'drain'; the write's own completion is what must emit it.
+  it("does not emit 'drain' after reopen while a write started in 'ready' is in flight", async () => {
+    using dir = tempDir("utf8stream-reopen-drain", {});
+    const dest = path.join(String(dir), "out.log");
+
+    let heldWrite: (() => void) | undefined;
+    let holdWrites = false;
+    const stream = new fs.Utf8Stream({
+      dest,
+      sync: false,
+      fs: {
+        write(...args: any[]) {
+          if (!holdWrites) return (fs.write as any)(...args);
+          const cb = args.pop();
+          heldWrite = () => (fs.write as any)(...args, cb);
+        },
+      },
+    });
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.write("before reopen\n");
+    stream.once("drain", () => {
+      stream.reopen();
+      stream.once("ready", () => {
+        holdWrites = true;
+        stream.write("after reopen\n");
+        expect(stream.writing).toBe(true);
+
+        let drainedWhileHeld = false;
+        const onEarlyDrain = () => (drainedWhileHeld = true);
+        stream.on("drain", onEarlyDrain);
+        // The reopen path schedules its 'drain' with process.nextTick; give it
+        // (and anything queued behind it) a full turn to fire.
+        setImmediate(() => {
+          stream.off("drain", onEarlyDrain);
+          try {
+            expect(drainedWhileHeld).toBe(false);
+            expect(heldWrite).toBeFunction();
+          } catch (e) {
+            return reject(e);
+          }
+          stream.once("drain", () => {
+            try {
+              expect(fs.readFileSync(dest, "utf8")).toBe("before reopen\nafter reopen\n");
+            } catch (e) {
+              return reject(e);
+            }
+            stream.once("close", resolve);
+            stream.end();
+          });
+          holdWrites = false;
+          heldWrite!();
+        });
+      });
+    });
+    await done;
+  });
+});
+
+describe("module init", () => {
+  it("fs.promises is a lazy getter that resolves to node:fs/promises", () => {
+    const desc = Object.getOwnPropertyDescriptor(fs, "promises")!;
+    expect(typeof desc.get).toBe("function");
+    expect(desc.enumerable).toBe(true);
+    expect(fs.promises).toBe(_promises);
+  });
+
+  it("every exported function keeps its own name", () => {
+    // FileReadStream/FileWriteStream are aliases of ReadStream/WriteStream, as in Node.
+    const mismatched = Object.keys(fs).filter(
+      k => !k.startsWith("File") && typeof fs[k] === "function" && fs[k].name !== k,
+    );
+    expect(mismatched).toStrictEqual([]);
+  });
 });

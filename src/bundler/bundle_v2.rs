@@ -2669,8 +2669,10 @@ pub mod bv2_impl {
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text, true)
                     {
+                        // `scan_for_secondary_paths` looks this up in `PathToSourceIndexMap`.
+                        let secondary_key = ignored_suffix.append_to(self.arena(), secondary.text);
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
+                            bun_alloc::AstAlloc::vec_from_slice(secondary_key);
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -6921,7 +6923,10 @@ pub mod bv2_impl {
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(secondary.text, path.text, true)
                     {
-                        resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
+                        // `scan_for_secondary_paths` looks `text` up in `PathToSourceIndexMap`.
+                        let mut secondary = *secondary;
+                        secondary.text = ignored_suffix.append_to(self.arena(), secondary.text);
+                        resolve_task.secondary_path_for_commonjs_interop = Some(secondary);
                     }
                 }
 

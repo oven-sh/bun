@@ -493,6 +493,26 @@ describe("bundler", async () => {
     run: { stdout: "1 2 1 3" },
   });
 
+  // An import of a package with "main" and "module" uses the "main" file when the package
+  // is also required (dual package hazard). The query is part of that match.
+  itBundled("bun/import-query-suffix-dual-package", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import a from "pkg-a?x";
+        import b from "pkg-b?x";
+        console.log(a, require("pkg-a?x"), b, require("pkg-b"));
+      `,
+      "/node_modules/pkg-a/package.json": `{ "main": "./main.js", "module": "./module.js" }`,
+      "/node_modules/pkg-a/main.js": `module.exports = "main";`,
+      "/node_modules/pkg-a/module.js": `export default "module";`,
+      "/node_modules/pkg-b/package.json": `{ "main": "./main.js", "module": "./module.js" }`,
+      "/node_modules/pkg-b/main.js": `module.exports = "main";`,
+      "/node_modules/pkg-b/module.js": `export default "module";`,
+    },
+    run: { stdout: "main main module main" },
+  });
+
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {

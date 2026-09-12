@@ -34,11 +34,25 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--cdp-error-once=<method>`: the same, for the first call only. A retry
+// of whatever failed then gets through.
+let cdpErrorOnce = process.argv.find(a => a.startsWith("--cdp-error-once="))?.slice("--cdp-error-once=".length);
+
+// `--event-before-page-enable`: emit a session event just before the
+// Page.enable reply, so the runtime runs a listener while the attach
+// chain has a sessionId but has not finished.
+const eventBeforePageEnable = process.argv.includes("--event-before-page-enable");
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The page the last Page.navigate committed, as this process saw the
+  // commands arrive. Tells a test where its evaluate landed in the order.
+  __fake_url() {
+    return lastUrl;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -66,15 +80,41 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
+// The last page any session committed, in command arrival order: what
+// __fake_url() reports. Each session's own current page, which is what
+// Page.reload loads again, is in committedUrl.
+let lastUrl = "about:blank";
+const committedUrl = new Map<string, string>();
+// Chrome sends a domain's events only to sessions that enabled it, so a
+// session whose Page.enable failed gets no frameNavigated and no
+// loadEventFired.
+const pageEnabled = new Set<string>();
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+  const committed = (url: string) => {
+    lastUrl = url;
+    committedUrl.set(sessionId!, url);
+    const loaderId = "L" + ++loads;
+    if (!pageEnabled.has(sessionId!)) return loaderId;
+    event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
+    event("Page.loadEventFired", { timestamp: loads });
+    return loaderId;
+  };
 
-  if (method === cdpErrorOn) {
+  if (method === cdpErrorOn || method === cdpErrorOnce) {
+    if (method === cdpErrorOnce) cdpErrorOnce = undefined;
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
+  }
+
+  // The browser endpoint carries Target.* and Browser.* only. Every other
+  // domain lives on a target's session, so Chrome answers a command that
+  // arrives with no sessionId the same way it answers an unknown method.
+  if (!sessionId && !method.startsWith("Target.") && !method.startsWith("Browser.")) {
+    return send({ id, error: { code: -32601, message: `'${method}' wasn't found` } });
   }
 
   switch (method) {
@@ -84,11 +124,22 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
+      reply({ frameId: "F", loaderId: "L" + (loads + 1) });
+      committed(params.url);
       return;
+    }
+    case "Page.reload": {
+      reply({});
+      committed(committedUrl.get(sessionId!) ?? "about:blank");
+      return;
+    }
+    case "Page.enable": {
+      pageEnabled.add(sessionId!);
+      // The event reaches the runtime while the view has a sessionId and
+      // an unfinished attach chain: anything a listener starts there has
+      // to queue behind what the user asked for first.
+      if (eventBeforePageEnable) event("Page.frameStartedLoading", { frameId: "F" });
+      return reply({});
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
@@ -111,7 +162,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ result: { type: typeof value, value } });
     }
     default:
-      // Page.enable, Runtime.enable, Target.closeTarget, Input.*: nothing to say.
+      // Runtime.enable, Target.closeTarget, Input.*: nothing to say.
       return reply({});
   }
 }

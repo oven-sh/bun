@@ -1942,6 +1942,11 @@ impl VirtualMachine {
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         } else {
             self.close_sqlite_databases_for_exit();
+            if !self.exit_handler.requested {
+                if let Some(hooks) = runtime_hooks() {
+                    (hooks.unlink_unix_socket_paths_for_exit)();
+                }
+            }
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
@@ -2422,6 +2427,8 @@ pub struct RuntimeHooks {
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
+    /// Loop ran dry on the main thread (no `teardown()`): unlink open unix listeners' files, as Node's handle teardown does.
+    pub unlink_unix_socket_paths_for_exit: fn(),
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):

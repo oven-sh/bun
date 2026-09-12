@@ -101,6 +101,34 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
+  // On POSIX `a\b` is one filename, not `a/b`.
+  test.skipIf(isWindows)("a backslash in the filename is not a separator", async () => {
+    const literal = path.join(testDir, "a\\b");
+    const nested = path.join(testDir, "a", "b");
+    fs.mkdirSync(path.join(testDir, "a"));
+    fs.writeFileSync(literal, "literal");
+    fs.writeFileSync(nested, "n");
+
+    let { promise, resolve } = Promise.withResolvers<[fs.Stats, fs.Stats]>();
+    fs.watchFile(literal, { interval: 50 }, (curr, prev) => resolve([curr, prev]));
+    let increment = 0;
+    // Touch both files so the listener fires whichever one the watcher stats.
+    const interval = repeat(() => {
+      increment++;
+      updateFile(literal, "literal" + increment);
+      updateFile(nested, "n" + (increment % 10));
+    });
+    const [curr, prev] = await promise;
+    clearInterval(interval);
+    fs.unwatchFile(literal);
+
+    // `a\b` holds "literal..." (7+ bytes), `a/b` holds "n." (1-2 bytes). The
+    // first update can land before the watcher's initial stat, so `prev` may
+    // already be past 7.
+    expect(prev.size).toBeGreaterThanOrEqual("literal".length);
+    expect(curr.size).toBeGreaterThanOrEqual("literal1".length);
+  });
+
   test("bigint stats", async () => {
     let entries: any = [];
     let { promise, resolve } = Promise.withResolvers<void>();

@@ -19,7 +19,6 @@ use bun_jsc::{
     VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
-use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
@@ -32,6 +31,42 @@ bun_output::declare_scope!(fs_watch, hidden);
 use super::path_watcher;
 #[cfg(windows)]
 use super::win_watcher as path_watcher;
+
+/// Absolute watch path; POSIX keeps the caller's bytes unnormalized. `None` if it does not fit.
+pub(crate) fn absolute_watch_path_z<'a>(
+    cwd: &[u8],
+    path: &[u8],
+    buf: &'a mut bun_paths::PathBuffer,
+) -> Option<&'a bun_core::ZStr> {
+    let cap = buf.len() - 1;
+    #[cfg(windows)]
+    let len = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        bun_paths::resolve_path::platform::Windows,
+    >(cwd, &mut buf[..cap], &[path])?
+    .len();
+    #[cfg(not(windows))]
+    let len = {
+        let mut len = 0;
+        if !bun_paths::is_absolute(path) {
+            if cwd.len() + 1 > cap {
+                return None;
+            }
+            buf[..cwd.len()].copy_from_slice(cwd);
+            len = cwd.len();
+            if len > 0 && buf[len - 1] != b'/' {
+                buf[len] = b'/';
+                len += 1;
+            }
+        }
+        if len + path.len() > cap {
+            return None;
+        }
+        buf[len..len + path.len()].copy_from_slice(path);
+        len + path.len()
+    };
+    buf[len] = 0;
+    Some(bun_core::ZStr::from_buf(&buf[..], len))
+}
 
 // TODO: make this a top-level struct
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -1115,15 +1150,8 @@ impl FSWatcher {
             }
             s
         };
-        // SAFETY: `FileSystem::instance()` returns the process-global singleton
-        // initialized at startup; never null once init has run.
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let joined_buf_len = joined_buf.len();
-        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined_buf[..joined_buf_len - 1],
-            &[slice],
-        ) else {
+        let Some(file_path) = absolute_watch_path_z(cwd, slice, &mut joined_buf) else {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
@@ -1131,9 +1159,6 @@ impl FSWatcher {
                 ..Default::default()
             });
         };
-        let joined_len = joined.len();
-        joined_buf[joined_len] = 0;
-        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
         let vm = args.global_this.bun_vm_ptr();
         // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor —

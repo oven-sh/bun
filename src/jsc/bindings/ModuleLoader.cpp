@@ -305,7 +305,17 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            // The lexer, the AST and the printer read the source until the transpile ends.
+            // Another thread can write a SharedArrayBuffer in that time. A macro runs JS in
+            // that time, and JS can overwrite, detach or move the storage of an unshared,
+            // fixed-length view too. So every view is copied, not only a shared or resizable one.
+            if (!result.sourceTextCopy.tryAppend(view->span())) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                result.value.error = scope.exception();
+                (void)scope.tryClearException();
+                return result;
+            }
+            result.value.sourceText.string = EncodedSlice { result.sourceTextCopy.span().data(), result.sourceTextCopy.size() };
             result.value.sourceText.value = contentsValue;
         }
     }

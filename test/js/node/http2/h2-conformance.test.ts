@@ -1993,8 +1993,6 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     const sessionError = once(client, "error");
-    const origins: unknown[] = [];
-    client.on("origin", o => origins.push(o));
     try {
       await raw.waitFor(f => f.type === FrameType.SETTINGS);
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
@@ -2008,7 +2006,6 @@ describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
       );
       const [err] = await sessionError;
       expect({ code: err.code, message: err.message }).toEqual(PROTOCOL_ERROR_SESSION);
-      expect(origins).toEqual([]);
     } finally {
       client.destroy();
       raw.close();

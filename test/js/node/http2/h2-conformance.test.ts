@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, duplexPair, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -56,22 +56,24 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
 class RawH2 {
-  socket: net.Socket;
+  socket: Duplex;
   private buf: Buffer = Buffer.alloc(0);
   frames: Frame[] = [];
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  /** `socket` is a connected transport: a TCP socket, or one side of a duplexPair(). */
+  constructor(socket: Duplex) {
+    this.socket = socket;
     this.socket.on("data", d => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
 
   static async connect(port: number): Promise<RawH2> {
-    const c = new RawH2(port);
-    await once(c.socket, "connect");
+    const socket = net.connect(port, "127.0.0.1");
+    const c = new RawH2(socket);
+    await once(socket, "connect");
     return c;
   }
 
@@ -800,6 +802,80 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+function settingsEntries(f: Frame): Array<[number, number]> {
+  const entries: Array<[number, number]> = [];
+  for (let off = 0; off + 6 <= f.payload.length; off += 6) {
+    entries.push([f.payload.readUInt16BE(off), f.payload.readUInt32BE(off + 2)]);
+  }
+  return entries;
+}
+
+/**
+ * Upload `total` bytes of DATA on `streamId` the way a compliant sender does (RFC 9113 §6.9):
+ * never exceed the connection or stream window, grow them on WINDOW_UPDATE, and on a server
+ * SETTINGS that changes INITIAL_WINDOW_SIZE shift the stream window by the delta (§6.9.2) and
+ * ACK it. Throws with the stall position if the server stops granting window.
+ */
+async function uploadWithFlowControl(c: RawH2, streamId: number, total: number) {
+  let connWindow = 65535;
+  let streamWindow = 65535;
+  let initialWindow = 65535;
+  let harvested = 0;
+  // The caller already ACKed the SETTINGS frames received before this point.
+  const ackFrom = c.frames.length;
+  const harvest = () => {
+    for (; harvested < c.frames.length; harvested++) {
+      const f = c.frames[harvested];
+      if (f.type === FrameType.WINDOW_UPDATE) {
+        const inc = f.payload.readUInt32BE(0) & 0x7fffffff;
+        if (f.streamId === 0) connWindow += inc;
+        else if (f.streamId === streamId) streamWindow += inc;
+      } else if (f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0) {
+        for (const [id, value] of settingsEntries(f)) {
+          if (id !== 0x4) continue;
+          streamWindow += value - initialWindow;
+          initialWindow = value;
+        }
+        if (harvested >= ackFrom) c.sendSettingsAck();
+      }
+    }
+  };
+  let sent = 0;
+  while (sent < total) {
+    harvest();
+    const budget = Math.min(connWindow, streamWindow, 16384, total - sent);
+    if (budget <= 0) {
+      // Stalled on flow control: wait for the server to send anything more. If it never does,
+      // this rejects and the test fails with the stall position.
+      const before = c.frames.length;
+      await c
+        .waitFor(() => c.frames.length > before, 3000)
+        .catch(() => {
+          throw new Error(`flow control stalled: sent=${sent} connWindow=${connWindow} streamWindow=${streamWindow}`);
+        });
+      continue;
+    }
+    const last = sent + budget >= total;
+    c.sendFrame(FrameType.DATA, last ? 0x1 /* END_STREAM */ : 0, streamId, Buffer.alloc(budget, 0x61));
+    sent += budget;
+    connWindow -= budget;
+    streamWindow -= budget;
+  }
+}
+
+/** Complete the SETTINGS handshake on a raw client, then open a POST / request on stream 1. */
+async function openPostStream(c: RawH2): Promise<RawH2> {
+  c.sendPreface();
+  c.sendEmptySettings();
+  await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+  c.sendSettingsAck();
+  // POST / without END_STREAM: static-table indexed [:method POST, :scheme http, :path /]
+  // plus a literal :authority.
+  const block = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+  c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, block);
+  return c;
+}
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured
@@ -828,64 +904,254 @@ describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    const c = await openPostStream(await RawH2.connect((server.address() as net.AddressInfo).port));
     try {
-      c.sendPreface();
-      c.sendEmptySettings();
-      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
-      c.sendSettingsAck();
-      // POST / without END_STREAM: static-table indexed [:method POST, :scheme http, :path /]
-      // plus a literal :authority.
-      const block = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
-      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, block);
       // Wait until the response has fully ended (HEADERS then END_STREAM) before sending any of
       // the request body — that ordering is what previously stalled the inbound windows.
       await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       await c.waitFor(f => f.streamId === 1 && (f.flags & 0x1) !== 0);
-
-      // Send the body respecting flow control: track WINDOW_UPDATE frames the server sends and
-      // never exceed the connection/stream windows (initially 65535 each).
-      let connWindow = 65535;
-      let streamWindow = 65535;
-      let harvested = 0;
-      const harvestWindowUpdates = () => {
-        for (; harvested < c.frames.length; harvested++) {
-          const f = c.frames[harvested];
-          if (f.type !== FrameType.WINDOW_UPDATE) continue;
-          const inc = f.payload.readUInt32BE(0) & 0x7fffffff;
-          if (f.streamId === 0) connWindow += inc;
-          else if (f.streamId === 1) streamWindow += inc;
-        }
-      };
-      const windowUpdateCount = () => c.frames.filter(f => f.type === FrameType.WINDOW_UPDATE).length;
-      let sent = 0;
-      while (sent < total) {
-        harvestWindowUpdates();
-        const budget = Math.min(connWindow, streamWindow, 16384, total - sent);
-        if (budget <= 0) {
-          // Stalled on flow control: wait for the server to grant more window. If it never does,
-          // this rejects and the test fails with the stall position.
-          const before = windowUpdateCount();
-          await c
-            .waitFor(() => windowUpdateCount() > before, 3000)
-            .catch(() => {
-              throw new Error(
-                `flow control stalled: sent=${sent} connWindow=${connWindow} streamWindow=${streamWindow}`,
-              );
-            });
-          continue;
-        }
-        const last = sent + budget >= total;
-        c.sendFrame(FrameType.DATA, last ? 0x1 /* END_STREAM */ : 0, 1, Buffer.alloc(budget, 0x61));
-        sent += budget;
-        connWindow -= budget;
-        streamWindow -= budget;
-      }
+      await uploadWithFlowControl(c, 1, total);
       await finished.promise;
       expect(received).toBe(total);
     } finally {
       c.destroy();
       server.close();
+    }
+  });
+});
+
+describe("inbound flow control after a SETTINGS change (RFC 9113 §6.9.2)", () => {
+  // When the server lowers SETTINGS_INITIAL_WINDOW_SIZE mid-upload, the client shifts its stream
+  // window down by the delta. The server must then replenish against the new, smaller window: a
+  // replenish threshold still based on the old 65535 is never reached by a peer that can only
+  // send 1024 bytes per round, and the upload stalls forever.
+  test("WINDOW_UPDATE keeps flowing after the server lowers INITIAL_WINDOW_SIZE mid-upload", async () => {
+    const total = 96 * 1024;
+    let received = 0;
+    const finished = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.once("data", () => stream.session!.settings({ initialWindowSize: 1024 }));
+      stream.on("data", (d: Buffer) => (received += d.length));
+      stream.on("error", (err: Error) => finished.reject(err));
+      stream.on("end", () => {
+        finished.resolve();
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await openPostStream(await RawH2.connect((server.address() as net.AddressInfo).port));
+    try {
+      await uploadWithFlowControl(c, 1, total);
+      await finished.promise;
+      expect(received).toBe(total);
+      // The shrink reached the client and the server kept granting window after it.
+      const shrink = c.frames.findIndex(
+        f =>
+          f.type === FrameType.SETTINGS &&
+          (f.flags & 0x1) === 0 &&
+          settingsEntries(f).some(([id, value]) => id === 0x4 && value === 1024),
+      );
+      expect(shrink).not.toBe(-1);
+      const updatesAfterShrink = c.frames
+        .slice(shrink)
+        .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect(updatesAfterShrink.length).toBeGreaterThan(1);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // A transport can deliver bytes while the server is still inside a dispatch, for example a
+  // Duplex that pushes synchronously. The server reads them once that dispatch returns. A
+  // SETTINGS ACK among them must still apply the window change of the SETTINGS it acknowledges.
+  test("WINDOW_UPDATE keeps flowing when the ACK of a smaller INITIAL_WINDOW_SIZE arrives during a dispatch", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    let session: http2.ServerHttp2Session | undefined;
+    server.on("session", s => (session = s));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.resume();
+      // This handler runs inside the dispatch of the request HEADERS.
+      stream.session!.settings({ initialWindowSize: 1024 });
+      // The client ACKs at once, and the server reads the ACK while this handler still runs.
+      serverSide.emit("data", encodeFrame(FrameType.SETTINGS, 0x1, 0));
+    });
+    const c = new RawH2(clientSide);
+    server.emit("connection", serverSide);
+    try {
+      await openPostStream(c);
+      // The client applied the smaller window after it opened stream 1, so §6.9.2 leaves
+      // 65535 + (1024 - 65535) = 1024 bytes of stream window. It uses all of them.
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(1024, 0x61));
+      // The whole window is used, so the server must open it again.
+      const update = await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1).catch(() => null);
+      expect(update?.payload.readUInt32BE(0)).toBe(1024);
+    } finally {
+      c.destroy();
+      session?.destroy();
+    }
+  });
+
+  // A stream that opens between a SETTINGS frame and its ACK starts with the value the client has
+  // ACKed, and the ACK then moves it by the delta. If the stream started with the new value, the
+  // delta would count twice, and the server would accept DATA past the window of the client.
+  test("a stream opened before the ACK of a larger INITIAL_WINDOW_SIZE gets exactly that window", async () => {
+    const server = http2.createServer({ settings: { initialWindowSize: 1000 } });
+    server.on("session", session => {
+      session.on("error", () => {});
+      session.settings({ initialWindowSize: 2000 });
+    });
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.resume();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // The server sends two SETTINGS frames: 1000 in its preface, then 2000.
+      await c.waitFor(
+        f =>
+          f.type === FrameType.SETTINGS &&
+          (f.flags & 0x1) === 0 &&
+          settingsEntries(f).some(([id, value]) => id === 0x4 && value === 2000),
+      );
+      // The client applies both, but it ACKs only the first before it opens stream 1. So
+      // stream 1 has a 2000-byte window, and 2001 bytes overrun it.
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.alloc(2001, 0x61));
+      const goaway = await c.waitForGoaway().catch(() => null);
+      expect(goaway && goawayErrorCode(goaway)).toBe(ErrorCode.FLOW_CONTROL_ERROR);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("outbound flow control after a SETTINGS change (RFC 9113 §6.9.2)", () => {
+  // A peer's change to SETTINGS_INITIAL_WINDOW_SIZE moves the send window of every open stream by
+  // the difference, in both directions, on top of the WINDOW_UPDATE credit the stream has.
+  const dataBytes = (raw: RawH2Server) =>
+    raw.frames.reduce((n, f) => (f.type === FrameType.DATA && f.streamId === 1 ? n + f.length : n), 0);
+  const windowUpdate = (streamId: number, increment: number) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(increment);
+    return encodeFrame(FrameType.WINDOW_UPDATE, 0, streamId, payload);
+  };
+  const initialWindowSettings = (value: number) => {
+    const payload = Buffer.alloc(6);
+    payload.writeUInt16BE(0x4, 0);
+    payload.writeUInt32BE(value, 2);
+    return encodeFrame(FrameType.SETTINGS, 0, 0, payload);
+  };
+  const settingsAck = () => encodeFrame(FrameType.SETTINGS, 0x1, 0);
+  // A large connection window, so the stream window is the only limit.
+  const connectionGrant = () => windowUpdate(0, 16 * 1024 * 1024);
+
+  // A client that keeps the old window overruns the new one, and a compliant server (nghttp2, or
+  // bun's own) ends the connection with FLOW_CONTROL_ERROR.
+  test.each([
+    ["a later SETTINGS frame", false],
+    ["the first SETTINGS frame", true],
+  ])(
+    "client sends no more DATA than the window left after %s lowers INITIAL_WINDOW_SIZE",
+    async (_, inFirstSettings) => {
+      const total = 80 * 1024;
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client.on("error", () => {});
+      try {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", () => {});
+        req.end(Buffer.alloc(total, 0x61));
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        if (!inFirstSettings) {
+          raw.socket!.write(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0, 0), settingsAck(), connectionGrant()]));
+        }
+
+        // The client fills the default 65535-byte stream window and stalls.
+        await raw.waitFor(() => dataBytes(raw) >= 65535);
+        expect(dataBytes(raw)).toBe(65535);
+
+        // Lower the window to 1024, then return the 65535 bytes the stream used. The client
+        // applies both before it can send again, so §6.9.2 leaves it
+        // 0 + (1024 - 65535) + 65535 = 1024 bytes of window.
+        const lower = inFirstSettings
+          ? [initialWindowSettings(1024), settingsAck(), connectionGrant()]
+          : [initialWindowSettings(1024)];
+        raw.socket!.write(Buffer.concat([...lower, windowUpdate(1, 65535)]));
+
+        // From here on, grant 1024 bytes each time the client uses its whole window.
+        const endSeen = () =>
+          raw.frames.some(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+        let window = 1024;
+        let accounted = 65535;
+        let overrun: string | null = null;
+        while (!endSeen()) {
+          await raw.waitFor(() => dataBytes(raw) - accounted >= window || endSeen());
+          const used = dataBytes(raw) - accounted;
+          if (used > window) {
+            overrun = `sent ${used} bytes into a ${window}-byte window`;
+            break;
+          }
+          accounted += used;
+          window -= used;
+          if (window === 0 && !endSeen()) {
+            raw.socket!.write(windowUpdate(1, 1024));
+            window = 1024;
+          }
+        }
+        expect({ overrun, received: dataBytes(raw) }).toEqual({ overrun: null, received: total });
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
+
+  // grpc-go raises INITIAL_WINDOW_SIZE while its streams hold WINDOW_UPDATE credit. A client that
+  // sets the window to the new value, and does not add the difference, loses that credit.
+  test("client adds a larger INITIAL_WINDOW_SIZE to the WINDOW_UPDATE credit of a stream", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      // More than the client can send in this test.
+      req.end(Buffer.alloc(256 * 1024, 0x61));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.socket!.write(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0, 0), settingsAck(), connectionGrant()]));
+      await raw.waitFor(() => dataBytes(raw) >= 65535);
+      expect(dataBytes(raw)).toBe(65535);
+
+      // 10000 bytes of credit, and the client uses all of it.
+      raw.socket!.write(windowUpdate(1, 10000));
+      await raw.waitFor(() => dataBytes(raw) >= 75535);
+      expect(dataBytes(raw)).toBe(75535);
+
+      // Raise the window to 100000. §6.9.2 adds 100000 - 65535 = 34465 bytes to the window.
+      const expected = 75535 + (100000 - 65535);
+      raw.socket!.write(initialWindowSettings(100000));
+      await raw.waitFor(() => dataBytes(raw) >= expected).catch(() => {});
+      // The client sends its PING ACK after the DATA it already wrote, so no more DATA is on the way.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(dataBytes(raw)).toBe(expected);
+    } finally {
+      client.destroy();
+      raw.close();
     }
   });
 });

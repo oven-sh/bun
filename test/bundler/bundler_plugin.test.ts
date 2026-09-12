@@ -2079,7 +2079,10 @@ describe("bundler", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout || "null")).toEqual({ success: true, output: "// entry.js\nvar entry_default = 2;\nexport {\n  entry_default as default\n};\n" });
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      output: "// entry.js\nvar entry_default = 2;\nexport {\n  entry_default as default\n};\n",
+    });
     expect(exitCode).toBe(0);
   });
 });

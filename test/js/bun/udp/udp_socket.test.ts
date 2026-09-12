@@ -187,6 +187,31 @@ describe("udpSocket()", () => {
     expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
   });
 
+  test.each(["blob", "dataview", "Blob", "bytes"])("binaryType %p rejects", binaryType => {
+    expect(() => udpSocket({ binaryType: binaryType as any })).toThrow(
+      `Expected "binaryType" to be 'arraybuffer', 'uint8array', or 'buffer'`,
+    );
+  });
+
+  // The getter used to panic for every typed-array name other than the three
+  // documented ones, and `binaryType` was read only when `socket` was given.
+  test.each([
+    ["arraybuffer", "arraybuffer"],
+    ["uint8array", "uint8array"],
+    ["buffer", "buffer"],
+    ["nodebuffer", "buffer"],
+    ["uint16array", "uint16array"],
+    ["Float32Array", "float32array"],
+    ["int8array", "int8array"],
+  ] as const)("binaryType %p reads back as %p without socket handlers", async (binaryType, reported) => {
+    const socket = await udpSocket({ binaryType: binaryType as any });
+    try {
+      expect(socket.binaryType).toBe(reported);
+    } finally {
+      socket.close();
+    }
+  });
+
   test("send/sendMany reject out-of-range ports", async () => {
     const server = await udpSocket({ port: 0, hostname: "127.0.0.1" });
     try {

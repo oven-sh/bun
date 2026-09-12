@@ -416,27 +416,27 @@ impl UDPSocketConfig {
             ..Default::default()
         };
 
+        if let Some(value) = options.get_truthy(global_this, "binaryType")? {
+            if !value.is_string() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected \"binaryType\" to be a string"
+                )));
+            }
+
+            config.binary_type = match BinaryType::from_js_value(global_this, value)? {
+                Some(bt) => bt,
+                None => {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected \"binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'"
+                    )));
+                }
+            };
+        }
+
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
             if !socket.is_object() {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("Expected \"socket\" to be an object")));
-            }
-
-            if let Some(value) = options.get_truthy(global_this, "binaryType")? {
-                if !value.is_string() {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected \"socket.binaryType\" to be a string"
-                    )));
-                }
-
-                config.binary_type = match BinaryType::from_js_value(global_this, value)? {
-                    Some(bt) => bt,
-                    None => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'"
-                        )));
-                    }
-                };
             }
 
             macro_rules! handler {
@@ -1839,7 +1839,7 @@ impl UDPSocket {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
-            _ => panic!("Invalid binary type"),
+            other => BunString::static_(other.lowercase_name()).to_js(global_this)?,
         })
     }
 

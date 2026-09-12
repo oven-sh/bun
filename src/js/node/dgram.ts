@@ -615,6 +615,13 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
+    // uv_ip4_addr/uv_ip6_addr reject a literal of the other family with EINVAL.
+    if (isIP(ip) !== (this.type === "udp4" ? 4 : 6)) {
+      state.bindState = BIND_STATE_UNBOUND;
+      this.emit("error", new ExceptionWithHostPort(UV_EINVAL, "bind", ip, port));
+      return;
+    }
+
     let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {

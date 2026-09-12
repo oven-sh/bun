@@ -1,12 +1,36 @@
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
 import { join } from "path";
 
-try {
-  const basePath = join(import.meta.dir, "../../../src/bun.js/WebKit/Source/WebInspectorUI/UserInterface");
+// Firefox compatibility patches applied to the bundled WebInspectorUI output.
+// Exported so it can be unit-tested without a full WebKit build.
+export function patchBundleForFirefox(jsText: string): string {
+  // WI._focusChanged is a capture-phase "focus" listener on document that calls
+  // event.target.isInsertionCaretInside(), an extension the inspector installs on
+  // Element.prototype. On reload Firefox can deliver this listener a focus event
+  // whose target is not an Element (https://github.com/oven-sh/bun/issues/16220),
+  // so the call throws and the whole UI fails to initialize. Bail out of the
+  // selection fixup when the target doesn't have the method; the createRange()
+  // path that follows it assumes an Element too.
+  const out = jsText.replace(
+    /if\((\w+)\.isInsertionCaretInside\(\)\)return/g,
+    'if(typeof $1.isInsertionCaretInside!=="function"||$1.isInsertionCaretInside())return',
+  );
+  if (out === jsText) {
+    throw new Error(
+      "Firefox isInsertionCaretInside patch did not apply: the minified shape of " +
+        "WI._focusChanged has changed. Update the pattern in patchBundleForFirefox.",
+    );
+  }
+  return out;
+}
+
+async function main() {
+  const webkitPath = process.env.WEBKIT_PATH || join(import.meta.dir, "../../../vendor/WebKit");
+  const basePath = join(webkitPath, "Source/WebInspectorUI/UserInterface");
   const htmlPath = join(basePath, "Main.html");
   const backendCommands = join(
-    import.meta.dir,
-    "../../../src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js",
+    webkitPath,
+    "WebKitBuild/Release/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js",
   );
   const scriptsToBundle = [];
   const stylesToBundle = [];
@@ -117,7 +141,8 @@ try {
     outdir: "out",
     minify: true,
   });
-  const jsFilename = "manifest-" + jsBundle.outputs[0].hash + ".js";
+  const jsText = patchBundleForFirefox(await jsBundle.outputs[0].text());
+  const jsFilename = "manifest-" + Bun.hash(jsText).toString(36) + ".js";
   // const cssBundle = await build({
   //   bundle: true,
   //   minify: true,
@@ -144,7 +169,7 @@ try {
   // const cssFilename = "manifest-" + cssBundle.outputFiles[0].hash.replaceAll("/", "_") + ".css";
   htmlText = htmlText.replace(jsReplacementId, jsFilename);
   // htmlText = htmlText.replace(cssReplacementId, cssFilename);
-  await Bun.write(join(import.meta.dir, "out", jsFilename), jsBundle.outputs[0]);
+  await Bun.write(join(import.meta.dir, "out", jsFilename), jsText);
   // await Bun.write(join(import.meta.dir, "out", cssFilename), cssBundle.outputFiles[0].text);
   await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
   await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
@@ -165,7 +190,12 @@ try {
   }
 
   recursiveCopy(basePath, join(import.meta.dir, "out"));
-} catch (e) {
-  console.error("Failed to build. Please make sure you've ran `make jsc` locally.");
-  throw e;
+}
+
+if (import.meta.main) {
+  main().catch(e => {
+    console.error("Failed to build. Please make sure you've ran `make jsc` locally.");
+    console.error(e);
+    process.exit(1);
+  });
 }

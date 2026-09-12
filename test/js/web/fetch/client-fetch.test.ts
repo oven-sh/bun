@@ -251,7 +251,7 @@ test("text with BOM", async () => {
   expect(text).toBe("test=\uFEFF");
 });
 
-test.todo("formData with BOM", async () => {
+test("formData with BOM", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "application/x-www-form-urlencoded");
     res.end("\uFEFFtest=\uFEFF");

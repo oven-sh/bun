@@ -72,8 +72,7 @@ public:
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();
         if (constructor != newTarget) {
-            // newTarget's realm is another Bun global for a ShadowRealm function, and a
-            // NodeVMGlobalObject (not a Zig::GlobalObject) for a function from a node:vm context.
+            // ShadowRealm functions belong to a different global object.
             auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
             structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());

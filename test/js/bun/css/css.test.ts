@@ -8036,6 +8036,90 @@ describe("css tests", () => {
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
     });
+
+    // When a block fails to parse, the parser skips to its closing token by
+    // walking the raw tokens and keeping a stack of the blocks opened on the
+    // way (`consume_until_end_of_block` in css_parser.rs). The stack holds 16
+    // blocks inline and moves to the heap past that. Each skipped block below
+    // has `depth` more blocks nested inside it, so 16 fills the inline stack,
+    // 17 is the first depth that moves to the heap, and 3 and 64 sit on either
+    // side. Nothing from inside the skipped region may survive, and parsing
+    // must resume right after it.
+    describe.each([3, 16, 17, 64])("skipping a block with %d blocks nested inside it", depth => {
+      const unclosed = Buffer.alloc(depth, "(").toString();
+      const closers = Buffer.alloc(depth, ")").toString();
+      const parens = unclosed + closers;
+      // Every kind of block the tokenizer knows, one per level: a parenthesis,
+      // a square bracket, a curly bracket and a function.
+      const opens = ["(", "[", "{", "fn("];
+      const closes = [")", "]", "}", ")"];
+      let mixed = "";
+      for (let i = 0; i < depth; i++) mixed += opens[i % opens.length];
+      for (let i = depth - 1; i >= 0; i--) mixed += closes[i % closes.length];
+
+      function skips(name: string, source: string, expected: string) {
+        test(name, () => {
+          expect(minify_test_with_options(source, expected)).toBe(expected);
+        });
+      }
+
+      // A forgiving selector list drops the invalid selector and resumes at
+      // the comma that follows its block.
+      skips(
+        "an invalid selector made of parentheses",
+        `.a:where((${parens}, .x), .b) { color: red }`,
+        ".a:where(.b){color:red}",
+      );
+      skips(
+        "an invalid selector made of mixed blocks",
+        `.a:where((${mixed}, .x), .b) { color: red }`,
+        ".a:where(.b){color:red}",
+      );
+      skips(
+        "an invalid selector made of a function",
+        `.a:where(fn(${mixed}, .x), .b) { color: red }`,
+        ".a:where(.b){color:red}",
+      );
+      skips(
+        "closing tokens of other block kinds do not end the skipped block",
+        `.a:where(( ] } ${parens} ] }, .x), .b) { color: red }`,
+        ".a:where(.b){color:red}",
+      );
+      // A leading @charset rule is skipped up to its semicolon. The blocks in
+      // between are skipped whole, including the semicolons and rules inside them.
+      skips(
+        "the blocks in an @charset rule",
+        `@charset "utf-8" (${mixed}; .x { color: red }); .b { color: blue }`,
+        ".b{color:#00f}",
+      );
+      skips(
+        "a curly bracket block in an @charset rule",
+        `@charset "utf-8" {${mixed}; .x { color: red }}; .b { color: blue }`,
+        ".b{color:#00f}",
+      );
+      // rgb() fails to parse as a color at the first nested block. The rest of
+      // the function block is skipped on the way out, then the declaration is
+      // kept as an unparsed value.
+      skips(
+        "the rest of a function whose value failed to parse",
+        `.a { color: rgb(1 2 3 ${mixed}); background: blue }`,
+        `.a{color:rgb(1 2 3 ${mixed});background:#00f}`,
+      );
+      // Reaching the end of input instead of a closing token. The skip of the
+      // @charset block gives up silently. The custom property parses, so its
+      // open blocks are closed on output. The failed rgb() is reported.
+      skips(
+        "an @charset rule that is never closed swallows the rest of the input",
+        `@charset "utf-8" (${unclosed}; .b`,
+        "",
+      );
+      skips("an unclosed value that parses is closed on output", `.a { --x: ${unclosed}`, `.a{--x:${parens}}`);
+      test("an unclosed value that fails to parse reports the end of input", () => {
+        expect(() => minify_test_with_options(`.a { color: red } .b { color: rgb(1 2 3 ${unclosed}`, "")).toThrow(
+          "Unexpected end of input",
+        );
+      });
+    });
   });
 
   test("deeply nested rules keep two spaces of indentation per level", async () => {

@@ -409,11 +409,15 @@ function findLlvmTool(
  *
  * zig/bun/esbuild are resolved separately (they come from cache/, not PATH)
  * so pass them in as placeholders for now; they'll be filled by downloaders.
+ *
+ * `searchPaths` replaces the default LLVM search directories (plus $PATH,
+ * which findTool always appends). Tests use it to point at a fake toolchain.
  */
 export function resolveLlvmToolchain(
   os: OS,
   arch: Arch,
   targetOs: OS = os,
+  searchPaths?: string[],
 ): Pick<
   Toolchain,
   | "cc"
@@ -441,22 +445,24 @@ export function resolveLlvmToolchain(
   // so calling it per-tool would burn ~600ms. Every tool below gets
   // the same paths; first-match-wins in findTool means whichever LLVM
   // install is highest-priority wins consistently.
-  const paths = llvmSearchPaths(os, arch);
+  const paths = searchPaths ?? llvmSearchPaths(os, arch);
 
   // The MSVC-style tool family is selected by the TARGET: building for
   // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
   const msvcTarget = targetOs === "windows";
 
-  // clang — version-checked. clang++ is the same binary (hardlink or
-  // symlink) from the same install; a second version-check spawn would
-  // just return the same answer. We still locate it separately so the
-  // "not found" error names the right tool.
+  // clang and clang++ — both version-checked. They are the same binary
+  // within one install, but with several LLVM installs on the machine the
+  // two lookups can diverge: `clang` falls through to a version-suffixed
+  // name (clang-21) while a bare `clang++` from a newer default install
+  // matches first. Mixing majors breaks the C++ compile (#41000), so the
+  // clang++ lookup must reject out-of-range versions the same way.
   const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
   });
   const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
-    checkVersion: false,
+    checkVersion: true,
     required: true,
   })?.path;
 
@@ -487,8 +493,10 @@ export function resolveLlvmToolchain(
   let hostCc: string | undefined;
   let hostCxx: string | undefined;
   if (msvcTarget && os !== "windows") {
-    hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
-    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
+    // Version-checked for the same reason as cc/cxx above: a bare `clang`
+    // from a different install than the pinned one must not win.
+    hostCc = findLlvmTool("clang", paths, os, { checkVersion: true, required: true })?.path;
+    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: true, required: true })?.path;
   }
 
   // ar: llvm-ar (or llvm-lib for windows targets)

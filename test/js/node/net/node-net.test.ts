@@ -2387,52 +2387,57 @@ it("onread: nothing is delivered between a false return and resume()", async () 
   }
 });
 
-it("onread: resume() then pause() before the drain tick leaves the handle paused", async () => {
-  // Node's level-triggered _handle.reading (lib/net.js:817-835): resume()→pause()
-  // ends with the handle stopped; the drain tick must not undo the pause.
-  const serverSockets: Socket[] = [];
-  const server = createServer(c => {
-    serverSockets.push(c);
-    c.write("aaaa");
-  });
-  const received: string[] = [];
-  const firstDelivery = Promise.withResolvers<void>();
-  const done = Promise.withResolvers<void>();
-  let client: Socket | undefined;
-  try {
-    const listening = Promise.withResolvers<void>();
-    server.once("error", listening.reject);
-    server.listen(0, "127.0.0.1", () => listening.resolve());
-    await listening.promise;
-    client = createConnection({
-      port: (server.address() as import("node:net").AddressInfo).port,
-      host: "127.0.0.1",
-      onread: {
-        buffer: Buffer.alloc(64),
-        callback(n: number, buf: Buffer) {
-          received.push(buf.toString("latin1", 0, n));
-          if (received.length === 1) firstDelivery.resolve();
-          if (received.join("").length === 8) done.resolve();
-          return received.length === 1 ? false : true;
-        },
-      },
+it.each(["resume", "read"] as const)(
+  "onread: %s() then pause() before the drain tick leaves the handle paused",
+  async restart => {
+    // Node's level-triggered _handle.reading (lib/net.js:817-845): resume()→pause()
+    // and read()→pause() both end with the handle stopped; the drain tick must
+    // not undo the pause.
+    const serverSockets: Socket[] = [];
+    const server = createServer(c => {
+      serverSockets.push(c);
+      c.write("aaaa");
     });
-    client.on("error", done.reject);
-    await firstDelivery.promise;
-    // resume() schedules the drain tick; pause() before it fires must win.
-    client.resume();
-    client.pause();
-    await new Promise<void>(resolve => serverSockets[0].write("bbbb", () => resolve()));
-    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
-    expect(received).toEqual(["aaaa"]);
-    client.resume();
-    await done.promise;
-    expect(received.join("")).toBe("aaaabbbb");
-  } finally {
-    client?.destroy();
-    server.close();
-  }
-});
+    const received: string[] = [];
+    const firstDelivery = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(64),
+          callback(n: number, buf: Buffer) {
+            received.push(buf.toString("latin1", 0, n));
+            if (received.length === 1) firstDelivery.resolve();
+            if (received.join("").length === 8) done.resolve();
+            return received.length === 1 ? false : true;
+          },
+        },
+      });
+      client.on("error", done.reject);
+      await firstDelivery.promise;
+      // resume() / read() schedules the drain tick; pause() before it fires must win.
+      if (restart === "resume") client.resume();
+      else client.read(0);
+      client.pause();
+      await new Promise<void>(resolve => serverSockets[0].write("bbbb", () => resolve()));
+      for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+      expect(received).toEqual(["aaaa"]);
+      client.resume();
+      await done.promise;
+      expect(received.join("")).toBe("aaaabbbb");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  },
+);
 
 it("onread: a false return on the last slice of a redelivered tail stays paused until resume()", async () => {
   // Node's readStop contract holds for every false return
@@ -2859,6 +2864,152 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   // read were delivered with no gap and no socket 'error'.
   expect(stdout.split("\n").filter(Boolean)).toEqual(["uncaught:onread-boom", "calls:abcd,efgh,ijkl"]);
   expect(exitCode).toBe(0);
+});
+
+// Node stops an onread socket's handle on pause() or a false return only:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
+// A 'readable' listener or an async iterator makes isPaused() true without a
+// pause(), and node keeps filling the onread buffer under those. node v26.3.0
+// delivers every byte and emits 'end' then 'close' in each of these cases.
+describe.concurrent("net.Socket onread on a stream that is paused without pause()", () => {
+  const SLICE = 4096;
+  const TOTAL = 64 * SLICE;
+  type State = { bytes: number; calls: number };
+  type Transport = "tcp" | "tls" | "unix";
+
+  function drain(socket: Socket) {
+    while (socket.read() !== null);
+  }
+
+  // The server sends TOTAL bytes and ends. Resolves once the client emitted 'close'.
+  async function transfer(
+    transport: Transport,
+    options: {
+      attach?: (client: Socket) => void;
+      onSlice?: (client: Socket, state: State) => boolean | void;
+    },
+  ) {
+    const onConnection = (c: Socket) => {
+      c.on("error", () => {});
+      c.end(Buffer.alloc(TOTAL, 97));
+    };
+    const server = transport === "tls" ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
+    if (transport === "unix") server.listen(join(socket_domain, `${randomUUID()}.sock`));
+    else server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const events: string[] = [];
+    const state: State = { bytes: 0, calls: 0 };
+    const onread = {
+      buffer: Buffer.alloc(SLICE),
+      callback(n: number) {
+        state.bytes += n;
+        state.calls++;
+        return options.onSlice?.(client, state);
+      },
+    };
+    const address = server.address();
+    const client: Socket =
+      typeof address === "string"
+        ? createConnection({ path: address, onread })
+        : transport === "tls"
+          ? tlsConnect({ port: address!.port, host: "127.0.0.1", ca: tlsCert.cert, servername: "localhost", onread })
+          : createConnection({ port: address!.port, host: "127.0.0.1", onread });
+    try {
+      client.on("end", () => events.push("end"));
+      options.attach?.(client);
+      await once(client, "close");
+      events.push("close");
+      return { bytes: state.bytes, events };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  const delivered = { bytes: TOTAL, events: ["end", "close"] };
+
+  describe.each<Transport>(isWindows ? ["tcp", "tls"] : ["tcp", "tls", "unix"])("over %s", transport => {
+    it.each([
+      ["added before 'connect'", (client: Socket) => void client.on("readable", () => drain(client))],
+      [
+        "added on 'connect'",
+        (client: Socket) => void client.once("connect", () => client.on("readable", () => drain(client))),
+      ],
+    ])("a 'readable' listener %s does not stop the reads", async (_when, attach) => {
+      expect(await transfer(transport, { attach })).toEqual(delivered);
+    });
+
+    it("a 'readable' listener added between two callbacks does not stop the reads", async () => {
+      const result = await transfer(transport, {
+        onSlice(client, state) {
+          if (state.calls === 3) client.on("readable", () => drain(client));
+        },
+      });
+      expect(result).toEqual(delivered);
+    });
+
+    it("an async iterator does not stop the reads", async () => {
+      let chunks = 0;
+      const iterated = Promise.withResolvers<void>();
+      const result = await transfer(transport, {
+        attach(client) {
+          (async () => {
+            for await (const _chunk of client) chunks++;
+          })().then(iterated.resolve, iterated.reject);
+        },
+      });
+      await iterated.promise;
+      expect({ ...result, chunks }).toEqual({ ...delivered, chunks: 0 });
+    });
+
+    // node's TLS wrap first hands over the records it has already decrypted. bun stops at the slice on every transport.
+    it("pause() still stops the reads under a 'readable' listener, and resume() restarts them", async () => {
+      let bytesAtPause = -1;
+      let bytesAtResume = -2;
+      const result = await transfer(transport, {
+        attach: client => void client.on("readable", () => drain(client)),
+        onSlice(client, state) {
+          if (state.calls !== 1) return;
+          client.pause();
+          bytesAtPause = state.bytes;
+          setImmediate(() => {
+            bytesAtResume = state.bytes;
+            client.resume();
+          });
+        },
+      });
+      expect({ ...result, stoppedWhilePaused: bytesAtResume === bytesAtPause }).toEqual({
+        ...delivered,
+        stoppedWhilePaused: true,
+      });
+    });
+
+    it.each(["resume", "read"] as const)(
+      "%s() restarts the reads after a false return under a 'readable' listener",
+      async restart => {
+        const result = await transfer(transport, {
+          attach: client => void client.on("readable", () => drain(client)),
+          onSlice(client, state) {
+            if (state.calls !== 1) return;
+            setImmediate(() => (restart === "resume" ? client.resume() : client.read(0)));
+            return false;
+          },
+        });
+        expect(result).toEqual(delivered);
+      },
+    );
+
+    // https://github.com/oven-sh/bun/issues/42418: read() starts the handle that pause() stopped, and isPaused() stays true.
+    it("pause() then read() inside the callback does not stop the reads", async () => {
+      const result = await transfer(transport, {
+        onSlice(client) {
+          client.pause();
+          client.read();
+        },
+      });
+      expect(result).toEqual(delivered);
+    });
+  });
 });
 
 // On Windows the native layer does not report fatal send errors yet (the WSA

@@ -415,29 +415,34 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
 // `immutable.rs` keeps resolving.
 pub use crate::strings_impl::copy_latin1_into_utf8_stop_on_non_ascii;
 
-pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoResult {
-    let buf_total = buf_.len();
-    let latin1_total = latin1_.len();
-    let mut buf: &mut [u16] = buf_;
-    let mut latin1: &[u8] = latin1_;
-    while !buf.is_empty() && !latin1.is_empty() {
-        let to_write = first_non_ascii(latin1)
-            .map(|v| v as usize)
-            .unwrap_or_else(|| latin1.len().min(buf.len()));
-        copy_u8_into_u16(buf, &latin1[..to_write]);
+/// Decodes windows-1252 bytes into UTF-16 code units. Each input byte maps to
+/// exactly one code unit, so the conversion stops at the shorter of the two
+/// slices.
+pub fn copy_cp1252_into_utf16(buf: &mut [u16], cp1252: &[u8]) -> EncodeIntoResult {
+    let len = buf.len().min(cp1252.len());
+    let buf = &mut buf[..len];
+    let cp1252 = &cp1252[..len];
 
-        latin1 = &latin1[to_write..];
-        buf = &mut buf[to_write..];
-        if !latin1.is_empty() && buf.len() >= 1 {
-            buf[0] = cp1252_to_codepoint_bytes_assume_not_ascii16(u32::from(latin1[0]));
-            latin1 = &latin1[1..];
-            buf = &mut buf[1..];
+    // windows-1252 differs from Latin-1 only in 0x80..=0x9F. A block without
+    // one of those bytes is a plain widening; a block with one goes through
+    // the table.
+    const BLOCK: usize = 64;
+    for (out, input) in buf.chunks_mut(BLOCK).zip(cp1252.chunks(BLOCK)) {
+        let has_c1 = input
+            .iter()
+            .fold(false, |acc, &b| acc | (b.wrapping_sub(0x80) < 0x20));
+        if has_c1 {
+            for (o, &b) in out.iter_mut().zip(input) {
+                *o = CP1252_TO_UTF16_CONVERSION_TABLE[usize::from(b)];
+            }
+        } else {
+            copy_u8_into_u16(out, input);
         }
     }
 
     EncodeIntoResult {
-        read: (buf_total - buf.len()) as u32,
-        written: (latin1_total - latin1.len()) as u32,
+        read: len as u32,
+        written: len as u32,
     }
 }
 
@@ -922,10 +927,6 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
     0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
     0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
 ];
-
-fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
-    CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]
-}
 
 // `copy_utf16_into_utf8` (the non-generic wrapper) lives canonically in
 // `crate::strings_impl`; re-exported at `crate::string::immutable`. The

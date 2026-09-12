@@ -608,11 +608,7 @@ fn lower_sequence(
     bin: &E::Binary,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
-    let continuation_block = builder.reserve(builder.current_block_kind());
-    let continuation_id = continuation_block.id;
-    let place = build_temporary_place(builder, loc);
-
-    let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
+    lower_in_sequence_block(builder, loc, |builder| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
@@ -623,7 +619,23 @@ fn lower_sequence(
             lower_expression_to_temporary(builder, e)
         }
         flatten_comma(builder, &bin.left)?;
-        let last = lower_expression_to_temporary(builder, &bin.right)?;
+        lower_expression_to_temporary(builder, &bin.right)
+    })
+}
+
+/// Runs `lower` in a new sequence block. The place it returns is the value of
+/// the sequence.
+fn lower_in_sequence_block(
+    builder: &mut HirBuilder,
+    loc: Option<SourceLocation>,
+    lower: impl FnOnce(&mut HirBuilder) -> Result<Place, CompilerError>,
+) -> Result<InstructionValue, CompilerError> {
+    let continuation_block = builder.reserve(builder.current_block_kind());
+    let continuation_id = continuation_block.id;
+    let place = build_temporary_place(builder, loc);
+
+    let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
+        let last = lower(builder)?;
         lower_value_to_temporary(
             builder,
             InstructionValue::StoreLocal {
@@ -1023,7 +1035,7 @@ fn lower_unary(
                 Ok(unsupported_node("UnaryExpression", loc))
             }
         },
-        UnPreInc | UnPreDec | UnPostInc | UnPostDec => lower_update(builder, unary, loc),
+        UnPreInc | UnPreDec | UnPostInc | UnPostDec => lower_update(builder, unary, loc, true),
         _ => {
             let Some(operator) = super::helpers::convert_unary_operator(unary.op) else {
                 return Err(todo_err("EUnary op", loc));
@@ -1039,10 +1051,27 @@ fn lower_unary(
     }
 }
 
+/// Lowers an expression statement or the update of a `for`: nothing reads
+/// the value.
+pub(super) fn lower_expression_for_effect(
+    builder: &mut HirBuilder,
+    expr: &Expr,
+) -> Result<(), CompilerError> {
+    let value = match &expr.data {
+        Data::EUnary(unary) if matches!(unary.op, OpCode::UnPostInc | OpCode::UnPostDec) => {
+            lower_update(builder, unary, convert_loc(expr.loc), false)?
+        }
+        _ => lower_expression(builder, expr)?,
+    };
+    lower_value_to_temporary(builder, value)?;
+    Ok(())
+}
+
 fn lower_update(
     builder: &mut HirBuilder,
     unary: &E::Unary,
     loc: Option<SourceLocation>,
+    value_is_used: bool,
 ) -> Result<InstructionValue, CompilerError> {
     let prefix = matches!(unary.op, OpCode::UnPreInc | OpCode::UnPreDec);
     let operation = match unary.op {
@@ -1057,49 +1086,35 @@ fn lower_update(
                 UpdateOperator::Decrement => BinaryOperator::Subtract,
             };
             let member_loc = convert_loc(unary.value.loc);
-            let lowered = lower_member_expression(builder, &unary.value, None)?;
-            let object = lowered.object;
-            let lowered_property = lowered.property;
-            let prev_value = lower_value_to_temporary(builder, lowered.value)?;
 
-            let one = lower_value_to_temporary(
-                builder,
-                InstructionValue::Primitive {
-                    value: PrimitiveValue::Number(FloatValue::new(1.0)),
-                    loc: None,
-                },
-            )?;
-            let updated = lower_value_to_temporary(
-                builder,
-                InstructionValue::BinaryExpression {
-                    operator: binary_op,
-                    left: prev_value.clone(),
-                    right: one,
-                    loc: member_loc,
-                },
-            )?;
+            // Intentional deviation: upstream returns the temporary that holds
+            // the load of `o.p`. In a nested function no pass names it, so
+            // codegen prints `o.p` again after the store and `const id = o.p++`
+            // gets the new value (facebook/react#35205).
+            // `(old = o.p, o.p = old + 1, old)` keeps the update in its place
+            // among the other operands.
+            if !prefix && value_is_used && builder.is_nested_function() {
+                let old_value = builder.declare_temporary_at_entry(member_loc);
+                return lower_in_sequence_block(builder, loc, |builder| {
+                    lower_member_update(
+                        builder,
+                        &unary.value,
+                        binary_op,
+                        member_loc,
+                        Some(&old_value),
+                    )?;
+                    lower_value_to_temporary(
+                        builder,
+                        InstructionValue::LoadLocal {
+                            place: old_value.clone(),
+                            loc: member_loc,
+                        },
+                    )
+                });
+            }
 
-            let new_value_place = match lowered_property {
-                MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
-                    builder,
-                    InstructionValue::PropertyStore {
-                        object,
-                        property: prop_literal,
-                        value: updated,
-                        loc: member_loc,
-                    },
-                )?,
-                MemberProperty::Computed(prop_place) => lower_value_to_temporary(
-                    builder,
-                    InstructionValue::ComputedStore {
-                        object,
-                        property: prop_place,
-                        value: updated,
-                        loc: member_loc,
-                    },
-                )?,
-            };
-
+            let (prev_value, new_value_place) =
+                lower_member_update(builder, &unary.value, binary_op, member_loc, None)?;
             let result_place = if prefix { new_value_place } else { prev_value };
             Ok(InstructionValue::LoadLocal {
                 loc: result_place.loc,
@@ -1123,6 +1138,82 @@ fn lower_update(
             Ok(unsupported_node("UpdateExpression", loc))
         }
     }
+}
+
+/// Lowers `o.p = o.p + 1` (or `- 1`) and returns the value loaded and the
+/// value stored. With `old_value`, the value loaded goes to that local first
+/// and the sum reads the local: `old = o.p, o.p = old + 1`.
+fn lower_member_update(
+    builder: &mut HirBuilder,
+    member: &Expr,
+    binary_op: BinaryOperator,
+    member_loc: Option<SourceLocation>,
+    old_value: Option<&Place>,
+) -> Result<(Place, Place), CompilerError> {
+    let lowered = lower_member_expression(builder, member, None)?;
+    let object = lowered.object;
+    let lowered_property = lowered.property;
+    let mut prev_value = lower_value_to_temporary(builder, lowered.value)?;
+    if let Some(old_value) = old_value {
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::StoreLocal {
+                lvalue: LValue {
+                    kind: InstructionKind::Reassign,
+                    place: old_value.clone(),
+                },
+                value: prev_value,
+                type_annotation: None,
+                loc: member_loc,
+            },
+        )?;
+        prev_value = lower_value_to_temporary(
+            builder,
+            InstructionValue::LoadLocal {
+                place: old_value.clone(),
+                loc: member_loc,
+            },
+        )?;
+    }
+
+    let one = lower_value_to_temporary(
+        builder,
+        InstructionValue::Primitive {
+            value: PrimitiveValue::Number(FloatValue::new(1.0)),
+            loc: None,
+        },
+    )?;
+    let updated = lower_value_to_temporary(
+        builder,
+        InstructionValue::BinaryExpression {
+            operator: binary_op,
+            left: prev_value.clone(),
+            right: one,
+            loc: member_loc,
+        },
+    )?;
+
+    let new_value_place = match lowered_property {
+        MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
+            builder,
+            InstructionValue::PropertyStore {
+                object,
+                property: prop_literal,
+                value: updated,
+                loc: member_loc,
+            },
+        )?,
+        MemberProperty::Computed(prop_place) => lower_value_to_temporary(
+            builder,
+            InstructionValue::ComputedStore {
+                object,
+                property: prop_place,
+                value: updated,
+                loc: member_loc,
+            },
+        )?,
+    };
+    Ok((prev_value, new_value_place))
 }
 
 fn lower_update_identifier(

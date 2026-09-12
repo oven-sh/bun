@@ -352,6 +352,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             };
 
+            if let Some(sig) = crate::shell::forward_signals::ended_script(code) {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                        bstr::BStr::new(name),
+                        bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                    );
+                    Output::flush();
+                }
+                Global::raise_ignoring_panic_handler(sig);
+            }
+
             if code > 0 {
                 if code != 2 && !silent {
                     pretty_errorln!(

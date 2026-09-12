@@ -47,6 +47,7 @@ use crate::shell::states::pipeline::Pipeline;
 use crate::shell::states::script::Script;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::states::subshell::Subshell;
+use crate::shell::subproc::ShellSubprocess;
 use crate::shell::yield_::Yield;
 use crate::shell::{ShellErr, ast};
 
@@ -732,6 +733,8 @@ impl Interpreter {
 
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
+        // Armed before `run()`: it spawns the first command before it returns.
+        crate::shell::forward_signals::install(mini.loop_ptr());
         if let Err(e) = interp.run() {
             let name = e.name();
             interp.deinit_from_exec();
@@ -751,8 +754,15 @@ impl Interpreter {
             // SAFETY: `interp` lives in this stack frame for the whole tick
             // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
             // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
+            // `forward_signal` runs between ticks, so no task holds a borrow of
+            // the node arena.
+            let interp = unsafe { &*interp_ptr };
+            if let Some(sig) = crate::shell::forward_signals::take_pending() {
+                interp.forward_signal(sig);
+            }
+            interp.flags.get().done()
         });
+        crate::shell::forward_signals::uninstall();
 
         let code = interp.exit_code.get().expect("exit_code set by finish()");
         interp.deinit_from_exec();
@@ -925,10 +935,40 @@ impl Interpreter {
         }
     }
 
+    /// Send `sig` to every subprocess that is still running (see
+    /// `forward_signals`). Every command the script runs, pipeline members and
+    /// command substitutions included, is a `Cmd` node in the arena. Call
+    /// between ticks only: no callback holds a borrow of a subprocess then.
+    pub(crate) fn forward_signal(&self, sig: bun_core::SignalCode) {
+        let Some(sig) = sig.platform_number() else {
+            return;
+        };
+        for node in self.nodes.get() {
+            let Node::Cmd(cmd) = node else { continue };
+            let crate::shell::states::cmd::Exec::Subproc(sub) = &cmd.exec else {
+                continue;
+            };
+            if sub.child.is_null() {
+                continue;
+            }
+            // SAFETY: `child` is the live `heap::alloc` subprocess owned by
+            // this `Cmd` until `Cmd::deinit` frees it (it is also the
+            // `Process`'s exit-callback context). Between ticks no callback
+            // holds a borrow of it.
+            let child: &mut ShellSubprocess = unsafe { &mut *sub.child };
+            if child.process.is_some() {
+                let _ = child.try_kill(sig);
+            }
+        }
+    }
+
     /// For sequencing states' `child_done`: an interrupted pipeline member stops
-    /// where it is instead of running its next command.
+    /// where it is instead of running its next command. After a termination
+    /// signal (see `forward_signals`) every sequence stops, so the script ends
+    /// with the commands that received it.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
         self.node(id).base().is_some_and(|b| b.interrupted)
+            || crate::shell::forward_signals::received().is_some()
     }
 
     /// Some ancestor is a member of a multi-command pipeline.

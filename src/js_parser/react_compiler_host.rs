@@ -178,7 +178,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             for (key, member) in args.members.iter() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;
                 if kind == js_ast::symbol::Kind::Arguments || Some(member.ref_) == name {
-                    // SAFETY: `key` is the key of a member of a live scope.
+                    // SAFETY: `put` stores `key` by reference, so it has to
+                    // outlive `args`. It is already the key of a member of
+                    // `args`, stored under the same contract.
                     unsafe { kept.put(key, *member) };
                 }
             }

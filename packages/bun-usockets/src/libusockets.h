@@ -570,6 +570,9 @@ int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_ca
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
+/* 1 once the handshake on `ssl` has started (or completed). SSL_set_session
+ * is only legal while this is 0: BoringSSL abort()s otherwise. */
+int us_ssl_handshake_started(struct ssl_st *ssl);
 /* Per-SSL session sink: each resumable session reaching the new-session
  * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
  * ownership of that reference). on_free(owner) runs once on SSL_free. */

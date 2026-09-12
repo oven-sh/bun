@@ -368,10 +368,7 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
 
-// The pool name also keys the TLS session cache, so it has to differ whenever the client
-// certificate or the trusted CA does. `name += value` only manages that when the value's
-// string form is its contents: a string, a Buffer, a TypedArray, or an array of those.
-// A { buf | pem, passphrase } entry, an ArrayBuffer and a Blob all stringify to "[object ...]".
+// `"" + value` is "[object ...]" for every value but a string, a Buffer, a TypedArray or an array of those.
 const poolKeyObjectIds = new WeakMap<object, number>();
 let poolKeyObjectCount = 0;
 function poolKeyPart(value: unknown): unknown {
@@ -506,8 +503,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
 
-  // Bun-only options: paths that the TLS layer reads the client certificate, its key and the
-  // CA from. Node has no such options, so a name without them stays Node's name.
+  // Bun-only options. Node has none of them, so a name without them stays Node's name.
   if (certFile) name += `:certFile=${JSONStringify(certFile)}`;
   if (keyFile) name += `:keyFile=${JSONStringify(keyFile)}`;
   if (caFile) name += `:caFile=${JSONStringify(caFile)}`;

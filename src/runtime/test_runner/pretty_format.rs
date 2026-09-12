@@ -517,7 +517,10 @@ impl Tag {
 
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(
+            self,
+            Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX | Tag::Event
+        )
     }
 
     /// What a container prints as after the walk spent `FormatOptions::shared_reference_budget`.

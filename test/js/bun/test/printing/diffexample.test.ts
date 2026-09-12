@@ -976,6 +976,33 @@ describe.concurrent("a value that reaches the same objects many times", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("diff: repeated React elements print as [Object] after 1 MiB", async () => {
+    // React elements print through their own arm of the formatter, not the Object one.
+    // 10 levels reach the 8 KB leaf 1,024 times and print 8 MB without the budget.
+    const { stderr, exitCode } = await run(`
+      import { expect, test } from "bun:test";
+      const el = (children: any) => ({
+        $$typeof: Symbol.for("react.element"),
+        type: "div",
+        key: null,
+        ref: null,
+        props: { children },
+      });
+      let o: any = el(Buffer.alloc(8192, "x").toString());
+      for (let i = 0; i < 10; i++) o = el([o, o]);
+      test("tree", () => {
+        expect(o).toEqual(1);
+      });
+    `);
+    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("[Object],");
+    expect(stderr).toContain(
+      "note: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier",
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("snapshot: a value that prints more than 64 MiB for repeated values is an error", async () => {
     const { stderr, exitCode } = await run(
       `

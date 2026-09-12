@@ -33,15 +33,15 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
 /// every unbound or must-not-be-renamed name in any module scope of the
-/// bundle, and the entry points' own export names. A per-chunk renamer only
-/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
+/// bundle, and the export names `reserve_entry_export_names` adds. A per-chunk
+/// renamer only avoids its own chunk's; a bundle-wide name has to avoid all
+/// of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
     let scopes = c.graph.ast.items_module_scope();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
@@ -52,15 +52,33 @@ fn reserved_names(
                 );
             }
         }
-        // An entry point's own `export {}` names share its export namespace
-        // with the cross-chunk exports it may carry.
-        if chunk.entry_point.is_entry_point() {
+    }
+    reserve_entry_export_names(c, chunks, &mut reserved)?;
+    Ok(reserved)
+}
+
+/// An entry chunk prints its entry point's own export names and the bindings
+/// it exports to other chunks in one `export {}` clause, where a repeated name
+/// is a SyntaxError. An export name is not a binding, so only a chunk that has
+/// both reserves them; anywhere else a cross-chunk binding keeps a name that
+/// an entry point also exports.
+fn reserve_entry_export_names(
+    c: &LinkerContext,
+    chunks: &[Chunk],
+    reserved: &mut StringHashMap<u32>,
+) -> Result<(), bun_alloc::AllocError> {
+    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
+    for chunk in chunks {
+        let Content::Javascript(js) = &chunk.content else {
+            continue;
+        };
+        if chunk.entry_point.is_entry_point() && !js.exports_to_other_chunks.is_empty() {
             for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
                 reserved.put(alias, 1)?;
             }
         }
     }
-    Ok(reserved)
+    Ok(())
 }
 
 fn intern(c: &LinkerContext, name: &[u8]) -> &'static [u8] {
@@ -131,19 +149,14 @@ pub(crate) fn assign_minified(
     // Every chunk's renamer already reserved the keywords plus its own module
     // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
     let mut reserved = StringHashMap::<u32>::default();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks.iter() {
         if let ChunkRenamer::Minify(r) = &chunk.renamer {
             for (name, _) in r.reserved_names().iter() {
                 reserved.put(name, 1)?;
             }
         }
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
-            }
-        }
     }
+    reserve_entry_export_names(c, chunks, &mut reserved)?;
 
     // (total count, first-seen order) per binding; most used first. Each
     // chunk contributes the count of the bindings it declares or imports.

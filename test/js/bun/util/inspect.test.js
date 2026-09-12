@@ -190,21 +190,35 @@ describe("quoted strings do not depend on the string's internal representation",
     expect(Bun.inspect(row16)).toBe(expected);
   });
 
-  it("8-bit and 16-bit strings with the same characters print the same", () => {
+  describe("8-bit and 16-bit strings with the same characters print the same", () => {
     const s8 = '\x1b[31m \x00\x0b\x0e\x1f "q" \\';
     const s16 = to16Bit(s8);
-    expect(s16).toBe(s8);
-    expect(s8).toBeLatin1String();
-    expect(s16).toBeUTF16String();
-    const expected = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\"';
-    expect(Bun.inspect(s8)).toBe(expected);
-    expect(Bun.inspect(s16)).toBe(expected);
-    expect(Bun.inspect([s16])).toBe(Bun.inspect([s8]));
-    expect(Bun.inspect({ k: s16 })).toBe(Bun.inspect({ k: s8 }));
-    expect(Bun.inspect(new String(s16))).toBe(Bun.inspect(new String(s8)));
-    expect(Bun.inspect(new Map([[s16, s16]]))).toBe(Bun.inspect(new Map([[s8, s8]])));
-    // Nothing above swapped the 16-bit string for the 8-bit one.
-    expect(s16).toBeUTF16String();
+
+    it("as a value", () => {
+      expect(s16).toBe(s8);
+      expect(s8).toBeLatin1String();
+      expect(s16).toBeUTF16String();
+      const expected = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\"';
+      expect(Bun.inspect(s8)).toBe(expected);
+      expect(Bun.inspect(s16)).toBe(expected);
+    });
+
+    // Each row is a place where the printer writes a quoted string that is not a property key.
+    // A new branch on the storage width in one of them fails its row.
+    it.each([
+      ["an array element", s => [s]],
+      ["an array that wraps", s => [s, s, s, s, s]],
+      ["an object value", s => ({ k: s })],
+      ["a nested value", s => ({ a: [{ b: [s] }] })],
+      ["a String object", s => new String(s)],
+      ["a Map key and value", s => new Map([[s, s]])],
+      ["a Set element", s => new Set([s])],
+    ])("as %s", (_, build) => {
+      expect(Bun.inspect(build(s16))).toBe(Bun.inspect(build(s8)));
+      // Nothing above swapped the 16-bit string for the 8-bit one.
+      expect(s8).toBeLatin1String();
+      expect(s16).toBeUTF16String();
+    });
   });
 
   it("strings that need 16 bits", () => {

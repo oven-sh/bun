@@ -14,11 +14,9 @@ use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
-/// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
-/// sites below can use the `JSLexer.isLatin1Identifier` /
-/// `JSPrinter.writeJsonString` spelling while the underlying crates expose
-/// slightly different shapes (single generic identifier predicate; const-generic
-/// encoding on `write_json_string`).
+/// Thin facade over `bun_js_parser::lexer` so the call sites below can use the
+/// `JSLexer.isLatin1Identifier` spelling while the underlying crate exposes a
+/// slightly different shape (single generic identifier predicate).
 mod JSLexer {
     #[inline]
     pub(super) fn is_latin1_identifier_u8(name: &[u8]) -> bool {
@@ -29,32 +27,6 @@ mod JSLexer {
     #[inline]
     pub(super) fn is_latin1_identifier_u16(name: &[u16]) -> bool {
         bun_ast::lexer_tables::is_latin1_identifier_u16(name)
-    }
-}
-mod JSPrinter {
-    pub(super) use bun_js_printer::Encoding;
-    /// Runtime-encoding adapter over `bun_js_printer::write_json_string`,
-    /// which takes `Encoding` as a const generic.
-    #[inline]
-    pub(super) fn write_json_string(
-        input: &[u8],
-        writer: &mut (impl bun_io::Write + ?Sized),
-        encoding: Encoding,
-    ) -> bun_js_printer::Result<()> {
-        match encoding {
-            Encoding::Latin1 => {
-                bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
-            }
-            Encoding::Utf8 => {
-                bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(input, writer)
-            }
-            Encoding::Ascii => {
-                bun_js_printer::write_json_string::<_, { Encoding::Ascii }>(input, writer)
-            }
-            Encoding::Utf16 => {
-                bun_js_printer::write_json_string::<_, { Encoding::Utf16 }>(input, writer)
-            }
-        }
     }
 }
 
@@ -5411,11 +5383,7 @@ pub mod formatter {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
-                let _ = JSPrinter::write_json_string(
-                    slice,
-                    &mut *writer.ctx,
-                    JSPrinter::Encoding::Utf8,
-                );
+                writer.write_json_string(EncodedSlice::utf8(slice));
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }

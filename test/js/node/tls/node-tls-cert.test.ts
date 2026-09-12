@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
@@ -11,10 +11,14 @@ const clientTls = {
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
 };
+// agent10/ca2 come from the upstream-synced keys: the older copy under
+// ./fixtures has a 1024-bit ca2, which Node >= 26 rejects as CA_KEY_TOO_SMALL
+// before any of the chain assertions below can be reached.
+const upstreamKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const serverTls = {
-  key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
-  cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
-  ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
+  key: readFileSync(join(upstreamKeys, "agent10-key.pem"), "utf8"),
+  cert: readFileSync(join(upstreamKeys, "agent10-cert.pem"), "utf8"),
+  ca: readFileSync(join(upstreamKeys, "ca2-cert.pem"), "utf8"),
 };
 
 function split(file: any, into: any) {
@@ -32,6 +36,11 @@ function checkServerIdentity(hostname: string, cert: any) {
   expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
+
+// tlsClientError code when a requestCert + rejectUnauthorized server rejects an
+// incomplete client chain: Node emits ConnResetException('socket hang up'); Bun
+// emits the X509 verify error it aborted the handshake on.
+const REJECTED_CLIENT_CHAIN_CODES = ["ECONNRESET", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"];
 
 function connect(options: any) {
   let { promise, resolve, reject } = Promise.withResolvers();
@@ -246,7 +255,10 @@ it("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    // Node's server finishes the handshake then destroys the socket, so both peers
+    // see ECONNRESET (lib/internal/tls/wrap.js onServerSocketSecure/onSocketClose).
+    // Bun aborts inside the handshake and reports the X509 reason instead.
+    expect(REJECTED_CLIENT_CHAIN_CODES).toContain(err.code);
   }
 });
 
@@ -295,7 +307,7 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
     ]);
     expect(outcome).toBe("closed");
 
-    expect(clientError?.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(REJECTED_CLIENT_CHAIN_CODES).toContain(clientError?.code);
     expect(secureConnections).toHaveLength(0);
     expect(handled).toHaveLength(0);
 
@@ -318,6 +330,100 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
 
     expect(handled).toHaveLength(1);
     expect(secureConnections).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+it("client sees a hard error, not a clean close, when the server rejects its certificate under rejectUnauthorized", async () => {
+  // A post-handshake close_notify would be indistinguishable from an empty reply.
+  // Pinned to TLS 1.2 so the rejection lands before the client's secureConnect
+  // on both runtimes; over TLS 1.3 the client finishes its handshake first.
+  const untrustedClient = {
+    key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
+  };
+  let serverClientError: any;
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: true,
+      maxVersion: "TLSv1.2",
+    },
+    socket => socket.end("SECRET"),
+  );
+  server.on("tlsClientError", err => {
+    serverClientError ??= err;
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  try {
+    const outcome = await new Promise<{ error: any; secureConnect: boolean; hadError: boolean; data: string }>(
+      resolve => {
+        let error: any = null;
+        let secureConnect = false;
+        let data = "";
+        const c = tls.connect({
+          host: "127.0.0.1",
+          port,
+          ca: serverTls.ca,
+          key: untrustedClient.key,
+          cert: untrustedClient.cert,
+          checkServerIdentity,
+          maxVersion: "TLSv1.2",
+        });
+        c.on("secureConnect", () => (secureConnect = true));
+        c.on("data", d => (data += d));
+        c.on("error", e => (error = e?.code ?? String(e)));
+        c.on("close", hadError => resolve({ error, secureConnect, hadError, data }));
+      },
+    );
+
+    // The handler never runs, the client's handshake never completes, and the
+    // client is told the connection failed.
+    expect({ data: outcome.data, secureConnect: outcome.secureConnect, hadError: outcome.hadError }).toEqual({
+      data: "",
+      secureConnect: false,
+      hadError: true,
+    });
+    // Node destroys the socket without close_notify after verifying, so the
+    // client reads ECONNRESET and tlsClientError is ConnResetException('socket
+    // hang up'); Bun sends a fatal unknown_ca alert and reports the X509 reason.
+    expect(["ECONNRESET", "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA"]).toContain(outcome.error);
+    expect(["ECONNRESET", "DEPTH_ZERO_SELF_SIGNED_CERT"]).toContain(serverClientError?.code);
+  } finally {
+    server.close();
+  }
+});
+
+it("tlsClientError keeps the specific reason for non-verification handshake failures under requestCert + rejectUnauthorized", async () => {
+  // SSL_get_verify_result is X509_V_ERR_INVALID_CALL before verification runs,
+  // so the X509-reason dispatch must only fire when a peer cert was actually
+  // presented; plain-HTTP and no-cert clients keep their parked reason.
+  const errors: (string | undefined)[] = [];
+  const server = tls.createServer(
+    { key: serverTls.key, cert: serverTls.cert, ca: clientTls.ca, requestCert: true, rejectUnauthorized: true },
+    s => s.end(),
+  );
+  server.on("tlsClientError", e => errors.push(e?.code));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+  try {
+    await new Promise<void>(resolve => {
+      const sock = net.connect(port, "127.0.0.1", () => sock.write("GET / HTTP/1.1\r\n\r\n"));
+      sock.on("error", () => {});
+      sock.on("close", () => resolve());
+    });
+    await new Promise<void>(resolve => {
+      const c = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false });
+      c.on("error", () => {});
+      c.on("close", () => resolve());
+    });
+    expect(errors).toEqual(["ERR_SSL_HTTP_REQUEST", "ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE"]);
   } finally {
     server.close();
   }
@@ -629,7 +735,7 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
 
   const results = await Promise.all(
     ["not-exist.pem", "", " "].map(async invalid => {
-      const proc = Bun.spawn({
+      await using proc = Bun.spawn({
         env: {
           ...bunEnv,
           SERVER_PORT: server.address.port.toString(),
@@ -666,7 +772,7 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
 
   const results = await Promise.all(
     [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath].map(async invalid => {
-      const proc = Bun.spawn({
+      await using proc = Bun.spawn({
         env: {
           ...bunEnv,
           SERVER_PORT: server.address.port.toString(),

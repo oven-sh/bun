@@ -253,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     RETURN_IF_EXCEPTION(scope, {});
 
     // Checked after the last conversion that can run user code, so nothing runs between this and the append.
-    if (thisObject->plugin.filtersAreFrozen()) [[unlikely]]
+    if (thisObject->plugin.filtersFrozen) [[unlikely]]
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "addFilter() called after the build started"_s);
 
     unsigned index = 0;
@@ -435,7 +435,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     }
 
     // Checked after the last conversion that can run user code, so nothing runs between this and the appends.
-    if (thisObject->plugin.filtersAreFrozen()) [[unlikely]]
+    if (thisObject->plugin.filtersFrozen) [[unlikely]]
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "onBeforeParse() called after the build started"_s);
 
     if (externalPtr)
@@ -736,6 +736,11 @@ void BundlerPlugin::tombstone()
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" void JSBundlerPlugin__freezeFilters(Bun::JSBundlerPlugin* plugin)
+{
+    plugin->plugin.filtersFrozen = true;
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)

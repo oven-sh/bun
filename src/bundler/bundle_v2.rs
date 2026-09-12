@@ -756,6 +756,8 @@ pub mod bv2_impl {
                 safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
+                #[link_name = "JSBundlerPlugin__freezeFilters"]
+                safe fn JSBundlerPlugin__freezeFilters(this: &Plugin);
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
                 // to Rust-registered native-plugin callbacks without dereferencing
                 // in `JSBundlerPlugin.cpp` itself (same posture as `matchOnLoad`
@@ -787,6 +789,12 @@ pub mod bv2_impl {
                 #[inline]
                 pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
+                }
+
+                /// JS thread, before a bundle pass takes this plugin. The pass and its parse workers read
+                /// the filter lists with no lock, so `addFilter` / `onBeforeParse` refuse from here on.
+                pub fn freeze_filters(&self) {
+                    JSBundlerPlugin__freezeFilters(self)
                 }
 
                 #[inline]
@@ -2990,6 +2998,10 @@ pub mod bv2_impl {
                 this.framework = Some(bo.framework);
                 this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
                 this.plugins = bo.plugins;
+                // A bake pass is built on the JS thread, which is where the plugin wants this call.
+                if let Some(plugins) = this.plugins_ref() {
+                    plugins.freeze_filters();
+                }
                 if this.transpiler.options.server_components {
                     debug_assert!(
                         this.client_transpiler_ref()

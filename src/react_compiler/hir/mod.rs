@@ -1448,9 +1448,8 @@ pub enum NonLocalKind {
     /// unchanged and the bundler keeps any `import_record_index` / `Ref` /
     /// variant tag it holds.
     ///
-    /// A node that is a whole call (`import()`, `require("x")`,
-    /// `require.resolve("x")`) is lowered as the callee of a `CallExpression`,
-    /// so the compiler keeps its side effects. Codegen rebuilds the node.
+    /// A node that is a whole call is not a constant, see
+    /// [`NonLocalBinding::opaque_call`].
     BunOpaque(bun_ast::Expr),
 }
 
@@ -1509,6 +1508,26 @@ impl NonLocalBinding {
                     _ => b"<bun-opaque>",
                 }
             }
+        }
+    }
+
+    /// The carried node, when that node is a whole call: `import()`,
+    /// `require("x")`, `require.resolve("x")`. Lowering makes the binding the
+    /// callee of a `CallExpression`, so the passes keep the side effects of the
+    /// call. Codegen emits the node for that `CallExpression` and for nothing
+    /// else.
+    pub fn opaque_call(&self) -> Option<bun_ast::Expr> {
+        use bun_ast::expr::Data;
+        match self.kind {
+            NonLocalKind::BunOpaque(node)
+                if matches!(
+                    node.data,
+                    Data::EImport(_) | Data::ERequireString(_) | Data::ERequireResolveString(_)
+                ) =>
+            {
+                Some(node)
+            }
+            _ => None,
         }
     }
 

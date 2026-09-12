@@ -380,6 +380,9 @@ struct Context<'a, 'h> {
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
+    /// Callee temporary to the node of [`NonLocalBinding::opaque_call`]. The
+    /// node is not in `temp`: only the `CallExpression` on the callee emits it.
+    opaque_calls: IdMap<IdentifierId, Expr>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
 }
@@ -397,6 +400,7 @@ impl<'a, 'h> Context<'a, 'h> {
             declarations: HashSet::new(),
             temp: IdMap::new(),
             object_methods: IdMap::new(),
+            opaque_calls: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::new(),
         }
@@ -1419,6 +1423,23 @@ fn codegen_instruction_nullable(
                     .insert(lvalue.identifier, (value.clone(), *loc));
                 return Ok(None);
             }
+            InstructionValue::LoadGlobal { binding, loc } => {
+                if let Some(node) = binding.opaque_call() {
+                    let callee = instr.lvalue.as_ref().filter(|lvalue| {
+                        cx.env.identifiers[lvalue.identifier.0 as usize]
+                            .name
+                            .is_none()
+                    });
+                    let Some(callee) = callee else {
+                        return Err(invariant_err(
+                            "Expected the callee of an opaque call to be a temporary",
+                            *loc,
+                        ));
+                    };
+                    cx.opaque_calls.insert(callee.identifier, node);
+                    return Ok(None);
+                }
+            }
             _ => {}
         }
     }
@@ -1864,6 +1885,12 @@ fn codegen_base_instruction_value(
             codegen_place_to_expression(cx, place)
         }
         InstructionValue::LoadGlobal { binding, .. } => {
+            if binding.opaque_call().is_some() {
+                return Err(invariant_err(
+                    "Expected an opaque call to be emitted by its CallExpression",
+                    iv.loc().copied(),
+                ));
+            }
             if let NonLocalKind::BunOpaque(e) = binding.kind {
                 return Ok(e);
             }
@@ -1878,26 +1905,23 @@ fn codegen_base_instruction_value(
             }
         }
         InstructionValue::CallExpression { callee, args, .. } => {
-            let callee_expr = codegen_place_to_expression(cx, callee)?;
-            let arguments = codegen_arguments(cx, args)?;
-            if let ExprData::EImport(orig) = callee_expr.data {
-                let mut it = arguments.into_iter();
+            if let Some(node) = cx.opaque_calls.get(callee.identifier).copied() {
+                let ExprData::EImport(orig) = node.data else {
+                    return Ok(node);
+                };
+                let mut arguments = codegen_arguments(cx, args)?.into_iter();
                 return Ok(Expr::init(
                     E::Import {
-                        expr: it.next().unwrap_or(orig.expr),
-                        options: it.next().unwrap_or(Expr::EMPTY),
+                        expr: arguments.next().unwrap_or(orig.expr),
+                        options: arguments.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
                         namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));
             }
-            if matches!(
-                callee_expr.data,
-                ExprData::ERequireString(_) | ExprData::ERequireResolveString(_)
-            ) {
-                return Ok(callee_expr);
-            }
+            let callee_expr = codegen_place_to_expression(cx, callee)?;
+            let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
                 E::Call {
                     target: callee_expr,

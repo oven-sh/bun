@@ -756,7 +756,7 @@ fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
 
 /// Howard Hinnant's `civil_from_days` — converts days-since-1970-01-01 to a
 /// proleptic-Gregorian (year, month[1..=12], day[1..=31]).
-fn civil_from_days(z: i64) -> (i32, u8, u8) {
+pub(crate) fn civil_from_days(z: i64) -> (i32, u8, u8) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = (z - era * 146_097) as u32; // [0, 146096]

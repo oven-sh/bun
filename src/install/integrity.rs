@@ -167,7 +167,7 @@ impl Integrity {
         Integrity { value: out, tag }
     }
 
-    pub(crate) fn slice(&self) -> &[u8] {
+    pub fn slice(&self) -> &[u8] {
         &self.value[0..self.tag.digest_len()]
     }
 
@@ -280,13 +280,13 @@ unsafe impl bytemuck::NoUninit for Tag {}
 impl Tag {
     pub(crate) const UNKNOWN: Tag = Tag(0);
     /// "shasum" in the metadata
-    pub(crate) const SHA1: Tag = Tag(1);
+    pub const SHA1: Tag = Tag(1);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
     pub const SHA256: Tag = Tag(2);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub(crate) const SHA384: Tag = Tag(3);
+    pub const SHA384: Tag = Tag(3);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub(crate) const SHA512: Tag = Tag(4);
+    pub const SHA512: Tag = Tag(4);
 
     #[inline]
     pub fn is_supported(self) -> bool {

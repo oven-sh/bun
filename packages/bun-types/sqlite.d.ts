@@ -571,13 +571,21 @@ declare module "bun:sqlite" {
     /**
      * See `sqlite3_file_control` for more information.
      * @link https://www.sqlite.org/c3ref/file_control.html
+     *
+     * Only opcodes with a safe JavaScript mapping are accepted. The argument
+     * (when the opcode takes one) is always a number; the scratch storage the
+     * opcode reads or writes is allocated internally. Opcodes that return a
+     * value return that value (a number, or a string for `SQLITE_FCNTL_VFSNAME`
+     * and `SQLITE_FCNTL_TEMPFILENAME`) on success and `undefined` if the VFS
+     * reports `SQLITE_NOTFOUND`. Opcodes without an output value return the
+     * `sqlite3_file_control` status code.
      */
-    fileControl(op: number, arg?: ArrayBufferView | number): number;
+    fileControl(op: number, arg?: number): number | string | undefined;
     /**
      * See `sqlite3_file_control` for more information.
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
-    fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+    fileControl(zDbName: string, op: number, arg?: number): number | string | undefined;
   }
 
   /**

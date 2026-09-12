@@ -1883,6 +1883,9 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
+        // After exit handlers, so a `Profiler.stop` in one still gets its profile.
+        crate::bun_cpu_profiler::stop_cpu_profiler_if_running(self.jsc_vm_mut());
+
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }

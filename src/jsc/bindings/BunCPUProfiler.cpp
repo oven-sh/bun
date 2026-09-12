@@ -17,14 +17,23 @@
 #include <wtf/URL.h>
 #include <algorithm>
 #include <limits>
+#include <memory>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
+extern "C" void Bun__drainCPUProfilerIfNeeded(JSC::VM* vm);
+extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
+extern "C" void Bun__setCPUProfilerCollectMarkdown(bool collect);
 
 void Bun__setSamplingInterval(int intervalMicroseconds)
 {
     Bun::setSamplingInterval(intervalMicroseconds);
+}
+
+void Bun__setCPUProfilerCollectMarkdown(bool collect)
+{
+    Bun::setCollectMarkdown(collect);
 }
 
 namespace Bun {
@@ -34,32 +43,21 @@ static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
+static thread_local bool s_collectMarkdown = false;
 
 void setSamplingInterval(int intervalMicroseconds)
 {
     s_samplingInterval = intervalMicroseconds;
 }
 
+void setCollectMarkdown(bool collect)
+{
+    s_collectMarkdown = collect;
+}
+
 bool isCPUProfilerRunning()
 {
     return s_isProfilerRunning;
-}
-
-void startCPUProfiler(JSC::VM& vm)
-{
-    // Capture the wall clock time when profiling starts (before creating stopwatch)
-    // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-
-    // Create a stopwatch and start it
-    auto stopwatch = WTF::Stopwatch::create();
-    stopwatch->start();
-
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
-    samplingProfiler.start();
-    s_isProfilerRunning = true;
 }
 
 struct ProfileNode {
@@ -117,28 +115,6 @@ static WTF::String formatFunctionName(const WTF::String& name, const JSC::Sampli
     }
 
     return displayName;
-}
-
-// Helper to format a location string from URL and line number
-static WTF::String formatLocation(const WTF::String& url, int lineNumber)
-{
-    if (url.isEmpty())
-        return "[native code]"_s;
-
-    // Extract path from file:// URL using WTF::URL
-    WTF::String path = url;
-    WTF::URL parsedUrl { url };
-    if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
-        path = parsedUrl.fileSystemPath();
-
-    if (lineNumber >= 0) {
-        WTF::StringBuilder sb;
-        sb.append(path);
-        sb.append(':');
-        sb.append(lineNumber);
-        return sb.toString();
-    }
-    return path;
 }
 
 // Helper to format time in human-readable form
@@ -289,43 +265,119 @@ static WTF::String generateEmptyProfileJSON()
     return sb.toString();
 }
 
-// Unified function that stops the profiler and generates requested output formats
-void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+// Profile output folded in one batch of samples at a time. Holds no JS objects.
+struct ProfileData {
+    // Chrome DevTools format: call tree keyed by parent id + function identity.
+    WTF::HashMap<WTF::String, int> nodeMap;
+    WTF::Vector<ProfileNode> nodes;
+    int nextNodeId { 2 };
+    WTF::Vector<int> samples;
+    WTF::Vector<long long> timeDeltas;
+
+    // Markdown format: per-function aggregates. Only built when requested.
+    bool collectMarkdown { false };
+    WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
+    long long totalTimeUs { 0 };
+    int totalSamples { 0 };
+
+    // Wall clock microseconds of the last sample folded in.
+    double lastTime { 0.0 };
+
+    // URL parsing dominates the per-frame cost, so both conversions are memoized.
+    WTF::HashMap<WTF::String, WTF::String> normalizedURLs;
+    WTF::HashMap<WTF::String, WTF::String> fileSystemPaths;
+};
+
+static thread_local ProfileData* s_profileData = nullptr;
+static thread_local WTF::MonotonicTime s_lastDrainTime;
+static constexpr WTF::Seconds kDrainInterval = WTF::Seconds::fromMilliseconds(100);
+
+void startCPUProfiler(JSC::VM& vm)
 {
-    s_isProfilerRunning = false;
+    // The profile's startTime.
+    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
-    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
-    if (!profiler) {
-        if (outJSON) *outJSON = WTF::String();
-        if (outText) *outText = WTF::String();
+    delete s_profileData;
+    s_profileData = new ProfileData();
+    s_profileData->collectMarkdown = s_collectMarkdown;
+    s_profileData->lastTime = s_profilingStartTime;
+
+    ProfileNode rootNode;
+    rootNode.id = 1;
+    rootNode.functionName = "(root)"_s;
+    rootNode.url = ""_s;
+    rootNode.scriptId = 0;
+    rootNode.lineNumber = -1;
+    rootNode.columnNumber = -1;
+    rootNode.hitCount = 0;
+    s_profileData->nodes.append(WTF::move(rootNode));
+
+    // Create a stopwatch and start it
+    auto stopwatch = WTF::Stopwatch::create();
+    stopwatch->start();
+
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
+    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
+    samplingProfiler.start();
+    s_lastDrainTime = MonotonicTime::now();
+    s_isProfilerRunning = true;
+}
+
+// Helper to format a location string from URL and line number
+static WTF::String formatLocation(ProfileData& data, const WTF::String& url, int lineNumber)
+{
+    if (url.isEmpty())
+        return "[native code]"_s;
+
+    // Extract path from file:// URL using WTF::URL
+    auto cached = data.fileSystemPaths.ensure(url, [&] {
+        WTF::URL parsedUrl { url };
+        if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
+            return parsedUrl.fileSystemPath();
+        return url;
+    });
+    const WTF::String& path = cached.iterator->value;
+
+    if (lineNumber >= 0) {
+        WTF::StringBuilder sb;
+        sb.append(path);
+        sb.append(':');
+        sb.append(lineNumber);
+        return sb.toString();
+    }
+    return path;
+}
+
+// Absolute file path to `file://` URL, as Chrome DevTools expects (#29240).
+static void normalizeURL(ProfileData& data, WTF::String& u)
+{
+    if (u.isEmpty())
+        return;
+    auto cached = data.normalizedURLs.find(u);
+    if (cached != data.normalizedURLs.end()) {
+        u = cached->value;
         return;
     }
-
-    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
-    JSC::JSLockHolder locker(vm);
-
-    // Defer GC while we're working with stack traces
-    JSC::DeferGC deferGC(vm);
-
-    // Pause the profiler while holding the lock
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-    profiler->pause();
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    auto stackTraces = profiler->releaseStackTraces();
-    profiler->clearData();
-
-    // If neither output is requested, we're done
-    if (!outJSON && !outText)
-        return;
-
-    if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
-        if (outText) *outText = "No samples collected.\n"_s;
-        return;
+    WTF::String input = u;
+    bool isAbsolutePath = false;
+    if (u[0] == '/') {
+        isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[1] == ':') {
+        char firstChar = u[0];
+        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+            isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+        isAbsolutePath = true;
     }
+    if (isAbsolutePath)
+        u = WTF::URL::fileURLWithFileSystemPath(u).string();
+    data.normalizedURLs.add(input, u);
+}
 
+// The caller holds the JSLock and defers GC: the frames carry raw heap pointers.
+static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::SamplingProfiler::StackTrace>&& stackTraces)
+{
     // Sort traces by timestamp once for both formats
     WTF::Vector<size_t> sortedIndices;
     sortedIndices.reserveInitialCapacity(stackTraces.size());
@@ -336,47 +388,36 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
 
-    // Generate JSON format if requested
-    if (outJSON) {
-        // Map from stack frame signature to node ID
-        WTF::HashMap<WTF::String, int> nodeMap;
-        WTF::Vector<ProfileNode> nodes;
+    data.totalSamples += static_cast<int>(stackTraces.size());
 
-        // Create root node
-        ProfileNode rootNode;
-        rootNode.id = 1;
-        rootNode.functionName = "(root)"_s;
-        rootNode.url = ""_s;
-        rootNode.scriptId = 0;
-        rootNode.lineNumber = -1;
-        rootNode.columnNumber = -1;
-        rootNode.hitCount = 0;
-        nodes.append(WTF::move(rootNode));
+    for (size_t idx : sortedIndices) {
+        auto& stackTrace = stackTraces[idx];
 
-        int nextNodeId = 2;
-        WTF::Vector<int> samples;
-        WTF::Vector<long long> timeDeltas;
+        double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+        long long deltaUs = static_cast<long long>(std::max(0.0, currentTime - data.lastTime));
+        data.lastTime = currentTime;
+        data.totalTimeUs += deltaUs;
+        data.timeDeltas.append(deltaUs);
 
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        if (stackTrace.frames.isEmpty()) {
+            data.samples.append(1);
+            continue;
+        }
 
-        for (size_t idx : sortedIndices) {
-            auto& stackTrace = stackTraces[idx];
-            if (stackTrace.frames.isEmpty()) {
-                samples.append(1);
-                double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-                double delta = std::max(0.0, currentTime - lastTime);
-                timeDeltas.append(static_cast<long long>(delta));
-                lastTime = currentTime;
-                continue;
-            }
+        // displayName() reads properties on the callee, so resolve it once per frame.
+        WTF::Vector<WTF::String> frameNames;
+        frameNames.reserveInitialCapacity(stackTrace.frames.size());
+        for (auto& frame : stackTrace.frames)
+            frameNames.append(frame.displayName(vm));
 
+        // JSON format: call tree from the outermost frame.
+        {
             int currentParentId = 1;
 
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String functionName = frame.displayName(vm);
+                WTF::String functionName = frameNames[i];
                 WTF::String url;
                 int scriptId = 0;
                 // Function-definition line/column (0-indexed) for callFrame.
@@ -393,30 +434,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // Absolute file path → `file://` URL. Chrome DevTools
-                    // expects `callFrame.url` to be a proper URL; leaving
-                    // the raw path breaks source-view resolution. We run
-                    // this AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-                    auto normalizeURL = [](WTF::String& u) {
-                        if (u.isEmpty())
-                            return;
-                        bool isAbsolutePath = false;
-                        if (u[0] == '/') {
-                            isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[1] == ':') {
-                            char firstChar = u[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-                            isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-                    };
+                    // The sourcemap callback resets `url` to the raw provider URL, so normalizeURL runs after it (#29240).
 
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
@@ -450,7 +468,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
                     // Normalize `url` to a `file://` URL now that any
                     // sourcemap rewriting is done.
-                    normalizeURL(url);
+                    normalizeURL(data, url);
 
                     if (frame.hasExpressionInfo()) {
                         // Sample position for positionTicks. Use a throwaway
@@ -481,7 +499,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             }
 #endif
                         }
-                        normalizeURL(sampleURL);
+                        normalizeURL(data, sampleURL);
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
@@ -505,10 +523,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 WTF::String key = keyBuilder.toString();
 
                 int nodeId;
-                auto it = nodeMap.find(key);
-                if (it == nodeMap.end()) {
-                    nodeId = nextNodeId++;
-                    nodeMap.add(key, nodeId);
+                auto it = data.nodeMap.find(key);
+                if (it == data.nodeMap.end()) {
+                    nodeId = data.nextNodeId++;
+                    data.nodeMap.add(key, nodeId);
 
                     ProfileNode node;
                     node.id = nodeId;
@@ -519,10 +537,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     node.columnNumber = functionDefColumn;
                     node.hitCount = 0;
 
-                    nodes.append(WTF::move(node));
+                    data.nodes.append(WTF::move(node));
 
                     if (currentParentId > 0)
-                        nodes[currentParentId - 1].children.append(nodeId);
+                        data.nodes[currentParentId - 1].children.append(nodeId);
                 } else {
                     nodeId = it->value;
                 }
@@ -530,28 +548,167 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 currentParentId = nodeId;
 
                 if (i == 0) {
-                    nodes[nodeId - 1].hitCount++;
+                    data.nodes[nodeId - 1].hitCount++;
                     if (sampleLine > 0)
-                        nodes[nodeId - 1].positionTicks.add(sampleLine, 0).iterator->value++;
+                        data.nodes[nodeId - 1].positionTicks.add(sampleLine, 0).iterator->value++;
                 }
             }
 
-            samples.append(currentParentId);
-
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-            double delta = std::max(0.0, currentTime - lastTime);
-            timeDeltas.append(static_cast<long long>(delta));
-            lastTime = currentTime;
+            data.samples.append(currentParentId);
         }
 
-        double endTime = lastTime;
+        // Markdown format: per-function self/total time and caller/callee counts.
+        if (data.collectMarkdown) {
+            WTF::String previousKey;
+
+            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
+                auto& frame = stackTrace.frames[i];
+
+                WTF::String functionName = formatFunctionName(frameNames[i], frame);
+                WTF::String url;
+                int lineNumber = -1;
+
+                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+                    auto sourceProviderAndID = frame.sourceProviderAndID();
+                    auto* provider = std::get<0>(sourceProviderAndID);
+                    if (provider) {
+                        url = provider->sourceURL();
+                        normalizeURL(data, url);
+                    }
+
+                    if (frame.hasExpressionInfo()) {
+                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                        if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                            auto& fn = vm.computeLineColumnWithSourcemap();
+                            if (fn)
+                                fn(vm, provider, sourceMappedLineColumn, url);
+#endif
+                        }
+                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                    }
+                }
+
+                WTF::String location = formatLocation(data, url, lineNumber);
+                // Key uses zero-width space separator internally (not shown in output)
+                WTF::StringBuilder keyBuilder;
+                keyBuilder.append(functionName);
+                keyBuilder.append(kKeySeparator);
+                keyBuilder.append(location);
+                WTF::String key = keyBuilder.toString();
+
+                auto result = data.functionStatsMap.add(key, FunctionStats());
+                FunctionStats& stats = result.iterator->value;
+                if (result.isNewEntry) {
+                    stats.functionName = functionName;
+                    stats.location = location;
+                }
+
+                stats.totalSamples++;
+                stats.totalTimeUs += deltaUs;
+
+                if (i == 0) {
+                    stats.selfSamples++;
+                    stats.selfTimeUs += deltaUs;
+                }
+
+                if (!previousKey.isEmpty()) {
+                    stats.callers.add(previousKey, 0).iterator->value++;
+
+                    auto prevIt = data.functionStatsMap.find(previousKey);
+                    if (prevIt != data.functionStatsMap.end())
+                        prevIt->value.callees.add(key, 0).iterator->value++;
+                }
+
+                previousKey = key;
+            }
+        }
+    }
+}
+
+void drainCPUProfilerIfNeeded(JSC::VM& vm)
+{
+    if (!s_isProfilerRunning || !s_profileData)
+        return;
+
+    auto now = MonotonicTime::now();
+    if (now - s_lastDrainTime < kDrainInterval)
+        return;
+    s_lastDrainTime = now;
+
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+    if (!profiler)
+        return;
+
+    JSC::JSLockHolder locker(vm);
+    JSC::DeferGC deferGC(vm);
+
+    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
+    {
+        // The sampling thread takes the same lock, so hold it only for the release.
+        auto& lock = profiler->getLock();
+        WTF::Locker profilerLocker { lock };
+        // releaseStackTraces() clears the profiler's live cell set: the sampled callees stop being GC roots here.
+        stackTraces = profiler->releaseStackTraces();
+    }
+    if (!stackTraces.isEmpty())
+        appendStackTraces(vm, *s_profileData, WTF::move(stackTraces));
+}
+
+// Unified function that stops the profiler and generates requested output formats
+void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+{
+    s_isProfilerRunning = false;
+
+    std::unique_ptr<ProfileData> data(s_profileData);
+    s_profileData = nullptr;
+
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+    if (!profiler) {
+        if (outJSON) *outJSON = WTF::String();
+        if (outText) *outText = WTF::String();
+        return;
+    }
+
+    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
+    JSC::JSLockHolder locker(vm);
+
+    // Defer GC while we're working with stack traces
+    JSC::DeferGC deferGC(vm);
+
+    // Pause the profiler while holding the lock
+    auto& lock = profiler->getLock();
+    WTF::Locker profilerLocker { lock };
+    profiler->pause();
+
+    // releaseStackTraces() calls processUnverifiedStackTraces() internally
+    auto stackTraces = profiler->releaseStackTraces();
+    profiler->clearData();
+
+    // If neither output is requested, we're done
+    if (!outJSON && !outText)
+        return;
+
+    if (data && !stackTraces.isEmpty())
+        appendStackTraces(vm, *data, WTF::move(stackTraces));
+
+    if (!data || data->totalSamples == 0) {
+        if (outJSON) *outJSON = generateEmptyProfileJSON();
+        if (outText) *outText = "No samples collected.\n"_s;
+        return;
+    }
+
+    // Generate JSON format if requested
+    if (outJSON) {
+        double startTime = s_profilingStartTime;
+        double endTime = data->lastTime;
 
         // Build JSON
         using namespace WTF;
         auto json = JSON::Object::create();
 
         auto nodesArray = JSON::Array::create();
-        for (const auto& node : nodes) {
+        for (const auto& node : data->nodes) {
             auto nodeObj = JSON::Object::create();
             nodeObj->setInteger("id"_s, node.id);
 
@@ -603,12 +760,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         json->setDouble("endTime"_s, endTime);
 
         auto samplesArray = JSON::Array::create();
-        for (int sample : samples)
+        for (int sample : data->samples)
             samplesArray->pushInteger(sample);
         json->setValue("samples"_s, samplesArray);
 
         auto timeDeltasArray = JSON::Array::create();
-        for (long long delta : timeDeltas)
+        for (long long delta : data->timeDeltas)
             timeDeltasArray->pushInteger(delta);
         json->setValue("timeDeltas"_s, timeDeltasArray);
 
@@ -618,104 +775,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     // Generate text format if requested
     if (outText) {
         double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
-        double endTime = startTime;
+        double endTime = data->lastTime;
 
-        WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
-
-        long long totalTimeUs = 0;
-        int totalSamples = static_cast<int>(stackTraces.size());
-
-        for (size_t idx : sortedIndices) {
-            auto& stackTrace = stackTraces[idx];
-
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-            long long deltaUs = static_cast<long long>(std::max(0.0, currentTime - lastTime));
-            totalTimeUs += deltaUs;
-            lastTime = currentTime;
-            endTime = currentTime;
-
-            if (stackTrace.frames.isEmpty())
-                continue;
-
-            WTF::String previousKey;
-
-            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
-                auto& frame = stackTrace.frames[i];
-
-                WTF::String rawFunctionName = frame.displayName(vm);
-                WTF::String functionName = formatFunctionName(rawFunctionName, frame);
-                WTF::String url;
-                int lineNumber = -1;
-
-                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                    auto sourceProviderAndID = frame.sourceProviderAndID();
-                    auto* provider = std::get<0>(sourceProviderAndID);
-                    if (provider) {
-                        url = provider->sourceURL();
-
-                        bool isAbsolutePath = false;
-                        if (!url.isEmpty()) {
-                            if (url[0] == '/')
-                                isAbsolutePath = true;
-                            else if (url.length() >= 2 && url[1] == ':') {
-                                char firstChar = url[0];
-                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                    isAbsolutePath = true;
-                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
-                                isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
-                    }
-
-                    if (frame.hasExpressionInfo()) {
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                            auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn, url);
-#endif
-                        }
-                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                    }
-                }
-
-                WTF::String location = formatLocation(url, lineNumber);
-                // Key uses zero-width space separator internally (not shown in output)
-                WTF::StringBuilder keyBuilder;
-                keyBuilder.append(functionName);
-                keyBuilder.append(kKeySeparator);
-                keyBuilder.append(location);
-                WTF::String key = keyBuilder.toString();
-
-                auto result = functionStatsMap.add(key, FunctionStats());
-                FunctionStats& stats = result.iterator->value;
-                if (result.isNewEntry) {
-                    stats.functionName = functionName;
-                    stats.location = location;
-                }
-
-                stats.totalSamples++;
-                stats.totalTimeUs += deltaUs;
-
-                if (i == 0) {
-                    stats.selfSamples++;
-                    stats.selfTimeUs += deltaUs;
-                }
-
-                if (!previousKey.isEmpty()) {
-                    stats.callers.add(previousKey, 0).iterator->value++;
-
-                    auto prevIt = functionStatsMap.find(previousKey);
-                    if (prevIt != functionStatsMap.end())
-                        prevIt->value.callees.add(key, 0).iterator->value++;
-                }
-
-                previousKey = key;
-            }
-        }
+        WTF::HashMap<WTF::String, FunctionStats>& functionStatsMap = data->functionStatsMap;
+        long long totalTimeUs = data->totalTimeUs;
+        int totalSamples = data->totalSamples;
 
         // Sort functions by self time
         WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedBySelf;
@@ -933,6 +997,17 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
 {
     Bun::startCPUProfiler(*vm);
+}
+
+extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm)
+{
+    if (Bun::isCPUProfilerRunning())
+        Bun::stopCPUProfiler(*vm, nullptr, nullptr);
+}
+
+extern "C" void Bun__drainCPUProfilerIfNeeded(JSC::VM* vm)
+{
+    Bun::drainCPUProfilerIfNeeded(*vm);
 }
 
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)

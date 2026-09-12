@@ -940,6 +940,11 @@ describe("permissive autolinks and emphasis delimiters", () => {
     ],
     // The link ends in front of an opener whose closer it does not reach.
     ["*a*http://a.bc/*y z*", '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y z</em></p>\n'],
+    // The bytes after the cut still count as neighbors: the closing "_" of the whole pair stays in the link.
+    [
+      "*a*https://example.com/_b_*c d*",
+      '<p><em>a</em><a href="https://example.com/_b_">https://example.com/_b_</a><em>c d</em></p>\n',
+    ],
     // A pair that lies in the URL stays part of the URL.
     [
       "**https://example.com/src/__init__.py**",

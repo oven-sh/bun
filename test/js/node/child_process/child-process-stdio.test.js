@@ -117,6 +117,32 @@ describe("process.stdin", () => {
     });
     expect(result).toEqual("data: File read successfully");
   });
+
+  it("decodes the chunk passed to child.stdin.write(chunk, encoding)", done => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    const chunks = [];
+    child.stdout.on("data", chunk => chunks.push(chunk));
+    child.stdout.on("error", done);
+    child.on("error", done);
+    // 'close' rather than 'exit': the stdio streams may still be draining when
+    // the child terminates.
+    child.on("close", code => {
+      try {
+        expect(Buffer.concat(chunks).toString("hex")).toBe("48490a414243");
+        expect(code).toBe(0);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+    child.stdin.write("48490a", "hex");
+    child.stdin.setDefaultEncoding("base64");
+    child.stdin.write("QUJD");
+    child.stdin.end();
+  });
 });
 
 describe("child.stdin", () => {

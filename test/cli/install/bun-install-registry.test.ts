@@ -9112,6 +9112,55 @@ describe("outdated", () => {
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
+
+  test("reads dependency ranges from package.json, not bun.lock", async () => {
+    const writeManifests = (root: object, pkg1: object, pkg2: object) =>
+      Promise.all([
+        write(packageJson, JSON.stringify(root)),
+        write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(pkg1)),
+        write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(pkg2)),
+      ]);
+
+    await writeManifests(
+      {
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+        dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      },
+      { name: "pkg1", dependencies: { "a-dep": "1.0.1" } },
+      { name: "pkg2", dependencies: { "no-deps": "catalog:" } },
+    );
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lockb")).arrayBuffer();
+
+    // Edit every range without running `bun install` again. bun.lockb still
+    // has the exact pins, and `a-dep` is gone from the root package.json.
+    await writeManifests(
+      {
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+        dependencies: { "no-deps": "~1.0.0" },
+      },
+      { name: "pkg1", devDependencies: { "a-dep": "^1.0.1" } },
+      { name: "pkg2", dependencies: { "no-deps": "catalog:" } },
+    );
+
+    const out = await runBunOutdated({ ...env, NO_COLOR: "1" }, packageDir, "--filter", "*");
+    expect(out.slice(out.indexOf("\n") + 1)).toMatchInlineSnapshot(`
+      "|----------------------------------------------------------|
+      | Package     | Current | Update | Latest | Workspace      |
+      |-------------|---------|--------|--------|----------------|
+      | no-deps     | 1.0.0   | 1.0.1  | 2.0.0  | root           |
+      |-------------|---------|--------|--------|----------------|
+      | no-deps     | 1.0.0   | 1.1.0  | 2.0.0  | catalog (pkg2) |
+      |-------------|---------|--------|--------|----------------|
+      | a-dep (dev) | 1.0.1   | 1.0.10 | 1.0.10 | pkg1           |
+      |----------------------------------------------------------|
+      "
+    `);
+    // `bun outdated` only reads: the lockfile on disk is untouched.
+    expect(await file(join(packageDir, "bun.lockb")).arrayBuffer()).toEqual(lockfile);
+  });
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

@@ -1,9 +1,10 @@
 use bstr::BStr;
 
-use crate::Error;
 use crate::bun_fs::FileSystem;
+use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::{Error, ResolutionTag};
 use bun_collections::{StringArrayHashMap, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
@@ -34,6 +35,44 @@ pub(crate) struct WorkspaceTarget {
     /// `None` = the workspace root.
     pub(crate) name_hash: Option<PackageNameHash>,
     pub(crate) package_json_path: Box<[u8]>,
+}
+
+impl WorkspaceTarget {
+    pub(crate) fn root() -> WorkspaceTarget {
+        WorkspaceTarget {
+            name: Box::default(),
+            name_hash: None,
+            package_json_path: root_package_json_path(),
+        }
+    }
+
+    /// The package.json behind lockfile package `pkg_id`: the root's, or a member's at the path its `workspace:` resolution stores. `None` for any other kind of package.
+    pub(crate) fn of_lockfile_package(
+        lockfile: &Lockfile,
+        pkg_id: PackageID,
+    ) -> Option<WorkspaceTarget> {
+        let res = lockfile.packages.items_resolution()[pkg_id as usize];
+        match res.tag {
+            ResolutionTag::Root => Some(WorkspaceTarget::root()),
+            ResolutionTag::Workspace => {
+                let buf = lockfile.buffers.string_bytes.as_slice();
+                let top_level =
+                    strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+                let mut path_buf = path_buffer_pool::get();
+                Some(WorkspaceTarget {
+                    name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
+                    name_hash: Some(lockfile.packages.items_name_hash()[pkg_id as usize]),
+                    package_json_path: join_abs_string_buf::<platform::Auto>(
+                        top_level,
+                        &mut path_buf.0,
+                        &[res.workspace().slice(buf), b"package.json"],
+                    )
+                    .into(),
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {

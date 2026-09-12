@@ -134,6 +134,22 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWorkerPrototype, JSWorkerPrototype::Base);
 
 using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
+// A WebIDL enumeration member of WorkerOptions: absent or undefined passes, anything else must
+// stringify to one of `allowed` or a TypeError is thrown and false returned.
+static bool validateEnumerationOption(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue value, ASCIILiteral name, std::span<const ASCIILiteral> allowed)
+{
+    if (!value || value.isUndefined())
+        return true;
+    auto string = value.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    for (auto literal : allowed) {
+        if (string == literal)
+            return true;
+    }
+    Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, name, "must be one of: "_s, value, allowed);
+    return false;
+}
+
 template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -181,6 +197,21 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 options.name = nameValue.toWTFString(lexicalGlobalObject).isolatedCopy();
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
+        }
+
+        // Valid values have no further effect (every worker is an ES module, nothing is fetched with
+        // credentials). node:worker_threads has neither option and keeps ignoring them.
+        if (options.kind == WorkerOptions::Kind::Web) {
+            static constexpr ASCIILiteral workerTypes[] = { "classic"_s, "module"_s };
+            static constexpr ASCIILiteral requestCredentials[] = { "omit"_s, "same-origin"_s, "include"_s };
+            auto typeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->type);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!validateEnumerationOption(lexicalGlobalObject, throwScope, typeValue, "options.type"_s, workerTypes))
+                return {};
+            auto credentialsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "credentials"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!validateEnumerationOption(lexicalGlobalObject, throwScope, credentialsValue, "options.credentials"_s, requestCredentials))
+                return {};
         }
 
         auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s));

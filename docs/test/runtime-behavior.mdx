@@ -127,6 +127,23 @@ test("test 1", () => {
 Promise.reject(new Error("Unhandled rejection"));
 ```
 
+### Files without tests
+
+A file that registers no tests, `describe` blocks, or lifecycle hooks runs as a script. After evaluating the file, `bun test` keeps running its timers and I/O until they finish, for at most the test timeout (`--timeout`). An error thrown or a promise rejected while it waits fails the run:
+
+```ts title="script.test.ts" icon="/icons/typescript.svg"
+import assert from "node:assert";
+import { readFile } from "node:fs/promises";
+
+// No test() calls. bun test waits for this function to finish.
+(async () => {
+  const source = await readFile(import.meta.path, "utf8");
+  assert.ok(source.includes("assert")); // A failed assertion here fails the run
+})();
+```
+
+`bun test` skips this wait when a preload script registers hooks, or when an earlier file or preload script left a timer or connection open.
+
 ### Custom Error Handling
 
 You can set up custom error handlers in your test setup:

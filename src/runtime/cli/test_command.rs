@@ -938,6 +938,37 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// Runs a bare file's timers and I/O like `bun <file>` until they finish, throw, or the test timeout passes.
+fn drain_script_file(
+    reporter: &CommandLineReporter,
+    buntest: &bun_test::BunTestPtr,
+    vm: &mut VirtualMachine,
+) {
+    let errors_before = vm.unhandled_error_counter;
+    let timeout_ms = match reporter.jest.default_timeout_override {
+        u32::MAX => reporter.jest.default_timeout_ms,
+        override_ms => override_ms,
+    };
+    let deadline = (timeout_ms != 0).then(|| {
+        bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).add_ms(i64::from(timeout_ms))
+    });
+    if let Some(deadline) = &deadline {
+        // So the poll below wakes at the deadline rather than at the next unrelated timer.
+        buntest.get().update_min_timeout(vm.global(), deadline);
+    }
+    while vm.unhandled_error_counter == errors_before
+        && (vm.has_keep_alives() || vm.event_loop_shared().has_pending_tasks())
+        && deadline.is_none_or(|deadline| {
+            bun::Timespec::now(bun::TimespecMockMode::ForceRealTime)
+                .order(&deadline)
+                .is_lt()
+        })
+    {
+        vm.event_loop_ref().auto_tick();
+        vm.event_loop_ref().tick();
+    }
+}
+
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
 pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
@@ -2911,7 +2942,11 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            // When nothing was alive here, whatever drain_script_file() waits on is this file's.
+            let mut idle_after_preloads = false;
+            let promise = vm.load_entry_point_for_test_runner(file_path, |vm| {
+                idle_after_preloads = !vm.has_keep_alives();
+            })?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
@@ -3013,6 +3048,11 @@ impl TestCommand {
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
+                } else if idle_after_preloads
+                    && buntest.collection.root_scope.is_bare()
+                    && buntest.bun_test_root.get().hook_scope.is_bare()
+                {
+                    drain_script_file(reporter, &buntest_strong, vm);
                 }
                 drop(buntest_strong);
             }

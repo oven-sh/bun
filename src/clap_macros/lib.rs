@@ -294,9 +294,6 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     }
                 }
             }
-            b'>' => {
-                i += 1;
-            }
             b'{' => {
                 while i < fmt.len() && fmt[i] != b'}' {
                     out.push(fmt[i]);
@@ -314,6 +311,10 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     i += 1;
                 }
                 let name = &fmt[start..i];
+                // Skip the tag's closing `>`. Any other `>` is text.
+                if i < fmt.len() {
+                    i += 1;
+                }
                 let seq: &str = if let Some(c) = color_for_bytes(name) {
                     c
                 } else if name == b"r" {

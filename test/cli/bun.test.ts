@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -175,6 +175,28 @@ describe("bun", () => {
       );
     });
   });
+
+  // `bun discord` runs the platform opener (`xdg-open` on Linux) and prints the
+  // URL when that fails. Linux only: an empty PATH makes `xdg-open` fail to
+  // resolve, while macOS spawns `/usr/bin/open` by absolute path and would
+  // open a browser.
+  describe.skipIf(!isLinux)("discord", () => {
+    test("prints the URL when the opener is not on PATH", async () => {
+      using emptyPath = tempDir("bun-discord-empty-path", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "discord"],
+        env: { ...bunEnv, PATH: String(emptyPath) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("-> https://bun.com/discord\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("getcompletes", () => {
     test("getcompletes should not panic and should not be empty", () => {
       const { stdout, exitCode } = spawnSync({

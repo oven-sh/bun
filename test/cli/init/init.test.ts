@@ -137,6 +137,102 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
 
+  // Windows is skipped: ConPTY rewrites the child's output into its own escape
+  // sequences, so the raw rows cannot be compared.
+  test.skipIf(isWindows)("bun init template menu marks the selected row when colors are off", async () => {
+    await using temp = tempDir("bun-init-menu-no-color", {});
+
+    const received: string[] = [];
+    let eof = false;
+    let wake: (() => void) | null = null;
+    const decoder = new TextDecoder();
+    // bunEnv sets NO_COLOR=1, so the menu takes its no-color branch: an ASCII
+    // `>` in place of the colored `❯` and no underline on the selected row.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      // An inline terminal is owned by the subprocess: when the child exits, the
+      // remaining output is drained and then `exit` fires. So `eof` means that
+      // no more output can arrive.
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_term, chunk) {
+          received.push(decoder.decode(chunk, { stream: true }));
+          wake?.();
+        },
+        exit() {
+          eof = true;
+          wake?.();
+        },
+      },
+    });
+    await using terminal = proc.terminal!;
+
+    // Resolves with everything received so far, once `ready` accepts it.
+    // Fails at once, with that output, if the process exits first.
+    const waitFor = async (ready: (all: string) => boolean): Promise<string> => {
+      const deadline = Date.now() + 10_000;
+      while (true) {
+        const all = received.join("");
+        if (ready(all)) return all;
+        if (eof) {
+          throw new Error(`bun init exited before the expected output. Received:\n${JSON.stringify(all)}`);
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          throw new Error(`Timed out waiting for the menu. Received so far:\n${JSON.stringify(all)}`);
+        }
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, remaining);
+          wake = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        wake = null;
+      }
+    };
+    // Every draw of the menu ends with "clear to end of screen", then the
+    // process blocks on stdin. So once the `count`-th one has arrived, the
+    // output is complete and stable.
+    const drawn = (count: number) => (all: string) => all.split("\x1b[0J").length > count;
+    // The menu is redrawn in place on every keypress (cursor up, then the three
+    // rows again). The last three non-empty lines are the current state.
+    const currentMenu = (all: string) =>
+      all
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+        .split("\r\n")
+        .filter(Boolean)
+        .slice(-3);
+
+    expect(currentMenu(await waitFor(drawn(1)))).toMatchInlineSnapshot(`
+      [
+        ">   Blank",
+        "    React",
+        "    Library",
+      ]
+    `);
+
+    // Down arrow: the marker follows the selection.
+    terminal.write("\x1b[B");
+    expect(currentMenu(await waitFor(drawn(2)))).toMatchInlineSnapshot(`
+      [
+        "    Blank",
+        ">   React",
+        "    Library",
+      ]
+    `);
+
+    // Ctrl-C cancels the menu without creating a project.
+    terminal.write("\x03");
+    await waitFor(all => all.includes("Cancelled"));
+    const exitCode = await proc.exited;
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

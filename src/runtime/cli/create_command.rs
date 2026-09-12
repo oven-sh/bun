@@ -1077,15 +1077,16 @@ impl CreateCommand {
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
         if !create_options.skip_git {
+            let git_env = env_loader.map.create_git_child_env()?;
             if !create_options.skip_install {
-                GitHandler::spawn(destination, path_env, create_options.verbose);
+                GitHandler::spawn(destination, path_env, git_env, create_options.verbose);
             } else {
                 if create_options.verbose {
                     create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
+                        GitHandler::run::<true>(destination, path_env, &git_env).unwrap_or(false);
                 } else {
                     create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
+                        GitHandler::run::<false>(destination, path_env, &git_env).unwrap_or(false);
                 }
             }
         }
@@ -2362,7 +2363,7 @@ static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
 impl GitHandler {
-    fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
+    fn spawn(destination: &[u8], path: &[u8], env: DotEnv::NullDelimitedEnvMap, verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // Own copies so the spawned closure is `'static` without any lifetime
@@ -2370,7 +2371,7 @@ impl GitHandler {
         let destination: Box<[u8]> = Box::from(destination);
         let path: Box<[u8]> = Box::from(path);
         let thread = match std::thread::Builder::new()
-            .spawn(move || Self::spawn_thread(&destination, &path, verbose))
+            .spawn(move || Self::spawn_thread(&destination, &path, &env, verbose))
         {
             Ok(t) => t,
             Err(err) => {
@@ -2382,12 +2383,17 @@ impl GitHandler {
         unsafe { *THREAD.get() = Some(thread) };
     }
 
-    fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
+    fn spawn_thread(
+        destination: &[u8],
+        path: &[u8],
+        env: &DotEnv::NullDelimitedEnvMap,
+        verbose: bool,
+    ) {
         Output::Source::configure_named_thread(bun_core::zstr!("git"));
         let outcome = if verbose {
-            Self::run::<true>(destination, path).unwrap_or(false)
+            Self::run::<true>(destination, path, env).unwrap_or(false)
         } else {
-            Self::run::<false>(destination, path).unwrap_or(false)
+            Self::run::<false>(destination, path, env).unwrap_or(false)
         };
 
         SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
@@ -2406,7 +2412,11 @@ impl GitHandler {
         outcome
     }
 
-    fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
+    fn run<const VERBOSE: bool>(
+        destination: &[u8],
+        path: &[u8],
+        env: &DotEnv::NullDelimitedEnvMap,
+    ) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
         // Not sure why...
@@ -2462,6 +2472,7 @@ impl GitHandler {
                 let _ = spawn_sync::spawn(&spawn_sync::Options {
                     argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     cwd: Box::from(destination),
+                    envp: Some(env.as_ptr()),
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,

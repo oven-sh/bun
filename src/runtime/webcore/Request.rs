@@ -1077,13 +1077,17 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
+            // The last candidate is `input` (unless that was a URL); anything before it is the
+            // `RequestInit` dictionary, which only contributes members it actually has.
+            let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
+            // A pristine Request/Response has its headers and method copied from internal state
+            // below, so the `headers`/`method` getters are not consulted again for it.
+            let mut copied_internal_fields = false;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
+                    copied_internal_fields = true;
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
@@ -1149,9 +1153,11 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
+                    copied_internal_fields = true;
                     // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
                     let response = unsafe { &mut *response };
-                    if !fields.contains(Fields::Method) {
+                    // A Response has no `method` property, so as `init` it cannot set one.
+                    if is_input && !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
                     }
@@ -1297,39 +1303,31 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
-                    Ok(Some(response_init)) => {
-                        let header_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Headers)
-                                {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if header_check {
-                            if let Some(headers) = response_init.headers {
-                                if !fields.contains(Fields::Headers) {
-                                    req.headers.set(Some(headers));
-                                    fields.insert(Fields::Headers);
-                                } else {
-                                    drop(headers); // headers.deref()
-                                }
+            if !copied_internal_fields && !fields.contains(Fields::Headers) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::Headers) {
+                    Ok(Some(headers_)) => {
+                        match HeadersRef::from_init_value(global_this, headers_) {
+                            Ok(Some(headers)) => {
+                                req.headers.set(Some(headers));
+                                fields.insert(Fields::Headers);
                             }
+                            Ok(None) => {}
+                            Err(e) => bail!(Err(e)),
                         }
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
 
-                        let method_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if method_check {
-                            if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
-                                fields.insert(Fields::Method);
-                            }
+            if !copied_internal_fields && !fields.contains(Fields::Method) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
+                    Ok(Some(method_)) => {
+                        match bun_http_jsc::method_jsc::from_js(global_this, method_) {
+                            Ok(method) => req.method = method.unwrap_or(Method::GET),
+                            Err(e) => bail!(Err(e)),
                         }
+                        fields.insert(Fields::Method);
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),

@@ -2507,8 +2507,8 @@ pub mod internal {
     }
 
     // Pack getaddrinfo results into one allocation with address families
-    // interleaved (RFC 8305 §4) so an unroutable family can never fill all
-    // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
+    // interleaved (RFC 8305 §4): usockets dials them one at a time, so the
+    // second attempt is the other family. See #4938 / #33278.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;

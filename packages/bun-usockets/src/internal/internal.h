@@ -162,13 +162,26 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
+#ifndef LIBUS_USE_LIBUV
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
+/* ns until the earliest scheduled connect attempt on this loop, or -1. */
+long long us_internal_connect_attempt_timeout_ns(struct us_loop_t *loop);
 #endif
+/* Delay between two connect attempts to the addresses of one name while the
+ * earlier attempts are still pending (RFC 8305 §5 "Connection Attempt Delay"). */
+#define LIBUS_CONNECT_ATTEMPT_DELAY_NS (250LL * 1000000LL)
+/* Schedule the next address of `c` for now + LIBUS_CONNECT_ATTEMPT_DELAY_NS.
+ * A no-op when `c` has no address left. */
+void us_internal_connect_attempt_schedule(struct us_connecting_socket_t *c);
+/* Start the scheduled attempt of every connecting socket whose delay elapsed. */
+void us_internal_connect_attempts_if_due(struct us_loop_t *loop);
+/* Open a connect() to the next address of `c`, at most one. Returns 1 when a
+ * socket was opened, 0 when every remaining address failed to open. */
+int us_internal_socket_start_next_attempt(struct us_connecting_socket_t *c);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -381,6 +394,10 @@ struct us_connecting_socket_t {
     uint16_t port;
     int error;
     struct addrinfo *addrinfo_head;
+    /* Absolute monotonic ns at which the next address in addrinfo_head is
+     * tried while the current attempts are still pending (RFC 8305 §5), or 0
+     * when nothing is scheduled. */
+    long long next_attempt_ns;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;

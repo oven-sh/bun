@@ -2537,10 +2537,31 @@ describe("bundler", () => {
   // way back to that file, whatever else it needs must be a chunk that can be evaluated on demand at that moment,
   // not code sitting further down the caller's own chunk. Each graph runs unbundled and bundled; the output must match.
   const requireCycleGraphs: Record<string, { files: Record<string, string>; todo?: string; folding?: true }> = {
+    "the caller imports itself": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          console.log(tools.map(t => t.name).join(","))
+          export const later = () => import('./other.ts')
+        `,
+        "registry.ts": `
+          import * as self from './registry.ts'
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool, { name: typeof self.buildTool }]
+        `,
+        "tool.ts": `
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool")
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
     // base.ts is needed by tool.ts and imports registry.ts, which require()s tool.ts. `other` (loaded after main) is
     // redundant in registry.ts's key, and dropping it must not fold base.ts into registry.ts's chunk.
     "a file the target needs imports the caller": {
-      todo: "folding puts base.ts in registry.ts's chunk, after the call",
       folding: true,
       files: {
         "main.ts": `
@@ -2571,7 +2592,6 @@ describe("bundler", () => {
     // The same with a leaf that shares the caller's key and is imported ahead of the call: it is the caller's group
     // that has to stay out, not whichever group comes second.
     "the caller shares its chunk with a leaf": {
-      todo: "folding puts base.ts in registry.ts's chunk, after the call",
       folding: true,
       files: {
         "main.ts": `
@@ -2853,13 +2873,18 @@ describe("bundler", () => {
   // Random graphs, each run unbundled, bundled without folding and bundled with it (splitting-fuzz.ts). Folding may
   // not lose a value or an order of top-level effects that the unfolded bundle and the source agree on. Folding
   // changes the bundle of about one graph in sixteen; these are from those.
-  for (const [seed, todo] of [
-    [3, ""],
-    [47, ""],
-    [25, "f3 and f3:done run after f6 and f9 once folded"],
+  for (const [seed, folded, todo] of [
+    [47, true, ""],
+    [59, true, ""],
+    // A chunk that can be evaluating while an entry of its class loads stays out of the fold: 762 and 993 lost an
+    // order and a read to it, and 3 was folded without harm.
+    [3, false, ""],
+    [762, false, ""],
+    [993, false, ""],
+    [496, true, "f5 runs after f1 once folded"],
   ] as const) {
     test.todoIf(!!todo).concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed}`, async () => {
-      expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded: true, problems: [] });
+      expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded, problems: [] });
     });
   }
 

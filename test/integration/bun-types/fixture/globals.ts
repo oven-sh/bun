@@ -246,14 +246,29 @@ const writableStream = new WritableStream();
   const a = new Event("asdf");
   a.bubbles;
   a.composedPath()[0];
+  expectType(a.NONE).is<0>();
+  expectType(a.CAPTURING_PHASE).is<1>();
+  expectType(a.AT_TARGET).is<2>();
+  expectType(a.BUBBLING_PHASE).is<3>();
 }
 {
   const a = new Blob();
   a.size;
+  expectType(a.slice()).is<Blob>();
+  expectType(a.slice(1)).is<Blob>();
+  expectType(a.slice(1, 2)).is<Blob>();
+  expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
 {
   const a = new File(["asdf"], "stuff.txt ");
   a.name;
+  expectType(a.slice(1, 2)).is<Blob>();
+  expectType(Bun.file("a.txt").slice(1, 2)).is<Bun.BunFile>();
+}
+{
+  // The JavaScriptCore module loader is not exposed as a global.
+  // @ts-expect-error
+  Loader;
 }
 {
   performance.now();

@@ -154,7 +154,7 @@ Support for Vite's `import.meta.hot` is planned, to enable better lifecycle mana
 
 On hot reload, Bun:
 
-- Resets the internal `require` cache and ES module registry (`Loader.registry`)
+- Resets the internal `require` cache and ES module registry
 - Runs the garbage collector synchronously (to minimize memory leaks, at the cost of runtime performance)
 - Re-transpiles all of your code from scratch (including sourcemaps)
 - Re-evaluates the code with JavaScriptCore

@@ -1688,7 +1688,7 @@ impl PipeReader {
     fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
         if interp.is_null() {
             debug_assert!(
-                matches!(y, Yield::Done | Yield::Suspended | Yield::Failed),
+                matches!(y, Yield::Done | Yield::Suspended),
                 "PipeReader async callback fired without interp backref"
             );
             return;

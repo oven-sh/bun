@@ -215,7 +215,7 @@ impl Expansion {
                     Err(e) => {
                         drop(io);
                         interp.throw(ShellErr::new_sys(&e));
-                        return Yield::failed();
+                        return Yield::Failed(this);
                     }
                 };
                 let script = Script::init(interp, duped, script_ast, this, io);
@@ -600,6 +600,17 @@ impl Expansion {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
+        if interp.failed() {
+            // The script failed: the rest of the word is not expanded.
+            {
+                let me = interp.as_expansion_mut(this);
+                me.state = ExpansionState::Done;
+                me.child_script = None;
+            }
+            interp.deinit_node(child);
+            let parent = interp.as_expansion(this).base.parent;
+            return interp.child_done(parent, this, 1);
+        }
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.
         let stdout = unsafe {

@@ -232,7 +232,7 @@ impl Cat {
                 });
                 reader.start()
             }
-            Branch::WaitingErr => Yield::failed(),
+            Branch::WaitingErr => Yield::suspended(),
         }
     }
 

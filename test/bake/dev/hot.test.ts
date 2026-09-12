@@ -388,6 +388,29 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+devTest("import.meta.hot with optional chaining", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const data = import.meta.hot?.data;
+      data.count ??= 0;
+      import.meta.hot?.dispose(() => console.log("Cleaning up"));
+      import.meta.hot?.["on"]("bun:invalidate", () => {});
+      import.meta.hot?.accept();
+      console.log("Initial count: " + data.count++);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("Initial count: 0");
+    await dev.writeNoChanges("index.ts");
+    await c.expectMessage("Cleaning up", "Initial count: 1");
+    await dev.writeNoChanges("index.ts");
+    await c.expectMessage("Cleaning up", "Initial count: 2");
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

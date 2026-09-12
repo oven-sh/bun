@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { join } from "node:path";
 import {
   ctx as _ctx,
@@ -17,6 +17,11 @@ import {
 } from "./test-utils";
 import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
 import type { Message } from "./valkey.failing-subscriber-no-ipc";
+
+// Redis times out blocked clients on its cron tick (hz 10, every 100ms), so a
+// blocking command on an empty key returns on the first tick after its timeout:
+// 0.05 returns in about 100ms where 0.1 took about 200ms.
+const BLOCK_TIMEOUT = 0.05;
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : (_ctx.redisTLS as RedisClient) };
@@ -36,7 +41,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         ctx.redis = createClient(connectionType);
       }
 
-      await ctx.redis.connect();
+      if (!ctx.redis.connected) {
+        await ctx.redis.connect();
+      }
       await ctx.redis.send("FLUSHALL", ["SYNC"]);
     });
 
@@ -46,7 +53,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           "BUN_VALKEY_URL": connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           "BUN_VALKEY_TLS": connectionType === ConnectionType.TLS ? JSON.stringify(TLS_REDIS_OPTIONS.tlsPaths) : "",
         });
-        expect(result.stdout).toContain(`connected`);
+        expect(result.stdout).toBe("connected");
+        expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(0);
       });
 
@@ -515,8 +523,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.set(key, "test-value");
 
         const serialized = await redis.dump(key);
-        expect(serialized).toBeDefined();
-        expect(serialized).not.toBeNull();
+        // The RDB payload starts with the string type byte and the length-prefixed
+        // value. The version and checksum trailer depends on the server.
+        expect(serialized).toStartWith("\x00\x0atest-value");
 
         const empty = await redis.dump("nonexistent");
         expect(empty).toBeNull();
@@ -822,12 +831,10 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.set("random-key3", "value3");
 
         const randomKey = await redis.randomkey();
-        expect(randomKey).toBeDefined();
-        expect(randomKey).not.toBeNull();
         expect(["random-key1", "random-key2", "random-key3"]).toContain<string | null>(randomKey);
 
         const value = await redis.get(randomKey!);
-        expect(value).toBeDefined();
+        expect(value).toBe(randomKey!.replace("random-key", "value"));
       });
 
       test("should iterate keys with SCAN", async () => {
@@ -1083,10 +1090,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.set(key, "Hello World");
 
         const serialized = await redis.dump(key);
-        expect(serialized).toBeDefined();
-        expect(serialized).not.toBeNull();
-
-        expect(typeof serialized === "string" || Buffer.isBuffer(serialized)).toBe(true);
+        expect(serialized).toStartWith("\x00\x0bHello World");
 
         const nonExistent = await redis.dump("dump-test-nonexistent");
         expect(nonExistent).toBeNull();
@@ -1099,10 +1103,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.set(key, "Hello Buffer");
 
         const buffer = await redis.getBuffer(key);
-        expect(buffer).toBeDefined();
-        expect(buffer).not.toBeNull();
-        expect(Buffer.isBuffer(buffer)).toBe(true);
-        expect(buffer!.toString()).toBe("Hello Buffer");
+        expect(buffer).toEqual(Buffer.from("Hello Buffer"));
 
         const nonExistent = await redis.getBuffer("getbuffer-nonexistent");
         expect(nonExistent).toBeNull();
@@ -1645,10 +1646,10 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.lpush(key, "value1");
 
-        const result = await redis.blpop(key, 0.1);
+        const result = await redis.blpop(key, BLOCK_TIMEOUT);
         expect(result).toEqual([key, "value1"]);
 
-        const timeout = await redis.blpop(key, 0.1);
+        const timeout = await redis.blpop(key, BLOCK_TIMEOUT);
         expect(timeout).toBeNull();
       });
 
@@ -1659,11 +1660,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.lpush(key, "value2");
         await redis.lpush(key, "value1");
 
-        const result = await redis.brpop(key, 0.1);
+        const result = await redis.brpop(key, BLOCK_TIMEOUT);
         expect(result).toEqual([key, "value2"]);
 
-        await redis.brpop(key, 0.1);
-        const timeout = await redis.brpop(key, 0.1);
+        expect(await redis.brpop(key, BLOCK_TIMEOUT)).toEqual([key, "value1"]);
+        const timeout = await redis.brpop(key, BLOCK_TIMEOUT);
         expect(timeout).toBeNull();
       });
 
@@ -1985,7 +1986,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should timeout and return null with BLMOVE on empty list", async () => {
         const redis = ctx.redis;
 
-        const result = await redis.blmove("empty-source", "dest", "LEFT", "RIGHT", 0.1);
+        const result = await redis.blmove("empty-source", "dest", "LEFT", "RIGHT", BLOCK_TIMEOUT);
         expect(result).toBeNull();
       });
 
@@ -2021,7 +2022,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should timeout and return null with BLMPOP on empty lists", async () => {
         const redis = ctx.redis;
 
-        const result = await redis.blmpop(0.1, 2, "empty-list1", "empty-list2", "LEFT");
+        const result = await redis.blmpop(BLOCK_TIMEOUT, 2, "empty-list1", "empty-list2", "LEFT");
         expect(result).toBeNull();
       });
 
@@ -2055,7 +2056,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should timeout and return null with BRPOPLPUSH on empty list", async () => {
         const redis = ctx.redis;
 
-        const result = await redis.brpoplpush("empty-source", "dest", 0.1);
+        const result = await redis.brpoplpush("empty-source", "dest", BLOCK_TIMEOUT);
         expect(result).toBeNull();
       });
 
@@ -2264,14 +2265,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(remaining1).toBe(3);
 
         const popped2 = await redis.spop(key, 2);
-        expect(Array.isArray(popped2)).toBe(true);
-        expect(popped2).toBeDefined();
-        expect(popped2!.length).toBe(2);
+        expect(popped2).toHaveLength(2);
 
         const remaining2 = await redis.scard(key);
         expect(remaining2).toBe(1);
 
-        await redis.spop(key);
+        const popped3 = await redis.spop(key);
+        // Every member is popped exactly once.
+        expect([popped1, ...popped2!, popped3].sort()).toEqual(["four", "one", "three", "two"]);
         const empty = await redis.spop(key);
         expect(empty).toBeNull();
       });
@@ -2279,9 +2280,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should publish to sharded channel with SPUBLISH", async () => {
         const redis = ctx.redis;
 
+        // Nothing is subscribed to the shard channel, so no client receives it.
         const result = await redis.spublish("test-channel", "test-message");
-        expect(typeof result).toBe("number");
-        expect(result).toBeGreaterThanOrEqual(0);
+        expect(result).toBe(0);
       });
 
       test("should get random member with SRANDMEMBER", async () => {
@@ -2293,9 +2294,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const member1 = await redis.srandmember(key);
         expect(["one", "two", "three"]).toContain<string | null>(member1);
 
+        // A positive count returns that many distinct members.
         const members = await redis.srandmember(key, 2);
-        expect(Array.isArray(members)).toBe(true);
-        expect(members!.length).toBeLessThanOrEqual(2);
+        expect(members).toHaveLength(2);
+        expect(new Set(members).size).toBe(2);
+        for (const member of members!) {
+          expect(["one", "two", "three"]).toContain(member);
+        }
 
         const count = await redis.scard(key);
         expect(count).toBe(3);
@@ -2635,12 +2640,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           cursor = nextCursor;
         } while (cursor !== "0");
 
-        expect(allMembers.length).toBe(20);
-        expect(new Set(allMembers).size).toBe(20);
-
-        for (let i = 0; i < 20; i++) {
-          expect(allMembers).toContain(`member${i}`);
-        }
+        expect(allMembers.sort()).toEqual(Array.from({ length: 20 }, (_, i) => `member${i}`).sort());
       });
 
       test("should scan set with MATCH pattern using SSCAN", async () => {
@@ -2664,8 +2664,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           scanCursor = nextCursor;
         }
 
-        const userMembers = allUserMembers.filter(m => m.startsWith("user:"));
-        expect(userMembers.length).toBeGreaterThanOrEqual(0);
+        expect(allUserMembers.sort()).toEqual(["user:1", "user:2", "user:3"]);
       });
 
       test("should scan empty set with SSCAN", async () => {
@@ -2793,23 +2792,21 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.sadd(key, "e");
 
         const popped = await redis.spop(key);
-        expect(popped).toBeDefined();
         expect(["a", "b", "c", "d", "e"]).toContain<string | null>(popped);
 
         const remaining = await redis.scard(key);
         expect(remaining).toBe(4);
 
         const poppedMultiple = await redis.spop(key, 2);
-        expect(Array.isArray(poppedMultiple)).toBe(true);
-        expect(poppedMultiple!.length).toBe(2);
-        poppedMultiple!.forEach(member => {
-          expect(["a", "b", "c", "d", "e"]).toContain(member);
-        });
+        expect(poppedMultiple).toHaveLength(2);
 
         const remainingAfter = await redis.scard(key);
         expect(remainingAfter).toBe(2);
 
-        await redis.spop(key, 10);
+        // A count above the cardinality pops whatever is left.
+        const rest = await redis.spop(key, 10);
+        expect(rest).toHaveLength(2);
+        expect([popped, ...poppedMultiple!, ...rest!].sort()).toEqual(["a", "b", "c", "d", "e"]);
         const emptyPop = await redis.spop(key);
         expect(emptyPop).toBeNull();
       });
@@ -2834,15 +2831,15 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.sadd(key, "e");
 
         const random = await redis.srandmember(key);
-        expect(random).toBeDefined();
         expect(["a", "b", "c", "d", "e"]).toContain<string | null>(random);
 
         const count = await redis.scard(key);
         expect(count).toBe(5);
 
+        // A positive count returns distinct members.
         const randomMultiple = await redis.srandmember(key, 3);
-        expect(Array.isArray(randomMultiple)).toBe(true);
-        expect(randomMultiple!.length).toBe(3);
+        expect(randomMultiple).toHaveLength(3);
+        expect(new Set(randomMultiple).size).toBe(3);
         randomMultiple!.forEach(member => {
           expect(["a", "b", "c", "d", "e"]).toContain(member);
         });
@@ -2850,9 +2847,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const countAfter = await redis.scard(key);
         expect(countAfter).toBe(5);
 
+        // A positive count above the cardinality returns the whole set.
         const tooMany = await redis.srandmember(key, 10);
-        expect(Array.isArray(tooMany)).toBe(true);
-        expect(tooMany!.length).toBe(5);
+        expect(tooMany!.sort()).toEqual(["a", "b", "c", "d", "e"]);
 
         const withDuplicates = await redis.srandmember(key, -10);
         expect(withDuplicates!.length).toBe(10);
@@ -3004,7 +3001,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const remaining = await redis.zcard(key);
         expect(remaining).toBe(1);
 
-        await redis.zpopmax(key);
+        expect(await redis.zpopmax(key)).toEqual(["one", 1]);
         const empty = await redis.zpopmax(key);
         expect(empty).toEqual([]);
       });
@@ -3027,7 +3024,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const remaining = await redis.zcard(key);
         expect(remaining).toBe(1);
 
-        await redis.zpopmin(key);
+        expect(await redis.zpopmin(key)).toEqual(["four", 4]);
         const empty = await redis.zpopmin(key);
         expect(empty).toEqual([]);
       });
@@ -3039,12 +3036,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.zadd(key, 1, "one", 2, "two", 3, "three");
 
         const result1 = await redis.zrandmember(key);
-        expect(result1).toBeDefined();
         expect(["one", "two", "three"]).toContain<string | null>(result1);
 
+        // A positive count returns that many distinct members.
         const result2 = await redis.zrandmember(key, 2);
-        expect(Array.isArray(result2)).toBe(true);
-        expect(result2!.length).toBeLessThanOrEqual(2);
+        expect(result2).toHaveLength(2);
+        expect(new Set(result2).size).toBe(2);
 
         result2!.forEach((member: string) => {
           expect(["one", "two", "three"]).toContain(member);
@@ -3539,12 +3536,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(allElements.length).toBe(10);
 
-        const members = allElements.filter((_, index) => index % 2 === 0);
-        expect(members).toContain("one");
-        expect(members).toContain("two");
-        expect(members).toContain("three");
-        expect(members).toContain("four");
-        expect(members).toContain("five");
+        // Elements alternate member, score.
+        const scores: Record<string, string> = {};
+        for (let i = 0; i < allElements.length; i += 2) {
+          scores[allElements[i]] = allElements[i + 1];
+        }
+        expect(scores).toEqual({ one: "1", two: "2", three: "3", four: "4", five: "5" });
       });
 
       test("should iterate sorted set with ZSCAN and MATCH", async () => {
@@ -3562,11 +3559,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         } while (cursor !== "0");
 
         const members = userElements.filter((_, index) => index % 2 === 0);
-
-        expect(members).toContain("user:1");
-        expect(members).toContain("user:2");
-        expect(members).not.toContain("post:1");
-        expect(members).not.toContain("post:2");
+        expect(members.sort()).toEqual(["user:1", "user:2"]);
       });
 
       test("should iterate sorted set with ZSCAN and COUNT", async () => {
@@ -3589,12 +3582,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(allElements.length).toBe(200);
 
-        const members = allElements.filter((_, index) => index % 2 === 0);
-        expect(members.length).toBe(100);
-        for (let i = 0; i < 100; i++) {
-          expect(members).toContain(`member:${i}`);
+        const scores: Record<string, string> = {};
+        for (let i = 0; i < allElements.length; i += 2) {
+          scores[allElements[i]] = allElements[i + 1];
         }
+        expect(scores).toEqual(Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`member:${i}`, String(i)])));
 
+        // A numeric cursor works the same as the string form.
         cursor = 0 as any;
         const allElements2: string[] = [];
         do {
@@ -3603,7 +3597,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           cursor = nextCursor;
         } while (cursor !== "0");
 
-        expect(allElements2.length).toBe(200);
+        expect(allElements2.sort()).toEqual(allElements.sort());
       });
 
       test("should reject invalid key in ZADD", async () => {
@@ -4082,8 +4076,6 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
 
         const result = await redis.zrandmember(key);
-        expect(result).toBeDefined();
-        expect(typeof result).toBe("string");
         expect(["one", "two", "three", "four", "five"]).toContain<string | null>(result);
       });
 
@@ -4101,10 +4093,10 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
 
+        // A positive count returns that many distinct members.
         const result = await redis.zrandmember(key, 2);
-        expect(result).toBeDefined();
-        expect(Array.isArray(result)).toBe(true);
-        expect(result!.length).toBe(2);
+        expect(result).toHaveLength(2);
+        expect(new Set(result).size).toBe(2);
 
         for (const member of result!) {
           expect(["one", "two", "three"]).toContain(member);
@@ -4121,16 +4113,16 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
 
         const result = await redis.zrandmember(key, 2, "WITHSCORES");
-        expect(result).toBeDefined();
-        expect(Array.isArray(result)).toBe(true);
-        expect(result!.length).toBe(2);
+        expect(result).toHaveLength(2);
+        expect(new Set(result!.map(([member]) => member)).size).toBe(2);
 
+        // Each pair carries the score the member was added with.
         for (const item of result!) {
-          expect(Array.isArray(item)).toBe(true);
-          expect(item.length).toBe(2);
-          expect(typeof item[0]).toBe("string");
-          expect(typeof item[1]).toBe("number");
-          expect(["one", "two", "three"]).toContain(item[0]);
+          expect([
+            ["one", 1.5],
+            ["two", 2.7],
+            ["three", 3.9],
+          ]).toContainEqual(item);
         }
       });
 
@@ -4141,9 +4133,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1", "one", "2", "two"]);
 
         const result = await redis.zrandmember(key, -5);
-        expect(result).toBeDefined();
-        expect(Array.isArray(result)).toBe(true);
-        expect(result!.length).toBe(5);
+        expect(result).toHaveLength(5);
 
         for (const member of result!) {
           expect(["one", "two"]).toContain(member);
@@ -4831,13 +4821,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
 
         const result = await redis.zmpop(1, key, "MIN", "COUNT", 3);
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(result![0]).toBe(key);
-        expect(result![1]).toEqual([
-          ["one", 1],
-          ["two", 2],
-          ["three", 3],
+        expect(result).toEqual([
+          key,
+          [
+            ["one", 1],
+            ["two", 2],
+            ["three", 3],
+          ],
         ]);
 
         const count = await redis.send("ZCARD", [key]);
@@ -4881,7 +4871,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const emptyKey = "bzmpop-timeout-test";
 
-        const result = await redis.bzmpop(0.1, 1, emptyKey, "MIN");
+        const result = await redis.bzmpop(BLOCK_TIMEOUT, 1, emptyKey, "MIN");
         expect(result).toBeNull();
       });
 
@@ -4892,12 +4882,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
 
         const result = await redis.bzmpop(0.5, 1, key, "MAX", "COUNT", 2);
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(result![0]).toBe(key);
-        expect(result![1]).toEqual([
-          ["three", 3],
-          ["two", 2],
+        expect(result).toEqual([
+          key,
+          [
+            ["three", 3],
+            ["two", 2],
+          ],
         ]);
 
         const count = await redis.send("ZCARD", [key]);
@@ -4925,12 +4915,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.zadd(key, 1.0, "one", 2.0, "two", 3.0, "three");
 
         const result = await redis.zpopmax(key);
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(Array.isArray(result)).toBe(true);
-        expect(result).toHaveLength(2);
-        expect(result![0]).toBe("three");
-        expect(result![1]).toBe(3);
+        expect(result).toEqual(["three", 3]);
 
         const count = await redis.zcard(key);
         expect(count).toBe(2);
@@ -4943,12 +4928,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.zadd(key, 1.0, "one", 2.0, "two", 3.0, "three");
 
         const result = await redis.zpopmin(key);
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(Array.isArray(result)).toBe(true);
-        expect(result).toHaveLength(2);
-        expect(result![0]).toBe("one");
-        expect(result![1]).toBe(1);
+        expect(result).toEqual(["one", 1]);
 
         const count = await redis.zcard(key);
         expect(count).toBe(2);
@@ -4977,11 +4957,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1.0", "one", "2.0", "two", "3.0", "three"]);
 
         const result = await redis.bzpopmin(key, 0.1);
-        expect(result).toBeDefined();
-        expect(result).toHaveLength(3);
-        expect(result![0]).toBe(key);
-        expect(result![1]).toBe("one");
-        expect(result![2]).toBe(1);
+        expect(result).toEqual([key, "one", 1]);
 
         const count = await redis.send("ZCARD", [key]);
         expect(count).toBe(2);
@@ -4991,7 +4967,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "bzpopmin-empty-test";
 
-        const result = await redis.bzpopmin(key, 0.1);
+        const result = await redis.bzpopmin(key, BLOCK_TIMEOUT);
         expect(result).toBeNull();
       });
 
@@ -5002,11 +4978,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key, "1.0", "one", "2.0", "two", "3.0", "three"]);
 
         const result = await redis.bzpopmax(key, 0.1);
-        expect(result).toBeDefined();
-        expect(result).toHaveLength(3);
-        expect(result![0]).toBe(key);
-        expect(result![1]).toBe("three");
-        expect(result![2]).toBe(3);
+        expect(result).toEqual([key, "three", 3]);
 
         const count = await redis.send("ZCARD", [key]);
         expect(count).toBe(2);
@@ -5016,7 +4988,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "bzpopmax-empty-test";
 
-        const result = await redis.bzpopmax(key, 0.1);
+        const result = await redis.bzpopmax(key, BLOCK_TIMEOUT);
         expect(result).toBeNull();
       });
 
@@ -5028,10 +5000,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key2, "5.0", "five", "6.0", "six"]);
 
         const result = await redis.bzpopmin(key1, key2, 0.1);
-        expect(result).toBeDefined();
-        expect(result![0]).toBe(key2);
-        expect(result![1]).toBe("five");
-        expect(result![2]).toBe(5);
+        expect(result).toEqual([key2, "five", 5]);
       });
 
       test("should work with multiple keys in BZPOPMAX", async () => {
@@ -5042,10 +5011,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.send("ZADD", [key2, "5.0", "five", "6.0", "six"]);
 
         const result = await redis.bzpopmax(key1, key2, 0.5);
-        expect(result).toBeDefined();
-        expect(result![0]).toBe(key2);
-        expect(result![1]).toBe("six");
-        expect(result![2]).toBe(6);
+        expect(result).toEqual([key2, "six", 6]);
       });
 
       test("should reject invalid arguments in BZPOPMIN", async () => {
@@ -5089,11 +5055,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const val1 = await redis.hincrbyfloat(key, "field1", 2.5);
         expect(val1).toBe("2.5");
 
+        // The server formats the result with the shortest exact representation.
         const val2 = await redis.hincrbyfloat(key, "field1", 1.3);
-        expect(Number.parseFloat(val2)).toBeCloseTo(3.8);
+        expect(val2).toBe("3.8");
 
         const val3 = await redis.hincrbyfloat(key, "field1", -0.8);
-        expect(Number.parseFloat(val3)).toBeCloseTo(3.0);
+        expect(val3).toBe("3");
       });
 
       test("should get all hash keys with HKEYS", async () => {
@@ -5218,8 +5185,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hexpireat(key, futureTs, "FIELDS", 1, "field1");
 
         const expireTime = await redis.hexpiretime(key, "FIELDS", 1, "field1");
-        expect(expireTime[0]).toBeGreaterThan(0);
-        expect(expireTime[0]).toBeLessThanOrEqual(futureTs);
+        expect(expireTime).toEqual([futureTs]);
       });
 
       test("should remove hash field expiration with HPERSIST", async () => {
@@ -5263,8 +5229,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hpexpireat(key, futureTs, "FIELDS", 1, "field1");
 
         const pexpireTime = await redis.hpexpiretime(key, "FIELDS", 1, "field1");
-        expect(pexpireTime[0]).toBeGreaterThan(0);
-        expect(pexpireTime[0]).toBeLessThanOrEqual(futureTs);
+        expect(pexpireTime).toEqual([futureTs]);
       });
 
       test("should set hash fields using object syntax", async () => {
@@ -5804,9 +5769,10 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
+        // A positive count returns that many distinct fields.
         const fields = await redis.hrandfield(key, 2);
-        expect(fields).toBeInstanceOf(Array);
-        expect(fields.length).toBe(2);
+        expect(fields).toHaveLength(2);
+        expect(new Set(fields).size).toBe(2);
         fields.forEach(field => {
           expect(["name", "age", "city"]).toContain(field);
         });
@@ -5820,15 +5786,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hset(key, fullData);
 
         const result = await redis.hrandfield(key, 2, "WITHVALUES");
-        expect(result).toBeInstanceOf(Array);
-        expect(result.length).toBe(2);
+        expect(result).toHaveLength(2);
 
         const obj = Object.fromEntries(result);
 
         expect(Object.keys(obj).length).toBe(2);
 
-        for (const [field, value] of Object.entries(obj)) {
-          expect(fullData).toHaveProperty(field, value);
+        for (const pair of result) {
+          expect(Object.entries(fullData)).toContainEqual(pair);
         }
       });
 
@@ -5838,9 +5803,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
+        // A small hash is returned in one page, so the cursor is already "0".
         const [cursor, fields] = await redis.hscan(key, 0);
-        expect(typeof cursor).toBe("string");
-        expect(fields).toBeInstanceOf(Array);
+        expect(cursor).toBe("0");
         expect(fields.length).toBe(6);
 
         const obj: Record<string, string> = {};
@@ -5857,17 +5822,15 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hset(key, { field1: "val1", field2: "val2", other: "val3" });
 
         const [cursor, fields] = await redis.hscan(key, 0, "MATCH", "field*");
-        expect(typeof cursor).toBe("string");
-        expect(fields).toBeInstanceOf(Array);
+        expect(cursor).toBe("0");
+        expect(fields).toHaveLength(4);
 
         const obj: Record<string, string> = {};
         for (let i = 0; i < fields.length; i += 2) {
           obj[fields[i]] = fields[i + 1];
         }
 
-        expect(obj.field1).toBe("val1");
-        expect(obj.field2).toBe("val2");
-        expect(obj.other).toBeUndefined();
+        expect(obj).toEqual({ field1: "val1", field2: "val2" });
       });
 
       test("should scan hash with count using hscan COUNT", async () => {
@@ -5880,11 +5843,21 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         }
         await redis.hset(key, fields);
 
-        const [cursor, result] = await redis.hscan(key, 0, "COUNT", 5);
-        expect(typeof cursor).toBe("string");
-        expect(result).toBeInstanceOf(Array);
+        let cursor: string | number = 0;
+        const all: string[] = [];
+        do {
+          const [nextCursor, page] = await redis.hscan(key, cursor, "COUNT", 5);
+          all.push(...page);
+          cursor = nextCursor;
+        } while (cursor !== "0");
 
-        expect(result.length).toBeGreaterThan(0);
+        // Every field is returned exactly once across the pages.
+        expect(all).toHaveLength(40);
+        const obj: Record<string, string> = {};
+        for (let i = 0; i < all.length; i += 2) {
+          obj[all[i]] = all[i + 1];
+        }
+        expect(obj).toEqual(fields);
       });
 
       test("should increment hash field by integer using hincrby", async () => {
@@ -5948,11 +5921,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
         const keys = await redis.hkeys(key);
-        expect(keys).toBeInstanceOf(Array);
-        expect(keys.length).toBe(3);
-        expect(keys).toContain("name");
-        expect(keys).toContain("age");
-        expect(keys).toContain("city");
+        expect(keys.sort()).toEqual(["age", "city", "name"]);
       });
 
       test("should return empty array for non-existent key using hkeys", async () => {
@@ -6012,11 +5981,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
         const values = await redis.hvals(key);
-        expect(values).toBeInstanceOf(Array);
-        expect(values.length).toBe(3);
-        expect(values).toContain("John");
-        expect(values).toContain("30");
-        expect(values).toContain("NYC");
+        expect(values.sort()).toEqual(["30", "John", "NYC"]);
       });
 
       test("should return empty array for non-existent key using hvals", async () => {
@@ -6105,10 +6070,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hexpireat(key, futureTimestamp, "FIELDS", 1, "name");
 
         const expiretimes = await redis.hexpiretime(key, "FIELDS", 2, "name", "age");
-        expect(expiretimes).toHaveLength(2);
-        expect(expiretimes[0]).toBeGreaterThan(0);
-        expect(expiretimes[0]).toBeLessThanOrEqual(futureTimestamp);
-        expect(expiretimes[1]).toBe(-1);
+        expect(expiretimes).toEqual([futureTimestamp, -1]);
       });
 
       test("should expire hash fields at specific time in milliseconds using hpexpireat", async () => {
@@ -6138,10 +6100,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.hpexpireat(key, futureTimestamp, "FIELDS", 1, "name");
 
         const expiretimes = await redis.hpexpiretime(key, "FIELDS", 2, "name", "age");
-        expect(expiretimes).toHaveLength(2);
-        expect(expiretimes[0]).toBeGreaterThan(0);
-        expect(expiretimes[0]).toBeLessThanOrEqual(futureTimestamp);
-        expect(expiretimes[1]).toBe(-1);
+        expect(expiretimes).toEqual([futureTimestamp, -1]);
       });
 
       test("should persist hash fields using hpersist", async () => {
@@ -6241,8 +6200,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const key = "geo:" + randomUUIDv7();
         await setupGeo(redis, key);
         const dist = await redis.geodist(key, "Palermo", "Catania", "km");
-        expect(typeof dist).toBe("string");
-        expect(Number(dist)).toBeCloseTo(166.2742, 3);
+        expect(dist).toBe("166.2742");
         expect(await redis.geodist(key, "Palermo", "Nowhere")).toBeNull();
       });
 
@@ -6251,9 +6209,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const key = "geo:" + randomUUIDv7();
         await setupGeo(redis, key);
         const hashes = await redis.geohash(key, "Palermo", "Catania");
-        expect(hashes).toHaveLength(2);
-        expect(hashes[0]).toMatch(/^sqc8b49rny/);
-        expect(hashes[1]).toMatch(/^sqdtr74hyu/);
+        expect(hashes).toEqual(["sqc8b49rny0", "sqdtr74hyu0"]);
       });
 
       test("GEOPOS returns coordinates", async () => {
@@ -6298,8 +6254,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("EVALSHA runs a cached Lua script", async () => {
         const redis = ctx.redis;
-        const sha = await redis.script("LOAD", "return 'cached'");
-        expect(typeof sha).toBe("string");
+        const script = "return 'cached'";
+        const sha = await redis.script("LOAD", script);
+        expect(sha).toBe(new Bun.CryptoHasher("sha1").update(script).digest("hex"));
         expect(await redis.evalsha(sha, 0)).toBe("cached");
       });
 
@@ -6420,10 +6377,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     describe("Generic Key Commands", () => {
       test("OBJECT ENCODING returns internal encoding", async () => {
         const redis = ctx.redis;
-        const key = "obj:" + randomUUIDv7();
+        // Redis 8.2+ stores key and value in one 64-byte allocation and reports
+        // a short string as raw when the pair does not fit, so keep the key short.
+        const key = "obj";
         await redis.set(key, "hello");
-        const encoding = await redis.object("ENCODING", key);
-        expect(["embstr", "raw", "int"]).toContain(encoding);
+        expect(await redis.object("ENCODING", key)).toBe("embstr");
+        await redis.set(key, "12345");
+        expect(await redis.object("ENCODING", key)).toBe("int");
       });
 
       test("SORT sorts list elements", async () => {
@@ -6459,27 +6419,20 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(await redis.xlen(key)).toBe(2);
 
-        const range = await redis.xrange(key, "-", "+");
-        expect(range).toHaveLength(2);
-        expect(range[0][0]).toBe(id1);
-        expect(range[0][1]).toEqual(["field", "v1"]);
-        expect(range[1][0]).toBe(id2);
+        const entry1 = [id1, ["field", "v1"]];
+        const entry2 = [id2, ["field", "v2", "other", "x"]];
 
-        const rev = await redis.xrevrange(key, "+", "-");
-        expect(rev[0][0]).toBe(id2);
-        expect(rev[1][0]).toBe(id1);
-
-        const limited = await redis.xrange(key, "-", "+", "COUNT", 1);
-        expect(limited).toHaveLength(1);
+        expect(await redis.xrange(key, "-", "+")).toEqual([entry1, entry2]);
+        expect(await redis.xrevrange(key, "+", "-")).toEqual([entry2, entry1]);
+        expect(await redis.xrange(key, "-", "+", "COUNT", 1)).toEqual([entry1]);
       });
 
       test("XREAD reads from a stream", async () => {
         const redis = ctx.redis;
         const key = "stream:" + randomUUIDv7();
-        await redis.xadd(key, "*", "k", "v");
+        const id = await redis.xadd(key, "*", "k", "v");
         const result = await redis.xread("COUNT", 10, "STREAMS", key, "0");
-        expect(result).toHaveProperty(key);
-        expect(result[key]).toHaveLength(1);
+        expect(result).toEqual({ [key]: [[id, ["k", "v"]]] });
       });
 
       test("XDEL and XTRIM remove entries", async () => {
@@ -6513,20 +6466,26 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const id = await redis.xadd(key, "*", "msg", "hello");
 
         const read = await redis.xreadgroup("GROUP", group, "consumer1", "COUNT", 10, "STREAMS", key, ">");
-        expect(read).toHaveProperty(key);
-        expect(read[key][0][0]).toBe(id);
-        expect(read[key][0][1]).toEqual(["msg", "hello"]);
+        expect(read).toEqual({ [key]: [[id, ["msg", "hello"]]] });
 
-        const pendingBefore = await redis.xpending(key, group);
-        expect(pendingBefore[0]).toBe(1);
+        // XPENDING summary: count, smallest id, greatest id, per-consumer counts.
+        expect(await redis.xpending(key, group)).toEqual([1, id, id, [["consumer1", "1"]]]);
 
         expect(await redis.xack(key, group, id!)).toBe(1);
 
-        const pendingAfter = await redis.xpending(key, group);
-        expect(pendingAfter[0]).toBe(0);
+        expect(await redis.xpending(key, group)).toEqual([0, null, null, null]);
 
         const groups = await redis.xinfo("GROUPS", key);
-        expect(Array.isArray(groups)).toBe(true);
+        expect(groups).toEqual([
+          {
+            name: group,
+            consumers: 1,
+            pending: 0,
+            "last-delivered-id": id,
+            "entries-read": 1,
+            lag: 0,
+          },
+        ]);
 
         expect(await redis.xgroup("DESTROY", key, group)).toBe(1);
       });
@@ -6541,13 +6500,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.xreadgroup("GROUP", group, "consumer1", "COUNT", 1, "STREAMS", key, ">");
 
         const claimed = await redis.xclaim(key, group, "consumer2", 0, id!);
-        expect(claimed).toHaveLength(1);
-        expect(claimed[0][0]).toBe(id);
+        expect(claimed).toEqual([[id, ["msg", "hello"]]]);
 
+        // XAUTOCLAIM: next cursor, claimed entries, ids deleted from the stream.
         const auto = await redis.xautoclaim(key, group, "consumer3", 0, "0");
-        expect(auto[0]).toBe("0-0");
-        expect(auto[1]).toHaveLength(1);
-        expect(auto[1][0][0]).toBe(id);
+        expect(auto).toEqual(["0-0", [[id, ["msg", "hello"]]], []]);
       });
     });
 
@@ -6555,7 +6512,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should have a connected property", () => {
         const redis = ctx.redis;
 
-        expect(typeof redis.connected).toBe("boolean");
+        expect(redis.connected).toBe(true);
       });
     });
 
@@ -6565,20 +6522,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const userId = "user:" + randomUUIDv7().substring(0, 8);
         const setResult = await redis.send("HSET", [userId, "name", "John", "age", "30", "active", "true"]);
-        expect(setResult).toBeDefined();
+        expect(setResult).toBe(3);
 
+        // A RESP3 map decodes to a plain object.
         const hash = await redis.send("HGETALL", [userId]);
-        expect(hash).toBeDefined();
-
-        if (typeof hash === "object" && hash !== null) {
-          expect(hash).toHaveProperty("name");
-          expect(hash).toHaveProperty("age");
-          expect(hash).toHaveProperty("active");
-
-          expect(hash.name).toBe("John");
-          expect(hash.age).toBe("30");
-          expect(hash.active).toBe("true");
-        }
+        expect(hash).toEqual({ name: "John", age: "30", active: "true" });
       });
 
       test("should handle sets as command responses", async () => {
@@ -6586,16 +6534,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const setKey = "colors:" + randomUUIDv7().substring(0, 8);
         const addResult = await redis.send("SADD", [setKey, "red", "blue", "green"]);
-        expect(addResult).toBeDefined();
+        expect(addResult).toBe(3);
 
+        // A RESP3 set decodes to an array.
         const setMembers = await redis.send("SMEMBERS", [setKey]);
-        expect(setMembers).toBeDefined();
-
-        expect(Array.isArray(setMembers)).toBe(true);
-
-        expect(setMembers).toContain("red");
-        expect(setMembers).toContain("blue");
-        expect(setMembers).toContain("green");
+        expect(setMembers.sort()).toEqual(["blue", "green", "red"]);
       });
     });
 
@@ -7081,20 +7024,27 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("high volume pub/sub", async () => {
         const channel = testChannel();
 
-        const MESSAGE_COUNT = 1000;
+        // A 1MB message spans many socket reads. 256 of them fit the 5s default
+        // timeout on a debug build, where 1000 did not.
+        const MESSAGE_COUNT = 256;
         const MESSAGE_SIZE = 1024 * 1024;
+        const payload = Buffer.alloc(MESSAGE_SIZE, "X").toString();
 
+        let intact = 0;
         let byteCounter = awaitableCounter(5_000); // 5s timeout
         const subscriber = await ctx.redis.duplicate();
         await subscriber.subscribe(channel, message => {
+          if (message === payload) intact++;
           byteCounter.incrementBy(message.length);
         });
 
         for (let i = 0; i < MESSAGE_COUNT; i++) {
-          await ctx.redis.publish(channel, "X".repeat(MESSAGE_SIZE));
+          expect(await ctx.redis.publish(channel, payload)).toBe(1);
         }
 
         expect(await byteCounter.untilValue(MESSAGE_COUNT * MESSAGE_SIZE)).toBe(MESSAGE_COUNT * MESSAGE_SIZE);
+        // Every message arrived whole, not only the right number of bytes.
+        expect(intact).toBe(MESSAGE_COUNT);
         subscriber.close();
       });
 
@@ -7104,10 +7054,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriberProc = spawn({
           cmd: [bunExe(), `${__dirname}/valkey.failing-subscriber-no-ipc.ts`],
           stdout: "pipe",
-          stderr: "inherit",
+          stderr: "pipe",
           stdin: "pipe",
-          env: { ...process.env, NODE_ENV: "development" },
+          env: { ...bunEnv, NODE_ENV: "development" },
         });
+        const stderr = subscriberProc.stderr.text();
 
         const reader = subscriberProc.stdout.getReader();
         async function* readLines() {
@@ -7161,19 +7112,25 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           });
           await waitForChildMessage("ready");
 
-          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
-          expect(await waitForChildMessage("message")).toMatchObject({ index: 1 });
+          // The child is the only subscriber on the channel.
+          expect(await ctx.redis.publish(channel, "message1")).toBe(1);
+          expect(await waitForChildMessage("message")).toEqual({ event: "message", index: 1 });
 
           // This should throw inside the child process, so it should notify us.
-          expect(await ctx.redis.publish(channel, "message2")).toBeGreaterThanOrEqual(1);
-          await waitForChildMessage("exception");
+          expect(await ctx.redis.publish(channel, "message2")).toBe(1);
+          expect(await waitForChildMessage("exception")).toEqual({
+            event: "exception",
+            exMsg: "Intentional callback error",
+          });
 
-          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
-          expect(await waitForChildMessage("message")).toMatchObject({ index: 3 });
+          expect(await ctx.redis.publish(channel, "message1")).toBe(1);
+          expect(await waitForChildMessage("message")).toEqual({ event: "message", index: 3 });
         } finally {
           subscriberProc.kill();
           await subscriberProc.exited;
         }
+        // The child reports the callback error itself, so nothing reaches stderr.
+        expect(await stderr).toBe("");
       });
 
       test("callback errors don't crash the client", async () => {
@@ -7190,20 +7147,21 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const subscriberProc = spawn({
           cmd: [bunExe(), `${__dirname}/valkey.failing-subscriber.ts`],
-          stdout: "inherit",
-          stderr: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
           ipc: msg => {
             currentMessage = msg;
             stepCounter.increment();
           },
           env: {
-            ...process.env,
+            ...bunEnv,
             NODE_ENV: "development",
           },
         });
+        const output = Promise.all([subscriberProc.stdout.text(), subscriberProc.stderr.text()]);
 
         await stepCounter.untilValue(STEP_WAITING_FOR_URL);
-        expect(currentMessage.event).toBe("waiting-for-url");
+        expect(currentMessage).toEqual({ event: "waiting-for-url" });
         subscriberProc.send({
           event: "start",
           url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
@@ -7212,41 +7170,40 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         try {
           await stepCounter.untilValue(STEP_SUBSCRIBED);
-          expect(currentMessage.event).toBe("ready");
+          expect(currentMessage).toEqual({ event: "ready" });
 
-          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
+          // The child is the only subscriber on the channel.
+          expect(await ctx.redis.publish(channel, "message1")).toBe(1);
           await stepCounter.untilValue(STEP_FIRST_MESSAGE);
-          expect(currentMessage.event).toBe("message");
-          expect(currentMessage.index).toBe(1);
+          expect(currentMessage).toEqual({ event: "message", index: 1 });
 
-          expect(await ctx.redis.publish(channel, "message2")).toBeGreaterThanOrEqual(1);
+          expect(await ctx.redis.publish(channel, "message2")).toBe(1);
           await stepCounter.untilValue(STEP_SECOND_MESSAGE);
-          expect(currentMessage.event).toBe("exception");
-          //expect(currentMessage.index).toBe(2);
+          expect(currentMessage).toEqual({ event: "exception", exMsg: "Intentional callback error" });
 
-          expect(await ctx.redis.publish(channel, "message3")).toBeGreaterThanOrEqual(1);
+          expect(await ctx.redis.publish(channel, "message3")).toBe(1);
           await stepCounter.untilValue(STEP_THIRD_MESSAGE);
-          expect(currentMessage.event).toBe("message");
-          expect(currentMessage.index).toBe(3);
+          expect(currentMessage).toEqual({ event: "message", index: 3 });
         } finally {
           subscriberProc.kill();
           await subscriberProc.exited;
         }
+        // The child talks over IPC only and reports the callback error itself.
+        expect(await output).toEqual(["", ""]);
       });
 
       test("subscriptions return correct counts", async () => {
-        const subscriber = createClient(connectionType);
-        await subscriber.connect();
+        const subscriber = await ctx.newSubscriberClient(connectionType);
 
         expect(await subscriber.subscribe("chan1", () => {})).toBe(1);
         expect(await subscriber.subscribe("chan2", () => {})).toBe(2);
       });
 
       test("unsubscribing from listeners", async () => {
-        const channel = "error-callback-channel";
+        const channel = testChannel();
 
-        const subscriber = createClient(connectionType);
-        await subscriber.connect();
+        // Pooled, so the subscription does not outlive the test.
+        const subscriber = await ctx.newSubscriberClient(connectionType);
 
         const counter = awaitableCounter();
         let messageCount1 = 0;
@@ -7263,16 +7220,16 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         };
         await subscriber.subscribe(channel, listener2);
 
-        await ctx.redis.publish(channel, "message1");
+        // Two listeners share one server-side subscription.
+        expect(await ctx.redis.publish(channel, "message1")).toBe(1);
         await counter.untilValue(2);
 
         expect(messageCount1).toBe(1);
         expect(messageCount2).toBe(1);
 
-        console.log("Unsubscribing listener2");
         await subscriber.unsubscribe(channel, listener2);
 
-        await ctx.redis.publish(channel, "message1");
+        expect(await ctx.redis.publish(channel, "message1")).toBe(1);
         await counter.untilValue(3);
 
         expect(messageCount1).toBe(2);
@@ -7335,7 +7292,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const duplicate = await subscriber.duplicate();
 
-        expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
+        // The duplicate starts in normal command mode, not subscriber mode.
+        expect(duplicate.connected).toBe(true);
+        expect(await duplicate.set("test-key", "test-value")).toBe("OK");
+        expect(await ctx.redis.get("test-key")).toBe("test-value");
+        duplicate.close();
 
         await subscriber.unsubscribe(testChannel);
       });

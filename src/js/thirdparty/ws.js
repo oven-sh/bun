@@ -143,6 +143,31 @@ function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }
 
+// The codes an endpoint may put in a Close frame (RFC 6455 7.4, npm ws lib/validation.js).
+function isValidStatusCode(code) {
+  return (
+    (code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) || (code >= 3000 && code <= 4999)
+  );
+}
+
+// The checks of Sender.prototype.close in npm ws, with the same errors. Returns the reason to
+// send. Like npm ws, `data` is ignored without a code or without a length.
+function closeReason(code, data) {
+  if (code === undefined) return "";
+  if (typeof code !== "number" || !isValidStatusCode(code)) {
+    throw new TypeError("First argument must be a valid error code number");
+  }
+  if (data === undefined || !data.length) return "";
+  // The native close() takes a string. Decode a view first so the limit applies to the bytes sent.
+  const reason = $isTypedArrayView(data)
+    ? new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8")
+    : data;
+  if (Buffer.byteLength(reason) > 123) {
+    throw new RangeError("The message must not be greater than 123 bytes");
+  }
+  return reason;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -516,10 +541,13 @@ class BunWebSocket extends EventEmitter {
     if (typeof cb === "function") process.nextTick(cb, null);
   }
 
-  close(code, reason) {
+  close(code, data) {
     const ws = this.#ws;
     if (ws) {
-      ws.close(code, reason);
+      // Like npm ws, only an OPEN socket checks the arguments. A CONNECTING socket aborts the
+      // handshake whatever they are, CLOSING and CLOSED ignore the call.
+      if (ws.readyState === ReadyState_OPEN) ws.close(code, closeReason(code, data));
+      else ws.close();
     }
   }
 
@@ -1169,8 +1197,9 @@ class BunWebSocketMocked extends EventEmitter {
     }
   }
 
-  close(code, reason) {
+  close(code, data) {
     if (this.#state === ReadyState_OPEN) {
+      const reason = closeReason(code, data);
       this.#state = ReadyState_CLOSING;
       this.#ws.close(code, reason);
     }

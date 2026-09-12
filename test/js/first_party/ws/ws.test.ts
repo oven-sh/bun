@@ -464,6 +464,123 @@ describe("WebSocketServer", () => {
   });
 });
 
+// Both socket classes of the shim run the checks of Sender.prototype.close in npm ws: a code an
+// endpoint may not send and a reason over 123 bytes throw and put nothing on the wire.
+describe.each(["server", "client"] as const)("close() arguments on a %s socket", side => {
+  // Opens `count` connections. For connection `i`, calls `closer` with the `side` socket once it
+  // is open, and resolves with what the 'close' event of the other end saw.
+  async function closeEach(count: number, closer: (ws: WebSocket, i: number) => void): Promise<[number, string][]> {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const seen = Array.from({ length: count }, () => Promise.withResolvers<[number, string]>());
+      const observe = (ws: WebSocket, i: number) => {
+        ws.on("close", (code: number, reason: unknown) => seen[i].resolve([code, String(reason)]));
+        ws.on("error", seen[i].reject);
+      };
+      const close = (ws: WebSocket, i: number) => {
+        try {
+          closer(ws, i);
+        } catch (e) {
+          seen[i].reject(e);
+          ws.terminate();
+        }
+      };
+      wss.on("connection", (ws, req) => {
+        const i = Number(new URL(req.url, "ws://host").searchParams.get("i"));
+        if (side === "server") close(ws, i);
+        else observe(ws, i);
+      });
+      for (let i = 0; i < count; i++) {
+        const client = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port + "/?i=" + i);
+        if (side === "client") client.on("open", () => close(client, i));
+        else observe(client, i);
+      }
+      return await Promise.all(seen.map(({ promise }) => promise));
+    } finally {
+      wss.close();
+    }
+  }
+
+  it("throws for an invalid code or a long reason and sends nothing", async () => {
+    const attempts: string[] = [];
+    const [peer] = await closeEach(1, ws => {
+      for (const args of [
+        [999],
+        [1004],
+        [1005],
+        [1006],
+        [1015],
+        [1016],
+        [2999],
+        [5000],
+        [65535],
+        [100000],
+        [-1],
+        [NaN],
+        ["1000"],
+        [1000, Buffer.alloc(124, "q").toString()],
+        [1000, Buffer.alloc(140, "é").toString()],
+        [1000, Buffer.alloc(124, "q")],
+      ] as unknown[][]) {
+        const label = typeof args[0] === "string" ? JSON.stringify(args[0]) : String(args[0]);
+        try {
+          // @ts-expect-error
+          ws.close(...args);
+          attempts.push(`${label}: no throw`);
+        } catch (e: any) {
+          attempts.push(`${label}: ${e.constructor.name}: ${e.message}`);
+        }
+      }
+      attempts.push(`readyState ${ws.readyState}`);
+      ws.close(4000, "ok");
+    });
+
+    const codeError = "TypeError: First argument must be a valid error code number";
+    const reasonError = "RangeError: The message must not be greater than 123 bytes";
+    expect(attempts).toEqual([
+      `999: ${codeError}`,
+      `1004: ${codeError}`,
+      `1005: ${codeError}`,
+      `1006: ${codeError}`,
+      `1015: ${codeError}`,
+      `1016: ${codeError}`,
+      `2999: ${codeError}`,
+      `5000: ${codeError}`,
+      `65535: ${codeError}`,
+      `100000: ${codeError}`,
+      `-1: ${codeError}`,
+      `NaN: ${codeError}`,
+      `"1000": ${codeError}`,
+      `1000: ${reasonError}`,
+      `1000: ${reasonError}`,
+      `1000: ${reasonError}`,
+      `readyState ${WebSocket.OPEN}`,
+    ]);
+    // Had any attempt sent a Close frame, the peer would report that one instead.
+    expect(peer).toEqual([4000, "ok"]);
+  });
+
+  it("sends a valid code and reason as given", async () => {
+    const maxReason = Buffer.alloc(120, "q").toString() + "☃"; // 123 bytes
+    const cases: { args: unknown[]; expected: [number, string] }[] = [
+      { args: [], expected: [1000, ""] },
+      { args: [1000], expected: [1000, ""] },
+      { args: [1003, "bye"], expected: [1003, "bye"] },
+      { args: [1014, maxReason], expected: [1014, maxReason] },
+      { args: [3000, "lib"], expected: [3000, "lib"] },
+      { args: [4999, "app"], expected: [4999, "app"] },
+      // Like npm ws: no code ignores the data, a view is sent as its bytes, data without a length is dropped.
+      { args: [undefined, Buffer.alloc(200, "q").toString()], expected: [1000, ""] },
+      { args: [1000, new TextEncoder().encode("utf8-🙂")], expected: [1000, "utf8-🙂"] },
+      { args: [1000, Buffer.from("buffer")], expected: [1000, "buffer"] },
+      { args: [1000, 42], expected: [1000, ""] },
+    ];
+    // @ts-expect-error
+    const results = await closeEach(cases.length, (ws, i) => ws.close(...cases[i].args));
+    expect(results).toEqual(cases.map(({ expected }) => expected));
+  });
+});
+
 describe("Server", () => {
   it("sets websocket prototype properties correctly", async () => {
     const wss = new Server({ port: 0 });

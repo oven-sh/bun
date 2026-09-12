@@ -200,6 +200,8 @@ pub mod postgres {
         pub mod stack_reader;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
+        #[path = "TransactionStatusIndicator.rs"]
+        pub mod transaction_status_indicator;
 
         // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
         pub use new_reader::ReaderContext;

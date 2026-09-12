@@ -1983,9 +1983,12 @@ impl RunCommand {
                 b"/node_modules/.bin",
                 b"\\node_modules\\.bin"
             ));
-            new_path.push(DELIMITER);
 
-            new_path.extend_from_slice(&path);
+            // An empty trailing entry would make the shell search the cwd.
+            if !path.is_empty() {
+                new_path.push(DELIMITER);
+                new_path.extend_from_slice(&path);
+            }
         }
 
         Ok(new_path)

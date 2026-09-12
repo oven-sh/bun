@@ -518,7 +518,7 @@ fn get_changed_files(
         match run_git(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", since, b"--"],
+            &[b"diff", b"--name-only", b"--end-of-options", since, b"--"],
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {

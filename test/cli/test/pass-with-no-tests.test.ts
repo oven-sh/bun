@@ -40,6 +40,44 @@ test("--pass-with-no-tests exits with 0 when filters match no tests", async () =
   expect(exitCode).toBe(0);
 });
 
+test.each([
+  ["a path that does not exist", ["./does-not-exist"]],
+  ["several paths that do not exist", ["./does-not-exist", "./also-missing"]],
+  ["a directory with no test files", ["./empty"]],
+])("--pass-with-no-tests exits with 0 when given %s", async (_label, paths) => {
+  using dir = tempDir("pass-with-no-tests-path", {
+    "some.test.ts": `import { test } from "bun:test"; test("example", () => {});`,
+    "empty/not-a-test.ts": `console.log("hello");`,
+  });
+
+  await using failing = Bun.spawn({
+    cmd: [bunExe(), "test", ...paths],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: bunEnv,
+  });
+  const [failErr, failExitCode] = await Promise.all([failing.stderr.text(), failing.exited]);
+  expect(failErr).toContain(paths[0]);
+  expect(failErr).not.toContain("example");
+  expect(failExitCode).toBe(1);
+
+  await using passing = Bun.spawn({
+    cmd: [bunExe(), "test", ...paths, "--pass-with-no-tests"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: bunEnv,
+  });
+  const [passErr, passExitCode] = await Promise.all([passing.stderr.text(), passing.exited]);
+  expect(passErr).toContain("The following filters did not match any test files:");
+  expect(passErr).toContain(paths[0]);
+  expect(passErr).not.toContain("example");
+  expect(passExitCode).toBe(0);
+});
+
 test("without --pass-with-no-tests, exits with 1 when no test files found", async () => {
   using dir = tempDir("fail-with-no-tests", {
     "not-a-test.ts": `console.log("hello");`,

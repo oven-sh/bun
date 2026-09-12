@@ -2039,9 +2039,11 @@ impl TestCommand {
                     Ok(()) => {}
                     Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                     // don't error if multiple are passed; one might fail
-                    // but the others may not
+                    // but the others may not. With --pass-with-no-tests, fall
+                    // through to the shared "did not match any test files"
+                    // path, which reports and exits 0.
                     Err(scanner::ScanError::DoesNotExist) => {
-                        if file_or_dirnames.len() == 1 {
+                        if file_or_dirnames.len() == 1 && !ctx.test_options.pass_with_no_tests {
                             if Output::is_ai_agent() {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",

@@ -821,6 +821,246 @@ describe("bundler", () => {
     },
   });
 
+  // Whether control enters a `catch` handler, and from which instruction,
+  // depends on the values the `try` block reads. When those are reactive, so is
+  // every value that depends on the path taken: a local assigned in the `try`
+  // block or in the handler, a `return` from either inside `useMemo`, and the
+  // caught value. Each component below renders several times against one memo
+  // cache, as React does for one component instance, and has to follow its
+  // props on every render.
+  itBundled("react-compiler/TryCatchIsReactiveControlFlow", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+
+        function parse(text) {
+          if (text.startsWith("!")) throw new Error("cannot parse " + text);
+          return text;
+        }
+        function alwaysThrows() {
+          throw new Error("always");
+        }
+        function neverThrows() {}
+
+        function AssignedInCatch(props) {
+          let status = "ok";
+          try {
+            parse(props.text);
+          } catch {
+            status = "failed";
+          }
+          return <div>{status}</div>;
+        }
+
+        function ReturnedFromUseMemo({ text }) {
+          const status = useMemo(() => {
+            try {
+              parse(text);
+              return "ok";
+            } catch {
+              return "failed";
+            }
+          }, [text]);
+          return <div>{status}</div>;
+        }
+
+        // The element built in the handler is memoized on the caught value.
+        function CaughtValue(props) {
+          let element;
+          try {
+            parse(props.text);
+            element = <b>ok</b>;
+          } catch (error) {
+            element = <i>{error.message}</i>;
+          }
+          return <div>{element}</div>;
+        }
+
+        // A reactive scope spans the whole try statement. The catch parameter
+        // is only bound inside the clause, so that scope cannot depend on it.
+        function ScopeAroundTry(props) {
+          let element = null;
+          try {
+            props.strict && parse(props.text);
+          } catch (error) {
+            element = <i>{error.message}</i>;
+          }
+          return <div>{element}</div>;
+        }
+
+        // The handler reads a local whose value depends on which call threw.
+        function ReadInCatch(props) {
+          let stage = "first";
+          let failedAt = "none";
+          try {
+            parse(props.first);
+            stage = "second";
+            parse(props.second);
+          } catch {
+            failedAt = stage;
+          }
+          return <div>{failedAt}</div>;
+        }
+
+        // No call that can enter the outer handler reads a reactive value, but
+        // alwaysThrows() only runs when the inner handler does.
+        function NestedTry(props) {
+          let status = "ok";
+          try {
+            try {
+              parse(props.text);
+            } catch {
+              alwaysThrows();
+            }
+            neverThrows();
+          } catch {
+            status = "failed";
+          }
+          return <div>{status}</div>;
+        }
+
+        // Each call in an arm can leave for the handler, so the end of the arm
+        // depends on the call before it, and only through that on the if.
+        function IfInTry(props) {
+          let side = "none";
+          try {
+            if (props.left) {
+              neverThrows();
+              side = "left";
+            } else {
+              neverThrows();
+              side = "right";
+            }
+          } catch {
+            return null;
+          }
+          return <div>{side}</div>;
+        }
+
+        // Both sides of the try statement split on a static test before they
+        // join again, so no path into the join starts at the throw itself.
+        function SplitOnBothSides({ text }) {
+          const status = useMemo(() => {
+            try {
+              parse(text);
+              if (globalThis.isMobile) return "ok on mobile";
+              return "ok";
+            } catch {
+              if (globalThis.isMobile) return "failed on mobile";
+              return "failed";
+            }
+          }, [text]);
+          return <div>{status}</div>;
+        }
+
+        // The try block reads nothing reactive, but how often it runs does
+        // depend on the props, and its handler leaves the loop body early.
+        function StaticTryInLoop(props) {
+          let failures = 0;
+          for (const item of props.items) {
+            try {
+              alwaysThrows();
+            } catch {
+              failures++;
+              continue;
+            }
+          }
+          return <div>{failures}</div>;
+        }
+
+        // This try block reads nothing reactive and always runs, so the local
+        // its handler assigns is not a dependency.
+        function NothingReactiveInTry(props) {
+          let staticStatus = "ok";
+          try {
+            parse(globalThis.staticText);
+          } catch {
+            staticStatus = "failed";
+          }
+          return <div title={props.title}>{staticStatus}</div>;
+        }
+
+        function text(node) {
+          if (Array.isArray(node)) return node.map(text).join("");
+          if (node !== null && typeof node === "object") return text(node.props.children);
+          return String(node);
+        }
+        function renders(Component, ...renderProps) {
+          const results = renderProps.map(props => {
+            globalThis.memoCacheOwner = Component;
+            return text(Component(props));
+          });
+          // A component the compiler skipped never asks for a cache.
+          const compiled = globalThis.memoCaches.has(Component) ? "memoized" : "not compiled";
+          console.log(Component.name + " (" + compiled + "): " + results.join(", "));
+        }
+
+        globalThis.staticText = "static";
+        const texts = [{ text: "!a" }, { text: "b" }, { text: "!c" }, { text: "d" }];
+        renders(AssignedInCatch, ...texts);
+        renders(ReturnedFromUseMemo, ...texts);
+        renders(CaughtValue, ...texts);
+        renders(
+          ScopeAroundTry,
+          { strict: true, text: "!a" },
+          { strict: false, text: "!a" },
+          { strict: true, text: "!c" },
+          { strict: true, text: "d" },
+        );
+        renders(
+          ReadInCatch,
+          { first: "a", second: "b" },
+          { first: "!a", second: "b" },
+          { first: "a", second: "!b" },
+          { first: "a", second: "b" },
+        );
+        renders(NestedTry, ...texts);
+        renders(IfInTry, { left: true }, { left: false }, { left: true }, { left: false });
+        renders(SplitOnBothSides, ...texts);
+        renders(StaticTryInLoop, { items: [] }, { items: [1, 2] }, { items: [1] }, { items: [] });
+        renders(NothingReactiveInTry, { title: "a" }, { title: "b" });
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useMemo = callback => callback();`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      // One cache for each component function stands in for the cache React
+      // keeps for each component instance.
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        const caches = (globalThis.memoCaches = new Map());
+        exports.c = size => {
+          const owner = globalThis.memoCacheOwner;
+          let cache = caches.get(owner);
+          if (cache === undefined) {
+            cache = new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            caches.set(owner, cache);
+          }
+          return cache;
+        };
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        AssignedInCatch (memoized): failed, ok, failed, ok
+        ReturnedFromUseMemo (memoized): failed, ok, failed, ok
+        CaughtValue (memoized): cannot parse !a, ok, cannot parse !c, ok
+        ScopeAroundTry (memoized): cannot parse !a, null, cannot parse !c, null
+        ReadInCatch (memoized): none, first, second, none
+        NestedTry (memoized): failed, ok, failed, ok
+        IfInTry (memoized): left, right, left, right
+        SplitOnBothSides (memoized): failed, ok, failed, ok
+        StaticTryInLoop (memoized): 0, 2, 1, 0
+        NothingReactiveInTry (memoized): ok, ok
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("!== staticStatus");
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

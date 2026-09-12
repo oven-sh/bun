@@ -436,6 +436,11 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypePromise: {
         JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(onLoadResult.value.promise);
+        // Once chained below, an already-rejected promise would read as Pending and require() would misreport it.
+        if (promise->status() == JSC::JSPromise::Status::Rejected) {
+            promise->markAsHandled();
+            RELEASE_AND_RETURN(scope, reject(promise->result()));
+        }
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
@@ -676,6 +681,8 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
+                // The plugin's promise stays chained here; silence its eventual rejection, require() already threw.
+                promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
@@ -745,6 +752,8 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
+                // The plugin's promise stays chained here; silence its eventual rejection, require() already threw.
+                promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }

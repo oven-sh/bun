@@ -178,3 +178,57 @@ export {
 };
 "
 `;
+
+exports[`Bun.Transpiler using in a C-style for loop head is lowered around the whole loop 1`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+for (const a = __using(__bun_temp_ref_1$, b, 0);; )
+c(a);
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+__callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}"
+`;
+
+exports[`Bun.Transpiler using in a C-style for loop head is lowered around the whole loop 2`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+for (const a = __using(__bun_temp_ref_1$, b, 1);; )
+c(a);
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+var __bun_temp_ref_5$ = __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+__bun_temp_ref_5$ && await __bun_temp_ref_5$;
+}"
+`;
+
+exports[`Bun.Transpiler using in a C-style for loop head is lowered around the whole loop 3`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+for (const a = __using(__bun_temp_ref_1$, b, 0), c = __using(__bun_temp_ref_1$, d, 0);e(a); f(c)) {
+g(a);
+}
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+__callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}"
+`;
+
+exports[`Bun.Transpiler using in a C-style for loop head is lowered around the whole loop 4`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+x:
+for (const a = __using(__bun_temp_ref_1$, b, 0);; ) {
+if (c)
+continue x;
+break x;
+}
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+__callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}"
+`;

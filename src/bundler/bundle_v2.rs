@@ -4108,6 +4108,7 @@ pub mod bv2_impl {
                         output_files: Vec::new(),
                         metafile: None,
                         metafile_markdown: None,
+                        input_paths: Default::default(),
                     });
                 }
 
@@ -4138,6 +4139,7 @@ pub mod bv2_impl {
                     output_files,
                     metafile,
                     metafile_markdown: None,
+                    input_paths: crate::input_path_set::InputPathSet::from_graph(&this.graph),
                 })
             })();
 
@@ -5387,6 +5389,7 @@ pub mod bv2_impl {
                 output_files,
                 metafile,
                 metafile_markdown,
+                input_paths: Default::default(),
             })
         }
     }

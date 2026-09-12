@@ -83,3 +83,78 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(stderr).toContain("4 fail");
   expect(exitCode).toBe(1);
 });
+
+// https://github.com/oven-sh/bun/issues/40949
+// https://github.com/oven-sh/bun/issues/14670
+// `.resolves` / `.rejects` used to wait on the internal promise state without
+// calling the value's own then(). A Promise subclass that starts its work in
+// then() (Bun.SQL's Query, Bun.$'s ShellPromise) never settled, and the test
+// timeout could not interrupt the wait. The child is killed by `timeout` if
+// that comes back.
+test("expect(lazyPromiseSubclass).rejects settles instead of hanging the run", async () => {
+  using dir = tempDir("expect-lazy-then", {
+    "lazy.test.ts": `
+      import { expect, test } from "bun:test";
+      import { $, SQL } from "bun";
+
+      class LazyQuery extends Promise<never> {
+        started = false;
+        #reject!: (e: Error) => void;
+        constructor() {
+          let reject!: (e: Error) => void;
+          super((_, rej) => {
+            reject = rej;
+          });
+          this.#reject = reject;
+        }
+        then(onFulfilled?: any, onRejected?: any): any {
+          if (!this.started) {
+            this.started = true;
+            queueMicrotask(() => this.#reject(new Error("boom")));
+          }
+          return super.then(onFulfilled, onRejected);
+        }
+        static get [Symbol.species]() {
+          return Promise;
+        }
+      }
+
+      test("expect(lazy).rejects settles", async () => {
+        await expect(new LazyQuery()).rejects.toThrow("boom");
+      });
+
+      test("Bun.$ ShellPromise", async () => {
+        $.throws(true);
+        await expect($\`exit 7\`.quiet()).rejects.toThrow(/exit code 7/);
+        await expect($\`echo hi\`.quiet()).resolves.toMatchObject({ exitCode: 0 });
+        expect(() => $\`exit 7\`.quiet()).toThrow(/exit code 7/);
+      });
+
+      test("Bun.SQL Query", async () => {
+        await using sql = new SQL("sqlite://:memory:");
+        await sql\`CREATE TABLE t (a INTEGER)\`;
+        await sql\`INSERT INTO t VALUES (1)\`;
+        await expect(sql\`SELECT a FROM t\`).resolves.toEqual([{ a: 1 }]);
+        await expect(sql\`SELECT a FROM t\`.values()).resolves.toEqual([[1]]);
+        await expect(sql\`SELECT * FROM no_such_table\`).rejects.toThrow(/no such table/);
+        expect(() => sql\`SELECT * FROM no_such_table\`).toThrow(/no such table/);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "lazy.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // A hang is reported as the timeout kill, not as missing output.
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toContain("3 pass");
+  expect(exitCode).toBe(0);
+});

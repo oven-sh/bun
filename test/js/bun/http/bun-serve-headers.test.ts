@@ -265,3 +265,158 @@ describe("response Connection: close closes the socket", () => {
     }
   });
 });
+
+// `Request.url` and `Request.headers` are read from the uWS request the first
+// time JS asks for them. That request only lives while the handler dispatch is
+// on the stack. A handler that responded synchronously used to leave a Request
+// that read back as url "" and an empty Headers once the dispatch ended, so a
+// deferred log hook saw nothing (an async handler that awaited I/O was fine).
+describe("Request.url and Request.headers after the handler returned", () => {
+  const requestHeaders = { "user-agent": "UA/1", cookie: "a=1; b=2", "x-custom": "custom-value" };
+
+  // Reads the request from a timer: the dispatch that created it has returned by then.
+  function readLater(req: Request) {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    setTimeout(() => {
+      // The copies read url/headers through the same lazy path as the original.
+      const clone = req.clone();
+      const copy = new Request(req);
+      const copyWithInit = new Request(req, { method: "POST" });
+      resolve({
+        url: req.url,
+        headers: Object.fromEntries(req.headers),
+        ua: req.headers.get("user-agent"),
+        clone: [clone.url, clone.headers.get("user-agent")],
+        copy: [copy.url, copy.headers.get("user-agent")],
+        copyWithInit: [copyWithInit.url, copyWithInit.method, copyWithInit.headers.get("user-agent")],
+        inspectHasUa: Bun.inspect(req).includes("UA/1"),
+      });
+    }, 0);
+    return promise;
+  }
+
+  const handlers: Record<string, (req: Request) => Response | Promise<Response> | undefined> = {
+    "returns a Response": () => new Response("ok"),
+    "returns Promise.resolve(Response)": () => Promise.resolve(new Response("ok")),
+    "resumes from a microtask": async () => {
+      await 0;
+      return new Response("ok");
+    },
+    "awaits a timer": async () => {
+      await Bun.sleep(1);
+      return new Response("ok");
+    },
+    "returns undefined": () => undefined,
+    "throws": () => {
+      throw new Error("boom");
+    },
+  };
+
+  describe.each([false, true])("development: %p", development => {
+    for (const [name, handler] of Object.entries(handlers)) {
+      test(`fetch handler ${name}`, async () => {
+        let later: Promise<Record<string, unknown>> | undefined;
+        let expectedHeaders: Record<string, string> | undefined;
+        using server = Bun.serve({
+          port: 0,
+          development,
+          fetch(req) {
+            if (!later) {
+              later = readLater(req);
+              return handler(req) as Response;
+            }
+            // Control request: a synchronous read of the same headers.
+            expectedHeaders = Object.fromEntries(req.headers);
+            return new Response("control");
+          },
+          error() {
+            return new Response("handled", { status: 500 });
+          },
+        });
+
+        const url = `${server.url}path?q=1`;
+        await (await fetch(url, { headers: requestHeaders })).text();
+        await (await fetch(url, { headers: requestHeaders })).text();
+
+        expect(await later!).toEqual({
+          url,
+          headers: expectedHeaders!,
+          ua: "UA/1",
+          clone: [url, "UA/1"],
+          copy: [url, "UA/1"],
+          copyWithInit: [url, "POST", "UA/1"],
+          inspectHasUa: true,
+        });
+        expect(expectedHeaders!["x-custom"]).toBe("custom-value");
+      });
+    }
+
+    test("routes handler: url, params, headers and cookies", async () => {
+      let later: Promise<Record<string, unknown>> | undefined;
+      using server = Bun.serve({
+        port: 0,
+        development,
+        routes: {
+          "/r/:id": req => {
+            const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+            later = promise;
+            setTimeout(() => {
+              resolve({
+                url: req.url,
+                id: req.params.id,
+                ua: req.headers.get("user-agent"),
+                cookieA: req.cookies.get("a"),
+                cookieB: req.cookies.get("b"),
+              });
+            }, 0);
+            return new Response("ok");
+          },
+        },
+        fetch: () => new Response("not found", { status: 404 }),
+      });
+
+      const url = `${server.url}r/42`;
+      await (await fetch(url, { headers: requestHeaders })).text();
+
+      expect(await later!).toEqual({ url, id: "42", ua: "UA/1", cookieA: "1", cookieB: "2" });
+    });
+  });
+
+  test("a retained Request never shows the next request on the same connection", async () => {
+    const requests: Request[] = [];
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        requests.push(req);
+        return new Response("ok");
+      },
+    });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(
+        "GET /first HTTP/1.1\r\nHost: x\r\nX-Id: first\r\n\r\n" +
+          "GET /second HTTP/1.1\r\nHost: x\r\nX-Id: second\r\n\r\n",
+      );
+
+      let raw = "";
+      await new Promise<void>((resolve, reject) => {
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          if ((raw.match(/HTTP\/1\.1 200/g) ?? []).length >= 2) resolve();
+        });
+        socket.on("close", () => reject(new Error("server closed the connection")));
+      });
+    } finally {
+      socket.destroy();
+    }
+
+    expect(requests.map(req => [req.url, req.headers.get("x-id")])).toEqual([
+      ["http://x/first", "first"],
+      ["http://x/second", "second"],
+    ]);
+  });
+});

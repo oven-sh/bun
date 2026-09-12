@@ -421,6 +421,9 @@ impl<'a> Transpiler<'a> {
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir;
+        // For `ImportKind::EntryPointBuild` the resolver reads a bare path such as
+        // `src/index.ts` as a path relative to the project root before it reads it
+        // as a package path, so a file on disk beats a package of the same name.
         let first = match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
@@ -436,8 +439,9 @@ impl<'a> Transpiler<'a> {
             Err(err) => Err(err.into()),
         };
 
-        // Relative entry points that were not resolved to a node_modules package are
-        // interpreted as relative to the current working directory.
+        // A name that matches a builtin, such as `util`, returns external before
+        // the resolver looks on disk at all. Retry it as an explicit relative path
+        // so that `bun build util` next to a `util.ts` builds the file.
         if !bun_paths::is_absolute(entry_point)
             && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
         {

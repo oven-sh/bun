@@ -720,6 +720,20 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
+/// Whether `dir`/`name` exists on disk.
+fn names_file_in_dir(dir: &[u8], name: &[u8]) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if dir.len() + name.len() + 2 > buf.len() {
+        return false;
+    }
+    let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        dir,
+        &mut buf[..],
+        &[name],
+    );
+    bun_sys::exists(joined)
+}
+
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
 /// preload promise if any, else null.
 ///
@@ -816,14 +830,34 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: see above.
                     if let Some(log) = unsafe { &*vm }.log {
                         // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "preload not found {}",
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
+                        let log = unsafe { &mut *log.as_ptr() };
+                        // A bare preload name is a package, as with `node --import`.
+                        // Say so when a file of that name exists in the project root.
+                        // SAFETY: `top_level_dir` is the `'static` fs singleton field.
+                        if bun_resolver::is_package_path(normalized)
+                            && names_file_in_dir(unsafe { &*top_level_dir }, normalized)
+                        {
+                            let _ = log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "preload not found {}. A bare name is a package. To preload the file, use {}",
+                                    bun_core::fmt::format_json_string_latin1(preload_slice),
+                                    bun_core::fmt::format_json_string_latin1(
+                                        &[b"./".as_slice(), normalized].concat()
+                                    ),
+                                ),
+                            );
+                        } else {
+                            let _ = log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "preload not found {}",
+                                    bun_core::fmt::format_json_string_latin1(preload_slice),
+                                ),
+                            );
+                        }
                     }
                     return Err(bun_jsc::CrateError::ModuleNotFound);
                 }

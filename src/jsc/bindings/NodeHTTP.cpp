@@ -754,10 +754,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
-// server.maxHeaderSize is a plain property and only the constructor option is validated, so any
-// number reaches this. Node casts the double to uint64_t, which is undefined for NaN, a negative
-// and 2^64 or more. Here the first two select the default limit (0) and the last one no limit.
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L688-L692
+// Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
 static uint64_t maxHTTPHeaderSizeFromNumber(double value)
 {
     if (!(value >= 1)) return 0;

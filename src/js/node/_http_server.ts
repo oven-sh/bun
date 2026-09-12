@@ -2293,10 +2293,7 @@ function renderNativeHeaders(res) {
             autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
             keepAliveSecs = timeoutSecs;
           } else {
-            // Rare path (maxRequestsPerSocket set, or a server.keepAliveTimeout assigned after
-            // construction that is negative or too large for it): render both lines in JS. Node
-            // prints the number as is, so -5000 is "timeout=-5" there too.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L513-L518
+            // Rare path (maxRequestsPerSocket set, or seconds the native side cannot take): render both lines in JS, as Node prints them.
             flat.push("Connection", "keep-alive");
             flat.push(
               "Keep-Alive",

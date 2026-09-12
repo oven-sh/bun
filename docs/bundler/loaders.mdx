@@ -154,6 +154,11 @@ var config = {
 config.logLevel;
 ```
 
+<Note>
+  Bun compiles TOML date/time values to `Temporal.*.from()` calls, for every `target`. The runtime that loads the bundle
+  needs a `Temporal` global. See [Date and time values in bundles](/runtime/toml#date-and-time-values-in-bundles).
+</Note>
+
 If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the parsed object.
 
 <CodeGroup>

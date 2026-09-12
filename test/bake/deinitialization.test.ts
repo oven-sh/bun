@@ -1,21 +1,50 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
-test("dev server deinitializes itself", () => {
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, "fixtures/deinitialization/test.ts")],
+// The fixture is a `bun test` suite of its own: the bunfig.toml in its
+// directory registers the serve plugin, and the heap counts it asserts on need
+// a process without other servers in it. The child takes a few seconds under
+// ASAN, so it gets a timeout above the 5s default.
+async function runDeinitializationSuite() {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./test.ts"],
     env: bunEnv,
-    stdio: ["inherit", "inherit", "inherit"],
     cwd: path.join(import.meta.dir, "fixtures/deinitialization"),
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  expect(result.signalCode).toBeUndefined();
-  expect(result.exitCode).toBe(0);
-  // The child runs a whole `bun test` suite (nine GC-heavy cases plus leak
-  // reporting at exit), which takes longer than the 5s default under ASAN.
-}, 60_000);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error(stderr);
 
-test("dev server is deinitialized before its arena when listen fails", async () => {
+  // The per-test results and the summary. The dev server's own log lines and
+  // the expect() call count are left out: they change with unrelated edits.
+  const report = normalizeBunSnapshot(stderr)
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\) |^ \d+ (pass|fail)$|^Ran /.test(line))
+    .join("\n");
+  expect(report).toMatchInlineSnapshot(`
+    "(pass) baseline: stopped server wrapper collects
+    (pass) flags: none
+    (pass) flags: websocket=1
+    (pass) flags: closeActiveConnections websocket=1
+    (pass) flags: sendAnyRequests
+    (pass) flags: sendAnyRequests websocket=1
+    (pass) flags: closeActiveConnections sendAnyRequests
+    (pass) flags: closeActiveConnections sendAnyRequests websocket=1
+    (pass) flags: websocket=8
+    (pass) flags: closeActiveConnections websocket=8
+     10 pass
+     0 fail
+    Ran 10 tests across 1 file."
+  `);
+  expect(normalizeBunSnapshot(stdout)).toContain("bun test <version> (<revision>)");
+  expect(exitCode).toBe(0);
+}
+
+test.concurrent("dev server deinitializes itself", runDeinitializationSuite, 30_000);
+
+test.concurrent("dev server is deinitialized before its arena when listen fails", async () => {
   using dir = tempDir("dev-server-listen-fails", {
     "index.html": `<!DOCTYPE html><html><body></body></html>`,
     "listen-fails-fixture.ts": `

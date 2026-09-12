@@ -1348,11 +1348,12 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
-    /// Node `id` threw a JS exception and holds nothing in flight: reject the
-    /// promise, kill the subprocesses, and report `id` as finished so the tree
-    /// winds down through `child_done` into `finish`.
+    /// Node `id` threw a JS exception and holds nothing in flight: kill the
+    /// subprocesses, report `id` as finished so the tree winds down through
+    /// `child_done` into `finish`, then reject the promise. The rejection runs
+    /// JS, so it comes last: user code sees the kills sent and the tree settled.
     pub(crate) fn fail(&self, id: NodeId) -> Yield {
-        self.reject_with_pending_exception();
+        let rejection = self.take_failure();
         if self.failed() {
             let node_count = self.nodes.get().len();
             for i in 0..node_count {
@@ -1366,20 +1367,32 @@ impl Interpreter {
             .node(id)
             .base()
             .map_or(NodeId::INTERPRETER, |b| b.parent);
-        self.child_done(parent, id, 1)
+        let y = self.child_done(parent, id, 1);
+        if let Some((reject, error)) = rejection {
+            let global_this = self
+                .global_this_ref()
+                .expect("take_failure returned a rejection on the Js path");
+            let _entered = self.event_loop.entered();
+            global_this.bun_vm().event_loop_mut().run_callback(
+                reject,
+                global_this,
+                crate::jsc::JSValue::UNDEFINED,
+                &[error],
+            );
+        }
+        y
     }
 
-    /// Take the pending JS exception and reject the `ShellPromise` with it.
-    fn reject_with_pending_exception(&self) {
+    /// Take the pending JS exception and mark the script failed. Returns the
+    /// cached `reject` and the error when the promise still has to settle.
+    fn take_failure(&self) -> Option<(crate::jsc::JSValue, crate::jsc::JSValue)> {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
 
         // Mini event loop: `Interpreter::throw` prints and exits instead.
-        let Some(global_this) = self.global_this_ref() else {
-            return;
-        };
+        let global_this = self.global_this_ref()?;
         log!(
-            "Interpreter(0x{:x}) reject with pending exception",
+            "Interpreter(0x{:x}) take failure",
             std::ptr::from_ref(self) as usize
         );
 
@@ -1393,32 +1406,24 @@ impl Interpreter {
                 "Yield::Failed without a pending JS exception"
             );
             // Nothing was thrown: the node finishes with exit code 1 and the script goes on.
-            let Some(error) = error else { return };
-            Some(error)
+            Some(error?)
         };
 
         // A second pipeline member failed: the promise is already rejected.
         if self.failed() {
-            return;
+            return None;
         }
         self.update_flags(|f| f.set_failed(true));
 
+        let error = error?;
         let this_jsvalue = self.this_jsvalue.get();
-        if let Some(error) = error
-            && this_jsvalue != JSValue::ZERO
-        {
-            if let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) {
-                let _entered = self.event_loop.entered();
-                global_this.bun_vm().event_loop_mut().run_callback(
-                    reject,
-                    global_this,
-                    JSValue::UNDEFINED,
-                    &[error],
-                );
-            }
-            JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
-            JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        if this_jsvalue == JSValue::ZERO {
+            return None;
         }
+        let reject = JSShellInterpreter::reject_get_cached(this_jsvalue);
+        JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        Some((reject?, error))
     }
 
     /// JS-host entrypoint — sets up root IO

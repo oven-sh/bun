@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { $ } from "bun";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -308,6 +310,66 @@ describe("yield", async () => {
           stderr: "",
           exitCode: 0,
         });
+      });
+
+      // A ShellPromise starts when `then` is called. `expect().rejects` does
+      // not call it, so await the promise here.
+      async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+        try {
+          await promise;
+        } catch (e) {
+          return e;
+        }
+        throw new Error("the shell promise resolved");
+      }
+
+      // The member that does not touch the pipe writes its pid first, and the
+      // failing member waits for that file in a command substitution before it
+      // throws. So the sleeper is alive when the script fails, and the test
+      // can check that it is killed and reaped afterwards.
+      test.concurrent("the killed member is gone after the rejection", async () => {
+        using dir = tempDir("shell-failed-pipeline-pid", {});
+        const bun = process.execPath;
+        const writePid = 'require("fs").writeFileSync("pid", String(process.pid)); setTimeout(() => {}, 100_000)';
+        const waitForPid =
+          'while (!require("fs").existsSync("pid")) Bun.sleepSync(5); process.stdout.write("--version")';
+        expect(
+          await rejectionOf(
+            $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`
+              .cwd(String(dir))
+              .quiet(),
+          ),
+        ).toMatchObject({ message: "Blobs are immutable, and cannot be used for stdout/stderr" });
+        const pid = Number(await Bun.file(join(String(dir), "pid")).text());
+        expect(pid).toBeGreaterThan(0);
+        // The kill is sent before the promise rejects. The shell reaps the
+        // child when its exit reaches the event loop, so poll for that.
+        const alive = () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (e) {
+            expect(e).toMatchObject({ code: "ESRCH" });
+            return false;
+          }
+        };
+        for (let i = 0; i < 1000 && alive(); i++) await Bun.sleep(10);
+        expect(alive()).toBe(false);
+      });
+
+      test.concurrent("two members fail: the first error rejects, the shell stays usable", async () => {
+        expect(await rejectionOf($`echo a > ${new Blob(["x"])} | echo b > ${new Blob(["x"])}`.quiet())).toMatchObject({
+          message: "Cannot redirect stdout/stderr to an immutable blob. Expected a file",
+        });
+        expect((await $`echo ok`.quiet().text()).trim()).toBe("ok");
+      });
+
+      test.concurrent("not quiet: the promise rejects and the shell stays usable", async () => {
+        const bun = process.execPath;
+        expect(
+          await rejectionOf($`${bun} -e ${"setTimeout(() => {}, 100_000)"} | ${bun} --version > ${new Response("r")}`),
+        ).toMatchObject({ message: "Blobs are immutable, and cannot be used for stdout/stderr" });
+        expect((await $`echo ok`.text()).trim()).toBe("ok");
       });
     });
   });

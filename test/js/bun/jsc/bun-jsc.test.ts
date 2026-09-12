@@ -24,7 +24,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -614,5 +616,190 @@ describe("JsRef::Weak liveness", () => {
     expect(stillLive).toBeLessThan(dropped.length / 2);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
     expect(kept.keep).toBe(true);
+  });
+});
+
+describe.concurrent("sampling profiler report at exit", () => {
+  const reportsIn = (profileDir: string) =>
+    readdirSync(profileDir).filter(name => name.startsWith("SamplingProfile.") && name.endsWith(".txt"));
+
+  it("startSamplingProfiler with a directory writes a report at exit", async () => {
+    // https://github.com/oven-sh/bun/issues/32212
+    using dir = tempDir("sampling-profiler", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { startSamplingProfiler } from "bun:jsc";
+        import { join } from "node:path";
+        startSamplingProfiler(join(process.cwd(), "profiles"));
+        let x = 0;
+        for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+        console.log("done", x > 0);
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done true\n");
+    expect(exitCode).toBe(0);
+
+    const profileDir = join(String(dir), "profiles");
+    const reports = reportsIn(profileDir);
+    expect(reports).toHaveLength(1);
+    expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+  });
+
+  it("startSamplingProfiler with a directory in a worker writes a report at worker teardown", async () => {
+    // https://github.com/oven-sh/bun/issues/32212
+    using dir = tempDir("sampling-profiler-worker", {
+      "main.mjs": `
+        import { readdirSync, statSync } from "node:fs";
+        import { join } from "node:path";
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+        const message = await new Promise((resolve, reject) => {
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+          worker.addEventListener("close", () => reject(new Error("worker closed before posting a message")));
+        });
+        console.log(message);
+        // The report is written during worker VM teardown, which completes
+        // before the close event is dispatched to the parent.
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        await worker.terminate();
+        await closed;
+        const profileDir = join(import.meta.dir, "profiles");
+        const reports = readdirSync(profileDir).filter(name => name.startsWith("SamplingProfile."));
+        console.log("reports", reports.length, reports.every(name => statSync(join(profileDir, name)).size > 0));
+      `,
+      "worker.mjs": `
+        import { startSamplingProfiler } from "bun:jsc";
+        import { join } from "node:path";
+        startSamplingProfiler(join(import.meta.dir, "profiles"));
+        let x = 0;
+        for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+        postMessage("done " + (x > 0));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done true\nreports 1 true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("startSamplingProfiler resolves a relative directory against the working directory at call time", async () => {
+    using dir = tempDir("sampling-profiler-relative", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { startSamplingProfiler } from "bun:jsc";
+        import { mkdirSync } from "node:fs";
+        let nulThrew = false;
+        try {
+          startSamplingProfiler("bad\\0dir");
+        } catch (e) {
+          nulThrew = e instanceof TypeError;
+        }
+        console.log("nul-throws", nulThrew);
+        startSamplingProfiler("profiles");
+        mkdirSync("elsewhere");
+        process.chdir("elsewhere");
+        let x = 0;
+        for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+        console.log("done", x > 0);
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("nul-throws true\ndone true\n");
+    expect(exitCode).toBe(0);
+
+    // The report lands in the directory as resolved when the profiler started,
+    // not relative to the working directory at exit.
+    const profileDir = join(String(dir), "profiles");
+    const reports = reportsIn(profileDir);
+    expect(reports).toHaveLength(1);
+    expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+  });
+
+  // BUN_JSC_samplingProfilerPath used to make VM::VM register JSC's own
+  // report-at-exit, a libc atexit handler that dereferences a null stream when
+  // it cannot open the output file (Sentry BUN-4TKX: process.exit() with a
+  // missing directory segfaults on macOS). Bun writes the report itself now.
+  it("BUN_JSC_samplingProfilerPath writes a report on process.exit() into a directory that does not exist yet", async () => {
+    using dir = tempDir("sampling-profiler-env", {});
+    const profileDir = join(String(dir), "missing", "profiles");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let x = 0; for (let i = 0; i < 2e6; i++) x += Math.sqrt(i); console.log("done", x > 0); process.exit(0);`,
+      ],
+      env: { ...bunEnv, BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: profileDir },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done true\n");
+    expect(exitCode).toBe(0);
+
+    const reports = reportsIn(profileDir);
+    expect(reports).toHaveLength(1);
+    const report = readFileSync(join(profileDir, reports[0]), "utf8");
+    expect(report).toContain("Sampling rate:");
+    expect(report).toContain("Top functions as");
+  });
+
+  it("BUN_JSC_samplingProfilerPath resolves a relative directory against the startup working directory", async () => {
+    using dir = tempDir("sampling-profiler-env-relative", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { mkdirSync } from "node:fs";
+        mkdirSync("elsewhere");
+        process.chdir("elsewhere");
+        let x = 0;
+        for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+        console.log("done", x > 0);
+        process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "profiles" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done true\n");
+    expect(exitCode).toBe(0);
+
+    const profileDir = join(String(dir), "profiles");
+    const reports = reportsIn(profileDir);
+    expect(reports).toHaveLength(1);
+    expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
   });
 });

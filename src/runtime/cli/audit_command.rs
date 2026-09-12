@@ -342,8 +342,7 @@ fn build_dependency_tree(
 struct AuditRegistry {
     href: Box<[u8]>,
     url_hash: u64,
-    token: Box<[u8]>,
-    auth: Box<[u8]>,
+    authorization: Option<Vec<u8>>,
     is_default: bool,
 }
 
@@ -352,8 +351,7 @@ impl AuditRegistry {
         AuditRegistry {
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,
-            token: scope.token.clone(),
-            auth: scope.auth.clone(),
+            authorization: scope.authorization(),
             is_default,
         }
     }
@@ -706,27 +704,15 @@ fn send_audit_request(
     headers.count(b"accept", b"application/json");
     headers.count(b"content-type", b"application/json");
     headers.count(b"content-encoding", b"gzip");
-    if !registry.token.is_empty() {
-        headers.count(b"authorization", b"");
-        headers.content.cap += b"Bearer ".len() + registry.token.len();
-    } else if !registry.auth.is_empty() {
-        headers.count(b"authorization", b"");
-        headers.content.cap += b"Basic ".len() + registry.auth.len();
+    if let Some(authorization) = &registry.authorization {
+        headers.count(b"authorization", authorization);
     }
     headers.allocate()?;
     headers.append(b"accept", b"application/json");
     headers.append(b"content-type", b"application/json");
     headers.append(b"content-encoding", b"gzip");
-    if !registry.token.is_empty() {
-        headers.append_fmt(
-            b"authorization",
-            format_args!("Bearer {}", BStr::new(&registry.token)),
-        );
-    } else if !registry.auth.is_empty() {
-        headers.append_fmt(
-            b"authorization",
-            format_args!("Basic {}", BStr::new(&registry.auth)),
-        );
+    if let Some(authorization) = &registry.authorization {
+        headers.append(b"authorization", authorization);
     }
 
     let mut url_str: Vec<u8> = Vec::new();

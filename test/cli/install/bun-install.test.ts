@@ -749,6 +749,962 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/30311
+  // npm resolves `.npmrc` credentials by walking UP the registry URL's path
+  // segments and applying the LONGEST matching ancestor. A bare string prefix
+  // (`/projects/12` for `/projects/123/...`) is NOT an ancestor and must not match.
+  describe(".npmrc auth resolves by path-segment ancestor", () => {
+    const scope = "myorg";
+    const registryPath = "/api/v4/projects/123/packages/npm/";
+
+    type ProbeOptions = {
+      /** `@myorg:registry=` (the default) or the unscoped `registry=` line. */
+      registry?: "scoped" | "default";
+      /** Userinfo embedded in the registry URL, e.g. `"user:pass@"`. */
+      userinfo?: string;
+      /** Declare the registry in `bunfig.toml` with this token instead of in `.npmrc`. */
+      bunfigToken?: string;
+      /** Declare the registry in `bunfig.toml` with these credentials instead of in `.npmrc`. */
+      bunfigBasic?: { username: string; password: string };
+      /** Declare the registry in `bunfig.toml` with no credentials, leaving them to `.npmrc`. */
+      bunfigBare?: true;
+      /** Lines for `$HOME/.npmrc`, which npm/Bun read before the project's `.npmrc`. */
+      homeNpmrc?: (host: string) => string;
+      /** The registry's path. Both the registry line and the manifest request use it. */
+      path?: string;
+    };
+
+    // Runs `bun install` against a local registry mounted at `registryPath` and
+    // returns the `Authorization` header it received (or null).
+    async function probeAuthorization(
+      authLines: (host: string) => string,
+      {
+        registry: registryKind = "scoped",
+        userinfo = "",
+        bunfigToken,
+        bunfigBasic,
+        bunfigBare,
+        homeNpmrc,
+        path: regPath = registryPath,
+      }: ProbeOptions = {},
+    ): Promise<string | null> {
+      const scoped = registryKind === "scoped";
+      const depName = scoped ? `@${scope}/pkg` : "pkg";
+      const manifestPath = `${regPath}${scoped ? `@${scope}%2fpkg` : "pkg"}`;
+      const authorizations: (string | null)[] = [];
+      const paths: string[] = [];
+
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          paths.push(new URL(req.url).pathname);
+          authorizations.push(req.headers.get("authorization"));
+          return new Response("not found", { status: 404 });
+        },
+      });
+
+      const host = `127.0.0.1:${registry.port}`;
+      const registryUrl = `http://${userinfo}${host}${regPath}`;
+      const registryLine = scoped ? `@${scope}:registry=${registryUrl}` : `registry=${registryUrl}`;
+
+      // A `registry=` line in `.npmrc` replaces the registry it names, discarding the
+      // credentials `bunfig.toml` gave it, so the two spellings are exclusive.
+      const inBunfig = bunfigToken !== undefined || bunfigBasic !== undefined || bunfigBare === true;
+      const files: Record<string, string> = {
+        ".npmrc": `${inBunfig ? "" : `${registryLine}\n`}${authLines(host)}\n`,
+        "package.json": JSON.stringify({
+          name: "probe",
+          version: "0.0.0",
+          dependencies: { [depName]: "1.0.0" },
+        }),
+        // `HOME` points here, not at the project dir: pointing it at the project would
+        // load the same `.npmrc` twice and hide cross-file resolution bugs.
+        ...(homeNpmrc ? { "home/.npmrc": `${homeNpmrc(host)}\n` } : { "home/.gitkeep": "" }),
+      };
+      if (inBunfig) {
+        const creds =
+          bunfigToken !== undefined
+            ? { token: bunfigToken }
+            : bunfigBasic !== undefined
+              ? { username: bunfigBasic.username, password: bunfigBasic.password }
+              : {};
+        const registryEntry = { url: registryUrl, ...creds };
+        files["bunfig.toml"] = Bun.TOML.stringify(
+          scoped ? { install: { scopes: { [scope]: registryEntry } } } : { install: { registry: registryEntry } },
+        );
+      }
+
+      using dir = tempDir("npmrc-auth-ancestor", files);
+      const home = join(String(dir), "home");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-cache"],
+        cwd: String(dir),
+        // An empty home: the developer's own `.npmrc` declares a `registry=` that
+        // would replace the one under test.
+        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The manifest request must actually have reached our registry, otherwise
+      // the assertions below would be vacuous.
+      expect({ paths, saw404: stderr.includes("404"), startedInstall: stdout.includes("bun install") }).toEqual({
+        paths: [manifestPath],
+        saw404: true,
+        startedInstall: true,
+      });
+      expect(exitCode).not.toBe(0);
+
+      return authorizations[0]!;
+    }
+
+    const token = "walkup-secret-token";
+    const b64 = (s: string) => Buffer.from(s).toString("base64");
+
+    // Matrix measured against npm 10.9.3 / 11.15.0 for registry pathname
+    // `/api/v4/projects/123/packages/npm/`.
+    const matrix: Array<[name: string, confPath: string, expected: string | null]> = [
+      ["host root", "/", `Bearer ${token}`],
+      ["shallow ancestor", "/api/", `Bearer ${token}`],
+      ["mid ancestor", "/api/v4/projects/", `Bearer ${token}`],
+      ["exact match with trailing slash", registryPath, `Bearer ${token}`],
+      ["exact match without trailing slash", registryPath.slice(0, -1), `Bearer ${token}`],
+      // SECURITY: `/api/v4/projects/12` is a string prefix of the registry path
+      // but not a path-segment ancestor. A `startsWith` implementation leaks
+      // project 123's credentials to whoever controls project 12.
+      ["string prefix, not an ancestor (trailing slash)", "/api/v4/projects/12/", null],
+      ["string prefix, not an ancestor (no trailing slash)", "/api/v4/projects/12", null],
+      ["unrelated sibling path", "/api/v4/projects/123/packages/other/", null],
+      ["deeper than the registry path", `${registryPath}deeper/`, null],
+    ];
+
+    it.each(matrix)("%s", async (_name, confPath, expected) => {
+      const auth = await probeAuthorization(host => `//${host}${confPath}:_authToken=${token}`);
+      expect(auth).toBe(expected);
+    });
+
+    // Longest ancestor wins, independent of the order the lines appear in.
+    it("longest match wins: root then deep", async () => {
+      const auth = await probeAuthorization(
+        host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:_authToken=DEEP`,
+      );
+      expect(auth).toBe("Bearer DEEP");
+    });
+
+    it("longest match wins: deep then root", async () => {
+      const auth = await probeAuthorization(
+        host => `//${host}${registryPath}:_authToken=DEEP\n//${host}/:_authToken=ROOT`,
+      );
+      expect(auth).toBe("Bearer DEEP");
+    });
+
+    it("longest match wins: mid ancestor beats root", async () => {
+      const auth = await probeAuthorization(host => `//${host}/api/v4/:_authToken=MID\n//${host}/:_authToken=ROOT`);
+      expect(auth).toBe("Bearer MID");
+    });
+
+    it("longest match wins: non-ancestor deeper line does not shadow the root line", async () => {
+      const auth = await probeAuthorization(
+        host => `//${host}/:_authToken=ROOT\n//${host}/api/v4/projects/12/:_authToken=ATTACKER`,
+      );
+      expect(auth).toBe("Bearer ROOT");
+    });
+
+    // Ancestor matching governs the whole config item, not just `_authToken`.
+    it("walks up for _auth", async () => {
+      const basic = Buffer.from("linus:verysecure").toString("base64");
+      const auth = await probeAuthorization(host => `//${host}/:_auth=${basic}`);
+      expect(auth).toBe(`Basic ${basic}`);
+    });
+
+    it("walks up for username + _password", async () => {
+      const password = Buffer.from("verysecure").toString("base64");
+      const auth = await probeAuthorization(host => `//${host}/:username=gandalf\n//${host}/:_password=${password}`);
+      expect(auth).toBe(`Basic ${Buffer.from("gandalf:verysecure").toString("base64")}`);
+    });
+
+    it("sends no Authorization header when no config item matches the host", async () => {
+      const auth = await probeAuthorization(() => `//other.example.com/:_authToken=${token}`);
+      expect(auth).toBe(null);
+    });
+
+    // Measured against npm 10.9.3 and 11.15.0: npm picks ONE config path per
+    // registry — the deepest ancestor carrying `_authToken`, `_auth`, or a complete
+    // `username` + `_password` pair — and reads every credential from that path
+    // alone. Options are never resolved independently of each other. Within that one
+    // path npm's `Auth` ctor picks by precedence, not file order:
+    // `_authToken` > `_auth` > `username` + `_password`.
+    describe("credentials resolve per config path, not per option", () => {
+      const password = Buffer.from("verysecure").toString("base64");
+      const basic = Buffer.from("gandalf:verysecure").toString("base64");
+      const frodo = Buffer.from("frodo:onering").toString("base64");
+
+      it("a split username/_password pair authenticates with neither", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:username=gandalf\n//${host}${registryPath}:_password=${password}`,
+        );
+        expect(auth).toBe(null);
+      });
+
+      it("a split _password/username pair authenticates with neither", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${registryPath}:username=gandalf\n//${host}/:_password=${password}`,
+        );
+        expect(auth).toBe(null);
+      });
+
+      it("a deeper username + _password shadows a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}/:_authToken=ROOT\n//${host}${registryPath}:username=gandalf\n//${host}${registryPath}:_password=${password}`,
+        );
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+
+      it("a deeper _authToken shadows a shallower username + _password", async () => {
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}${registryPath}:_authToken=DEEP\n//${host}/:username=gandalf\n//${host}/:_password=${password}`,
+        );
+        expect(auth).toBe("Bearer DEEP");
+      });
+
+      it("a deeper _auth shadows a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:_auth=${basic}`,
+        );
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+
+      // Same path, both credentials: npm's `Auth` ctor is
+      // `if (token) … else if (auth) … else if (username && password)`, so `_auth`
+      // wins no matter which line the file lists first.
+      it("_auth beats username + _password at the same path: _auth first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_auth=${frodo}\n//${host}/:username=gandalf\n//${host}/:_password=${password}`,
+        );
+        expect(auth).toBe(`Basic ${frodo}`);
+      });
+
+      it("_auth beats username + _password at the same path: username first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:username=gandalf\n//${host}/:_password=${password}\n//${host}/:_auth=${frodo}`,
+        );
+        expect(auth).toBe(`Basic ${frodo}`);
+      });
+
+      // `if (token)` comes before `else if (auth)`, so `_authToken` wins over
+      // `_auth` at the same path regardless of line order.
+      it("_authToken beats _auth at the same path: _authToken first", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=TOKEN\n//${host}/:_auth=${frodo}`);
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats _auth at the same path: _auth first", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_auth=${frodo}\n//${host}/:_authToken=TOKEN`);
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats username + _password at the same path: _authToken first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=TOKEN\n//${host}/:username=gandalf\n//${host}/:_password=${password}`,
+        );
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats username + _password at the same path: username first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:username=gandalf\n//${host}/:_password=${password}\n//${host}/:_authToken=TOKEN`,
+        );
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("a deeper email is not a credential and does not shadow a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:email=gandalf@example.com`,
+        );
+        expect(auth).toBe("Bearer ROOT");
+      });
+
+      it("a deeper username without a _password does not shadow a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:username=gandalf`,
+        );
+        expect(auth).toBe("Bearer ROOT");
+      });
+
+      it("a deeper username without a _password does not shadow a shallower username + _password", async () => {
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}/:username=gandalf\n//${host}/:_password=${password}\n//${host}${registryPath}:username=saruman`,
+        );
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+    });
+
+    // npm's walk strips a trailing `/` and the segment before it in separate steps,
+    // so `//host/api/v4/` and `//host/api/v4` are two different config paths (the
+    // slashed one checked first), as are `//host/` and `//host`.
+    describe("a trailing slash makes a distinct config path", () => {
+      const password = Buffer.from("verysecure").toString("base64");
+
+      // The slashed line comes first, so file order cannot be what picks it.
+      it("the slashed path is deeper than its unslashed twin", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/api/v4/:_authToken=SLASH\n//${host}/api/v4:_authToken=NOSLASH`,
+        );
+        expect(auth).toBe("Bearer SLASH");
+      });
+
+      it("the slashed host root is deeper than the bare host", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=SLASH\n//${host}:_authToken=BARE`);
+        expect(auth).toBe("Bearer SLASH");
+      });
+
+      it("the bare host still matches when nothing deeper does", async () => {
+        const auth = await probeAuthorization(host => `//${host}:_authToken=BARE`);
+        expect(auth).toBe("Bearer BARE");
+      });
+
+      // `//host:username` and `//host/:_password` are two config keys, neither of which
+      // is a complete credential. npm composes nothing from them, and neither may Bun —
+      // including when the registry sits at the host root, so both keys are its own.
+      it("a username and a _password split across the two host-root spellings authenticate with neither", async () => {
+        const auth = await probeAuthorization(host => `//${host}:username=gandalf\n//${host}/:_password=${password}`);
+        expect(auth).toBe(null);
+      });
+
+      it("the same split, with the registry at the host root, still authenticates with neither", async () => {
+        const auth = await probeAuthorization(host => `//${host}:username=gandalf\n//${host}/:_password=${password}`, {
+          path: "/",
+        });
+        expect(auth).toBe(null);
+      });
+    });
+
+    // Bun does not implement certificate auth: it warns and ignores `certfile`/`keyfile`.
+    // An unsupported option must never suppress credentials Bun can actually send.
+    describe("certfile + keyfile are ignored", () => {
+      it("a complete pair does not stop a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}/:_authToken=${token}\n//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a lone certfile does not stop a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=${token}\n//${host}${registryPath}:certfile=a.pem`,
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a lone keyfile does not stop a shallower _authToken", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=${token}\n//${host}${registryPath}:keyfile=b.key`,
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a deeper _authToken still beats a shallower complete pair", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:certfile=a.pem\n//${host}/:keyfile=b.key\n//${host}${registryPath}:_authToken=${token}`,
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      // `bunfig.toml` and registry-URL userinfo are Bun's second credential layer.
+      it("a complete pair leaves a bunfig.toml token intact on a scoped registry", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
+          { bunfigToken: token },
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a complete pair leaves a bunfig.toml token intact on the default registry", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
+          { registry: "default", bunfigToken: token },
+        );
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a complete pair leaves the registry URL's userinfo intact", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
+          { registry: "default", userinfo: "user:pass@" },
+        );
+        expect(auth).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
+      });
+
+      it("a complete pair on a shallower path leaves a bunfig.toml token intact", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:certfile=a.pem\n//${host}/:keyfile=b.key`, {
+          bunfigToken: token,
+        });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a lone certfile leaves a bunfig.toml token intact", async () => {
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:certfile=a.pem`, {
+          bunfigToken: token,
+        });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a lone keyfile leaves the registry URL's userinfo intact", async () => {
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:keyfile=b.key`, {
+          registry: "default",
+          userinfo: "user:pass@",
+        });
+        expect(auth).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
+      });
+
+      it("a bunfig.toml token with no matching .npmrc line is sent", async () => {
+        const auth = await probeAuthorization(() => `//other.example.com/:_authToken=OTHER`, { bunfigToken: token });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+    });
+
+    // npm merges every `.npmrc` into ONE flat config map before it resolves anything,
+    // so a key repeated across files collapses last-write-wins *before* `hasAuth` runs.
+    // Resolving per-file instead makes the home file's `_authToken` win and the
+    // project's `_auth` unreachable.
+    describe("keys collapse across .npmrc files before resolution", () => {
+      const path = "/api/v4/";
+      const basic = Buffer.from("alice:s3cret").toString("base64");
+
+      // Measured against npm 10.9.3: `Basic <alice:s3cret>`.
+      it("the project's empty _authToken falsifies the home file's token, so _auth wins", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=\n//${host}${path}:_auth=${basic}`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+
+      it("a project token overrides the home file's token at the same key", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+
+      it("the home file's token applies when the project declares nothing", async () => {
+        const auth = await probeAuthorization(() => "", {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer HOMETOKEN");
+      });
+
+      // The home file's key is a strict ancestor, so it is never even consulted:
+      // `hasAuth` stops at the deeper key the project file supplies.
+      it("a deeper project token beats a shallower home token", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}/:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+
+      // The emptiness test happens AFTER the collapse, so a later empty value clears an
+      // earlier one instead of losing to it. npm 10.9.3 sends no header for both.
+      const homeBasic = (host: string) =>
+        `//${host}${path}:username=alice\n//${host}${path}:_password=${Buffer.from("s3cret").toString("base64")}`;
+
+      it("the project's empty username clears the home file's username and password pair", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:username=`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(null);
+      });
+
+      it("the project's empty _password clears the home file's username and password pair", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_password=`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(null);
+      });
+
+      it("a project username overrides the home file's at the same key", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:username=bob`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(`Basic ${Buffer.from("bob:s3cret").toString("base64")}`);
+      });
+    });
+
+    // npm never decodes `_auth`; it forwards the value as `Basic <value>`. An opaque
+    // blob and a blank password are credentials, not errors.
+    describe("_auth is forwarded verbatim", () => {
+      it("sends an opaque _auth blob that does not decode to user:pass", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("sends an _auth that is not even valid base64", async () => {
+        const blob = "!!not-base64!!";
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("sends an _auth with a blank password", async () => {
+        const value = b64("tok:");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+
+      it("prefers an opaque _auth over username and _password at the same key", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}${registryPath}:_auth=${blob}\n` +
+            `//${host}${registryPath}:username=x\n` +
+            `//${host}${registryPath}:_password=${b64("y")}`,
+        );
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("sends a decodable _auth verbatim rather than re-encoding it", async () => {
+        // Unpadded: a decode/re-encode round trip would add the `=`.
+        const value = "YWI6Y2Q";
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+
+      // Which credential wins must not depend on whether `_auth` decodes: with a
+      // username + password also stored on the registry (here from the URL's
+      // userinfo), all three blobs go out verbatim.
+      const userinfo = { registry: "default", userinfo: "url-user:url-pass@" } as const;
+
+      it("a non-decodable _auth wins over the registry's username + password", async () => {
+        const blob = "!!not-base64!!";
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`, userinfo);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("a colon-less _auth wins over the registry's username + password", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`, userinfo);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("a decodable _auth wins over the registry's username + password, verbatim", async () => {
+        const value = b64("alice:s3cret");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`, userinfo);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+    });
+
+    // A yarn-style credential inside the registry URL is stripped from the path before
+    // the request goes out, whether or not `.npmrc` also supplies one. Otherwise the
+    // secret ships in the request path, where proxies and logs can see it.
+    describe("credentials embedded in the registry URL", () => {
+      // Returns the Authorization header and the request path the registry saw.
+      async function probeEmbedded(
+        registryPath: string,
+        authLines: (host: string) => string,
+        userinfo = "",
+        { cli = false, source = "scoped" }: { cli?: boolean; source?: "scoped" | "default" | "env" | "bunfig" } = {},
+      ) {
+        const seen: Array<{ path: string; auth: string | null }> = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+            return new Response("not found", { status: 404 });
+          },
+        });
+        const host = `127.0.0.1:${registry.port}`;
+        const registryUrl = `http://${userinfo}${host}${registryPath}`;
+        const npmrcRegistryLine =
+          cli || source === "env" || source === "bunfig"
+            ? ""
+            : source === "default"
+              ? `registry=${registryUrl}\n`
+              : `@myorg:registry=${registryUrl}\n`;
+        using dir = tempDir("npmrc-embedded-auth", {
+          ".npmrc": `${npmrcRegistryLine}${authLines(host)}\n`,
+          "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
+          "home/.gitkeep": "",
+          ...(source === "bunfig" ? { "bunfig.toml": `[install]\nregistry = "${registryUrl}"\n` } : {}),
+        });
+        const home = join(String(dir), "home");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-cache", ...(cli ? ["--registry", registryUrl] : [])],
+          cwd: String(dir),
+          env: {
+            ...env,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: home,
+            ...(source === "env" ? { NPM_CONFIG_REGISTRY: registryUrl } : {}),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ requests: seen.length, exitCode, stderr }).toEqual({
+          requests: 1,
+          exitCode: 1,
+          stderr: expect.any(String),
+        });
+        return seen[0]!;
+      }
+
+      // The bunfig object form is the one way into the scope builder with a token already
+      // set, so it pins that the strip does not depend on the credential being adopted.
+      async function probeBunfig(registryPath: string, token: string) {
+        const seen: Array<{ path: string; auth: string | null }> = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+            return new Response("not found", { status: 404 });
+          },
+        });
+        const host = `127.0.0.1:${registry.port}`;
+        using dir = tempDir("bunfig-embedded-auth", {
+          "bunfig.toml": `[install.scopes]\nmyorg = { url = "http://${host}${registryPath}", token = "${token}" }\n`,
+          "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
+          "home/.gitkeep": "",
+        });
+        const home = join(String(dir), "home");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-cache"],
+          cwd: String(dir),
+          env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ requests: seen.length, exitCode }).toEqual({ requests: 1, exitCode: 1 });
+        return seen[0]!;
+      }
+
+      // Bun's JFrog guide writes the credential as a path segment, `/npm/_auth=<base64>`.
+      // Base64 holds `/`, so the marker, not the last slash, must anchor the strip.
+      it("strips a slash-form _auth whose base64 value contains a slash", async () => {
+        const seen = await probeEmbedded("/api/npm/_auth=YWJj/ZGVm", () => "");
+        expect(seen).toEqual({ path: "/api/npm/@myorg%2fpkg", auth: "Basic YWJj/ZGVm" });
+      });
+
+      it("strips a slash-form _authToken whose value contains a slash", async () => {
+        const seen = await probeEmbedded("/api/_authToken=a/b", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer a/b" });
+      });
+
+      it("strips slash-form username and _password segments", async () => {
+        const seen = await probeEmbedded("/api/username=u/_password=p/q", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p/q").toString("base64")}` });
+      });
+
+      it("leaves a plain `=` in a path segment alone", async () => {
+        const seen = await probeEmbedded("/a=b/c/", () => "");
+        expect(seen).toEqual({ path: "/a=b/c/@myorg%2fpkg", auth: null });
+      });
+
+      it("leaves a plain `=` in a trailing path segment alone", async () => {
+        const seen = await probeEmbedded("/api/npm=1/", () => "");
+        expect(seen).toEqual({ path: "/api/npm=1/@myorg%2fpkg", auth: null });
+      });
+
+      // A marker is matched as spelled, as a `.npmrc` line is: a case variant is a
+      // misspelling, stripped from the path and never adopted.
+      it("strips an embedded _AuthToken spelled with a capital without adopting it", async () => {
+        const seen = await probeEmbedded("/api/:_AuthToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
+      });
+
+      // A `:word=` run at the very end of the path is the one place yarn writes a
+      // credential; a misspelt name there is still a credential, stripped and never
+      // adopted. main's blunt colon split removed it too.
+      it.each(["/api/:_passwd=SECRET", "/api/:authtoken=SECRET"])(
+        "strips a misspelt credential segment %s at the end of the path without adopting it",
+        async registryPath => {
+          const seen = await probeEmbedded(registryPath, () => "");
+          expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
+        },
+      );
+
+      // A `:word=` or `_word=` segment anywhere else is a plain path segment: npm has
+      // no heuristic for it, and stripping it lost the rest of the registry path.
+      it.each([
+        ["/a:b=c/npm/", "/a:b=c/npm/@myorg%2fpkg"],
+        ["/api/_v=1/npm/", "/api/_v=1/npm/@myorg%2fpkg"],
+        ["/api/_secret=x/", "/api/_secret=x/@myorg%2fpkg"],
+      ])("leaves a `=` segment inside the registry path alone: %s", async (registryPath, expectedPath) => {
+        const seen = await probeEmbedded(registryPath, () => "");
+        expect(seen).toEqual({ path: expectedPath, auth: null });
+      });
+
+      it("leaves a `:word=` segment inside a --registry path alone", async () => {
+        const seen = await probeEmbedded("/a:b=c/npm/", () => "", "", { cli: true });
+        expect(seen).toEqual({ path: "/a:b=c/npm/@myorg%2fpkg", auth: null });
+      });
+
+      // The default registry reaches the scope builder from a `.npmrc` `registry=` line,
+      // `$NPM_CONFIG_REGISTRY` and bunfig's string form as well; the strip is the same.
+      it.each(["default", "env", "bunfig"] as const)(
+        "strips an embedded _authToken from a %s registry URL",
+        async source => {
+          const seen = await probeEmbedded("/api/:_authToken=S", () => "", "", { source });
+          expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer S" });
+        },
+      );
+
+      // `--registry` used to bypass the scope builder; with a trailing slash after the
+      // marker the token went out in every request path.
+      it("strips an embedded _authToken from a --registry URL with a trailing slash", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=S/", () => "", "", { cli: true });
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer S" });
+      });
+
+      it("keeps the .npmrc token of the same host over a --registry URL's embedded one", async () => {
+        const seen = await probeEmbedded(
+          "/api/:_authToken=S/",
+          host => `registry=http://${host}/\n//${host}/:_authToken=T`,
+          "",
+          { cli: true },
+        );
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("strips an embedded _auth when bunfig already supplies a token", async () => {
+        const seen = await probeBunfig("/api/:_auth=opaque-blob", "T");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("keeps bunfig's token over an embedded _authToken", async () => {
+        const seen = await probeBunfig("/api/:_authToken=EMBEDDED", "T");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("strips an embedded _authToken from the path and uses it when .npmrc has none", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer EMBEDDED" });
+      });
+
+      it("strips an embedded _authToken from the path even when an .npmrc ancestor wins", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", host => `//${host}/:_authToken=FROM_NPMRC`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer FROM_NPMRC" });
+      });
+
+      // main only stripped the marker while looking for a credential to adopt; with
+      // userinfo already in the URL it skipped the scan and the token shipped in the path.
+      it("strips an embedded _authToken from the path when the URL also carries userinfo", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "", "u:p@");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${btoa("u:p")}` });
+      });
+
+      // A bare `:` belongs to the path. Only `name=value` segments naming a credential
+      // are stripped, so a registry mounted under `/a:b/c/` keeps its path.
+      it("leaves a plain colon in the registry path alone", async () => {
+        const seen = await probeEmbedded("/a:b/c/", host => `//${host}/a:b/c/:_authToken=TOK`);
+        expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: "Bearer TOK" });
+      });
+
+      it("leaves a plain colon in the registry path alone when no credential is configured", async () => {
+        const seen = await probeEmbedded("/a:b/c/", () => "");
+        expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
+      });
+
+      // An empty marker supplies nothing: it is stripped from the path, but it must not
+      // end the scan or shadow the credential the .npmrc supplies.
+      it("an empty embedded _auth does not discard the .npmrc credential", async () => {
+        const seen = await probeEmbedded("/api/:_auth=", host => `//${host}/:_auth=b3BhcXVlYmxvYg`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic b3BhcXVlYmxvYg" });
+      });
+
+      it("an empty embedded _authToken does not discard the .npmrc credential", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=", host => `//${host}/:_auth=b3BhcXVlYmxvYg`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic b3BhcXVlYmxvYg" });
+      });
+
+      // An `.npmrc` `_auth` supersedes URL-embedded credentials outright, so `bun pm
+      // whoami` can never report an identity the registry did not authenticate.
+      it("an .npmrc _auth wins over embedded username and _password", async () => {
+        const seen = await probeEmbedded(
+          "/api/:username=embeddeduser/:_password=embeddedpass",
+          host => `//${host}/:_auth=T1BBUVVFQkxPQg==`,
+        );
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic T1BBUVVFQkxPQg==" });
+      });
+
+      // The scan anchors on the `:<name>=` marker, not on any `:`, so a colon inside the
+      // value neither ends it nor splits it.
+      it("strips an embedded _authToken whose value contains a colon", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=aa:bb", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer aa:bb" });
+      });
+
+      // An embedded `_password` is used verbatim, unlike an `.npmrc` one, which is base64.
+      it("strips an embedded username and _password whose value contains a colon", async () => {
+        const seen = await probeEmbedded("/api/:username=u/:_password=p:q", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p:q").toString("base64")}` });
+      });
+
+      // `_authToken` ends what is read, not what is stripped: a segment to its left is
+      // still a secret, and leaving it behind puts it in the request path.
+      it("strips a _password written to the left of the _authToken it loses to", async () => {
+        const seen = await probeEmbedded("/api/:_password=cA==:_authToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("strips a username written to the left of the _authToken it loses to", async () => {
+        const seen = await probeEmbedded("/api/:username=u:_authToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      // The rightmost terminal marker is the one that is read; a second one to its left
+      // is stripped but never recorded, so it cannot outrank the first.
+      // The `_auth` values are ones a base64 round trip would change, so the header
+      // proves the value went out as written.
+      it.each([
+        ["an opaque value", "opaque-blob"],
+        ["a blank password", btoa("u:")],
+      ])("reads the rightmost terminal marker, not the leftmost (%s)", async (_name, value) => {
+        const seen = await probeEmbedded(`/api/:_authToken=T:_auth=${value}`, () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${value}` });
+      });
+
+      it("reads the leftmost of two duplicate non-terminal markers", async () => {
+        const seen = await probeEmbedded("/api/:username=a:username=b:_password=p", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("a:p").toString("base64")}` });
+      });
+    });
+
+    // npm's walk decides which ancestor supplies auth. Layering a half credential over
+    // one the registry already stores (from its URL's userinfo) is Bun-only and stays
+    // exact-path: an ancestor's stray `username=` must not rebind a deeper registry's
+    // stored password to a new identity.
+    describe("a lone username or _password supplies nothing, as in npm's hasAuth", () => {
+      const stored = { registry: "default", userinfo: "url-user:url-pass@" } as const;
+      const storedBasic = `Basic ${Buffer.from("url-user:url-pass").toString("base64")}`;
+
+      it("an ancestor's lone username does not rebind the stored password", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:username=attacker`, stored);
+        expect(auth).toBe(storedBasic);
+      });
+
+      it("an ancestor's lone _password does not rebind the stored username", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_password=${Buffer.from("other").toString("base64")}`,
+          stored,
+        );
+        expect(auth).toBe(storedBasic);
+      });
+
+      it("an ancestor's empty _authToken does not clear the stored token", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:username=u\n//${host}/:_authToken=`, {
+          registry: "default",
+          userinfo: `:${token}@`,
+        });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+    });
+
+    // A registry declared in `bunfig.toml` resolves through the same walk, unless
+    // `bunfig.toml` itself gave it credentials: project config beats `.npmrc`.
+    describe("registries declared in bunfig.toml", () => {
+      it.each([
+        ["scoped", { bunfigBare: true }],
+        ["default", { registry: "default", bunfigBare: true }],
+      ] as const)("a host-root _authToken applies to a credential-less %s registry", async (_name, opts) => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=${token}`, opts);
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("a string prefix of the path is still not an ancestor", async () => {
+        const auth = await probeAuthorization(host => `//${host}/api/v4/projects/12/:_authToken=${token}`, {
+          bunfigBare: true,
+        });
+        expect(auth).toBeNull();
+      });
+
+      it("walks up for _auth", async () => {
+        const blob = b64("alice:s3cret");
+        const auth = await probeAuthorization(host => `//${host}/api/:_auth=${blob}`, { bunfigBare: true });
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("a bunfig.toml token is kept even when an ancestor key would supply another", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=FROM_NPMRC`, { bunfigToken: token });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("bunfig.toml username + password are kept even when the registry's own key supplies _auth", async () => {
+        const basic = { username: "bunfig-user", password: "bunfig-pass" };
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${b64("x:y")}`, {
+          bunfigBasic: basic,
+        });
+        expect(auth).toBe(`Basic ${b64(`${basic.username}:${basic.password}`)}`);
+      });
+    });
+
+    // The unscoped `registry=` line resolves credentials through the same walk. It is
+    // a separate branch in `src/ini/lib.rs`, and it is the only one that can carry
+    // credentials from `bunfig.toml` or from userinfo in the registry URL.
+    describe("the default registry walks up too", () => {
+      const asDefault = { registry: "default" } as const;
+
+      it("host root", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=${token}`, asDefault);
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+
+      it("string prefix, not an ancestor (trailing slash)", async () => {
+        const auth = await probeAuthorization(host => `//${host}/api/v4/projects/12/:_authToken=${token}`, asDefault);
+        expect(auth).toBe(null);
+      });
+
+      it("string prefix, not an ancestor (no trailing slash)", async () => {
+        const auth = await probeAuthorization(host => `//${host}/api/v4/projects/12:_authToken=${token}`, asDefault);
+        expect(auth).toBe(null);
+      });
+
+      it("longest match wins: root then deep", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:_authToken=DEEP`,
+          asDefault,
+        );
+        expect(auth).toBe("Bearer DEEP");
+      });
+
+      it("longest match wins: deep then root", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}${registryPath}:_authToken=DEEP\n//${host}/:_authToken=ROOT`,
+          asDefault,
+        );
+        expect(auth).toBe("Bearer DEEP");
+      });
+
+      // Userinfo in the registry URL is the registry's pre-`.npmrc` credential. No
+      // config path matches, so nothing may overwrite or clear it.
+      it("userinfo in the registry URL survives a non-matching auth line", async () => {
+        const auth = await probeAuthorization(() => `//other.example.com/:_authToken=${token}`, {
+          ...asDefault,
+          userinfo: "user:pass@",
+        });
+        expect(auth).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
+      });
+
+      it("a matching auth line replaces the registry URL's userinfo", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=${token}`, {
+          ...asDefault,
+          userinfo: "user:pass@",
+        });
+        expect(auth).toBe(`Bearer ${token}`);
+      });
+    });
+  });
+
   // The Rust port adds a same-origin guard in `NetworkTask::for_tarball` so a
   // malicious registry can't point `dist.tarball` at a third-party host and
   // harvest the scope's `Authorization` header. The guard must compare

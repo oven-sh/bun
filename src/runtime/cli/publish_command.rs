@@ -771,40 +771,19 @@ impl PublishCommand {
             return false;
         };
 
+        let authorization = registry.authorization();
         let mut headers = http::HeaderBuilder::default();
         headers.count(b"accept", b"application/json");
-
-        let mut auth_buf: Vec<u8> = Vec::new();
-
-        if !registry.token.is_empty() {
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
-            headers.count(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
-            headers.count(b"authorization", &auth_buf);
+        if let Some(authorization) = &authorization {
+            headers.count(b"authorization", authorization);
         }
 
         if headers.allocate().is_err() {
             return false;
         }
         headers.append(b"accept", b"application/json");
-
-        if !registry.token.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
-            headers.append(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
-            headers.append(b"authorization", &auth_buf);
+        if let Some(authorization) = &authorization {
+            headers.append(b"authorization", authorization);
         }
 
         let mut req = http::AsyncHTTP::init_sync(
@@ -1887,19 +1866,14 @@ impl PublishCommand {
             b"legacy"
         };
         let ci_name = ci::detect_ci_name();
+        let authorization = registry.authorization();
 
         {
             headers.count(b"accept", b"*/*");
             headers.count(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
+            if let Some(authorization) = &authorization {
+                headers.count(b"authorization", authorization);
             }
 
             if maybe_json_len.is_some() {
@@ -1943,14 +1917,8 @@ impl PublishCommand {
             headers.append(b"accept", b"*/*");
             headers.append(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
+            if let Some(authorization) = &authorization {
+                headers.append(b"authorization", authorization);
             }
 
             if maybe_json_len.is_some() {

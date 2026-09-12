@@ -717,10 +717,7 @@ fn read_dir_tree(pm: &mut PackageManager, root: &[u8]) -> Result<Tree, crate::Er
     Ok(tree)
 }
 
-/// This project's lockfile, loaded into `lockfile`, when `manifest` (the package.json of `dir`) has `workspace:` or
-/// `catalog:` versions and `dir` is a folder whose `bun pm pack` reads that lockfile: the package the command was
-/// run in, the project root, or a workspace the lockfile lists. Any other folder keeps its versions as written, so
-/// a workspace here that happens to share a name never stands in for one of its own.
+/// This project's lockfile, loaded into `lockfile`, when `manifest` (the package.json of `dir`) needs it and it covers `dir`.
 fn project_lockfile<'a>(
     pm: &mut PackageManager,
     lockfile: &'a mut Lockfile,
@@ -755,6 +752,7 @@ fn project_lockfile<'a>(
     let dir = absolute(top_level_dir, &mut dir_buf[..], dir);
     let mut is_dir = |path: &[u8]| absolute(top_level_dir, &mut buf[..], path) == dir;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
+    // `bun pm pack` reads this lockfile in the invoking package, the project root and each workspace it lists. Not elsewhere.
     let covered = is_dir(b"")
         || bun_paths::dirname(pm.original_package_json_path.as_bytes()).is_some_and(&mut is_dir)
         || lockfile.packages.items_resolution().iter().any(|res| {
@@ -763,8 +761,7 @@ fn project_lockfile<'a>(
     covered.then_some(lockfile)
 }
 
-/// The `workspace:` and `catalog:` dependency versions in `manifest` (a package.json, parsed as `json`), each with the
-/// version `bun pm pack` writes into the tarball in its place.
+/// The `workspace:` and `catalog:` versions in `manifest` (parsed as `json`), each with what `bun pm pack` publishes for it.
 fn protocol_versions(
     manifest: &[u8],
     json: &bun_js_parser::Expr,
@@ -811,10 +808,7 @@ fn protocol_versions(
     versions
 }
 
-/// Replaces the `workspace:` and `catalog:` versions in a folder's package.json with the ones `bun pm pack` publishes,
-/// so a workspace package compares equal to its published copy. The rest of the file stays as written. So does a
-/// version that `other`, the folder on the other side, spells the same way: the two already compare equal, and maybe
-/// only one of them has a lockfile that resolves it (two checkouts of one package).
+/// Writes the published versions into `tree`'s package.json. `other` holds the versions of the folder on the other side.
 fn publish_versions(tree: &mut Tree, other: &[ProtocolVersion]) {
     let Some(manifest) = tree.files.get_mut(b"package.json".as_slice()) else {
         return;
@@ -822,6 +816,7 @@ fn publish_versions(tree: &mut Tree, other: &[ProtocolVersion]) {
     let mut edits: Vec<(&core::ops::Range<usize>, &[u8])> = tree
         .protocol_versions
         .iter()
+        // A version both folders spell the same way already compares equal, and maybe only one folder's lockfile resolves it.
         .filter(|v| {
             !other
                 .iter()

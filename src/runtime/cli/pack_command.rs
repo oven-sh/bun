@@ -3353,17 +3353,14 @@ impl UnresolvedVersion {
     }
 }
 
-/// The version the tarball's package.json gets in place of a `workspace:` or `catalog:` dependency version.
-/// `None` when `spec` uses neither protocol and is published as written. Shared with `bun pm diff`, which shows a
-/// local package.json with the versions that would be published.
+/// What the tarball's package.json gets in place of a `workspace:` or `catalog:` version. `None`: `spec` uses neither.
 pub(crate) fn published_version(
     maybe_lockfile: Option<&Lockfile>,
     dependency_name: &[u8],
     spec: &[u8],
 ) -> Option<Result<Vec<u8>, UnresolvedVersion>> {
     if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
-        // Only a bare `^`, `~` or `*` stands for the workspace's current version; any other range is published as
-        // written.
+        // Only a bare `^`, `~` or `*` takes the workspace's version. Any other range is published as written.
         let prefix: &[u8] = match range {
             b"^" => b"^",
             b"~" => b"~",

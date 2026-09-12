@@ -42,6 +42,13 @@ impl Order {
     pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
+            if entry_box.callback.is_none() {
+                // The hook's callback was dropped because its describe is .skip/.todo
+                // (`ExecutionEntry::create`). Scheduling it would mint a standalone sequence
+                // with `test_entry = None` that the reporter then prints as a phantom
+                // "(unnamed)" skipped/todo test.
+                continue;
+            }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
             // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
             // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and

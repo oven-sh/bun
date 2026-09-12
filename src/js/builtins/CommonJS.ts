@@ -13,10 +13,13 @@ export function require(this: JSCommonJSModule, _: string) {
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+// As in Node, `this` is only the parent and can be any value, even null: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1611
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // Read once, before the module enters $requireMap: `filename` can be a user getter.
+  const parentFilename = this?.filename;
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -31,7 +34,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
+    return $requireNativeModule(id);
   } else {
     const existing = $requireMap.$get(id);
     if (existing) {
@@ -68,7 +71,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   }
 
   if (id === "bun:test") {
-    return Bun.jest(this.filename);
+    return Bun.jest(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put
@@ -87,9 +90,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = this.$require(
+      out = $requireCommonJS(
         id,
         mod,
+        parentFilename,
         // did they pass a { type } object?
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
@@ -101,7 +105,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw E;
     }
   } else {
-    out = this.$require(id, mod, $argumentCount(), $argument(1));
+    out = $requireCommonJS(id, mod, parentFilename, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.

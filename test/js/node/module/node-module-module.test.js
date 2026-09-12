@@ -830,6 +830,124 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  // Node's Module.prototype.require is `Module._load(id, this, false)`: `this` is only the parent,
+  // so it does not have to be a module, or an object at all.
+  test("Module.prototype.require accepts a `this` that is not a module", async () => {
+    using dir = tempDir("module-prototype-require-this", {
+      "dep.cjs": `module.exports = { name: "dep" };`,
+      "sub/dep.cjs": `module.exports = { name: "sub/dep" };`,
+      "sees-parent.cjs": `module.exports = module.parent === globalThis.expectedParent;`,
+      "bad.cjs": `module.exports = ;`,
+      "throws.cjs": `throw new Error("boom");`,
+      "main.cjs": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const dep = path.join(__dirname, "dep.cjs");
+        const seesParent = path.join(__dirname, "sees-parent.cjs");
+        const bad = path.join(__dirname, "bad.cjs");
+        const throws = path.join(__dirname, "throws.cjs");
+        const anchor = path.join(__dirname, "sub", "anchor.cjs");
+
+        function attempt(fn) {
+          try {
+            return fn();
+          } catch (e) {
+            return "threw " + e.name;
+          }
+        }
+        const load = (parent, request) => attempt(() => Module.prototype.require.call(parent, request));
+
+        const plain = { id: __filename, filename: __filename };
+        const result = {};
+
+        result.plainObject = load(plain, dep);
+        result.cached = require.cache[dep].exports;
+        result.loaded = require.cache[dep].loaded;
+        result.parentIsThis = require.cache[dep].parent === plain;
+        result.requireAgain = require(dep) === result.plainObject;
+        delete require.cache[dep];
+
+        // The module also sees the parent while it runs.
+        globalThis.expectedParent = plain;
+        result.parentDuringLoad = load(plain, seesParent);
+
+        result.inheritsFromModule = load(Object.create(module), dep);
+        delete require.cache[dep];
+
+        result.number = load(5, dep);
+        delete require.cache[dep];
+
+        result.nullThis = load(null, dep);
+        result.nullParent = require.cache[dep]?.parent;
+        delete require.cache[dep];
+
+        result.undefinedThis = load(undefined, dep);
+        delete require.cache[dep];
+
+        // A call with no receiver. There is no parent filename, so a relative id resolves from the cwd.
+        const unbound = Module.prototype.require;
+        result.noReceiver = attempt(() => unbound(dep));
+        delete require.cache[dep];
+        result.noReceiverRelative = attempt(() => unbound("./dep.cjs"));
+        delete require.cache[dep];
+
+        result.relativeToFilename = load({ id: anchor, filename: anchor }, "./dep.cjs");
+        result.builtin = load({}, "path") === path;
+        result.prefixedBuiltin = load({}, "node:path") === path;
+
+        // A load that fails must not leave its placeholder module in require.cache.
+        let threw = false;
+        try {
+          Module.prototype.require.call(plain, bad);
+        } catch {
+          threw = true;
+        }
+        result.failedLoad = { threw, leftInCache: bad in require.cache };
+
+        // A module that throws while it runs: the caller gets that error, not one from the loader.
+        let thrown;
+        try {
+          Module.prototype.require.call(plain, throws);
+        } catch (e) {
+          thrown = e.name + ": " + e.message;
+        }
+        result.throwingLoad = { thrown, leftInCache: throws in require.cache };
+
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      plainObject: { name: "dep" },
+      cached: { name: "dep" },
+      loaded: true,
+      parentIsThis: true,
+      requireAgain: true,
+      parentDuringLoad: true,
+      inheritsFromModule: { name: "dep" },
+      number: { name: "dep" },
+      nullThis: { name: "dep" },
+      nullParent: null,
+      undefinedThis: { name: "dep" },
+      noReceiver: { name: "dep" },
+      noReceiverRelative: { name: "dep" },
+      relativeToFilename: { name: "sub/dep" },
+      builtin: true,
+      prefixedBuiltin: true,
+      failedLoad: { threw: true, leftInCache: false },
+      throwingLoad: { thrown: "Error: boom", leftInCache: false },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

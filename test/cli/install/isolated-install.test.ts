@@ -1401,6 +1401,59 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   });
 });
 
+test("ranged peer rebinds in the install that adds a higher satisfying version, not the one after", async () => {
+  // The first install binds peer-deps-fixed's `no-deps@^1.0.0` to 1.0.0, the
+  // only candidate. Adding `one-dep` brings in no-deps@1.0.1; loading the
+  // lockfile that install writes binds the edge to 1.0.1 (highest satisfying),
+  // so that install has to bind it the same way itself. Otherwise it links the
+  // 1.0.0 peer variant and the next `bun install`, with nothing changed,
+  // re-keys the store entry.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const peerEntries = async () => (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"));
+  const peerNoDepsVersion = async (entry: string) =>
+    ((await file(join(bunDir, entry, "node_modules", "no-deps", "package.json")).json()) as { version: string })
+      .version;
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "rebind-ranged-peer",
+      dependencies: { "peer-deps-fixed": "1.0.0", "one-fixed-dep": "1.0.0" },
+    }),
+  );
+  await runBunInstall(bunEnv, packageDir);
+  const [initialEntry] = await peerEntries();
+  expect(await peerNoDepsVersion(initialEntry)).toBe("1.0.0");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "rebind-ranged-peer",
+      dependencies: { "peer-deps-fixed": "1.0.0", "one-fixed-dep": "1.0.0", "one-dep": "1.0.0" },
+    }),
+  );
+  await runBunInstall(bunEnv, packageDir);
+  const entries = await peerEntries();
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+  const { out, err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(out).toContain("(no changes)");
+  expect(err).not.toContain("Saved lockfile");
+  expect(await peerEntries()).toEqual(entries);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+  // The superseded variant stays in the store until `bun prune`, like after any peer bump.
+  const [rebound, ...rest] = entries.filter(entry => entry !== initialEntry);
+  expect(rest).toEqual([]);
+  expect(await peerNoDepsVersion(rebound)).toBe("1.0.1");
+  expect(readlinkSync(join(packageDir, "node_modules", "peer-deps-fixed"))).toBe(
+    join(".bun", rebound, "node_modules", "peer-deps-fixed"),
+  );
+});
+
 test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
   // The peer alias `no-deps` points at `npm:a-dep@^1.0.2` while the real
   // no-deps package (in two versions) is also in the graph. Loading bun.lock

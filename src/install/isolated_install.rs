@@ -2104,6 +2104,15 @@ pub(crate) fn install_isolated_packages(
         installer
             .manager_mut()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
+
+        // left empty when every project-local entry is about to be (re)installed anyway
+        let verified_npm_entries =
+            if installer.manager().options.enable.force_install() || is_new_bun_modules {
+                DynamicBitSet::init_empty(store.entries.len())?
+            } else {
+                installer.verify_npm_store_entries()?
+            };
+
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
@@ -2237,24 +2246,19 @@ pub(crate) fn install_isolated_packages(
                                     .unwrap_or(false);
                             }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // Capture the length instead of a `ResetScope` so
-                            // `store_path` stays unborrowed.
-                            let scope_for_patch_tag_path = store_path.len();
-                            if pkg_res_tag == ResolutionTag::Npm {
-                                // if it's from npm, it should always have a package.json.
-                                // in other cases, probably yes but i'm less confident.
-                                store_path.append(b"package.json").assume_ok();
-                            }
-                            let exists = sys::exists_z(store_path.slice_z());
 
                             break 'needs_install match &patch_info {
-                                installer::PatchInfo::None => !exists,
+                                // an npm entry whose package.json names something else (an interrupted or foreign write) is rebuilt, as the hoisted linker does
+                                installer::PatchInfo::None if pkg_res_tag == ResolutionTag::Npm => {
+                                    !verified_npm_entries.is_set(entry_id.get() as usize)
+                                }
+                                // other resolutions probably have a package.json too, but the directory is the safer signal
+                                installer::PatchInfo::None => !sys::exists_z(store_path.slice_z()),
                                 // checked above
                                 installer::PatchInfo::Remove(_) => unreachable!(),
                                 installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    store_path.set_length(scope_for_patch_tag_path);
                                     store_path.append(&*hash).assume_ok();
                                     !sys::exists_z(store_path.slice_z())
                                 }

@@ -830,7 +830,7 @@ impl JSGlobalObject {
                 // exception would silently swallow the throw, so throw a
                 // fallback instead.
                 return self.throw_value(
-                    ZigString::static_("error message is too long to display")
+                    BunString::static_("error message is too long to display")
                         .to_error_instance(self),
                 );
             }

@@ -1038,6 +1038,12 @@ pub mod fs {
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
+        pub(crate) fn remove_where(&mut self, pred: impl FnMut(&EntriesOption) -> bool) -> usize {
+            self.inner().remove_where(pred)
+        }
+        pub(crate) fn clear_not_found(&mut self) -> usize {
+            self.inner().clear_not_found()
+        }
     }
 
     /// The active filesystem backend (always the real filesystem).
@@ -1350,6 +1356,22 @@ pub mod fs {
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
+        }
+
+        /// Evicts every cached listing of a directory below `dir_with_slash`
+        /// (`dir_with_slash` itself excluded). Returns how many were removed.
+        pub(crate) fn bust_entries_cache_below(&mut self, dir_with_slash: &[u8]) -> usize {
+            let _g = self.entries_mutex.lock_guard();
+            let listings = self.entries.remove_where(|entry| match entry {
+                EntriesOption::Entries(listing) => {
+                    listing.dir.len() > dir_with_slash.len()
+                        && listing.dir.starts_with(dir_with_slash)
+                }
+                EntriesOption::Err(_) => false,
+            });
+            // A not-found marker has no key to match, and a path that did
+            // not exist under the old target can exist under the new one.
+            listings + self.entries.clear_not_found()
         }
 
         /// lstat + (if symlink) open + fstat +

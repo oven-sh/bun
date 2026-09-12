@@ -5,30 +5,30 @@
 
 //! Optimizes the code for running in an SSR environment.
 //!
-//! Assumes that setState will not be called during render during initial mount,
-//! which allows inlining useState/useReducer.
+//! Assumes a single render: effects and the event handlers of builtin JSX tags never run.
 //!
 //! Optimizations:
-//! - Inline useState/useReducer
+//! - Inline useState/useReducer when nothing that is kept reads the setter or dispatch function
 //! - Remove effects (useEffect, useLayoutEffect, useInsertionEffect)
-//! - Remove event handlers (functions that call setState or startTransition)
 //! - Remove known event handler props and ref props from builtin JSX tags
 //! - Inline useEffectEvent to its argument
 //!
 //! Ported from TypeScript `src/Optimization/OptimizeForSSR.ts`.
+//! Unlike upstream, a function that calls setState is never replaced with `undefined`.
 
 use std::collections::HashMap;
 
+use super::dead_code_elimination::{find_referenced_identifiers, is_id_or_name_used};
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors::{each_instruction_value_operand, each_terminal_operand};
 use crate::hir::{
     ArrayPatternElement, HirFunction, IdentifierId, InstructionValue, PlaceOrSpread,
-    PrimitiveValue, hir_vec, is_set_state_type, is_start_transition_type,
+    PrimitiveValue, hir_vec,
 };
 
 /// Optimizes a function for SSR by inlining state hooks, removing effects,
-/// removing event handlers, and stripping known event handler / ref JSX props.
+/// and stripping known event handler / ref JSX props.
 ///
 /// Corresponds to TS `optimizeForSSR(fn: HIRFunction): void`.
 pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
@@ -157,30 +157,15 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
         }
     }
 
-    // Phase 2: Apply transformations
+    // Phase 2: Remove what a server render never runs
     //
-    // - Replace FunctionExpression with Primitive(undefined) if it calls setState/startTransition
     // - Remove known event handler props and ref props from builtin JSX tags
-    // - Replace Destructure of inlined state with StoreLocal
     // - Replace useEffectEvent(fn) with LoadLocal(fn)
     // - Replace useEffect/useLayoutEffect/useInsertionEffect with Primitive(undefined)
-    // - Replace useState/useReducer with their inlined replacement
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &mut func.instructions[instr_id.0 as usize];
             match &instr.value {
-                InstructionValue::FunctionExpression {
-                    lowered_func, loc, ..
-                } => {
-                    let inner_func = &env.functions[lowered_func.func.0 as usize];
-                    if has_known_non_render_call(inner_func, env) {
-                        let loc = *loc;
-                        instr.value = InstructionValue::Primitive {
-                            value: PrimitiveValue::Undefined,
-                            loc,
-                        };
-                    }
-                }
                 InstructionValue::JsxExpression { tag, .. } => {
                     if let crate::hir::JsxTag::Builtin(builtin) = tag {
                         // Only optimize non-custom-element builtin tags
@@ -195,30 +180,6 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                         !is_known_event_handler(&tag_name, name) && *name != b"ref"
                                     }
                                 });
-                            }
-                        }
-                    }
-                }
-                InstructionValue::Destructure { value, lvalue, loc } => {
-                    let value_id = env.identifiers[value.identifier.0 as usize].id;
-                    if inlined_state.contains_key(&value_id) {
-                        // Invariant: destructuring pattern must be ArrayPattern with at least one Identifier item
-                        if let crate::hir::Pattern::Array(arr) = &lvalue.pattern {
-                            if !arr.items.is_empty() {
-                                if let ArrayPatternElement::Place(first_place) = &arr.items[0] {
-                                    let loc = *loc;
-                                    let kind = lvalue.kind;
-                                    let store = InstructionValue::StoreLocal {
-                                        lvalue: crate::hir::LValue {
-                                            place: first_place.clone(),
-                                            kind,
-                                        },
-                                        value: value.clone(),
-                                        type_annotation: None,
-                                        loc,
-                                    };
-                                    instr.value = store;
-                                }
                             }
                         }
                     }
@@ -260,6 +221,85 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                 loc,
                             };
                         }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if inlined_state.is_empty() {
+        return;
+    }
+
+    // Phase 3: Inlining drops the setter's declaration, so keep a hook if DCE keeps a read of it
+    let referenced = find_referenced_identifiers(func, env);
+    // DCE prunes a hook call with an unread result, but not the `init(arg)` call that would replace it
+    inlined_state.retain(|id, _| is_id_or_name_used(&referenced, &env.identifiers, *id));
+    for (_block_id, block) in &func.body.blocks {
+        for &instr_id in &block.instructions {
+            let instr = &func.instructions[instr_id.0 as usize];
+            if let InstructionValue::Destructure { value, lvalue, .. } = &instr.value {
+                let value_id = env.identifiers[value.identifier.0 as usize].id;
+                if !inlined_state.contains_key(&value_id) {
+                    continue;
+                }
+                let crate::hir::Pattern::Array(arr) = &lvalue.pattern else {
+                    continue;
+                };
+                let is_rest_used = arr.items.iter().skip(1).any(|item| match item {
+                    ArrayPatternElement::Place(place) => {
+                        is_id_or_name_used(&referenced, &env.identifiers, place.identifier)
+                    }
+                    ArrayPatternElement::Spread(spread) => {
+                        is_id_or_name_used(&referenced, &env.identifiers, spread.place.identifier)
+                    }
+                    ArrayPatternElement::Hole => false,
+                });
+                if is_rest_used {
+                    inlined_state.remove(&value_id);
+                }
+            }
+        }
+    }
+
+    // Phase 4: Inline the hooks that are left
+    for (_block_id, block) in &func.body.blocks {
+        for &instr_id in &block.instructions {
+            let instr = &mut func.instructions[instr_id.0 as usize];
+            match &instr.value {
+                InstructionValue::Destructure { value, lvalue, loc } => {
+                    let value_id = env.identifiers[value.identifier.0 as usize].id;
+                    if inlined_state.contains_key(&value_id) {
+                        // Invariant: destructuring pattern must be ArrayPattern with at least one Identifier item
+                        if let crate::hir::Pattern::Array(arr) = &lvalue.pattern {
+                            if !arr.items.is_empty() {
+                                if let ArrayPatternElement::Place(first_place) = &arr.items[0] {
+                                    let loc = *loc;
+                                    let kind = lvalue.kind;
+                                    let store = InstructionValue::StoreLocal {
+                                        lvalue: crate::hir::LValue {
+                                            place: first_place.clone(),
+                                            kind,
+                                        },
+                                        value: value.clone(),
+                                        type_annotation: None,
+                                        loc,
+                                    };
+                                    instr.value = store;
+                                }
+                            }
+                        }
+                    }
+                }
+                InstructionValue::MethodCall { property, .. }
+                | InstructionValue::CallExpression {
+                    callee: property, ..
+                } => {
+                    let callee_id = property.identifier;
+                    let hook_kind = get_hook_kind(env, callee_id);
+                    match hook_kind {
                         Some(HookKind::UseReducer | HookKind::UseState) => {
                             let lvalue_id = env.identifiers[instr.lvalue.identifier.0 as usize].id;
                             if let Some(replacement) = inlined_state.get(&lvalue_id) {
@@ -305,27 +345,6 @@ enum InlinedStateReplacement {
         arg: crate::hir::Place,
         loc: Option<crate::hir::SourceLocation>,
     },
-}
-
-/// Returns true if the function body contains a call to setState or startTransition.
-/// This identifies functions that are event handlers and can be replaced with undefined
-/// during SSR.
-///
-/// Corresponds to TS `hasKnownNonRenderCall(fn: HIRFunction): boolean`.
-fn has_known_non_render_call(func: &HirFunction, env: &Environment) -> bool {
-    for (_block_id, block) in &func.body.blocks {
-        for &instr_id in &block.instructions {
-            let instr = &func.instructions[instr_id.0 as usize];
-            if let InstructionValue::CallExpression { callee, .. } = &instr.value {
-                let callee_type =
-                    &env.types[env.identifiers[callee.identifier.0 as usize].type_.0 as usize];
-                if is_set_state_type(callee_type) || is_start_transition_type(callee_type) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Returns true if the prop name matches the known event handler pattern `on[A-Z]`.

@@ -66,6 +66,14 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+### Intentional differences from upstream
+
+A re-sync must keep these. Each one has a test that fails without it.
+
+| File                               | Difference                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `optimization/optimize_for_ssr.rs` | Upstream inlines every `useState`/`useReducer` and replaces every function that calls a setter with `undefined`. The output then reads setters that have no declaration and calls `undefined`. The port inlines a hook only when dead code elimination keeps no read of the other destructured items, and never replaces a function. Test: `react-compiler/SsrKeepsStateHookWhileSetterIsReachable`. |
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

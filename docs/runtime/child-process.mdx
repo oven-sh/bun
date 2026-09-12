@@ -147,6 +147,17 @@ proc.kill(15); // specify a signal code
 proc.kill("SIGTERM"); // specify a signal name
 ```
 
+`proc.kill()` signals the child process only. Processes the child started, such as the compilers a build tool forked, keep running after the child dies. `proc.killTree()` signals the child and every process descended from it:
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["sh", "-c", "sleep 1000 & wait"]);
+
+proc.killTree(); // SIGTERM the shell and the sleep it started
+proc.killTree("SIGKILL"); // accepts the same signal names and numbers as kill()
+```
+
+On Linux and macOS, Bun first stops every process in the tree with `SIGSTOP`, so none of them can fork or exit while Bun lists them. Bun then sends the signal to each process, deepest descendants first, and resumes the processes with `SIGCONT` so that the signal is delivered. Bun skips the `SIGCONT` for `SIGKILL`, which terminates a stopped process as well, and for stop signals, so `proc.killTree("SIGSTOP")` pauses the whole tree and `proc.killTree("SIGCONT")` resumes it. [`--no-orphans`](/runtime/bunfig#run-noorphans) uses the same walk when Bun itself exits. On other platforms, `killTree()` behaves like `kill()` and signals the child process only.
+
 The parent `bun` process does not terminate until all child processes have exited. Use `proc.unref()` to detach the child process from the parent.
 
 ```ts index.ts icon="/icons/typescript.svg"
@@ -232,6 +243,19 @@ const proc = Bun.spawn({
 ```
 
 The `killSignal` option also controls which signal Bun sends when an AbortSignal is aborted.
+
+## Using deathSignal (Linux)
+
+By default, a child outlives its parent. If something kills the Bun process with `SIGKILL`, the processes it spawned keep running. On Linux, `deathSignal` makes the kernel send the child that signal as soon as the thread that spawned it exits, for any reason. Bun sets it up with `prctl(PR_SET_PDEATHSIG)` in the child before `exec`, so there is no window in which the child can miss it:
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn({
+  cmd: ["sleep", "1000"],
+  deathSignal: "SIGKILL", // signal name or number
+});
+```
+
+The kernel ties the death signal to the spawning thread. A child spawned from a `Worker` receives it when that worker terminates. With [`--no-orphans`](/runtime/bunfig#run-noorphans), Bun gives every spawn a death signal of `SIGKILL` unless the spawn passes its own `deathSignal`. Like `killSignal`, `deathSignal` must name a real signal; Bun rejects `0`. Bun ignores the option on other platforms.
 
 ## Using maxBuffer
 
@@ -541,6 +565,7 @@ namespace SpawnOptions {
     signal?: AbortSignal;
     timeout?: number;
     killSignal?: string | number;
+    deathSignal?: NodeJS.Signals | number; // Linux only; sent to the child when the spawning thread dies
     maxBuffer?: number;
     cgroup?: string | number; // Linux only; cgroup directory path or open directory fd
     terminal?: TerminalOptions | Terminal; // Bun.spawn only (spawnSync throws); PTY (POSIX) / ConPTY (Windows) support
@@ -584,6 +609,7 @@ interface Subprocess extends AsyncDisposable {
   readonly killed: boolean;
 
   kill(exitCode?: number | NodeJS.Signals): void;
+  killTree(signal?: number | NodeJS.Signals): void; // also signals every descendant (Linux/macOS)
   ref(): void;
   unref(): void;
 

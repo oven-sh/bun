@@ -1863,6 +1863,57 @@ export function waitForFileToExist(path: string, interval_ms: number) {
   }
 }
 
+/** `kill(pid, 0)`: true while the pid exists, including as a zombie nobody has reaped yet. */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolves to whether `pid` stopped existing within `timeoutMs` (false is a meaningful answer, not an error). */
+export async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await Bun.sleep(20);
+  }
+  return !isProcessAlive(pid);
+}
+
+/**
+ * Returns the first line a still-running child has written, without waiting for the stream to end.
+ * Bytes that arrived in the same chunk after the newline are discarded, so this is only for
+ * fixtures that print one line and then stay alive.
+ */
+export async function readFirstLine(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (!text.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return text.split("\n", 1)[0].trim();
+}
+
+/** Best-effort SIGKILL of processes a test started itself. Skips anything that is not a pid > 1 (0 and negative values address whole process groups). */
+export function killProcesses(...pids: number[]): void {
+  for (const pid of pids) {
+    if (!(Number.isInteger(pid) && pid > 1)) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+}
+
 export function libcPathForDlopen() {
   switch (process.platform) {
     case "linux":

@@ -743,6 +743,25 @@ impl Process {
 
         Ok(())
     }
+
+    /// Signal this process and its descendants; only the root's errno is reported, as in [`Self::kill`].
+    pub fn kill_tree(&mut self, signal: u8) -> Maybe<()> {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        {
+            match &self.poller {
+                Poller::WaiterThread(_) | Poller::Fd(_) => {
+                    self.kill(0)?;
+                    bun_io::parent_death_watchdog::kill_process_tree(self.pid, signal as c_int);
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        {
+            self.kill(signal)
+        }
+    }
 }
 
 // Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest.

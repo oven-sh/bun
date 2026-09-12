@@ -1525,8 +1525,6 @@ declare module "bun" {
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     *              A collection inside a sequence item starts on the `- ` line. Its other entries line up with
-     *              the first one, 2 spaces after the dash, whatever `space` is.
      * @returns A string containing the YAML document.
      *
      * @example

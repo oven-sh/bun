@@ -2137,6 +2137,12 @@ declare module "bun" {
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
+   * An existing file is overwritten in place and truncated to the new length. It keeps its inode, hard links, and
+   * permissions. A file descriptor destination (`Bun.file(fd)`) is written at its current position and is not
+   * truncated, except that an empty `input` truncates it to zero length. The write is not atomic: concurrent writers
+   * to one path can interleave. For an atomic replace, write to a temporary path and `rename()` it over the
+   * destination.
+   *
    * @category File System
    *
    * @param destination The file or file path to write to
@@ -2711,6 +2717,19 @@ declare module "bun" {
 
     /**
      * Incremental writer for files and pipes.
+     *
+     * For a path-backed `BunFile`, this opens the file immediately and creates
+     * it if it does not exist (the parent directory must exist). Writes start
+     * at the beginning of the file. There is no append mode: to append, open
+     * the file with `fs.openSync(path, "a")` and call `Bun.file(fd).writer()`.
+     * The writer does not close a file descriptor that you passed in.
+     *
+     * @example
+     * ```ts
+     * const writer = Bun.file("output.txt").writer();
+     * writer.write("hello\n");
+     * await writer.end();
+     * ```
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
@@ -2756,7 +2775,16 @@ declare module "bun" {
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
-      options?: { highWaterMark?: number },
+      options?: {
+        /**
+         * If `true`, create the parent directory if it doesn't exist.
+         *
+         * If `false`, the write rejects when the directory doesn't exist.
+         *
+         * @default true
+         */
+        createPath?: boolean;
+      },
     ): Promise<number>;
 
     /**

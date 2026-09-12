@@ -445,6 +445,8 @@ pub struct TestOptions {
     /// `bun test --parallel-delay=MS`: how long the first worker must be
     /// busy before spawning the rest. None = use the built-in default.
     pub parallel_delay_ms: Option<u32>,
+    /// `bun test --parallel`: CLI flags re-serialized for the worker argv.
+    pub parallel_forwarded_argv: Vec<Box<[u8]>>,
     /// Internal: this process is a `--parallel` worker. Files arrive over
     /// fd 3, results are written back over fd 3; no discovery, no header.
     pub test_worker: bool,
@@ -523,6 +525,7 @@ impl Default for TestOptions {
             isolate: false,
             parallel: 0,
             parallel_delay_ms: None,
+            parallel_forwarded_argv: Vec::new(),
             test_worker: false,
             changed: None,
             shard: None,

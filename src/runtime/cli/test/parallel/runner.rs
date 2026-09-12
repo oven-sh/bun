@@ -410,6 +410,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             argv.push(lit(b"--jsx-side-effects\0"));
         }
     }
+    for token in &opts.parallel_forwarded_argv {
+        argv.push(dupe_z(token));
+    }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
     }

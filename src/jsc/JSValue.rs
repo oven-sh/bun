@@ -2849,8 +2849,7 @@ impl JSValue {
         JSC__JSValue__isConstructor(self)
     }
 
-    /// `Array.isArray(self)`: an array, or a `Proxy` whose target is one.
-    /// A revoked `Proxy` is `false` here. `Array.isArray` throws a TypeError for it.
+    /// `Array.isArray(self)`, but a revoked `Proxy` is `false` instead of a TypeError.
     pub fn is_array_or_proxied_array(self) -> bool {
         let mut value = self;
         while value.is_cell() {
@@ -2872,9 +2871,7 @@ impl JSValue {
     }
 
     // ── Jest "is empty object". ────────────────────────
-    /// `JSValue.isObjectEmpty` — Jest-extended `toBeEmptyObject` semantics:
-    /// an object with zero own-enumerable keys for which `jest-get-type` says
-    /// "object". Arrays, functions, Map/Set/RegExp/Date are *not* empty objects.
+    /// jest-extended `toBeEmptyObject`: a `jest-get-type` "object" with no own enumerable keys.
     pub fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
         let ty = self.js_type();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26

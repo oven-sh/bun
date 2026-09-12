@@ -196,6 +196,58 @@ test.concurrent("close() rejects a held navigate() catchably and a floating one 
   expect(result).toEqual({ heldOutcome: { rejected: "WebView closed" }, unhandled: [] });
 });
 
+// Converting an argument can run user code (valueOf, toString, toJSON, an
+// options getter) that closes the view after the method's first closed-check.
+// Every method must check again before it sends: a command sent for a closed
+// view gets a reply nothing can route, so its promise would never settle.
+test.concurrent("close() during argument conversion makes the call throw instead of hang", async () => {
+  const result = await runScenario(`
+    const closing = (view, value) => ({
+      valueOf() { view.close(); return value; },
+      toString() { view.close(); return String(value); },
+    });
+    const shapes = {
+      "click(x, _)": view => view.click(closing(view, 5), 5),
+      "click(_, y)": view => view.click(5, closing(view, 5)),
+      "click(x, y, options)": view => view.click(5, 5, { get button() { view.close(); return "left"; } }),
+      "click(x, y, { modifiers })": view => view.click(5, 5, { modifiers: [closing(view, "Shift")] }),
+      "click(selector, options)": view => view.click("#b", { get timeout() { view.close(); return 100; } }),
+      "press(key, options)": view => view.press("Enter", { get modifiers() { view.close(); return []; } }),
+      "scroll(dx, _)": view => view.scroll(closing(view, 5), 5),
+      "scrollTo(selector, options)": view => view.scrollTo("#b", { get block() { view.close(); return "center"; } }),
+      "resize(width, _)": view => view.resize(closing(view, 50), 50),
+      "screenshot(options)": view => view.screenshot({ get format() { view.close(); return "png"; } }),
+      "cdp(method, params)": view => view.cdp("Runtime.evaluate", { toJSON() { view.close(); return {}; } }),
+    };
+    const results = {};
+    for (const [name, call] of Object.entries(shapes)) {
+      const view = newView();
+      await view.navigate("http://fake/");
+      try {
+        call(view);
+        results[name] = "returned";
+      } catch (e) {
+        results[name] = e.code + ": " + e.message;
+      }
+    }
+    print(results);
+  `);
+  const closed = "ERR_INVALID_STATE: WebView is closed";
+  expect(result).toEqual({
+    "click(x, _)": closed,
+    "click(_, y)": closed,
+    "click(x, y, options)": closed,
+    "click(x, y, { modifiers })": closed,
+    "click(selector, options)": closed,
+    "press(key, options)": closed,
+    "scroll(dx, _)": closed,
+    "scrollTo(selector, options)": closed,
+    "resize(width, _)": closed,
+    "screenshot(options)": closed,
+    "cdp(method, params)": closed,
+  });
+});
+
 // The browser dying (instead of close()) rejects the same internal
 // constructor-url promise; that must be quiet too. A floating user promise
 // is the opposite: a crash is not a requested teardown, so its rejection

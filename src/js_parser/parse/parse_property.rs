@@ -282,6 +282,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (opts.ts_decorators.len() > 0 && !p.options.features.standard_decorators)
                     {
                         p.lexer.expected(T::TIdentifier)?;
+                    } else if !opts.declare_range.is_empty() {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            opts.declare_range,
+                            b"\"declare\" cannot be used with a private identifier",
+                        );
                     }
 
                     let ident = p.lexer.identifier;
@@ -301,6 +307,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.token == T::TColon && was_identifier && opts.is_class {
                             match expr.data {
                                 js_ast::ExprData::EIdentifier(_) => {
+                                    if !opts.declare_range.is_empty() {
+                                        p.log().add_range_error(
+                                            Some(p.source),
+                                            opts.declare_range,
+                                            b"\"declare\" cannot be used with an index signature",
+                                        );
+                                    }
+
                                     p.lexer.next()?;
                                     p.skip_type_script_type(Level::Lowest)?;
                                     p.lexer.expect(T::TCloseBracket)?;
@@ -412,21 +426,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PDeclare => {
-                                        // skip declare keyword entirely
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
                                             && !p.lexer.has_newline_before
+                                            && opts.declare_range.is_empty()
                                             && raw == b"declare"
                                         {
+                                            opts.declare_range = name_range;
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(_prop) =
+                                            if let Some(mut prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                let mut prop = _prop;
+                                                // Only experimental decorators keep the field
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
+                                                    && !p.options.features.standard_decorators
                                                 {
                                                     prop.kind = PropertyKind::Declare;
                                                     return Ok(Some(prop));
@@ -446,16 +462,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         {
                                             opts.is_ts_abstract = true;
                                             let scope_index = p.scopes_in_order.len();
-                                            if let Some(prop) =
+                                            if let Some(mut prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
+                                                    && !p.options.features.standard_decorators
                                                 {
-                                                    let mut prop_ = prop;
-                                                    prop_.kind = PropertyKind::Abstract;
-                                                    return Ok(Some(prop_));
+                                                    prop.kind = PropertyKind::Abstract;
+                                                    return Ok(Some(prop));
                                                 }
                                             }
                                             p.discard_scopes_up_to(scope_index);
@@ -495,6 +511,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
                         {
+                            if !opts.declare_range.is_empty() {
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    opts.declare_range,
+                                    b"\"declare\" cannot be used with a static block",
+                                );
+                            }
+
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -635,7 +659,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
                 && !opts.is_async
                 && !opts.is_generator
-                && p.lexer.token != T::TOpenParen
                 && !has_type_parameters
                 && (p.lexer.token != T::TOpenParen || has_definite_assignment_assertion_operator)
             {
@@ -677,16 +700,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if p.lexer.token == T::TEquals {
-                    if Self::IS_TYPESCRIPT_ENABLED {
-                        if !opts.declare_range.is_empty() {
-                            p.log().add_range_error(
-                                Some(p.source),
-                                p.lexer.range(),
-                                b"Class fields that use \"declare\" cannot be initialized",
-                            );
-                        }
-                    }
-
                     p.lexer.next()?;
 
                     // "this" and "super" property access is allowed in field initializers
@@ -764,6 +777,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 || opts.is_async
                 || opts.is_generator
             {
+                if Self::IS_TYPESCRIPT_ENABLED && !opts.declare_range.is_empty() {
+                    let what: &[u8] = match kind {
+                        PropertyKind::Get => b"getter",
+                        PropertyKind::Set => b"setter",
+                        _ => b"method",
+                    };
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        opts.declare_range,
+                        format_args!(
+                            "\"declare\" cannot be used with a {}",
+                            bstr::BStr::new(what)
+                        ),
+                    );
+                }
+
                 return Self::parse_method_expression(
                     p,
                     kind,

@@ -1579,6 +1579,7 @@ impl<'a> Transpiler<'a> {
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
+                    ts_no_ambiguous_less_than: matches!(source.path.name().ext, b".mts" | b".cts"),
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,

@@ -2477,6 +2477,7 @@ pub mod parse_worker {
             crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
             loader,
         );
+        opts.ts_no_ambiguous_less_than = matches!(source.path.name().ext, b".mts" | b".cts");
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on

@@ -1852,24 +1852,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto headers1 = dynamicDowncast<JSFetchHeaders>(c1);
                 auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
                 if (headers1 && headers2) {
-                    auto& wrapped1 = headers1->wrapped();
-                    const auto& wrapped2 = headers2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
+                    if (headers1->wrapped().internalHeaders() != headers2->wrapped().internalHeaders()) {
                         return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (maybeValue.hasException()) {
-                            return false;
-                        }
-
-                        if (maybeValue.returnValue() != value) {
-                            return false;
-                        }
                     }
 
                     goto compareAsNormalValue;

@@ -766,6 +766,38 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
+// Jest's equals() and node's innerDeepEqual() reject two objects whose
+// Object.prototype.toString tags differ before they compare any property.
+template<bool moduleNamespaceIsPlainObject>
+static NEVER_INLINE bool haveSameToStringTag(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    auto tagOf = [&](JSC::JSObject* object) -> JSString* {
+        if constexpr (moduleNamespaceIsPlainObject) {
+            // `import * as ns` is a plain object under Jest's CommonJS transform, so
+            // `expect(ns).toEqual({ ...exports })` keeps comparing the exports.
+            if (object->type() == ModuleNamespaceObjectType)
+                return globalObject->vm().smallStrings.objectObjectString();
+        }
+        return objectPrototypeToString(globalObject, object);
+    };
+    JSString* tag1 = tagOf(o1);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSString* tag2 = tagOf(o2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (tag1 == tag2)
+        return true;
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return sameTag;
+}
+
+// An ordinary object or an array keeps all of its state in own properties. Every other kind of object
+// (a Promise, a WeakMap, a Response) can hold state that an own-property walk does not see.
+static ALWAYS_INLINE bool isOrdinaryObjectOrArray(JSC::JSType type)
+{
+    return type == FinalObjectType || type == ArrayType || type == DerivedArrayType;
+}
+
 // node's wellKnownConstructors set (lib/internal/util/comparisons.js), matched for any realm.
 static bool isWellKnownConstructor(JSValue value)
 {
@@ -941,16 +973,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     }
                 }
             }
-            JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
+            bool sameTag = haveSameToStringTag<false>(globalObject, scope, protoCheck1, protoCheck2);
             RETURN_IF_EXCEPTION(scope, false);
-            JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (tag1 != tag2) {
-                bool sameTag = tag1->equal(globalObject, tag2);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (!sameTag) {
-                    return false;
-                }
+            if (!sameTag) {
+                return false;
             }
         }
     }
@@ -963,6 +989,20 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
+
+    // Only own enumerable properties are compared from here on, and a Promise, a WeakMap or a Response has
+    // none, like {}. Two ordinary objects still compare by their properties whatever their tags are: bun
+    // tags plain data itself (`req.params` is [object RequestParams]) and tests compare it to literals.
+    // The node entry points compared the tags above.
+    if constexpr (!checkPrototypes) {
+        if (!isOrdinaryObjectOrArray(c1->type()) || !isOrdinaryObjectOrArray(c2->type())) {
+            bool sameTag = haveSameToStringTag<true>(globalObject, scope, o1, o2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!sameTag) {
+                return false;
+            }
+        }
+    }
 
     bool v1Array = isArray(globalObject, v1);
     RETURN_IF_EXCEPTION(scope, false);

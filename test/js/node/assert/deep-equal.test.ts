@@ -563,6 +563,16 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  { name: "a Promise and {}", a: () => Promise.resolve(), b: () => ({}), strict: false, loose: false },
+  { name: "a WeakRef and {}", a: () => new WeakRef({}), b: () => ({}), strict: false, loose: false },
+  {
+    name: "a DataView and {}",
+    a: () => new DataView(new ArrayBuffer(8)),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  { name: "an empty arguments object and {}", a: () => argumentsObject(), b: () => ({}), strict: false, loose: false },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.
   {
@@ -773,7 +783,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Typed arrays and buffers.

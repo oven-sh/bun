@@ -274,6 +274,129 @@ describe("expect()", () => {
     expect([, 1]).toEqual([undefined, 1]);
   });
 
+  // Jest's equals() returns false when Object.prototype.toString gives the two values a different tag.
+  // bun:test applies that rule whenever one of the two is not an ordinary object or array.
+  describe("toEqual() and Object.prototype.toString tags", () => {
+    class Tagged {
+      get [Symbol.toStringTag]() {
+        return "Tagged";
+      }
+    }
+    class Plain {}
+    const argumentsOf = ANY(function () {
+      return arguments;
+    });
+
+    /** @type {[string, () => unknown][]} */
+    const notOrdinaryObjects = [
+      ["a Promise", () => Promise.resolve()],
+      ["a WeakSet", () => new WeakSet()],
+      ["a WeakMap", () => new WeakMap()],
+      ["a WeakRef", () => new WeakRef({})],
+      ["a DataView", () => new DataView(new ArrayBuffer(8))],
+      ["Math", () => Math],
+      ["a Response", () => new Response()],
+      ["a Blob", () => new Blob([])],
+      ["a URL", () => new URL("http://a")],
+      ["an AbortController", () => new AbortController()],
+      ["a Headers", () => new Headers()],
+      ["a generator", () => (function* () {})()],
+      ["an arguments object", () => argumentsOf()],
+    ];
+
+    test.each(notOrdinaryObjects)("%s does not equal {}", (_, make) => {
+      expect(make()).not.toEqual({});
+      expect({}).not.toEqual(make());
+      expect(make()).not.toStrictEqual({});
+      expect({}).not.toStrictEqual(make());
+      expect(make()).not.toEqual(new Plain());
+      expect(make()).not.toEqual(Object.create(null));
+    });
+
+    test.each(notOrdinaryObjects)("%s nested in a container does not equal {}", (_, make) => {
+      expect({ a: make() }).not.toEqual({ a: {} });
+      expect([make()]).not.toEqual([{}]);
+      expect(new Map([[1, make()]])).not.toEqual(new Map([[1, {}]]));
+      expect(new Set([make()])).not.toEqual(new Set([{}]));
+      expect([make()]).not.toContainEqual({});
+      const fn = jest.fn();
+      fn(make());
+      expect(fn).not.toHaveBeenCalledWith({});
+    });
+
+    test.each(notOrdinaryObjects)("%s still equals itself and matches asymmetric matchers", (_, make) => {
+      const value = make();
+      expect(value).toEqual(value);
+      expect({ a: value }).toEqual({ a: value });
+      expect(value).toEqual(expect.anything());
+      expect({ a: value }).toEqual({ a: expect.anything() });
+    });
+
+    test("objects with two different tags are not equal", () => {
+      expect(Promise.resolve()).not.toEqual(new WeakSet());
+      expect(new WeakMap()).not.toEqual(new WeakSet());
+      expect(new Request("http://a")).not.toEqual(new Response());
+      expect(new TextDecoder()).not.toEqual(new TextEncoder());
+      expect(argumentsOf(1, 2)).not.toEqual({ 0: 1, 1: 2 });
+      expect(new Tagged()).not.toEqual(Promise.resolve());
+      expect(Object.defineProperty(new Number(1), Symbol.toStringTag, { value: "NotNumber" })).not.toEqual(
+        new Number(1),
+      );
+    });
+
+    test("objects with the same tag are compared by their properties", () => {
+      expect(new Proxy({}, {})).toEqual({});
+      expect(new Proxy({ a: 1 }, {})).toEqual({ a: 1 });
+      expect(new Proxy({ a: 1 }, {})).not.toEqual({ a: 2 });
+      expect(new Proxy([1], {})).toEqual([1]);
+      expect(Object.create(null)).toEqual({});
+      expect(Object.assign(Object.create(null), { a: 1 })).toEqual({ a: 1 });
+      expect(new Plain()).toEqual({});
+      expect(process.env).toEqual({ ...process.env });
+      expect(argumentsOf(1, 2)).toEqual(argumentsOf(1, 2));
+      expect(argumentsOf(1, 2)).not.toEqual(argumentsOf(1, 3));
+    });
+
+    test("an exception from a Symbol.toStringTag getter propagates", () => {
+      class Throws {
+        get [Symbol.toStringTag]() {
+          throw new Error("from the tag getter");
+        }
+      }
+      expect(() => expect(new Throws()).toEqual(Promise.resolve())).toThrow("from the tag getter");
+      expect(() => expect(Promise.resolve()).toEqual(new Throws())).toThrow("from the tag getter");
+    });
+
+    if (isBun) {
+      // Jest rejects all of these. bun:test keeps them equal: an ordinary object has no state outside of its
+      // properties, and bun labels plain data itself (`req.params` in Bun.serve is [object RequestParams]).
+      test("two ordinary objects are compared by their properties whatever their tags are", () => {
+        expect(new Tagged()).toEqual({});
+        expect({}).toEqual(new Tagged());
+        expect(Object.create({ [Symbol.toStringTag]: "Inherited" })).toEqual({});
+        expect(Object.defineProperty({ x: 1 }, Symbol.toStringTag, { value: "Own" })).toEqual({ x: 1 });
+        expect(Object.defineProperty([1], Symbol.toStringTag, { value: "Own" })).toEqual([1]);
+
+        const formData = new FormData();
+        formData.append("a", "b");
+        expect(Object.prototype.toString.call(formData.toJSON())).toBe("[object FormData]");
+        expect(formData.toJSON()).toEqual({ a: "b" });
+        expect(new URLSearchParams("a=b").toJSON()).toEqual({ a: "b" });
+      });
+
+      // Under Jest's CommonJS transform `import * as ns` is a plain object, so this comparison is common.
+      test("a module namespace object is compared to a plain object by its exports", async () => {
+        const ns = await import("./test-interop.js");
+        expect(Object.prototype.toString.call(ns)).toBe("[object Module]");
+        expect(ns).toEqual({ default: test_interop });
+        expect({ default: test_interop }).toEqual(ns);
+        expect(ns).not.toEqual({ default: () => {} });
+        expect(ns).not.toEqual({});
+        expect(ns).not.toEqual(Promise.resolve());
+      });
+    }
+  });
+
   describe("toEqual() with DOM types", () => {
     test("URLSearchParams", () => {
       expect(new URLSearchParams("a=1")).not.toEqual(new URLSearchParams("b=1"));

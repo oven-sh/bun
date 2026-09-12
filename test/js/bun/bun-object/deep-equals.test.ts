@@ -1,5 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
-import vm from "node:vm";
+import vm, * as vmNamespace from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
   const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
@@ -47,6 +47,109 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     const b = new FakeMap();
     expect(deepEquals(a, b)).toBe(false);
     expect(deepEquals(b, a)).toBe(false);
+  });
+
+  // An object that is not an ordinary object or array can hold state the property walk does not see,
+  // so it must at least have the same Object.prototype.toString tag as the other operand.
+  describe("Object.prototype.toString tags", () => {
+    class Tagged {
+      get [Symbol.toStringTag]() {
+        return "Tagged";
+      }
+    }
+    function argumentsOf(..._values: unknown[]) {
+      return arguments;
+    }
+
+    it.each([
+      ["a Promise and {}", () => Promise.resolve(), () => ({})],
+      ["a WeakSet and {}", () => new WeakSet(), () => ({})],
+      ["a WeakMap and {}", () => new WeakMap(), () => ({})],
+      ["a WeakRef and {}", () => new WeakRef({}), () => ({})],
+      ["a DataView and {}", () => new DataView(new ArrayBuffer(8)), () => ({})],
+      ["Math and {}", () => Math, () => ({})],
+      ["a Response and {}", () => new Response(), () => ({})],
+      ["a Blob and {}", () => new Blob([]), () => ({})],
+      ["a URL and {}", () => new URL("http://a"), () => ({})],
+      ["an AbortController and {}", () => new AbortController(), () => ({})],
+      ["an arguments object and {}", () => argumentsOf(), () => ({})],
+      ["an arguments object and an object with the same keys", () => argumentsOf(1, 2), () => ({ 0: 1, 1: 2 })],
+      ["a Promise and a null-prototype object", () => Promise.resolve(), () => Object.create(null)],
+      ["a Promise and a class instance", () => Promise.resolve(), () => new Tagged()],
+      ["a Promise and a WeakSet", () => Promise.resolve(), () => new WeakSet()],
+      ["a Request and a Response", () => new Request("http://a"), () => new Response()],
+      ["{ a: Promise } and { a: {} }", () => ({ a: Promise.resolve() }), () => ({ a: {} })],
+      ["[WeakMap] and [{}]", () => [new WeakMap()], () => [{}]],
+      ["Map { 1 => Promise } and Map { 1 => {} }", () => new Map([[1, Promise.resolve()]]), () => new Map([[1, {}]])],
+      ["Set { Promise } and Set { {} }", () => new Set([Promise.resolve()]), () => new Set([{}])],
+    ] as [string, () => unknown, () => unknown][])("%s are not equal", (_, a, b) => {
+      expect(deepEquals(a(), b())).toBe(false);
+      expect(deepEquals(b(), a())).toBe(false);
+    });
+
+    it("objects with the same tag are compared by their properties", () => {
+      expect(Bun.deepEquals(new Proxy({ a: 1 }, {}), { a: 1 })).toBe(true);
+      expect(Bun.deepEquals(Object.assign(Object.create(null), { a: 1 }), { a: 1 })).toBe(true);
+      expect(Bun.deepEquals(process.env, { ...process.env })).toBe(true);
+      expect(deepEquals(new Proxy({ a: 1 }, {}), { a: 2 })).toBe(false);
+      expect(deepEquals(argumentsOf(1, 2), argumentsOf(1, 2))).toBe(true);
+      expect(deepEquals(argumentsOf(1, 2), argumentsOf(1, 3))).toBe(false);
+    });
+
+    // bun labels plain data itself: `req.params` in Bun.serve is [object RequestParams].
+    it("two ordinary objects are compared by their properties whatever their tags are", () => {
+      expect(Bun.deepEquals(new Tagged(), {})).toBe(true);
+      expect(Bun.deepEquals(Object.create({ [Symbol.toStringTag]: "Inherited" }), {})).toBe(true);
+      expect(Bun.deepEquals(Object.defineProperty({ x: 1 }, Symbol.toStringTag, { value: "Own" }), { x: 1 })).toBe(
+        true,
+      );
+      expect(Bun.deepEquals(Object.defineProperty([1], Symbol.toStringTag, { value: "Own" }), [1])).toBe(true);
+      expect(deepEquals(new Tagged(), new Tagged())).toBe(true);
+
+      const formData = new FormData();
+      formData.append("a", "b");
+      expect(Object.prototype.toString.call(formData.toJSON())).toBe("[object FormData]");
+      expect(Bun.deepEquals(formData.toJSON(), { a: "b" })).toBe(true);
+      expect(Bun.deepEquals(new URLSearchParams("a=b").toJSON(), { a: "b" })).toBe(true);
+    });
+
+    it("req.params in a Bun.serve route equals an object literal with the same entries", async () => {
+      let params: unknown;
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          "/orgs/:orgId/repos/:repoId": req => {
+            params = req.params;
+            return new Response("ok");
+          },
+        },
+      });
+      const res = await fetch(new URL("/orgs/oven-sh/repos/bun", server.url).href);
+      expect(await res.text()).toBe("ok");
+      expect(Object.prototype.toString.call(params)).toBe("[object RequestParams]");
+      expect(Bun.deepEquals(params, { orgId: "oven-sh", repoId: "bun" })).toBe(true);
+      expect(params).toEqual({ orgId: "oven-sh", repoId: "bun" });
+      expect(deepEquals(params, { orgId: "oven-sh", repoId: "other" })).toBe(false);
+    });
+
+    // Under Jest's CommonJS transform `import * as ns` is a plain object, so this comparison is common.
+    it("a module namespace object is compared to a plain object by its exports", () => {
+      expect(Object.prototype.toString.call(vmNamespace)).toBe("[object Module]");
+      expect(Bun.deepEquals(vmNamespace, { ...vmNamespace })).toBe(true);
+      expect(Bun.deepEquals({ ...vmNamespace }, vmNamespace)).toBe(true);
+      expect(deepEquals(vmNamespace, {})).toBe(false);
+      expect(deepEquals(vmNamespace, Promise.resolve())).toBe(false);
+    });
+
+    it("an exception from a Symbol.toStringTag getter propagates", () => {
+      class Throws {
+        get [Symbol.toStringTag]() {
+          throw new Error("from the tag getter");
+        }
+      }
+      expect(() => deepEquals(new Throws(), Promise.resolve())).toThrow("from the tag getter");
+      expect(() => deepEquals(Promise.resolve(), new Throws())).toThrow("from the tag getter");
+    });
   });
 
   // we may change this in the future

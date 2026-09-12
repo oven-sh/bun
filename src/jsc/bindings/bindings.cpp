@@ -134,6 +134,8 @@
 #include "FetchHeaders.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "node/crypto/JSKeyObject.h"
+#include "webcrypto/JSCryptoKey.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -1381,6 +1383,36 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
+// Key material compare from node's comparisons.js. nullopt: continue with the own-property walk.
+static std::optional<bool> cryptoKeysDequal(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    if (auto* keyObject1 = dynamicDowncast<Bun::JSKeyObject>(o1)) {
+        auto* keyObject2 = dynamicDowncast<Bun::JSKeyObject>(o2);
+        if (!keyObject2)
+            return false;
+        bool equal = keyObject1->handle().deepEquals(globalObject, scope, keyObject2->handle());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!equal)
+            return false;
+        return std::nullopt;
+    }
+    if (auto* cryptoKey1 = dynamicDowncast<WebCore::JSCryptoKey>(o1)) {
+        auto* cryptoKey2 = dynamicDowncast<WebCore::JSCryptoKey>(o2);
+        if (!cryptoKey2)
+            return false;
+        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, cryptoKey1, cryptoKey2, [&](JSValue algorithm1, JSValue algorithm2) {
+            return mode.deepEquals(globalObject, algorithm1, algorithm2, gcBuffer, stack, scope, true);
+        });
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!equal)
+            return false;
+        return std::nullopt;
+    }
+    if (o2->inherits<Bun::JSKeyObject>() || o2->inherits<WebCore::JSCryptoKey>())
+        return false;
+    return std::nullopt;
+}
+
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
@@ -2123,6 +2155,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
+
+            std::optional<bool> keysEqual = cryptoKeysDequal(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, obj1, obj2);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (keysEqual.has_value())
+                return keysEqual;
 
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();

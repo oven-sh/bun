@@ -949,6 +949,55 @@ describe.concurrent("an onLoad hook that loads another importer of the module it
   }
 });
 
+// import("./a.mjs") reaches a.mjs's dependency b.mjs, and the onLoad hook for b.mjs require()s a.mjs, the module that
+// is importing b.mjs. The require() loads a.mjs's graph synchronously and reaches b.mjs again from inside b.mjs's own
+// fetch. a.mjs cannot finish loading before the hook returns, so that require() throws. The import() is not affected:
+// a.mjs evaluates once and a later import() returns the same namespace. Here the outer load is asynchronous and only
+// the nested one is synchronous. A debug build of the engine without the fix asserts in
+// JSModuleLoader::hostLoadImportedModule, because the nested load finds b.mjs's registry entry still New.
+it.concurrent("an onLoad hook that require()s the importer of the module it is loading", async () => {
+  using dir = tempDir("plugin-onload-requires-importer", {
+    "a.mjs": `import { b } from "./b.mjs"; export const x = b + 1; console.log("a evaluated");`,
+    "b.mjs": ``,
+    "entry.mjs": `
+      import { createRequire } from "node:module";
+      const require = createRequire(import.meta.url);
+      const outcomes = [];
+      Bun.plugin({
+        name: "b-loader",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]b\\.mjs$/ }, () => {
+            try {
+              outcomes.push(Object.keys(require("./a.mjs")));
+            } catch (e) {
+              outcomes.push(e.name + ": " + e.message.slice(0, e.message.indexOf('"')));
+            }
+            return { loader: "js", contents: "export const b = 1;" };
+          });
+        },
+      });
+      const ns = await import("./a.mjs");
+      const again = await import("./a.mjs");
+      console.log(JSON.stringify({ outerRequire: outcomes.at(-1), x: ns.x, sameNamespace: again === ns }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const [evaluated, result] = stdout.trim().split("\n");
+  expect(result ? [evaluated, JSON.parse(result)] : { crashed: stderr, stdout }).toEqual([
+    "a evaluated",
+    { outerRequire: "TypeError: require() async module ", x: 2, sameNamespace: true },
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 // Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
 describe.concurrent("Bun.plugin.clearAll()", () => {
   async function run(src: string) {

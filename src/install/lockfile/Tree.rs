@@ -822,10 +822,16 @@ impl Tree {
                         }
                         tree_id = tree.parent;
                     }
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
+
+                    // Its own hoist root: stays in this node, dedupes against a same-name sibling.
+                    break 'hoisted Tree::hoist_dependency::<true, METHOD>(
+                        next_id,
+                        next_id,
+                        pkg_id,
+                        dep_id,
+                        resolution_list,
+                        builder,
+                    );
                 }
 
                 Tree::hoist_dependency::<true, METHOD>(

@@ -64,6 +64,8 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
+    /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
+    pub pending_shutdown: Cell<bool>,
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
     pub transport_eof: Cell<bool>,
@@ -323,6 +325,7 @@ impl UpgradedDuplex {
         }
         if self.pending_data.get().is_empty() {
             self.drain_pending_end();
+            self.drain_pending_shutdown();
             return;
         }
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears
@@ -344,6 +347,7 @@ impl UpgradedDuplex {
             }
         }
         self.drain_pending_end();
+        self.drain_pending_shutdown();
     }
 
     /// Replay an EOF that landed before the engine came up. Split out so both
@@ -361,6 +365,13 @@ impl UpgradedDuplex {
             return;
         }
         (self.handlers.on_end)(self.handlers.ctx);
+    }
+
+    /// After the staged input: a server answers a staged ClientHello before the end().
+    fn drain_pending_shutdown(&self) {
+        if self.pending_shutdown.replace(false) {
+            self.shutdown();
+        }
     }
 
     pub(crate) fn on_timeout(&self) {
@@ -408,6 +419,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
+            pending_shutdown: Cell::new(false),
             transport_eof: Cell::new(false),
         }
     }
@@ -547,11 +559,15 @@ impl UpgradedDuplex {
         }
     }
 
+    /// Half-close like `us_internal_ssl_shutdown`: close_notify (none mid-handshake), then end().
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&self) {
-        if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
-        }
+        let Some(w) = self.wrapper_ref() else {
+            self.pending_shutdown.set(true);
+            return;
+        };
+        let _ = w.shutdown(false);
+        self.call_write_or_end(None, false);
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown_read")]
@@ -679,6 +695,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
+        self.pending_shutdown.set(false);
         self.transport_eof.set(false);
     }
 }

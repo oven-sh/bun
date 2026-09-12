@@ -302,6 +302,97 @@ describe.concurrent.each([
   });
 });
 
+/** Poll until every pid is gone or `timeoutMs` elapses; returns the pids still alive. */
+async function waitUntilAllDead(pids: number[], timeoutMs: number): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  let alive = pids.filter(isAlive);
+  while (alive.length > 0 && Date.now() < deadline) {
+    await sleep(25);
+    alive = alive.filter(isAlive);
+  }
+  return alive;
+}
+
+// process.exit() on the main thread does not stop Worker threads: they keep
+// running, and spawning, until the process is gone. The exit handler lists
+// bun's children once before it kills them, so a child a Worker spawned after
+// that listing used to outlive bun. The handler now closes the spawn gate
+// first: a later spawn fails with ECANCELED, and a spawn that was in flight
+// kills the child it created. So every child is either listed or killed by
+// its spawner.
+//
+// Each child appends its own pid to the pidfile before it execs sleep, so a
+// child that lives long enough to matter is always on the list, whether or
+// not the Worker that spawned it got to run again before exit. A spawn
+// failure other than ECANCELED is appended too, so the test cannot pass
+// because the workers failed to spawn. The main thread exits only once the
+// file has MIN_RECORDED lines: on a release build the first spawns and the
+// exit are otherwise so close together that no child has written yet, and
+// the list would be empty.
+const MIN_RECORDED = 20;
+test.concurrent.skipIf(!isPosix)(
+  "--no-orphans: clean exit reaps children spawned by Workers during the exit",
+  async () => {
+    using dir = tempDir("no-orphans-workers", {
+      pids: "",
+      "exit-while-workers-spawn.js": `
+        import { Worker, isMainThread, parentPort } from "node:worker_threads";
+        import { appendFileSync, readFileSync } from "node:fs";
+        const workerCount = 4;
+        if (isMainThread) {
+          let hot = 0;
+          const started = performance.now();
+          const exitOnceChildrenHaveRun = () => {
+            const recorded = readFileSync(process.env.PIDFILE, "utf8").split("\\n").filter(Boolean).length;
+            // The deadline is a hang guard: the test then fails on the count.
+            if (recorded >= ${MIN_RECORDED} || performance.now() - started > 10_000) process.exit(0);
+            setTimeout(exitOnceChildrenHaveRun, 1);
+          };
+          for (let i = 0; i < workerCount; i++) {
+            new Worker(new URL(import.meta.url)).on("message", () => {
+              // Every worker is inside its spawn loop and stays there until exit.
+              if (++hot === workerCount) exitOnceChildrenHaveRun();
+            });
+          }
+        } else {
+          let spawned = 0;
+          const spawnOne = () => {
+            try {
+              Bun.spawn({
+                cmd: ["/bin/sh", "-c", 'echo $$ >> "$0"; exec sleep 30', process.env.PIDFILE],
+                stdio: ["ignore", "ignore", "ignore"],
+              });
+            } catch (e) {
+              // ECANCELED is expected once the exit handler has closed the gate.
+              if (e.code !== "ECANCELED") appendFileSync(process.env.PIDFILE, "error " + e.code + "\\n");
+            }
+            if (++spawned === 10) parentPort.postMessage("hot");
+            setTimeout(spawnOne, 0);
+          };
+          spawnOne();
+        }
+      `,
+    });
+    const pidfile = `${dir}/pids`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-orphans", "exit-while-workers-spawn.js"],
+      env: { ...bunEnv, PIDFILE: pidfile },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = readFileSync(pidfile, "utf8").split("\n").filter(Boolean);
+    const spawnErrors = lines.filter(line => !/^\d+$/.test(line));
+    const children = lines.filter(line => /^\d+$/.test(line)).map(Number);
+    const survivors = await waitUntilAllDead(children, 10000);
+    reap(...survivors);
+    if (exitCode !== 0) console.error(stderr);
+    expect({ spawnErrors, survivors, exitCode }).toEqual({ spawnErrors: [], survivors: [], exitCode: 0 });
+    expect(children.length).toBeGreaterThanOrEqual(MIN_RECORDED);
+  },
+);
+
 // `bun run --no-orphans` while the supervisor is SIGKILLed.
 // Tree: test → sh (supervisor) → `bun run` → /bin/sh (script). The script is
 // non-Bun so it never installs its own watchdog — survival of the script after

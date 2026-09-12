@@ -297,6 +297,20 @@ String {
 }
 `;
 
+exports[`most types: String with 16-bit storage 1`] = `
+String {
+  "0": "日",
+  "1": "本",
+}
+`;
+
+exports[`most types: String with ASCII text in 16-bit storage 1`] = `
+String {
+  "0": "a",
+  "1": "b",
+}
+`;
+
 exports[`most types: String with property 1`] = `String {}`;
 
 exports[`most types: Uint8Array 1`] = `Uint8Array []`;

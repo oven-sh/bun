@@ -57,6 +57,10 @@ test("most types", () => {
   expect({ a: s }).toMatchSnapshot("Object with String with property");
   expect({ a: new String() }).toMatchSnapshot("Object with empty String");
   expect(new String("hello")).toMatchSnapshot("String");
+  expect(new String("日本")).toMatchSnapshot("String with 16-bit storage");
+  expect(new String(new TextDecoder("utf-16le").decode(new Uint16Array([0x61, 0x62])))).toMatchSnapshot(
+    "String with ASCII text in 16-bit storage",
+  );
 
   expect(new Number(7)).toMatchSnapshot("Number");
   expect({ a: {} }).toMatchSnapshot("Object with empty object");

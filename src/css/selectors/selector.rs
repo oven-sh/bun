@@ -86,10 +86,48 @@ pub(crate) fn downlevel_selectors<'bump>(
     selectors: &mut [Selector],
     targets: &Targets,
 ) -> VendorPrefix {
+    let mut any = AnyLowering::default();
+    let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, &mut any);
+    if !any.blocked {
+        necessary_prefixes.insert(any.prefixes);
+    }
+    necessary_prefixes
+}
+
+/// How the `:is()` lists of one style rule lower to `:-webkit-any()` /
+/// `:-moz-any()`, collected across the whole selector list (nested lists
+/// included) because the prefixed copy repeats the whole rule.
+#[derive(Default)]
+struct AnyLowering {
+    /// Prefixes requested by the `:is()` lists that can be lowered.
+    prefixes: VendorPrefix,
+    /// Some `:is()` list has to stay `:is()` (see `can_downlevel_is_to_any`).
+    /// A prefixed copy of the rule would still contain it, and every browser
+    /// that needs the copy drops the whole rule, so none is emitted.
+    blocked: bool,
+}
+
+impl AnyLowering {
+    fn request(&mut self, selectors: &[Selector], targets: &Targets) {
+        if can_downlevel_is_to_any(selectors) {
+            self.prefixes
+                .insert(targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo));
+        } else {
+            self.blocked = true;
+        }
+    }
+}
+
+fn downlevel_selector_list<'bump>(
+    bump: &'bump Bump,
+    selectors: &mut [Selector],
+    targets: &Targets,
+    any: &mut AnyLowering,
+) -> VendorPrefix {
     let mut necessary_prefixes = VendorPrefix::empty();
     for selector in selectors.iter_mut() {
         for component in selector.components.iter_mut() {
-            necessary_prefixes.insert(downlevel_component(bump, component, targets));
+            necessary_prefixes.insert(downlevel_component(bump, component, targets, any));
         }
     }
     necessary_prefixes
@@ -99,6 +137,7 @@ fn downlevel_component<'bump>(
     bump: &'bump Bump,
     component: &mut Component,
     targets: &Targets,
+    any: &mut AnyLowering,
 ) -> VendorPrefix {
     match component {
         Component::NonTsPseudoClass(pc) => {
@@ -106,7 +145,7 @@ fn downlevel_component<'bump>(
                 PseudoClass::Dir { direction } => {
                     if targets.should_compile_same(Feature::DirSelector) {
                         *component = downlevel_dir(bump, *direction, targets);
-                        return downlevel_component(bump, component, targets);
+                        return downlevel_component(bump, component, targets, any);
                     }
                     VendorPrefix::empty()
                 }
@@ -116,7 +155,7 @@ fn downlevel_component<'bump>(
                     if languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList)
                     {
                         *component = Component::Is(lang_list_to_selectors(bump, languages));
-                        return downlevel_component(bump, component, targets);
+                        return downlevel_component(bump, component, targets, any);
                     }
                     VendorPrefix::empty()
                 }
@@ -125,37 +164,28 @@ fn downlevel_component<'bump>(
         }
         Component::PseudoElement(pe) => pe.get_necessary_prefixes(targets),
         Component::Is(selectors) => {
-            let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
+            let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, any);
+            necessary_prefixes.insert(VendorPrefix::NONE);
 
             // Convert :is to :-webkit-any/:-moz-any if needed.
-            // All selectors must be simple, no combinators are supported.
-            if targets.should_compile_same(Feature::IsSelector)
-                && !should_unwrap_is(selectors)
-                && 'brk: {
-                    for selector in selectors.iter() {
-                        if selector.has_combinator() {
-                            break 'brk false;
-                        }
-                    }
-                    break 'brk true;
-                }
-            {
-                necessary_prefixes.insert(
-                    targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
-                );
-            } else {
-                necessary_prefixes.insert(VendorPrefix::NONE);
+            if targets.should_compile_same(Feature::IsSelector) && !should_unwrap_is(selectors) {
+                any.request(selectors, targets);
             }
 
             necessary_prefixes
         }
         Component::Negation(selectors) => {
-            let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
+            let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, any);
 
             // Downlevel :not(.a, .b) -> :not(:is(.a, .b)) if not list is unsupported.
-            // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
+            // We need to use :is() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
+                necessary_prefixes.insert(VendorPrefix::NONE);
+                if targets.should_compile_same(Feature::IsSelector) {
+                    any.request(selectors, targets);
+                }
+
                 let is: Selector = Selector::from_component(Component::Is({
                     // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
                     // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
@@ -166,20 +196,12 @@ fn downlevel_component<'bump>(
                     new_selectors.into_boxed_slice()
                 }));
                 *component = Component::Negation(vec![is].into_boxed_slice());
-
-                if targets.should_compile_same(Feature::IsSelector) {
-                    necessary_prefixes.insert(
-                        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
-                    );
-                } else {
-                    necessary_prefixes.insert(VendorPrefix::NONE);
-                }
             }
 
             necessary_prefixes
         }
-        Component::Where(s) | Component::Has(s) => downlevel_selectors(bump, s, targets),
-        Component::Any { selectors, .. } => downlevel_selectors(bump, selectors, targets),
+        Component::Where(s) | Component::Has(s) => downlevel_selector_list(bump, s, targets, any),
+        Component::Any { selectors, .. } => downlevel_selector_list(bump, selectors, targets, any),
         _ => VendorPrefix::empty(),
     }
 }
@@ -867,7 +889,9 @@ pub(crate) mod serialize {
                         }
 
                         let vp = dest.vendor_prefix;
-                        if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
+                        if (vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ))
+                            && can_downlevel_is_to_any(selectors)
+                        {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
                             dest.write_str(b"any(")?;
@@ -1668,6 +1692,29 @@ pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
     }
 
     false
+}
+
+/// Whether `:is(selectors)` can be written as the legacy `:-webkit-any()` /
+/// `:-moz-any()` for old browsers without changing the cascade in new ones.
+///
+/// The legacy forms take compound selectors only, and Blink and WebKit still
+/// parse `:-webkit-any()` today with the specificity of one pseudo-class,
+/// (0,1,0), whatever its arguments are. `:is()` takes the specificity of its
+/// most specific argument. When that is below (0,1,0), for example
+/// `:is(span, p)` or `:is(*)`, the prefixed copy of the rule outranks the
+/// `:is()` copy in every browser that supports both, and wins cascades that
+/// the authored selector loses. At or above (0,1,0) the prefixed copy can
+/// never outrank the `:is()` copy, so it is a safe fallback.
+pub(crate) fn can_downlevel_is_to_any(selectors: &[parser::Selector]) -> bool {
+    let mut max: u32 = 0;
+    for selector in selectors {
+        if selector.has_combinator() {
+            return false;
+        }
+        max = max.max(selector.specificity());
+    }
+    let max = parser::Specificity::from_u32(max);
+    max.id_selectors > 0 || max.class_like_selectors > 0
 }
 
 fn has_type_selector(selector: &parser::Selector) -> bool {

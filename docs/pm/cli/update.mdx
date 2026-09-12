@@ -155,6 +155,18 @@ bun update -D '@types/*'
 bun update -i --prod
 ```
 
+## `--depth 0`
+
+By default, `bun update` also moves transitive dependencies to the newest version their dependents' ranges allow. `--depth 0` updates only the `package.json` entries of the workspace you run it in and keeps every transitive dependency at the version recorded in `bun.lock`. This matches `pnpm update --depth 0`. A transitive dependency still moves when the updated direct dependency declares a range that its locked version no longer satisfies.
+
+It combines with names, patterns, `--dev`, `--prod`, `--no-optional`, `--latest`, `--recursive`, and `--filter`. Only `0` is accepted as a depth.
+
+```sh terminal icon="terminal"
+bun update --depth 0
+bun update --depth 0 --latest
+bun update --depth 0 -r
+```
+
 ## `--global`
 
 `bun update -g` updates packages installed with `bun add -g`:

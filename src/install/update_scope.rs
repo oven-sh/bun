@@ -158,12 +158,48 @@ impl UpdateScope<'_> {
         }
     }
 
+    /// `bun update --depth 0`: only a row the root or a workspace owns may move; a moved package's own rows keep whatever bun.lock already resolves for them.
+    pub fn contains_direct_dependency(&self, lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+        match lockfile
+            .packages
+            .items_dependencies()
+            .iter()
+            .position(|slice| slice.contains(dep_id))
+        {
+            Some(owner) => {
+                matches!(
+                    lockfile.packages.items_resolution()[owner].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                ) && self.contains_package(lockfile, owner)
+            }
+            None => true,
+        }
+    }
+
     /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        self.walkable_rows_of(lockfile, false)
+    }
+
+    /// `bun update --depth 0`: only the rows the root and the workspaces own, so a transitive row that shares a name with a direct dependency stays locked.
+    pub fn direct_walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        self.walkable_rows_of(lockfile, true)
+    }
+
+    fn walkable_rows_of(&self, lockfile: &Lockfile, direct_only: bool) -> DynamicBitSet {
         let mut walk =
             DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+        let pkg_res = lockfile.packages.items_resolution();
         for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             if slice.len == 0 {
+                continue;
+            }
+            if direct_only
+                && !matches!(
+                    pkg_res[id].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            {
                 continue;
             }
             if self.contains_package(lockfile, id) {
@@ -178,6 +214,30 @@ impl UpdateScope<'_> {
         }
         walk
     }
+}
+
+/// One bit per dependency row the root or a workspace owns.
+pub fn direct_rows(lockfile: &Lockfile) -> DynamicBitSet {
+    let mut rows = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+    let pkg_res = lockfile.packages.items_resolution();
+    for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        if slice.len == 0
+            || !matches!(
+                pkg_res[id].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+        {
+            continue;
+        }
+        rows.set_range_value(
+            Range {
+                start: slice.begin() as usize,
+                end: slice.end() as usize,
+            },
+            true,
+        );
+    }
+    rows
 }
 
 /// Which package.json entries --dev / --prod / --no-optional cover; peer entries are covered only when no selector is given.
@@ -250,12 +310,13 @@ fn matches(glob: &[u8], name: &[u8]) -> bool {
     }
 }
 
-fn describe_groups(groups: UpdateGroups) -> Vec<u8> {
+fn describe_selectors(groups: UpdateGroups, direct_only: bool) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     for (on, flag) in [
         (groups.dev, &b"--dev"[..]),
         (groups.prod, b"--prod"),
         (groups.no_optional, b"--no-optional"),
+        (direct_only, b"--depth 0"),
     ] {
         if on {
             if !out.is_empty() {
@@ -322,11 +383,13 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
     }
 }
 
-/// Turns `bun update` patterns and `--dev`/`--prod`/`--no-optional` into the concrete names the named path expects; a plain `bun update [name]` returns before doing anything.
+/// Turns `bun update` patterns and `--dev`/`--prod`/`--no-optional`/`--depth 0` into the concrete names the named path expects; a plain `bun update [name]` returns before doing anything.
 pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], groups: UpdateGroups) {
     let positionals = manager.options.positionals;
     let args = positionals.get(1..).unwrap_or(&[]);
-    let selecting = !groups.is_default();
+    // `--depth 0` selects every group but walks only the root and workspace rows, like the group selectors do.
+    let direct_only = manager.options.do_.update_direct_only();
+    let selecting = !groups.is_default() || direct_only;
     if !selecting && !args.iter().any(|a| is_pattern(a)) {
         return;
     }
@@ -337,7 +400,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         if selecting {
             if has_version_suffix(arg) {
                 Output::err_generic(
-                    "a version cannot be combined with --dev, --prod or --no-optional: {}",
+                    "a version cannot be combined with --dev, --prod, --no-optional or --depth 0: {}",
                     (BStr::new(arg),),
                 );
                 Global::exit(1);
@@ -358,7 +421,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     }
 
     let subject = if patterns.is_empty() {
-        describe_groups(groups)
+        describe_selectors(groups, direct_only)
     } else {
         describe_patterns(&patterns)
     };
@@ -483,9 +546,14 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     let mut failed = false;
     for pattern in patterns.iter().filter(|p| !p.negated && !p.hit) {
         failed = true;
-        if selecting {
+        if !groups.is_default() {
             Output::err_generic(
                 "no dependencies in the selected groups match \"{}\"",
+                (BStr::new(pattern.raw),),
+            );
+        } else if direct_only {
+            Output::err_generic(
+                "no direct dependencies match \"{}\"",
                 (BStr::new(pattern.raw),),
             );
         } else {
@@ -506,7 +574,10 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if checked == 1 { "y" } else { "ies" }
             );
             if selecting {
-                pretty!("selected by {}", BStr::new(&describe_groups(groups)));
+                pretty!(
+                    "selected by {}",
+                    BStr::new(&describe_selectors(groups, direct_only))
+                );
             }
             if !patterns.is_empty() {
                 pretty!(

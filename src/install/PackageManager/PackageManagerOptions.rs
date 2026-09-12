@@ -849,6 +849,7 @@ impl Options {
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);
+            self.do_.set(Do::UPDATE_DIRECT_ONLY, cli.update_direct_only);
 
             if !cli.positionals.is_empty() {
                 self.positionals = cli.positionals;
@@ -965,7 +966,9 @@ bitflags::bitflags! {
         const ANALYZE                      = 1 << 11;
         const RECURSIVE                    = 1 << 12;
         const PREFETCH_RESOLVED_TARBALLS   = 1 << 13;
-        // _: u2 padding
+        /// `bun update --depth 0`: only root and workspace rows re-resolve.
+        const UPDATE_DIRECT_ONLY           = 1 << 14;
+        // _: u1 padding
     }
 }
 
@@ -1058,6 +1061,10 @@ impl Do {
     #[inline]
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
+    }
+    #[inline]
+    pub fn update_direct_only(self) -> bool {
+        self.contains(Do::UPDATE_DIRECT_ONLY)
     }
 }
 

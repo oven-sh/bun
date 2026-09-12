@@ -59,6 +59,8 @@ pub mod add_remove_with_filter;
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]
 pub mod install_with_manager;
+#[path = "PackageManager/native_addon_links.rs"]
+pub mod native_addon_links;
 #[path = "PackageManager/PackageJSONEditor.rs"]
 pub mod package_json_editor;
 #[path = "PackageManager/package_json_write_back.rs"]

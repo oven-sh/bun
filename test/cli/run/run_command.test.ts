@@ -1,9 +1,9 @@
 import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 let cwd: string;
 
@@ -39,6 +39,54 @@ describe("bun", () => {
     expect(stdout.toString()).toBeEmpty();
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
+  });
+});
+
+// A working directory can be up to PATH_MAX - 1 bytes long. The files the resolver reads
+// from it are then at paths longer than PATH_MAX, which do not fit a path buffer:
+// package.json is read relative to the open directory, tsconfig.json and jsconfig.json
+// are skipped.
+describe.skipIf(isWindows)("a working directory close to PATH_MAX", () => {
+  const PATH_MAX = process.platform === "linux" || process.platform === "android" ? 4096 : 1024;
+  const SEGMENT = Buffer.alloc(200, "d").toString();
+
+  /** An absolute path below `root` whose UTF-8 encoding is exactly `length` bytes long. */
+  function pathOfLength(root: string, length: number): string {
+    let path = root;
+    // Leave room for the final component, which has to stay under NAME_MAX (255).
+    while (length - Buffer.byteLength(path) > 256) path = join(path, SEGMENT);
+    path = join(path, Buffer.alloc(length - Buffer.byteLength(path) - 1, "L").toString());
+    expect(Buffer.byteLength(path)).toBe(length);
+    return path;
+  }
+
+  describe.each(["package.json", "tsconfig.json", "jsconfig.json"])("<cwd>/%s", name => {
+    test.concurrent.each([
+      ["one byte longer than PATH_MAX", PATH_MAX - `/${name}`.length + 1],
+      ["as long as it can be", PATH_MAX - 1],
+    ])("is %s and bun run runs the script", async (_, cwdBytes) => {
+      using dir = tempDir("run-deep-cwd", {
+        project: {
+          [name]: "{}",
+          "package.json": JSON.stringify({ name: "deep", scripts: { hi: "echo hi" } }),
+        },
+      });
+      // The files cannot be written by their final paths, so the directory is moved there with them inside.
+      const cwd = pathOfLength(String(dir), cwdBytes);
+      mkdirSync(dirname(cwd), { recursive: true });
+      renameSync(join(String(dir), "project"), cwd);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "hi"],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hi\n", stderr: "$ echo hi\n", exitCode: 0 });
+    });
   });
 });
 

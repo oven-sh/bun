@@ -1,9 +1,18 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { cpSync } from "node:fs";
-import { join } from "path";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  normalizeBunSnapshot,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+} from "harness";
+import { cpSync, mkdirSync, renameSync } from "node:fs";
+import { dirname, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -1083,4 +1092,74 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
+});
+
+// Every package manager command starts by opening the nearest package.json by its absolute
+// path, walking up from the working directory. A working directory can be PATH_MAX - 1 bytes
+// long, and `<cwd>/package.json` is 13 bytes longer than that, so from the deepest directories
+// the OS allows it does not fit the PATH_MAX bytes (NUL included) a path may take.
+//
+// On Windows the path buffer is longer than any path the OS accepts.
+describe.skipIf(isWindows)("working directory close to PATH_MAX", () => {
+  const PATH_MAX = process.platform === "linux" || process.platform === "android" ? 4096 : 1024;
+  const SEGMENT = Buffer.alloc(200, "d").toString();
+
+  /** An absolute path below `root` whose UTF-8 encoding is exactly `length` bytes long. */
+  function pathOfLength(root: string, length: number): string {
+    let path = root;
+    // Leave room for the final component, which has to stay under NAME_MAX (255).
+    while (length - Buffer.byteLength(path) > 256) path = join(path, SEGMENT);
+    path = join(path, Buffer.alloc(length - Buffer.byteLength(path) - 1, "L").toString());
+    expect(Buffer.byteLength(path)).toBe(length);
+    return path;
+  }
+
+  /** A project below a new temporary directory, in a directory whose path is exactly `cwdBytes` bytes long. */
+  function deepProject(cwdBytes: number) {
+    const dir = tempDir("pm-deep-cwd", {
+      "project/package.json": JSON.stringify({ name: "deep", version: "1.0.0" }),
+    });
+    // package.json may be too long to write by its final path, so the directory is moved there with it inside.
+    const cwd = pathOfLength(String(dir), cwdBytes);
+    mkdirSync(dirname(cwd), { recursive: true });
+    renameSync(join(String(dir), "project"), cwd);
+    return { cwd, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  async function runBun(args: string[], cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.replaceAll(cwd, "<cwd>"), exitCode };
+  }
+
+  test("the longest <cwd>/package.json that can be opened is read", async () => {
+    using project = deepProject(PATH_MAX - 1 - "/package.json".length);
+
+    expect(await runBun(["pm", "pkg", "get", "name"], project.cwd)).toEqual({
+      stdout: '"deep"\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    ["PATH_MAX bytes long, leaving no room for the NUL", PATH_MAX - "/package.json".length],
+    ["as long as it can be", PATH_MAX - 1],
+  ])("<cwd>/package.json is %s", (_, cwdBytes) => {
+    test.each(["install", "pm cache"])("bun %s fails with ENAMETOOLONG", async command => {
+      using project = deepProject(cwdBytes);
+
+      const { stdout, stderr, exitCode } = await runBun(command.split(" "), project.cwd);
+
+      expect(stderr).toContain('ENAMETOOLONG: File name too long: could not open "<cwd>/package.json" (open)\n');
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
 });

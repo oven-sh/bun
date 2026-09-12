@@ -7,10 +7,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
-/// Cap per side of an assertion diff (#34178: shared references print once per path).
-const MAX_PRETTY_PRINT_BYTES: usize = 1024 * 1024;
-
-const TRUNCATION_NOTICE: &[u8] = b"\n... [value too large, output truncated]";
+/// [`FormatOptions::shared_reference_budget`] of each side.
+const SHARED_REFERENCE_BUDGET_MIB: usize = 1;
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
@@ -19,6 +17,8 @@ pub struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
+    /// A side spent [`SHARED_REFERENCE_BUDGET_MIB`] and abbreviated values that it had printed.
+    pub(crate) abbreviated: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
@@ -28,10 +28,36 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
+        let fmt_options = FormatOptions {
+            enable_colors: false,
+            add_newline: false,
+            flush: false,
+            quote_strings: true,
+            shared_reference_budget: SHARED_REFERENCE_BUDGET_MIB * 1024 * 1024,
+        };
+        let mut received_buf: Vec<u8> = Vec::new();
+        let received_abbreviated = JestPrettyFormat::format(
+            MessageLevel::Debug,
+            global_this,
+            core::slice::from_ref(&received),
+            1,
+            &mut received_buf,
+            fmt_options,
+        )?;
+        let mut expected_buf: Vec<u8> = Vec::new();
+        let expected_abbreviated = JestPrettyFormat::format(
+            MessageLevel::Debug,
+            global_this,
+            core::slice::from_ref(&expected),
+            1,
+            &mut expected_buf,
+            fmt_options,
+        )?;
         Ok(DiffFormatter {
-            received_string: Cow::Owned(format_capped(global_this, received)?),
-            expected_string: Cow::Owned(format_capped(global_this, expected)?),
+            received_string: Cow::Owned(trim_one_newline(received_buf)),
+            expected_string: Cow::Owned(trim_one_newline(expected_buf)),
             not,
+            abbreviated: received_abbreviated || expected_abbreviated,
         })
     }
 
@@ -40,31 +66,9 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
+            abbreviated: false,
         }
     }
-}
-
-/// Pretty-prints one side of the diff, keeping at most [`MAX_PRETTY_PRINT_BYTES`] of it.
-fn format_capped(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Vec<u8>> {
-    let mut buf: Vec<u8> = Vec::new();
-    let truncated = JestPrettyFormat::format_capped(
-        MessageLevel::Debug,
-        global_this,
-        core::slice::from_ref(&value),
-        1,
-        &mut buf,
-        FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            quote_strings: true,
-        },
-        MAX_PRETTY_PRINT_BYTES,
-    )?;
-    if truncated {
-        buf.extend_from_slice(TRUNCATION_NOTICE);
-    }
-    Ok(trim_one_newline(buf))
 }
 
 fn trim_one_newline(mut buf: Vec<u8>) -> Vec<u8> {
@@ -87,7 +91,14 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             &self.expected_string,
             f,
             &diff_config,
-        )
+        )?;
+        if self.abbreviated {
+            write!(
+                f,
+                "\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to {SHARED_REFERENCE_BUDGET_MIB} MiB."
+            )?;
+        }
+        Ok(())
     }
 }
 

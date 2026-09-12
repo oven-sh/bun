@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 function cleanOutput(output: string) {
   return output
@@ -899,4 +899,102 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(0, 120)).toContain("\n  [\n-   0,\n+   1,\n    1,\n");
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
+});
+
+test("a difference after the first 1 MiB of a value without shared references is reported", () => {
+  // 1.1 MB per side in 1,100 lines.
+  const line = Buffer.alloc(1000, "x").toString();
+  const text = (last: string) => Array.from({ length: 1_100 }, (_, i) => line + i).join("\n") + "\n" + last;
+
+  let message = "";
+  try {
+    expect(text("LAST-A")).toBe(text("LAST-B"));
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message.slice(-120)).toContain('\n- LAST-B"\n+ LAST-A"\n\n- Expected  - 1\n+ Received  + 1');
+});
+
+// https://github.com/oven-sh/bun/issues/34178
+// The formatter prints [Circular] only for a cycle, so it prints a value that is reachable N ways
+// N times. In this graph each level holds the level below twice: 16 levels reach the leaf 65,536
+// times and print 64 MB, and the 34 levels of the issue allocate until the machine dies.
+describe.concurrent("a value that reaches the same objects many times", () => {
+  // The formatter reads `$$typeof` each time it reaches a value, so the getter counts how many times
+  // the walk reaches the leaf. The leaf prints about 1 KB, so the budget of 1 MiB allows about 1,000.
+  const graph = `
+    let visits = 0;
+    const leaf: any = { s: Buffer.alloc(1024, "x").toString() };
+    Object.defineProperty(leaf, "$$typeof", {
+      get() {
+        visits++;
+        return undefined;
+      },
+    });
+    let o: any = leaf;
+    for (let i = 0; i < 16; i++) o = { a: o, b: o };
+  `;
+
+  async function run(source: string, ...args: string[]) {
+    using dir = tempDir("diff-shared-references", { "graph.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "graph.test.ts"],
+      env: { ...bunEnv, FORCE_COLOR: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["received side", "expect(o).toEqual(1)"],
+    ["expected side", "expect(1).toEqual(o)"],
+    ["asymmetric matcher", "expect({}).toEqual(expect.objectContaining(o))"],
+  ])("diff, %s: repeated values print as [Object] after 1 MiB", async (_name, assertion) => {
+    const { stdout, stderr, exitCode } = await run(`
+      import { expect, test } from "bun:test";
+      ${graph}
+      test("graph", () => {
+        try {
+          ${assertion};
+        } finally {
+          console.log(JSON.stringify({ visits }));
+        }
+      });
+    `);
+    const line = stdout.split("\n").find(l => l.startsWith('{"visits"'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!).visits).toBeLessThan(5_000);
+    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain('"b": [Object],');
+    expect(stderr).toContain(
+      "note: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier",
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("snapshot: a value that prints more than 64 MiB for repeated values is an error", async () => {
+    const { stderr, exitCode } = await run(
+      `
+      import { expect, test } from "bun:test";
+      const shared = { s: Buffer.alloc(1024 * 1024, "x").toString() };
+      test("small", () => {
+        expect(Array.from({ length: 3 }, () => shared)).toMatchSnapshot();
+      });
+      test("large", () => {
+        expect(Array.from({ length: 80 }, () => shared)).toMatchSnapshot();
+      });
+    `,
+      "--update-snapshots",
+    );
+    expect(stderr).toContain("(pass) small");
+    expect(stderr).toContain(
+      "error: Snapshot value is too large to serialize: the objects that it references more than once print more than 64 MiB. Snapshot a smaller part of the value.",
+    );
+    expect(stderr).toContain("(fail) large");
+    expect(exitCode).toBe(1);
+  });
 });

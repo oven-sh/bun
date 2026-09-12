@@ -221,13 +221,16 @@ pub mod expect {
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
+            // A stored snapshot cannot abbreviate, so a value that spends this budget is an error.
+            const SHARED_REFERENCE_BUDGET_MIB: usize = 64;
             let fmt_options = FormatOptions {
                 enable_colors: false,
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                shared_reference_budget: SHARED_REFERENCE_BUDGET_MIB * 1024 * 1024,
             };
-            JestPrettyFormat::format(
+            let abbreviated = JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global,
                 core::slice::from_ref(&self),
@@ -235,6 +238,11 @@ pub mod expect {
                 out,
                 fmt_options,
             )?;
+            if abbreviated {
+                return Err(global.throw(format_args!(
+                    "Snapshot value is too large to serialize: the objects that it references more than once print more than {SHARED_REFERENCE_BUDGET_MIB} MiB. Snapshot a smaller part of the value."
+                )));
+            }
             // `FormatOptions.flush` is false, so the formatter does not flush
             // internally; a buffered `out` would otherwise drop trailing
             // snapshot bytes.

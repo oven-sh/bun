@@ -70,6 +70,20 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+    struct us_loop_t *loop = group->loop;
+    if (!loop) {
+        /* Never init'd, so nothing is linked. A Windows named-pipe Listener
+         * keeps a group like this, and its stop(true) still calls close_all. */
+        return;
+    }
+
+    /* A close below can run a JS handler that ticks the loop (expect().resolves
+     * → waitForPromise). Called outside a tick, that nested tick is the outermost
+     * one, and its loop_post frees the sockets we already closed. This walk reads
+     * them after a dispatch, and Listener.stop closes its listen socket again
+     * after we return. Count as a tick level, so only a tick outside us frees them. */
+    loop->data.tick_depth++;
+
     if (also_listeners) {
         /* Listeners first — stops new sockets from being accepted into
          * head_sockets while we're draining it. */
@@ -152,6 +166,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         }
         US_ASSERT(group->low_prio_count == 0);
     }
+
+    loop->data.tick_depth--;
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {

@@ -433,6 +433,9 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
+    // Four runs that each miss the cache and write a new entry. One run takes
+    // about 1.4 s on a debug build with the sanitizers on, which is past the
+    // 5 s default for the whole test.
     test("--drop invalidates cache", () => {
       writeFileSync(
         join(temp_dir, "a.js"),
@@ -450,7 +453,7 @@ describe("transpiler cache", () => {
 
       expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
       expect(newCacheCount()).toBe(0);
-    });
+    }, 30_000);
   });
 
   // Serving the entry point from the cache must not change how the modules it
@@ -690,4 +693,88 @@ console.log("OK");
   expect(third.stdout.toString()).toContain("OK");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(0);
+});
+
+// A cache hit registers the stored sourcemap section as the module's source
+// map, and stack remapping reads that section as an InternalSourceMap blob. A
+// section with no blob header in it must not be registered: the first error's
+// stack reads the header through a pointer to nothing.
+//
+// Metadata layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+//   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, then
+//   twelve u64 fields; sourcemap_byte_length @ 62.
+describe("a cached entry with no sourcemap section", () => {
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+
+  // A module large enough for the cache (>= 4 KiB) that throws and prints the
+  // first frame of the error's stack. Reading the stack is what remaps the
+  // captured frame through the cached sourcemap.
+  function writeThrowingModule() {
+    const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+    const filler = Buffer.alloc(120 * line.length, line).toString();
+    writeFileSync(
+      join(temp_dir, "boom.ts"),
+      `${filler}
+function boom(): number {
+  throw new Error("boom");
+}
+try {
+  boom();
+} catch (e) {
+  console.log((e as Error).stack!.split("\\n")[1].trim());
+}
+console.log("OK");
+`,
+    );
+  }
+
+  const run = (extra: Record<string, string> = {}) =>
+    Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env: { ...env, ...extra } });
+
+  function storedSourceMapLength() {
+    const entries = readdirSync(cache_dir).filter(name => name.endsWith(".pile"));
+    expect(entries).toHaveLength(1);
+    return Number(readFileSync(join(cache_dir, entries[0])).readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+  }
+
+  test("written by a run with source maps off", () => {
+    writeThrowingModule();
+
+    // BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS turns source maps off for the run,
+    // so the printer produces no sourcemap and the entry this run writes has
+    // an empty sourcemap section.
+    const first = run({ BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" });
+    expect(first.stdout.toString()).toContain("OK");
+    expect(first.exitCode).toBe(0);
+    expect(storedSourceMapLength()).toBe(0);
+
+    // This run does remap stack traces, and it is served that entry.
+    const second = run();
+    expect(second.stdout.toString()).toContain("at boom");
+    expect(second.stdout.toString()).toContain("OK");
+    expect(second.signalCode).toBeUndefined();
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("whose stored sourcemap length was zeroed", () => {
+    writeThrowingModule();
+
+    const first = run();
+    expect(first.stdout.toString()).toContain("OK");
+    expect(first.exitCode).toBe(0);
+    expect(storedSourceMapLength()).toBeGreaterThan(0);
+
+    // Point the metadata at no sourcemap bytes, leaving the rest of the entry
+    // (including the section that follows) untouched.
+    const entry = join(cache_dir, readdirSync(cache_dir).find(name => name.endsWith(".pile"))!);
+    const data = readFileSync(entry);
+    data.writeBigUInt64LE(0n, SOURCEMAP_BYTE_LENGTH_AT);
+    writeFileSync(entry, data);
+
+    const second = run();
+    expect(second.stdout.toString()).toContain("at boom");
+    expect(second.stdout.toString()).toContain("OK");
+    expect(second.signalCode).toBeUndefined();
+    expect(second.exitCode).toBe(0);
+  });
 });

@@ -183,26 +183,35 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> bun_js_printer::Result<()> {
+        // A table value tagged `InternalSourceMap` is the blob's data pointer,
+        // and consumers read the blob header through it with no length in hand
+        // (`ParsedSourceMap::from_internal`, on the first stack remap). So a
+        // buffer that is not a whole blob must never enter the table. An empty
+        // `MutableString` reaches here from a runtime transpiler cache hit for
+        // an entry with no sourcemap section: its data pointer is the empty
+        // `Box<[u8]>` sentinel, so that remap read address 0x11.
+        if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {
+            return Ok(());
+        }
+
+        let incoming = InternalSourceMap {
+            data: mappings.list.as_ptr(),
+        };
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous
         // transpile remap against nothing and leak transpiled coords. A map
         // with no mappings can never answer a lookup, so dropping it is never
         // worse than installing it.
-        if mappings.list.len() >= SourceMap::internal_source_map::HEADER_SIZE {
-            let incoming = InternalSourceMap {
-                data: mappings.list.as_ptr(),
-            };
-            if incoming.mapping_count() == 0 {
-                self.lock();
-                let contains = self.map.contains_key(&hash(source.path.text));
-                self.unlock();
-                if contains {
-                    return Ok(());
-                }
-                // Note: reshaped for borrowck — the lock is
-                // released before returning since no further table access follows.
+        if incoming.mapping_count() == 0 {
+            self.lock();
+            let contains = self.map.contains_key(&hash(source.path.text));
+            self.unlock();
+            if contains {
+                return Ok(());
             }
+            // Note: reshaped for borrowck — the lock is
+            // released before returning since no further table access follows.
         }
 
         // Note: every caller MOVES an owned

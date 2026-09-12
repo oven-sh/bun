@@ -11,7 +11,10 @@ use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{
+    CommandLineArguments, DependencyID, PackageID, PackageManager, Subcommand, package_manager,
+};
+use bun_install_types::NodeLinker::NodeLinker;
 use bun_semver as semver;
 
 use crate::command;
@@ -342,6 +345,7 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
+        let configured_linker = pm.options.node_linker;
         // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
         // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
         // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
@@ -351,6 +355,7 @@ impl WhyCommand {
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        let linker = load_lockfile.node_linker(configured_linker);
 
         if top_only {
             MAX_DEPTH.store(1, AtomicOrdering::Relaxed);
@@ -375,6 +380,17 @@ impl WhyCommand {
 
         let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
 
+        // A peer edge leads where each placement of its owner resolves the name, bound or not.
+        let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::default();
+        let served_peers = if linker == NodeLinker::Isolated {
+            bun_install::isolated_install::served_peers(pm, lockfile)?
+        } else {
+            bun_install::lockfile::tree::served_peers(lockfile)
+        };
+        for (dep_id, pkg_id) in served_peers {
+            peer_targets.entry(dep_id).or_default().push(pkg_id);
+        }
+
         let glob = GlobPattern::init(package_pattern);
 
         // The column-backed `PackageList` exposes
@@ -396,12 +412,11 @@ impl WhyCommand {
             let resolutions = pkg_res_slices[pkg_idx].get(resolutions_items);
 
             for (dep_idx, dependency) in dependencies.iter().enumerate() {
-                let target_id = resolutions[dep_idx];
-                if target_id as usize >= packages.len() {
-                    continue;
-                }
-
-                let dependents_entry = all_dependents.entry(target_id).or_default();
+                let dep_id = pkg_dep_slices[pkg_idx].begin() + dep_idx as DependencyID;
+                let targets: &[PackageID] = match peer_targets.get(&dep_id) {
+                    Some(served) if dependency.behavior.is_peer() => served,
+                    _ => core::slice::from_ref(&resolutions[dep_idx]),
+                };
 
                 let mut dep_version_buf: Vec<u8> = Vec::new();
                 write!(
@@ -432,14 +447,28 @@ impl WhyCommand {
                 let workspace = strings::has_prefix(&dep_pkg_version, b"workspace:")
                     || dep_pkg_version.is_empty();
 
-                dependents_entry.push(DependentInfo {
+                let info = DependentInfo {
                     name: Box::<[u8]>::from(pkg_name),
                     version: dep_pkg_version,
                     spec,
                     dep_type,
                     pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
                     workspace,
-                });
+                };
+                let Some((&last_target, other_targets)) = targets.split_last() else {
+                    continue;
+                };
+                for &target_id in other_targets {
+                    if (target_id as usize) < packages.len() {
+                        all_dependents
+                            .entry(target_id)
+                            .or_default()
+                            .push(info.clone());
+                    }
+                }
+                if (last_target as usize) < packages.len() {
+                    all_dependents.entry(last_target).or_default().push(info);
+                }
             }
 
             if !glob.matches_name(pkg_name, package_pattern) {

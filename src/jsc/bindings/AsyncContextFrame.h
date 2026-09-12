@@ -3,6 +3,11 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <wtf/Noncopyable.h>
+
+namespace WebCore {
+class JSValueInWrappedObject;
+}
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
@@ -16,6 +21,9 @@ public:
 
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
+
+    // Snapshots the active async context into `slot`, which the owner's JS wrapper must GC-visit.
+    static void captureCurrentContext(JSC::JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot);
 
     // The following is JSC::call but
     // - it unwraps AsyncContextFrame
@@ -45,4 +53,17 @@ public:
         , context(context_, JSC::WriteBarrierEarlyInit)
     {
     }
+};
+
+// Makes `context` the active async context for its lifetime. No-op if `context` is empty.
+class AsyncContextFrameScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextFrameScope);
+
+public:
+    AsyncContextFrameScope(JSC::JSGlobalObject*, JSC::JSValue context);
+    ~AsyncContextFrameScope();
+
+private:
+    JSC::JSGlobalObject* m_globalObject { nullptr };
+    JSC::JSValue m_previousContext;
 };

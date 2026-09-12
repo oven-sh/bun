@@ -23,7 +23,7 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -1914,4 +1914,67 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
   }
+});
+
+// RETURN_IF_EXCEPTION is also where a worker's termination trap is serviced, so
+// once terminate() has fired, the next helper called from a native function
+// returns empty with the TerminationException pending. In
+// KeyObject::getKeyObjectHandleFromJwk the EC "d" decode was the one
+// decodeJwkString() call whose result was used without that check, so a
+// terminate() landing while the worker was inside createPrivateKey({ format:
+// "jwk" }) for an EC key dereferenced null ("Segmentation fault at address
+// 0x10"; UBSan reports the member call on a null JSArrayBufferView) and took the
+// whole process down with it.
+test("createPrivateKey from an EC JWK survives worker.terminate() landing mid-import", async () => {
+  // Worker startup dominates on debug/ASAN builds, so fewer rounds there; the
+  // unguarded decode dies in the first round either way.
+  const rounds = isDebug || isASAN ? 2 : 6;
+  using dir = tempDir("ec-jwk-terminate", {
+    "main.mjs": `
+      import { createPrivateKey, generateKeyPairSync } from "node:crypto";
+
+      if (Bun.isMainThread) {
+        for (let round = 0; round < ${rounds}; round++) {
+          const workers = Array.from({ length: 4 }, () => new Worker(import.meta.url));
+          await Promise.all(
+            workers.map(
+              worker =>
+                new Promise((resolve, reject) => {
+                  worker.onmessage = resolve;
+                  worker.onerror = event => reject(event.error ?? new Error(event.message));
+                }),
+            ),
+          );
+          const closed = Promise.all(
+            workers.map(worker => new Promise(resolve => worker.addEventListener("close", resolve, { once: true }))),
+          );
+          for (const worker of workers) worker.terminate();
+          await closed;
+        }
+        console.log("survived");
+      } else {
+        const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+        // Leading zero bytes leave the scalar unchanged (BN_bin2bn drops them),
+        // so this still imports as the same key, but decoding "d", the call that
+        // was unguarded, now takes up most of every createPrivateKey(), which is
+        // where terminate() has to land.
+        jwk.d = Buffer.concat([Buffer.alloc(768 * 1024), Buffer.from(jwk.d, "base64url")]).toString("base64url");
+        // Import once before reporting in: a JWK that does not import fails the
+        // round loudly instead of leaving terminate() nothing to race.
+        createPrivateKey({ key: jwk, format: "jwk" });
+        postMessage("busy");
+        for (;;) createPrivateKey({ key: jwk, format: "jwk" });
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
 });

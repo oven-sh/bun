@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bun_threading::RwLock;
 
-use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::api::cron::CronJob;
@@ -253,17 +252,21 @@ impl FakeTimers {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
-        let now_el = unsafe { (*next).next };
-        let now = from_el_timespec(&now_el);
-        if Environment::CI_ASSERT {
-            let prev = CURRENT_TIME.get_timespec_now();
-            debug_assert!(prev.is_some());
-            debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
-        }
+        let deadline = from_el_timespec(unsafe { &(*next).next });
+        let current = CURRENT_TIME.get_timespec_now();
+        debug_assert!(current.is_some());
+        // A `jest` timer-control call made from inside an earlier callback of
+        // this drain can already have moved the clock past `deadline`. The
+        // timer then fires late, at the current time, like an overdue real
+        // timer: the fake clock never runs backwards.
+        let now = match current {
+            Some(current) if current.greater(&deadline) => current,
+            _ => deadline,
+        };
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        let fired = unsafe { EventLoopTimer::fire(next, &now, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
@@ -445,7 +448,14 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let target = current.add_ms_float(effective_advance);
 
     let advanced = FakeTimers::execute_until(global, target);
-    CURRENT_TIME.set(global, &target, None);
+    // A callback fired by the drain can itself have advanced the clock past
+    // `target`, or called `useRealTimers()`: never move the clock backwards.
+    if CURRENT_TIME
+        .get_timespec_now()
+        .is_some_and(|now| !now.greater(&target))
+    {
+        CURRENT_TIME.set(global, &target, None);
+    }
     advanced?;
 
     Ok(frame.this())

@@ -191,6 +191,9 @@ const kUpgradeAttached = Symbol("kUpgradeAttached");
 const kOnreadTail = Symbol("kOnreadTail");
 // Bytes of the chunk deliver() is slicing that the onread callback has not received yet.
 const kOnreadSlicing = Symbol("kOnreadSlicing");
+// Bumped by dropOnreadTail(): deliver() stops a chunk whose connection was replaced under it. `connecting` does
+// not say that: the old connection keeps delivering while a connect() waits for its lookup.
+const kOnreadEpoch = Symbol("kOnreadEpoch");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
@@ -666,6 +669,7 @@ function dropOnreadTail(self) {
   if (self[kOnreadBuffer] === undefined) return;
   self[kOnreadTail] = undefined;
   self[kOnreadSlicing] = 0;
+  self[kOnreadEpoch]++;
   self[kOnreadPendingEnd] = false;
   self[kOnreadReadRequested] = false;
 }
@@ -1552,6 +1556,8 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
+  // doConnect swaps the native socket under a live handle: bytes declined since connect() stay with the old one.
+  dropOnreadTail(self);
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
@@ -1714,6 +1720,7 @@ function Socket(options?) {
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
     this[kOnreadSlicing] = 0;
+    this[kOnreadEpoch] = 0;
     // Node calls the factory once at initSocketHandle time, then once after
     // every callback (stream_base_commons onStreamRead): the first delivery
     // already has a real buffer, and a non-Uint8Array result leaves the prior
@@ -1741,6 +1748,7 @@ function Socket(options?) {
     function deliverSlices(buffer) {
       let offset = 0;
       const total = buffer.length;
+      const epoch = self[kOnreadEpoch];
       while (offset < total) {
         const dest = self[kOnreadBuffer];
         if (dest === true) {
@@ -1758,7 +1766,7 @@ function Socket(options?) {
             // synchronously the way node's bare call does.
             reportError(e);
           }
-          if (self.destroyed || self.connecting) return;
+          if (self.destroyed || self[kOnreadEpoch] !== epoch) return;
           if (ret === false || self.isPaused()) {
             self[kOnreadTail] = kOnreadEmptyTail;
             readStop(self, self._handle);
@@ -1789,8 +1797,8 @@ function Socket(options?) {
           // delivered, matching node's per-onStreamRead behavior.
           reportError(e);
         }
-        // A callback that called connect() started a new connection: the rest of this chunk is the old one's.
-        if (self.destroyed || self.connecting) return;
+        // A callback that called connect() replaced the connection: the rest of this chunk is the old one's.
+        if (self.destroyed || self[kOnreadEpoch] !== epoch) return;
         if (ret === false || self.isPaused()) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
@@ -1876,8 +1884,9 @@ Object.defineProperty(Socket.prototype, "_bytesDispatched", {
   },
 });
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L896-L900
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L939-L950
 Object.defineProperty(Socket.prototype, "bytesRead", {
+  enumerable: true,
   get: function () {
     const handle = this._handle;
     return (handle ? handleBytesRead(this, handle) : this[kBytesRead]) || 0;

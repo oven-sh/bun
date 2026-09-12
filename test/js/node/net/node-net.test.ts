@@ -3141,6 +3141,25 @@ describe("net.Socket bytesRead", () => {
     return { server, port: (server.address() as import("node:net").AddressInfo).port };
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L939-L950
+  it("is an enumerable getter on the prototype with no setter, like node", () => {
+    const s = new Socket();
+    const forIn: string[] = [];
+    for (const key in s) forIn.push(key);
+    const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(Socket.prototype, "bytesRead")!;
+    expect({
+      forIn: forIn.includes("bytesRead"),
+      own: Object.hasOwn(s, "bytesRead"),
+      descriptor: { get: typeof get, set: typeof set, enumerable, configurable },
+      value: s.bytesRead,
+    }).toEqual({
+      forIn: true,
+      own: false,
+      descriptor: { get: "function", set: "undefined", enumerable: true, configurable: false },
+      value: 0,
+    });
+  });
+
   it("equals the bytes the peer wrote and survives 'close'", async () => {
     const { server, port } = await listen(c => c.end(Buffer.alloc(100_000, "x")));
     try {
@@ -3249,9 +3268,69 @@ describe("net.Socket bytesRead", () => {
     }
   });
 
+  it("onread: a chunk that arrives while connect() waits for its lookup is delivered whole", async () => {
+    const peer = Promise.withResolvers<Socket>();
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.write("AAAABBBBCCCC");
+      peer.resolve(c);
+    });
+    const calls: [string, number][] = [];
+    const firstChunk = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    let serverSocket: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            const slice = buf.toString("latin1", 0, n);
+            calls.push([slice, s!.bytesRead]);
+            if (slice === "CCCC") firstChunk.resolve();
+            // A separate write, after the slicing of the second chunk is over.
+            if (slice === "DDDD") setImmediate(() => serverSocket!.write("Z"));
+            if (slice === "Z") done.resolve();
+          },
+        },
+      });
+      s.on("error", err => {
+        firstChunk.reject(err);
+        done.reject(err);
+      });
+      serverSocket = await peer.promise;
+      await firstChunk.promise;
+      // The lookup never answers: the socket stays in `connecting` and the first connection stays open.
+      s.connect({ port, host: "never-resolved.test", lookup() {} });
+      expect(s.connecting).toBe(true);
+      serverSocket.write("DDDDEEEEFFFF");
+      await done.promise;
+      // node v26.3.0 reports the same slices and counts.
+      expect(calls).toEqual([
+        ["AAAA", 4],
+        ["BBBB", 8],
+        ["CCCC", 12],
+        ["DDDD", 16],
+        ["EEEE", 20],
+        ["FFFF", 24],
+        ["Z", 25],
+      ]);
+    } finally {
+      s?.destroy();
+      serverSocket?.destroy();
+      server.close();
+    }
+  });
+
   it("onread: a declined tail does not carry over to the next connection", async () => {
     let connections = 0;
-    const { server, port } = await listen(c => c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz"));
+    const { server, port } = await listen(c => {
+      // The client destroys the first connection with unread bytes, which can reset it.
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz");
+    });
     const calls: string[] = [];
     const first = Promise.withResolvers<void>();
     const second = Promise.withResolvers<void>();

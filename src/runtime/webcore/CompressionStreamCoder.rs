@@ -190,6 +190,7 @@ impl CompressionStreamCoder {
         format: Format,
         decompress: bool,
         high_water_mark: usize,
+        level: Option<i32>,
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
@@ -200,7 +201,7 @@ impl CompressionStreamCoder {
                 let rc = unsafe {
                     zlib::deflateInit2_(
                         &raw mut *s,
-                        -1,
+                        level.unwrap_or(-1),
                         8, // Z_DEFLATED
                         format.window_bits(),
                         8, // default mem_level
@@ -239,6 +240,19 @@ impl CompressionStreamCoder {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
                 })
                 .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
+                if let Some(quality) = level {
+                    // SAFETY: `p` was just created and is exclusively owned here.
+                    let ok = brotli::BrotliEncoderSetParameter(
+                        unsafe { &mut *p.as_ptr() },
+                        brotli::BROTLI_PARAM_QUALITY,
+                        quality as u32,
+                    ) != 0;
+                    if !ok {
+                        // SAFETY: `p` was created above and not stored anywhere.
+                        unsafe { brotli::BrotliEncoderDestroyInstance(p.as_ptr()) };
+                        return Err(CodecError::Message("failed to set brotli quality"));
+                    }
+                }
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
@@ -252,6 +266,17 @@ impl CompressionStreamCoder {
             (Format::Zstd, false) => {
                 let p = NonNull::new(zstd::ZSTD_createCCtx())
                     .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
+                if let Some(lvl) = level {
+                    // SAFETY: `p` was just created and is exclusively owned here.
+                    let rc = unsafe {
+                        zstd::ZSTD_CCtx_setParameter(p.as_ptr(), zstd::ZSTD_c_compressionLevel, lvl)
+                    };
+                    if zstd::ZSTD_isError(rc) != 0 {
+                        // SAFETY: `p` was created above and not stored anywhere.
+                        unsafe { zstd::ZSTD_freeCCtx(p.as_ptr()) };
+                        return Err(CodecError::Message("failed to set zstd level"));
+                    }
+                }
                 Backend::ZstdEncode(p)
             }
             (Format::Zstd, true) => {
@@ -751,16 +776,20 @@ impl AsyncInput {
 
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
+/// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
 pub extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
+    has_level: bool,
+    level: i32,
 ) -> *mut CompressionStreamCoder {
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
-    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1)) {
+    let level = (has_level && !decompress).then_some(level);
+    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level) {
         Ok(b) => Box::into_raw(b),
         Err(_) => ptr::null_mut(),
     }

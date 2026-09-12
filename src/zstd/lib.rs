@@ -34,6 +34,9 @@ pub mod c {
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
 
+    // ZSTD_cParameter
+    pub const ZSTD_c_compressionLevel: ZSTD_cParameter = 100;
+
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
     // ZSTD_ErrorCode (zstd_errors.h) — only the public stable subset.

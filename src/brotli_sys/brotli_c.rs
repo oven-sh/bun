@@ -271,4 +271,6 @@ impl BrotliEncoder {
 
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
+/// `BrotliEncoderParameter::BROTLI_PARAM_QUALITY` (encode.h).
+pub const BROTLI_PARAM_QUALITY: c_uint = 1;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;

@@ -537,6 +537,47 @@ it("chrome: close() rejects pending promises", async () => {
   await expect(p).rejects.toThrow(/closed/);
 });
 
+// Page.crash kills the tab's renderer the same way an OOM kill or a SIGKILL
+// of that process does. The browser lives on, so only this view is affected:
+// Chrome sends Inspector.targetCrashed on its session and holds every command
+// the page has to answer until a navigation of any kind recreates the
+// renderer. The view stays open throughout.
+it("chrome: a renderer crash rejects the view's pending work, and reload() or goBack() recovers it", async () => {
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const message = (e: unknown) => (e as Error).message;
+  const refused = "page crashed (renderer process died), reload() or navigate() to recover";
+  try {
+    await view.navigate(html("<title>first</title>"));
+    await view.navigate(html("<title>second</title>"));
+    // Both reject in the same turn, so both need a handler before the
+    // first await, or the second one reports as an unhandled rejection.
+    const settled = await Promise.allSettled([view.evaluate("new Promise(() => {})"), view.cdp("Page.crash")]);
+    expect(settled.map(s => s.status)).toEqual(["rejected", "rejected"]);
+    expect(settled.map(s => message((s as PromiseRejectedResult).reason))).toEqual([
+      "page crashed (renderer process died)",
+      "page crashed (renderer process died)",
+    ]);
+    // The slots are free, and a page operation fails fast while the renderer
+    // is gone rather than waiting on a navigation that may never come.
+    // resize() in particular: Chrome 153 wedges the whole DevTools connection
+    // on an Emulation command sent to a crashed tab.
+    expect(await view.evaluate("1").then(() => null, message)).toBe(refused);
+    expect(await view.resize(300, 300).then(() => null, message)).toBe(refused);
+    // reload() is a navigation: it gets the tab a new renderer.
+    await view.reload();
+    expect(view.title).toBe("second");
+    expect(await view.evaluate("document.title")).toBe("second");
+    // So is goBack().
+    await view.cdp("Page.crash").catch(() => {});
+    expect(await view.evaluate("1").then(() => null, message)).toBe(refused);
+    await view.goBack();
+    expect(view.title).toBe("first");
+    expect(await view.evaluate("document.title")).toBe("first");
+  } finally {
+    view.close();
+  }
+});
+
 it("chrome: two views have independent sessions", async () => {
   const a = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   const b = new Bun.WebView({ backend: chrome, width: 200, height: 200 });

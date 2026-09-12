@@ -88,6 +88,8 @@ public:
     WTF::String m_url;
     WTF::String m_title;
     bool m_loading = false;
+    // Chrome: renderer dead since Inspector.targetCrashed, no document yet.
+    bool m_crashed = false;
 
     // Chrome session state. Empty until the Target.createTarget →
     // Target.attachToTarget → Page.enable chain completes (driven by the

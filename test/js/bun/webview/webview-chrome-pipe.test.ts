@@ -336,6 +336,112 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// A tab's renderer process can die while the browser keeps running (OOM kill,
+// SIGKILL, Page.crash). Chrome reports it with Inspector.targetCrashed on the
+// view's session and keeps the session attached. A navigation (navigate,
+// reload, history) gives the tab a new renderer; until then Chrome holds every
+// command the page has to answer, the ones already in flight included. So the
+// view settles the pending work itself and refuses page operations until a
+// navigation commits, rather than let them wait for one that may never come.
+// cdp() stays raw.
+test.concurrent("a renderer crash rejects the view's pending work and a reload() recovers it", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/crashed-and-reloaded");
+    const hungEvaluate = view.evaluate("__fake_no_reply()");
+    const hungCdp = view.cdp("Page.crash");
+    hungEvaluate.catch(() => {}); // held, so the crash rejection is not loud here
+    hungCdp.catch(() => {});
+    // The listener runs after the rejections, so the statuses are final here
+    // and the check needs no timer.
+    const report = await new Promise(resolve => {
+      view.addEventListener("Inspector.targetCrashed", () => resolve({
+        evaluateStatus: Bun.peek.status(hungEvaluate),
+        cdpStatus: Bun.peek.status(hungCdp),
+      }));
+    });
+    // Awaiting a slot the crash left pending would never return, so report
+    // that instead of hanging (and keep whatever it settles with later quiet).
+    const settledNow = p => Bun.peek.status(p) === "pending" ? (p.catch(() => {}), { pending: true }) : outcome(p);
+    // A taken slot throws ERR_INVALID_STATE from the call, not its promise.
+    const begin = call => { try { return call(); } catch (e) { return Promise.reject(new Error("threw " + e.message)); } };
+    report.evaluate = await settledNow(hungEvaluate);
+    report.cdp = await settledNow(hungCdp);
+
+    // While the renderer is dead, a page operation is refused on the spot.
+    report.evaluateWhileCrashed = await settledNow(begin(() => view.evaluate("'too early'")));
+    report.resizeWhileCrashed = await settledNow(begin(() => view.resize(120, 120)));
+    // cdp() keeps Chrome's own semantics: the browser holds the command and
+    // fails it with "Target crashed" once a navigation recreates the renderer.
+    const cdpWhileCrashed = outcome(begin(() => view.cdp("DOM.getDocument")));
+    report.reload = await outcome(begin(() => view.reload()));
+    report.cdpWhileCrashed = await cdpWhileCrashed;
+    report.after = await outcome(begin(() => view.evaluate("'alive at ' + " + JSON.stringify(view.url))));
+    // The refused resize() left the view's own idea of its size alone:
+    // scroll() still aims its wheel event at the centre of the 100x100 view.
+    await view.scroll(0, 10);
+    const { x, y } = await view.evaluate("__fake_last_input");
+    report.scrollCentre = [x, y];
+    view.close();
+    print(report);
+  `);
+  const crashed = { rejected: "page crashed (renderer process died)" };
+  const refused = { rejected: "page crashed (renderer process died), reload() or navigate() to recover" };
+  expect(result).toEqual({
+    evaluateStatus: "rejected",
+    cdpStatus: "rejected",
+    evaluate: crashed,
+    cdp: crashed,
+    evaluateWhileCrashed: refused,
+    resizeWhileCrashed: refused,
+    reload: {},
+    cdpWhileCrashed: { rejected: "Target crashed" },
+    after: { resolved: "alive at http://fake/crashed-and-reloaded" },
+    scrollCentre: [50, 50],
+  });
+});
+
+// History navigation is a navigation too: Chrome answers
+// Page.getNavigationHistory from the browser while the renderer is dead, and
+// Page.navigateToHistoryEntry recreates it. So goBack() must not be refused.
+test.concurrent("goBack() recovers a crashed view too", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/one");
+    await view.navigate("http://fake/two");
+    const crashed = new Promise(resolve => view.addEventListener("Inspector.targetCrashed", resolve));
+    view.cdp("Page.crash").catch(() => {});
+    await crashed;
+    const back = await outcome(view.goBack());
+    print({ back, url: view.url, value: await outcome(view.evaluate("'alive'")) });
+    view.close();
+  `);
+  expect(result).toEqual({ back: {}, url: "http://fake/one", value: { resolved: "alive" } });
+});
+
+// The crash rejection is not a requested teardown, so a pending operation
+// nothing holds has to surface as an unhandled rejection, the way a browser
+// death does.
+test.concurrent("a floating operation killed by a renderer crash stays loud", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = newView();
+    await view.navigate("http://fake/");
+    view.evaluate("__fake_no_reply()"); // floating: nobody handles it
+    view.cdp("Page.crash").catch(() => {});
+    // Bounded so the scenario still reports when the report never comes.
+    const deadline = Date.now() + 2000;
+    while (unhandled.length === 0 && Date.now() < deadline) await Bun.sleep(10);
+    // Nothing announces "no second report is coming"; this is a bounded
+    // window for one to appear.
+    await Bun.sleep(50);
+    view.close();
+    print(unhandled);
+  `);
+  expect(result).toEqual(["page crashed (renderer process died)"]);
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

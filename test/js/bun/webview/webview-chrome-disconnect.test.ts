@@ -197,6 +197,9 @@ test.concurrent.each([
     `mock.emit("Target.detachedFromTarget", { sessionId: "S1", targetId: "T1" })`,
     "page detached (crashed or closed)",
   ],
+  // The tab's renderer process dies. Chrome reports it on the view's own
+  // session, not at browser level, and keeps the session attached.
+  ["Inspector.targetCrashed", `mock.emit("Inspector.targetCrashed", {}, "S1")`, "page crashed (renderer process died)"],
 ])("%s during a load rejects navigate() and clears loading", async (_, takePageAway, reason) => {
   const result = await runScenario(`
     const mock = startMockCDP();

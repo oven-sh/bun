@@ -1,7 +1,20 @@
 import { CSRF, type CSRFAlgorithm } from "bun";
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 describe("Bun.CSRF", () => {
   const secret = "this-is-my-super-secure-secret-key";
+
+  // A token is timestamp (8) | nonce (16) | expiresIn (8), big-endian, then an
+  // HMAC over those 32 bytes. This signs one that was issued `age` ms ago, so
+  // that an expiry check does not have to sleep.
+  const tokenIssued = (age: number, expiresIn: number) => {
+    const payload = Buffer.alloc(32);
+    payload.writeBigUInt64BE(BigInt(Date.now() - age), 0);
+    crypto.getRandomValues(payload.subarray(8, 24));
+    payload.writeBigUInt64BE(BigInt(expiresIn), 24);
+    const signature = createHmac("sha256", secret).update(payload).digest();
+    return Buffer.concat([payload, signature]).toString("base64url");
+  };
 
   test("CSRF exists", () => {
     expect(CSRF).toBeDefined();
@@ -81,22 +94,16 @@ describe("Bun.CSRF", () => {
     expect(isValid).toBe(false);
   });
 
-  test("token with expiresIn parameter works", async () => {
-    // Generate a token with a longer expiration (1 second)
-    const token = CSRF.generate(secret, {
-      expiresIn: 100,
-    });
-
-    // Should be valid immediately
+  test("token with expiresIn parameter works", () => {
+    const MINUTE = 60 * 1000;
+    const token = CSRF.generate(secret, { expiresIn: MINUTE });
     expect(CSRF.verify(token, { secret })).toBe(true);
+    // generate() embeds the expiresIn it was given.
+    expect(Buffer.from(token, "base64url").readBigUInt64BE(24)).toBe(BigInt(MINUTE));
 
-    // Should still be valid after a short time
-    await Bun.sleep(10);
-    expect(CSRF.verify(token, { secret })).toBe(true);
-
-    // Ensure that expiration works properly
-    await Bun.sleep(100);
-    expect(CSRF.verify(token, { secret })).toBe(false);
+    // verify() accepts a token until it is older than its expiresIn, then rejects it.
+    expect(CSRF.verify(tokenIssued(MINUTE / 2, MINUTE), { secret })).toBe(true);
+    expect(CSRF.verify(tokenIssued(2 * MINUTE, MINUTE), { secret })).toBe(false);
   });
 
   test("token format doesn't affect verification", () => {

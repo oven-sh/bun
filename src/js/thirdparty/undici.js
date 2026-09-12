@@ -70,7 +70,6 @@ class BodyReadable extends ReadableFromWeb {
   }
 
   get bodyUsed() {
-    // return this.#response.bodyUsed;
     return this.#bodyUsed;
   }
 
@@ -188,7 +187,6 @@ async function request(
   if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
   method = method && typeof method === "string" ? method.toUpperCase() : null;
-  // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");

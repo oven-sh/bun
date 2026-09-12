@@ -561,20 +561,6 @@ extern "C" ssize_t sys_pwritev2(int fd, const struct iovec* iov, int iovcnt,
     make_pos_h_l(&pos_h, &pos_l, offset);
     return syscall(__NR_pwritev2, fd, iov, iovcnt, pos_l, pos_h, flags);
 }
-#else
-extern "C" ssize_t preadv2(int fd, const struct iovec* iov, int iovcnt,
-    off_t offset, unsigned int flags)
-{
-    errno = ENOSYS;
-    return -1;
-}
-extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
-    off_t offset, unsigned int flags)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
 #endif
 
 extern "C" void Bun__onExit();

@@ -348,8 +348,6 @@ export function initializeNextTickQueue(
 ) {
   var queue;
   var tickInitHooks;
-  var process;
-  var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
   var reportUncaughtException = reportUncaughtExceptionFn;
 

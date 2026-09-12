@@ -367,33 +367,12 @@ const fn system_errno_max_dense() -> u32 {
     SystemErrno::MAX as u32
 }
 
-/// Raw Win32 `GetLastError()` code → `SystemErrno` tag name, via the
-/// `Win32Error` mapping table. Restores `error.code` fidelity (ENOENT,
-/// EACCES, ...) for `?`-propagated `std::io::Error`s on Windows. Exists on all
-/// platforms because the `ErrnoNames` link-interface is platform-independent;
-/// always `None` off Windows.
-#[inline]
-fn win32_errno_name(code: u32) -> Option<&'static str> {
-    #[cfg(windows)]
-    {
-        let code = u16::try_from(code).ok()?;
-        SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
-            .map(<&'static str>::from)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = code;
-        None
-    }
-}
-
 // Wire the above into bun_core's `ErrnoNames` hook. `()` owner — pure
 // stateless functions; the handle is the const `ErrnoNames::SYS`.
 bun_core::link_impl_ErrnoNames! {
     Sys for extern () => |_this| {
         name(errno) => system_errno_name(errno),
         max_dense() => system_errno_max_dense(),
-        win32_name(code) => win32_errno_name(code),
     }
 }
 
@@ -510,27 +489,6 @@ mod errno_name_tests {
             assert_eq!((-524isize as usize).get_errno(), E::EUNKNOWN);
             assert_eq!((-2isize as usize).get_errno(), E::ENOENT);
             assert_eq!(7usize.get_errno(), E::SUCCESS);
-        }
-    }
-
-    /// `win32_errno_name` translation contract: known `GetLastError()` codes
-    /// map to POSIX names on Windows, unmapped/out-of-range codes are `None`,
-    /// and the helper is a constant `None` off Windows.
-    #[test]
-    fn win32_errno_names() {
-        #[cfg(windows)]
-        {
-            // ERROR_FILE_NOT_FOUND / ERROR_ACCESS_DENIED.
-            assert_eq!(win32_errno_name(2), Some("ENOENT"));
-            assert_eq!(win32_errno_name(5), Some("EPERM"));
-            // Unmapped Win32 code and the `u16::try_from` overflow fallback.
-            assert_eq!(win32_errno_name(0), None);
-            assert_eq!(win32_errno_name(u32::MAX), None);
-        }
-        #[cfg(not(windows))]
-        {
-            assert_eq!(win32_errno_name(2), None);
-            assert_eq!(win32_errno_name(u32::MAX), None);
         }
     }
 

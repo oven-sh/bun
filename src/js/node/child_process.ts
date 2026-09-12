@@ -49,10 +49,6 @@ const kFromNode = Symbol("kFromNode");
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
   $debug("child_process: debug mode on");
-  globalThis.__lastId = null;
-  globalThis.__getId = () => {
-    return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
-  };
 }
 
 // Sections:
@@ -1021,10 +1017,6 @@ function normalizeSpawnArguments(file, args, options) {
 
   const env = options.env || process.env;
   const bunEnv = {};
-
-  // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
-  // // collect coverage for programs that spawn with white-listed environment.
-  // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
 
   let envKeys: string[] = [];
   for (const key in env) {

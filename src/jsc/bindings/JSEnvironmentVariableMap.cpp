@@ -22,11 +22,9 @@
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
-#include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
@@ -343,7 +341,6 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
-extern "C" int Bun__getTLSRejectUnauthorizedValue();
 extern "C" void Bun__setTLSRejectUnauthorizedValue(int value);
 extern "C" int Bun__getVerboseFetchValue();
 extern "C" void Bun__setVerboseFetchValue(int value);

@@ -37,7 +37,6 @@
 #include "sqlite3_local.h"
 static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
     "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
-static inline int lazyLoadSQLite() { return 0; }
 static constexpr bool lazy_sqlite3_has_session = true;
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
 #endif
@@ -817,8 +816,6 @@ static JSValue rowToObjectCached(JSGlobalObject* globalObject, ThrowScope& scope
 
 static JSValue rowToArray(JSGlobalObject* globalObject, ThrowScope& scope, sqlite3_stmt* stmt, int numCols, bool useBigInts)
 {
-    auto& vm = getVM(globalObject);
-    (void)vm;
     JSArray* row = constructEmptyArray(globalObject, nullptr, numCols);
     RETURN_IF_EXCEPTION(scope, {});
     for (int i = 0; i < numCols; ++i) {
@@ -1250,8 +1247,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncClose, (JSGlobalObject * globalObject, Ca
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    (void)vm;
     JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());
     if (self && self->isOpen()) {
         self->closeInternal();

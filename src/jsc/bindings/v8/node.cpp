@@ -14,7 +14,6 @@ static_assert(REPORTED_NODEJS_ABI_VERSION == NODE_MODULE_VERSION,
 
 using v8::Context;
 using v8::HandleScope;
-using v8::Isolate;
 using v8::Local;
 using v8::MaybeLocal;
 using v8::Object;

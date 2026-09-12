@@ -44,7 +44,6 @@ void DisposeGlobal(uintptr_t* location)
 {
     if (location) weakHandleParameters().remove(location);
     // TODO free up a slot in the handle scope
-    (void)location;
 }
 
 void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type)

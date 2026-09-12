@@ -62,7 +62,6 @@ struct node_module;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "headers-handwritten.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
@@ -74,15 +73,6 @@ struct node_module;
 
 namespace Bun {
 class JSCommonJSExtensions;
-class InternalModuleRegistry;
-class JSMockModule;
-class JSMockFunction;
-}
-
-namespace WebCore {
-class GlobalEventScope;
-class SubtleCrypto;
-class EventTarget;
 }
 
 extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
@@ -140,11 +130,6 @@ public:
 
     DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
 
-    const DOMGuardedObjectSet& guardedObjects() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
-    {
-        ASSERT(!Thread::mayBeGCThread());
-        return m_guardedObjects;
-    }
     DOMGuardedObjectSet& guardedObjects(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         ASSERT(!vm().heap.mutatorShouldBeFenced());
@@ -339,7 +324,6 @@ public:
         return Bun__ZigGlobalObject__uvLoop(m_bunVM);
     }
 #endif
-    bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
@@ -497,7 +481,6 @@ public:
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
                                                                                                              \
-    /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \

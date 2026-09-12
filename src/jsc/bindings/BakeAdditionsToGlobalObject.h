@@ -2,7 +2,6 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
-#include "headers-handwritten.h"
 
 namespace Bun {
 using namespace JSC;

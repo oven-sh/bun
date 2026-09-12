@@ -53,7 +53,6 @@ public:
         Pbkdf2Params,
         RsaHashedKeyGenParams,
         RsaHashedImportParams,
-        RsaKeyGenParams,
         RsaOaepParams,
         RsaPssParams,
         X25519Params,

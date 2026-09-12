@@ -165,7 +165,6 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
 void *us_quic_socket_ext(us_quic_socket_t *s);
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
-void us_quic_socket_close(us_quic_socket_t *s);
 
 #ifdef __cplusplus
 }

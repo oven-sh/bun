@@ -26,7 +26,6 @@ public:
         IsEval = 2,
         IsConstructor = 4,
         IsNative = 8,
-        IsWasm = 16,
         IsFunction = 32,
         IsAsync = 64,
     };

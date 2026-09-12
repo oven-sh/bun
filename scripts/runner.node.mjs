@@ -1000,7 +1000,7 @@ async function runTests() {
             .replaceAll("\\", "/"),
         );
 
-      const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
+      const { ok, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
@@ -2853,7 +2853,7 @@ function formatTestToMarkdown(result, concise, retries, unlisted = false) {
       if (!error) {
         continue;
       }
-      const { file, line } = error;
+      const { line } = error;
       if (line) {
         errorLine = line;
         break;
@@ -3111,7 +3111,7 @@ function generateJUnitReport(outfile, results) {
   const testSuites = new Map();
 
   for (const result of results) {
-    const { testPath, ok, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
+    const { testPath, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
 
     if (!testSuites.has(testPath)) {
       testSuites.set(testPath, {

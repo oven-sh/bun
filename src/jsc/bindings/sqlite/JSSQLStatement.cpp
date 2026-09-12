@@ -64,13 +64,6 @@ static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
 // i.e. it shouldn't have any impact on startup time
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
-
-#else
-static inline int lazyLoadSQLite()
-{
-    return 0;
-}
-
 #endif
 /* ******************************************************************************** */
 
@@ -334,9 +327,6 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows);
 
-JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
-JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
-
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
 
@@ -391,7 +381,6 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 
 class SQLiteBindingsMap {
 public:
-    SQLiteBindingsMap() = default;
     SQLiteBindingsMap(uint16_t count = 0, bool trimLeadingPrefix = false)
     {
         this->trimLeadingPrefix = trimLeadingPrefix;

@@ -47,16 +47,12 @@ pub use bun_io::PipeReadScratch;
 bun_dispatch::link_interface! {
     pub JsEventLoop[Jsc] {
         fn iteration_number() -> u64;
-        fn file_polls() -> *mut bun_io::file_poll::Store;
-        fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
         fn tick();
         fn auto_tick();
         fn auto_tick_active();
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
-        fn stdout() -> *mut ();
-        fn stderr() -> *mut ();
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);

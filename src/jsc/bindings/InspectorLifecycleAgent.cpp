@@ -114,13 +114,11 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::preventExit()
 {
-    m_preventingExit = true;
     return {};
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::stopPreventingExit()
 {
-    m_preventingExit = false;
     return {};
 }
 

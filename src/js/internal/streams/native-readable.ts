@@ -111,7 +111,6 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
 // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
 // This is so the consumer of the stream can terminate the stream early if they know
 // how many bytes they want to read (ie. when reading only part of a file)
-// ObjectDefinePrivateProperty(NativeReadable.prototype, "_getRemainingChunk", );
 function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   maxToRead ??= stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];

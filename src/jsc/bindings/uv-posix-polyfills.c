@@ -29,8 +29,6 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 #include "uv-posix-polyfills-darwin.c"
 #elif defined(__FreeBSD__)
 #include "uv-posix-polyfills-posix.c"
-#elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
-#include "uv-posix-polyfills-posix.c"
 #endif
 
 uv_pid_t uv_os_getpid()

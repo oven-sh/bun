@@ -260,11 +260,6 @@ export const tart = {
       await spawnScp({ ...connectOptions, source, destination });
     };
 
-    const rdp = async () => {
-      const connectOptions = await connect();
-      await spawnRdp({ ...connectOptions });
-    };
-
     const close = async () => {
       await this.deleteVm(name);
     };

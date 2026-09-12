@@ -230,7 +230,6 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 
 $visibility = "Private";
 export function createRequireCache() {
-  var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {
       return { ...proxy };
@@ -270,7 +269,6 @@ export function createRequireCache() {
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
       $requireMap.$delete(key);
       $esmRegistryDelete(key);
       $evictIsolationSourceProviderCache(key);

@@ -161,9 +161,7 @@ pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
-pub use bun_windows_sys::advapi32;
 pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
-pub use bun_windows_sys::user32;
 pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
 pub use bun_windows_sys::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
@@ -571,8 +569,7 @@ pub use bun_windows_sys::externs::{
 // live in bun_windows_sys::externs; Zeroable impls for these nominal types
 // live in bun_core/lib.rs (orphan-rule home). Do NOT re-declare here.
 pub use bun_windows_sys::externs::{
-    IO_COUNTERS, JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
+    IO_COUNTERS, JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JobObjectExtendedLimitInformation,
 };
 
@@ -1232,8 +1229,6 @@ pub fn detect_runtime_version() -> &'static str {
 pub use bun_windows_sys::externs::InitializeProcThreadAttributeList;
 
 pub use bun_windows_sys::externs::UpdateProcThreadAttribute;
-
-pub use bun_windows_sys::externs::IsProcessInJob;
 
 pub(crate) const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x80000;
 pub(crate) const PROC_THREAD_ATTRIBUTE_JOB_LIST: DWORD = 0x2000D;

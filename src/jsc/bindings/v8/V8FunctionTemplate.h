@@ -72,11 +72,6 @@ private:
     {
         return Data::localToObjectPointer<shim::FunctionTemplate>();
     }
-
-    const shim::FunctionTemplate* localToObjectPointer() const
-    {
-        return Data::localToObjectPointer<shim::FunctionTemplate>();
-    }
 };
 
 } // namespace v8

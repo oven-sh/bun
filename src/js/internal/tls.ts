@@ -5,7 +5,6 @@ function isPemObject(obj: unknown): obj is { pem: unknown } {
 }
 
 function isPemArray(obj: unknown): obj is [{ pem: unknown }] {
-  // if (obj instanceof Object && "pem" in obj) return isValidTLSArray(obj.pem);
   return $isArray(obj) && obj.every(isPemObject);
 }
 

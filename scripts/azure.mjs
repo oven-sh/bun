@@ -464,7 +464,7 @@ export const azure = {
    * @returns {Promise<import("./machine.mjs").Machine>}
    */
   async createMachine(options) {
-    const { os, arch, tags, sshKeys } = options;
+    const { os, arch, tags } = options;
     const vmName = `bun-${os}-${arch}-${Date.now()}`;
     const publicIpName = `${vmName}-ip`;
     const nicName = `${vmName}-nic`;

@@ -14,7 +14,6 @@ ASSERT_V8_ENUM_MATCHES(PropertyAttribute, DontDelete)
 
 using JSC::Identifier;
 using JSC::JSFinalObject;
-using JSC::JSGlobalObject;
 using JSC::JSObject;
 using JSC::JSValue;
 using JSC::PutPropertySlot;

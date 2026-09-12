@@ -45,7 +45,6 @@ union OnLoadResultValue {
 struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
-    bool wasMock;
 };
 
 extern "C" bool isBunTest;

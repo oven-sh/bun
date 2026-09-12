@@ -1094,7 +1094,6 @@ dependencies = [
  "bun_errno",
  "bun_simdutf_sys",
  "const_format",
- "libc",
  "strum",
  "thiserror",
 ]

@@ -738,7 +738,6 @@ pub mod ntdll {
             Length: ULONG,
             FsInformationClass: FS_INFORMATION_CLASS,
         ) -> NTSTATUS;
-        pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
         // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
         // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
@@ -793,12 +792,6 @@ pub mod ntdll {
     }
     pub use super::RtlNtStatusToDosError;
 }
-pub use ntdll::NtClose;
-
-/// `user32` namespace (subset placeholder; fill in as needed).
-pub mod user32 {}
-/// `advapi32` namespace (subset placeholder; fill in as needed).
-pub mod advapi32 {}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
 // module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
@@ -960,8 +953,8 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
-        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
+        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW,
+        SetCurrentDirectoryW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -1358,26 +1351,6 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
-/// `SYSTEM_INFO` (`sysinfoapi.h`).
-#[repr(C)]
-pub struct SYSTEM_INFO {
-    pub wProcessorArchitecture: WORD,
-    pub wReserved: WORD,
-    pub dwPageSize: DWORD,
-    pub lpMinimumApplicationAddress: *mut c_void,
-    pub lpMaximumApplicationAddress: *mut c_void,
-    pub dwActiveProcessorMask: usize,
-    pub dwNumberOfProcessors: DWORD,
-    pub dwProcessorType: DWORD,
-    pub dwAllocationGranularity: DWORD,
-    pub wProcessorLevel: WORD,
-    pub wProcessorRevision: WORD,
-}
-#[cfg_attr(windows, link(name = "kernel32"))]
-unsafe extern "system" {
-    pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
-}
-
 pub const TOKEN_QUERY: DWORD = 0x0008;
 /// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
 pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
@@ -1455,8 +1428,6 @@ unsafe extern "C" {
 // bun_core re-export / impl-Zeroable against these types directly; do NOT
 // re-declare them downstream.
 
-/// `JOBOBJECTINFOCLASS::JobObjectAssociateCompletionPortInformation` (`winnt.h`).
-pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
@@ -1480,14 +1451,6 @@ pub struct PROCESS_BASIC_INFORMATION {
 }
 /// `PROCESSINFOCLASS::ProcessBasicInformation` (`winternl.h`).
 pub const ProcessBasicInformation: ULONG = 0;
-
-/// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
-    pub CompletionKey: LPVOID, // PVOID
-    pub CompletionPort: HANDLE,
-}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1780,8 +1743,6 @@ unsafe extern "system" {
         lpPreviousValue: *mut c_void, // [out, optional]
         lpReturnSize: *mut usize,     // [in, optional]
     ) -> BOOL;
-
-    pub fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut BOOL) -> BOOL;
 
     pub fn CreatePseudoConsole(
         size: COORD,

@@ -22,14 +22,6 @@ typedef struct EncodedSlice {
     size_t len;
 } EncodedSlice;
 
-#ifndef __cplusplus
-typedef uint8_t BunStringTag;
-typedef union BunStringImpl {
-    EncodedSlice encoded;
-    void* wtf;
-} BunStringImpl;
-
-#else
 namespace WTF {
 class StringImpl;
 class String;
@@ -66,7 +58,6 @@ enum class UWSResponseKind : int32_t {
     H2 = 2,
     H3 = 3,
 };
-#endif
 
 typedef struct BunString {
     BunStringTag tag;
@@ -202,7 +193,6 @@ inline constexpr BunPluginTarget BunPluginTargetNode = 2;
 inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
 typedef uint8_t ZigStackFrameCode;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeEval = 1;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeModule = 2;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeFunction = 3;
@@ -284,9 +274,6 @@ inline constexpr JSErrorCode JSErrorCodeSyntaxError = 4;
 inline constexpr JSErrorCode JSErrorCodeTypeError = 5;
 inline constexpr JSErrorCode JSErrorCodeURIError = 6;
 inline constexpr JSErrorCode JSErrorCodeAggregateError = 7;
-inline constexpr JSErrorCode JSErrorCodeOutOfMemoryError = 8;
-inline constexpr JSErrorCode JSErrorCodeStackOverflow = 253;
-inline constexpr JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 // Must be kept in sync with Loader in src/options_types/schema.rs
 typedef uint8_t BunLoaderType;
@@ -295,12 +282,8 @@ inline constexpr BunLoaderType BunLoaderTypeJSX = 1;
 inline constexpr BunLoaderType BunLoaderTypeJS = 2;
 inline constexpr BunLoaderType BunLoaderTypeTS = 3;
 inline constexpr BunLoaderType BunLoaderTypeTSX = 4;
-inline constexpr BunLoaderType BunLoaderTypeCSS = 5;
-inline constexpr BunLoaderType BunLoaderTypeFILE = 6;
 inline constexpr BunLoaderType BunLoaderTypeJSON = 7;
-inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
 inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
-inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
 inline constexpr BunLoaderType BunLoaderTypeMD = 21;
@@ -331,11 +314,6 @@ typedef void WebSocketHTTPClient;
 typedef void WebSocketHTTPSClient;
 typedef void WebSocketClient;
 typedef void WebSocketClientTLS;
-
-#ifndef __cplusplus
-typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
-typedef struct JSC::JSUint8Array JSC::JSUint8Array;
-#endif
 
 #ifdef __cplusplus
 

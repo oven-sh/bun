@@ -639,7 +639,7 @@ const aws = {
  * @returns {string}
  */
 export function getUserData(cloudInit) {
-  const { os, userData } = cloudInit;
+  const { os } = cloudInit;
 
   // For Windows, use PowerShell script
   if (os === "windows") {
@@ -656,7 +656,6 @@ export function getUserData(cloudInit) {
  */
 function getCloudInit(cloudInit) {
   const username = cloudInit["username"] || "root";
-  const password = cloudInit["password"] || crypto.randomUUID();
   const authorizedKeys = cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || [];
 
   let sftpPath = "/usr/lib/openssh/sftp-server";
@@ -678,13 +677,6 @@ function getCloudInit(cloudInit) {
       break;
     default:
       throw new Error(`Unsupported os: ${cloudInit["os"]}`);
-  }
-
-  let users;
-  if (username === "root") {
-    users = [`root:${password}`];
-  } else {
-    users = [`root:${password}`, `${username}:${password}`];
   }
 
   // https://cloudinit.readthedocs.io/en/stable/

@@ -1078,9 +1078,6 @@ var lazyDefaultSQL: Bun.SQL;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
-  // this will throw "attempt to assign to readonly property"
-  // Object.assign(defaultSQLObject, lazyDefaultSQL);
-  // exportsObject.default = exportsObject.sql = lazyDefaultSQL;
 }
 
 function ensureDefaultSQL() {

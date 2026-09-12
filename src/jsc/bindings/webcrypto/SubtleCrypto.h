@@ -42,7 +42,6 @@
 namespace JSC {
 class ArrayBufferView;
 class ArrayBuffer;
-class CallFrame;
 }
 
 namespace WebCore {

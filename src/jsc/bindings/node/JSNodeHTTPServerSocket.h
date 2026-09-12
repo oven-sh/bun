@@ -29,12 +29,6 @@ struct us_socket_stream_buffer_t {
 struct us_socket_t;
 }
 
-namespace uWS {
-template<bool SSL, bool IsNodeHttp>
-struct HttpResponseData;
-struct WebSocketData;
-}
-
 namespace WebCore {
 class JSNodeHTTPResponse;
 }
@@ -114,10 +108,6 @@ public:
      * until the request body has been fully parsed (Upgrade requests with a
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
-
-    /* Trailer fields received after the current request's chunked body, as a
-     * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
-     * when there are none. Clears the captured section. */
 
     /* Set the trailer fields (pre-rendered "name: value\r\n" lines) to write
      * between the terminating 0 chunk and the final CRLF of the current

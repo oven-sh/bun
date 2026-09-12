@@ -97,7 +97,6 @@ struct StringPtr {
     size_t m_size;
 };
 
-#define HTTP_BOTH 0
 #define HTTP_REQUEST 1
 #define HTTP_RESPONSE 2
 
@@ -189,9 +188,6 @@ public:
     bool m_haveFlushed = false;
 
     inline bool isInitialized() const { return m_parserData.settings != nullptr; }
-
-    // We don't use m_gotException. Instead, we use RETURN_IF_EXCEPTION
-    // bool m_gotException;
 
     size_t m_currentBufferLen;
     const char* m_currentBufferData;

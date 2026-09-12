@@ -31,7 +31,6 @@ public:
     }
 
     KeyObject& handle() { return m_handle; }
-    const KeyObject& handle() const { return m_handle; }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
     static void destroy(JSC::JSCell* cell) { static_cast<JSKeyObject*>(cell)->~JSKeyObject(); }

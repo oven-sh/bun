@@ -7,7 +7,6 @@
 
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
 #include "JSFetchHeaders.h"
 #include "HTTPLatin1String.h"
@@ -17,7 +16,6 @@
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
-#include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"

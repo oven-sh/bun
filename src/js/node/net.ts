@@ -2226,7 +2226,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     $debug("close handle");
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
-    // this[kBytesRead] = this._handle.bytesRead;
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
@@ -3080,7 +3079,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
 }
 
 function internalConnect(self, options, path);
-function internalConnect(self, options, address, port, addressType, localAddress, localPort, _flags?) {
+function internalConnect(self, options, address, port, addressType, localAddress, localPort) {
   $assert(self.connecting);
 
   let err;
@@ -3222,7 +3221,7 @@ function internalConnectMultiple(context, canceled?) {
     self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
   }
 
-  const { localPort, port, _flags } = context;
+  const { localPort, port } = context;
   const { address, family: addressType } = context.addresses[current];
   let localAddress;
   let err;
@@ -3299,7 +3298,6 @@ function internalConnectMultiple(context, canceled?) {
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
 
-  // const req = new TCPConnectWrap();
   const req = {};
   req.oncomplete = afterConnectMultiple.bind(undefined, context, current);
   req.address = address;
@@ -4278,7 +4276,6 @@ function createServer(options, connectionListener) {
 }
 
 function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
-  // while (args.length && args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {

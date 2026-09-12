@@ -321,8 +321,7 @@ impl PmVersionCommand {
         Ok(())
     }
 
-    /// `npm version` refuses a major, minor or patch above Number.MAX_SAFE_INTEGER. Below that
-    /// limit, `+ 1` cannot wrap.
+    /// node-semver's limit for major, minor and patch. It also keeps `+ 1` from wrapping.
     /// https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
     fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
         const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
@@ -539,8 +538,7 @@ impl PmVersionCommand {
         Self::increment_version(current_str, &current, version_type, &prerelease_id)
     }
 
-    /// The number after the prerelease identifier `identifier`. `None` when it is not a number
-    /// or `+ 1` does not fit. A u64 like `Tag::order_pre`: a u32 read 20250101123456 as a string.
+    /// `None` for a name, and for a number with no successor in the u64 `Tag::order_pre` compares in.
     fn next_prerelease_number(identifier: &[u8]) -> Option<u64> {
         bun_core::fmt::parse_decimal::<u64>(identifier)?.checked_add(1)
     }

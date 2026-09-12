@@ -431,6 +431,11 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
         bun_base64::encode_len(input)
     };
 
+    // Checked here so an over-MaxLength output fails before the allocate+encode, not after.
+    if to_len > BunString::max_length() {
+        return BunString::dead();
+    }
+
     if to_len < EXTERNAL_MIN_LEN {
         let (str, chars) = BunString::create_uninitialized_latin1(to_len);
         if str.is_dead() {

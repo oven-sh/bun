@@ -84,6 +84,18 @@ impl ClientSession {
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
+    /// The lsquic status of the live connection, or `-1` when `qsocket` is
+    /// unset. Feeds [`status_is_retry_worthy`].
+    fn conn_status(&self) -> core::ffi::c_int {
+        match self.qsocket_mut() {
+            Some(qs) => {
+                let mut buf = [0u8; 16];
+                qs.status(&mut buf)
+            }
+            None => -1,
+        }
+    }
+
     pub(crate) fn has_headroom(&self) -> bool {
         if self.closed {
             return false;
@@ -214,13 +226,16 @@ impl ClientSession {
         }
     }
 
-    /// A stream closed before any response headers arrived. If the request
-    /// hasn't been retried yet and the body wasn't a JS stream (which may
-    /// already be consumed), re-enqueue it on a fresh session — this is the
-    /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
-    /// port-reuse race where a pooled session goes stale between the
-    /// `matches()` check and the first stream open.
-    pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
+    /// Re-enqueue a stream that closed before any response headers on a fresh
+    /// session, up to `MAX_H3_RETRIES`. After the first retry, only a `fast`
+    /// failure of a replayable request (`not_applied` or idempotent) retries.
+    pub(crate) fn retry_or_fail(
+        &mut self,
+        stream: *mut Stream,
+        err: crate::Error,
+        fast: bool,
+        not_applied: bool,
+    ) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
@@ -229,17 +244,19 @@ impl ClientSession {
         let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
-        // `Stream.client` is a live backref while attached; `ParentRef::from`
-        // (NonNull → shared deref) reads the Copy `flags` field without
-        // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        // Shared deref only: no `&mut HTTPClient` may live across `detach()`.
+        let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        let retries = client_ref.h3_retries;
+        let replayable = not_applied || client_ref.method.is_idempotent();
+        let budget_left = retries < crate::MAX_H3_RETRIES && (retries == 0 || (fast && replayable));
+        if !budget_left || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
             return self.fail(stream, err);
         };
         // Same backref as above; short-lived write before detach().
-        client_mut(client_ptr).flags.h3_retried = true;
+        client_mut(client_ptr).h3_retries = retries + 1;
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
         self.closed = true;
@@ -349,7 +366,10 @@ impl ClientSession {
 
         if client.state.response_stage != HTTPStage::Body {
             if done {
-                // Stream closed before headers — handshake/reset failure.
+                // A timeout also closes every bound stream, so read the
+                // connection status rather than assuming a fast reset. The
+                // request bytes already went out, so it is not `not_applied`.
+                let fast = status_is_retry_worthy(self.conn_status());
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {
@@ -357,6 +377,8 @@ impl ClientSession {
                     } else {
                         crate::Error::ConnectionClosed
                     },
+                    fast,
+                    false,
                 );
             }
             return;
@@ -486,6 +508,17 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
+}
+
+/// Whether a terminal connection status is worth more than the first retry.
+/// Excludes the deterministic no-retry outcomes, where a fresh session fails
+/// the same way: a timeout (the peer never answered), a handshake failure, and
+/// a version-negotiation failure. A reset, a GOAWAY, or a peer close stays
+/// retry-worthy because a new connection to the origin can still succeed.
+pub(super) fn status_is_retry_worthy(st: core::ffi::c_int) -> bool {
+    st != quic::CONN_STATUS_TIMED_OUT
+        && st != quic::CONN_STATUS_HSK_FAILURE
+        && st != quic::CONN_STATUS_VERNEG_FAILURE
 }
 
 fn finish(client: &mut HTTPClient) {

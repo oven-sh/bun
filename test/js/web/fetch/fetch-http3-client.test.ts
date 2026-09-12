@@ -671,6 +671,40 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   }
 });
 
+// Repeated stale-session retry under concurrency. A fresh server binds the
+// same reusePort right before the old one stops abruptly, so the pooled
+// session goes stale again and again while many requests are in flight. When
+// a retry's fresh session also lands on the draining old socket, one retry is
+// not enough: each such request must keep retrying on a new session until it
+// reaches the live server, up to MAX_H3_RETRIES. Every request here reaches a
+// live server within the budget, so all of them resolve.
+test("keeps retrying a stale pooled session across repeated port reuse", async () => {
+  const CONCURRENCY = 8;
+  const ROUNDS = 20;
+  const mk = (port: number) =>
+    Bun.serve({ port, reusePort: true, tls, http3: true, http1: false, fetch: () => new Response("ok") });
+
+  let server = mk(0);
+  const port = server.port;
+  try {
+    for (let round = 0; round < ROUNDS; round++) {
+      const inflight: Promise<string>[] = [];
+      for (let i = 0; i < CONCURRENCY; i++) {
+        inflight.push(fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text()));
+      }
+      // Bind the replacement before dropping the current server so the retry
+      // always has a live origin on the same port to land on.
+      const next = mk(port);
+      server.stop(true);
+      server = next;
+      const bodies = await Promise.all(inflight);
+      expect(bodies).toEqual(Array(CONCURRENCY).fill("ok"));
+    }
+  } finally {
+    server.stop(true);
+  }
+});
+
 // Subprocess so the experimental flag is process-scoped and the in-process
 // server above (http1: false) doesn't interfere — this server keeps http1 on
 // so the first fetch goes over TCP and reads Alt-Svc.

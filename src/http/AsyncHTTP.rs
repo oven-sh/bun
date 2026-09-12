@@ -167,6 +167,7 @@ fn make_client<'a>(
         remaining_redirect_count: 127,
         allow_retry: false,
         h2_retries: 0,
+        h3_retries: 0,
         redirect_type,
         redirect: Vec::new(),
         prev_redirect: Vec::new(),

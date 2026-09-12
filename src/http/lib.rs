@@ -203,7 +203,6 @@ pub struct Flags {
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
     pub forced_protocol: Option<Protocol>,
-    pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
 }
 
@@ -225,7 +224,6 @@ impl Default for Flags {
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
             forced_protocol: None,
-            h3_retried: false,
             is_node_http_client: false,
         }
     }
@@ -337,6 +335,10 @@ const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 /// did not process the request, so re-dispatch from the top. Only reached
 /// for `.bytes` bodies (replayable).
 pub(crate) const MAX_H2_RETRIES: u8 = 5;
+
+/// Cap on re-dispatching an HTTP/3 request whose stream closed before any
+/// response headers. The gate is in `h3_client::ClientSession::retry_or_fail`.
+pub(crate) const MAX_H3_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
@@ -789,6 +791,8 @@ pub struct HTTPClient<'a> {
     /// where the server promises the request was not processed. Capped by
     /// `MAX_H2_RETRIES`.
     pub(crate) h2_retries: u8,
+    /// HTTP/3 re-dispatch count, capped by `MAX_H3_RETRIES`.
+    pub(crate) h3_retries: u8,
     pub(crate) redirect_type: FetchRedirect,
     pub(crate) redirect: Vec<u8>,
     /// The previous hop's `redirect` buffer, parked by `handle_response_metadata`

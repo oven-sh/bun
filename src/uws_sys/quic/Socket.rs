@@ -10,6 +10,13 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+/// `Socket::status` values for the deterministic, no-retry connection
+/// outcomes: no peer response, a failed handshake, and no common QUIC version.
+pub use bun_lsquic_sys::{
+    LSCONN_ST_HSK_FAILURE as CONN_STATUS_HSK_FAILURE, LSCONN_ST_TIMED_OUT as CONN_STATUS_TIMED_OUT,
+    LSCONN_ST_VERNEG_FAILURE as CONN_STATUS_VERNEG_FAILURE,
+};
+
 // `Socket` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Socket` is
 // ABI-identical to a non-null `*mut Socket` with no `noalias`/`readonly`
 // attribute. Shims taking only the handle + value types are `safe fn`; the

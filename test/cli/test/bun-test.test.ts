@@ -403,6 +403,42 @@ describe("bun test", () => {
       });
       expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
+    // https://github.com/oven-sh/bun/issues/42361
+    describe.each([
+      ["beforeAll", "(fail) beforeAll", "a beforeAll hook timed out after 10ms."],
+      ["afterAll", "(fail) afterAll", "an afterAll hook timed out after 10ms."],
+      ["beforeEach", "(fail) runs", "a beforeEach hook for this test timed out after 10ms."],
+      ["afterEach", "(fail) runs", "an afterEach hook for this test timed out after 10ms."],
+    ])("%s", (hook, label, message) => {
+      test("a timed out hook names the hook kind", () => {
+        const stderr = runTest({
+          input: `
+            import { ${hook}, test } from "bun:test";
+            ${hook}(async () => {
+              await Bun.sleep(1000);
+            }, 10);
+            test("runs", () => {});
+          `,
+          expectExitCode: 1,
+        });
+        expect(stderr).toContain(label);
+        expect(stderr).toContain(`^ ${message}`);
+        expect(stderr).not.toContain("beforeEach/afterEach");
+        expect(stderr).not.toContain("(unnamed)");
+      });
+    });
+    test("a timed out hook with a done callback names the hook kind", () => {
+      const stderr = runTest({
+        input: `
+          import { afterAll, test } from "bun:test";
+          afterAll(done => {}, 10);
+          test("runs", () => {});
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr).toContain("(fail) afterAll");
+      expect(stderr).toContain("^ an afterAll hook timed out after 10ms, before its done callback was called.");
+    });
   });
   describe("support for Github Actions", () => {
     test("should not group logs by default", () => {

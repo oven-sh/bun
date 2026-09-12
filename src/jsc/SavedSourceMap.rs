@@ -183,8 +183,7 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> bun_js_printer::Result<()> {
-        // Readers take a stored blob's header on trust. A transpiler cache hit
-        // for an entry with no sourcemap section passes an empty buffer here.
+        // A cache hit for an entry with no sourcemap section passes an empty buffer.
         if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {
             return Ok(());
         }

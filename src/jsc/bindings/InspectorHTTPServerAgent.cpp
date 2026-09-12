@@ -91,46 +91,6 @@ void InspectorHTTPServerAgent::serverRoutesUpdated(int serverId, int hotReloadId
 
     this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
 }
-void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->requestWillBeSent(WTF::move(request));
-}
-void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Response>&& response)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->responseReceived(WTF::move(response));
-}
-void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->bodyChunkReceived(WTF::move(chunk));
-}
-void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, WTF::move(opt_duration));
-}
-void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->requestHandlerException(WTF::move(error));
-}
 
 }
 

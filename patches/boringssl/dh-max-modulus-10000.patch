@@ -1,0 +1,15 @@
+--- a/include/openssl/dh.h
++++ b/include/openssl/dh.h
+@@ -53,8 +53,10 @@
+ // Properties.
+ 
+ // OPENSSL_DH_MAX_MODULUS_BITS is the maximum supported Diffie-Hellman group
+-// modulus, in bits.
+-#define OPENSSL_DH_MAX_MODULUS_BITS 8192
++// modulus, in bits. BoringSSL uses 8192 here; raised to OpenSSL's 10000 so
++// Node.js user code with 8193..10000-bit custom DH primes keeps working.
++// Still within BN_MONTGOMERY_MAX_WORDS * BN_BITS2 (16384).
++#define OPENSSL_DH_MAX_MODULUS_BITS 10000
+ 
+ // DH_bits returns the size of `dh`'s group modulus, in bits.
+ OPENSSL_EXPORT unsigned DH_bits(const DH *dh);

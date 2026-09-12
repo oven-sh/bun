@@ -635,6 +635,7 @@ impl ServerConfig {
             ..ServerConfig::default()
         };
         let mut has_hostname = false;
+        let mut has_port = false;
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
@@ -1083,6 +1084,7 @@ impl ServerConfig {
                 *tp = p;
             }
             port = p;
+            has_port = p != 0;
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
@@ -1118,6 +1120,11 @@ impl ServerConfig {
                 if has_hostname {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
+                    )));
+                }
+                if has_port {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Cannot specify both port and unix",
                     )));
                 }
 

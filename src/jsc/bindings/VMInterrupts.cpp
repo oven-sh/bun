@@ -1,6 +1,8 @@
 #include "root.h"
 #include "VMInterrupts.h"
 #include "BunClientData.h"
+#include "EventLoopTask.h"
+#include "ScriptExecutionContext.h"
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/VMTraps.h>
@@ -26,8 +28,8 @@ void VMInterrupts::service(JSC::VM& vm)
     }
     // A trap is also serviced from the runtime's exception checks, which can sit inside a DeferGC
     // scope (a cell allocated but not yet reachable from a root). A collection there is the one
-    // DeferGC exists to prevent, and a heap snapshot is a full collection. The trap cannot be fired
-    // again from here (handleTraps loops while a trap bit is set), so a timer fires it.
+    // DeferGC exists to prevent, and a heap snapshot is a full collection. The request cannot be
+    // made again from here (handleTraps loops while a trap bit is set), so a timer makes it.
     if (vm.heap.isDeferred()) {
         JSC::VMTraps::queue().dispatchAfter(1_ms, [vmHandle = Bun__VmHandle__retainRef(clientData.vmHandle)] {
             Bun__VmHandle__requestInterrupt(vmHandle, nullptr);
@@ -61,4 +63,19 @@ extern "C" void Bun__VMInterrupts__enqueue(JSC::VM* vm, Bun::VMInterrupts::Work*
 extern "C" void Bun__VMInterrupts__drop(Bun::VMInterrupts::Work* work)
 {
     delete work;
+}
+
+// The loop task the handle posts beside the trap: the way to a VM idle in its loop, where no script
+// services the trap.
+extern "C" WebCore::EventLoopTask* Bun__VMInterrupts__createServiceTask()
+{
+    return new WebCore::EventLoopTask([](WebCore::ScriptExecutionContext& context) {
+        auto& vm = context.vm();
+        // Once the queue is empty the trap has no script left to service it, and an unserviced trap
+        // keeps JSC's signal sender suspending this thread every 1ms for as long as the VM holds its
+        // API lock, which a worker does for its whole life. Cleared before the drain: a request that
+        // lands after this sets it again and is either drained below or serviced later.
+        vm.traps().clearTrap(JSC::VMTraps::NeedShellTimeoutCheck);
+        WebCore::clientData(vm)->interrupts.service(vm);
+    });
 }

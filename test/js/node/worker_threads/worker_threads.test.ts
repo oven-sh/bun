@@ -836,26 +836,30 @@ describe("getHeapSnapshot", () => {
 // (cpuUsage() and getHeapStatistics() need nothing from the worker thread and are covered apart.)
 describe("introspection while the worker runs synchronous JavaScript", () => {
   async function expectToSettleWhileBusy(worker: Worker, flag: Int32Array, calledBeforeOnline?: Promise<unknown>) {
-    if (calledBeforeOnline) await expect(calledBeforeOnline).resolves.toBeDefined();
+    try {
+      if (calledBeforeOnline) await expect(calledBeforeOnline).resolves.toBeDefined();
 
-    const handle = await worker.startCpuProfile();
-    const profile = JSON.parse(await handle.stop());
-    expect(profile.nodes[0].callFrame.functionName).toBe("(root)");
+      const handle = await worker.startCpuProfile();
+      const profile = JSON.parse(await handle.stop());
+      expect(profile.nodes[0].callFrame.functionName).toBe("(root)");
 
-    const stream = await worker.getHeapSnapshot();
-    expect(stream).toBeInstanceOf(Readable);
-    const json = JSON.parse(
-      await new Promise<string>(resolve => {
-        let text = "";
-        stream.on("data", chunk => (text += chunk));
-        stream.on("end", () => resolve(text));
-      }),
-    );
-    expect(json.nodes.length).toBeGreaterThan(0);
+      const stream = await worker.getHeapSnapshot();
+      expect(stream).toBeInstanceOf(Readable);
+      const json = JSON.parse(
+        await new Promise<string>((resolve, reject) => {
+          let text = "";
+          stream.on("data", chunk => (text += chunk));
+          stream.on("end", () => resolve(text));
+          stream.on("error", reject);
+        }),
+      );
+      expect(json.nodes.length).toBeGreaterThan(0);
 
-    // Everything above settled while the worker still spun: it leaves the loop only now.
-    expect(Atomics.load(flag, 0)).toBe(0);
-    Atomics.store(flag, 0, 1);
+      // Everything above settled while the worker still spun: it leaves the loop only now.
+      expect(Atomics.load(flag, 0)).toBe(0);
+    } finally {
+      Atomics.store(flag, 0, 1);
+    }
     const [exitCode] = await once(worker, "exit");
     expect(exitCode).toBe(0);
   }

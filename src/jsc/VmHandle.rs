@@ -52,6 +52,8 @@ unsafe extern "C" {
     fn Bun__VMInterrupts__enqueue(vm: &crate::VM, work: *mut c_void);
     /// Delete `work` unrun.
     pub(crate) fn Bun__VMInterrupts__drop(work: *mut c_void);
+    /// A new heap `WebCore::EventLoopTask` that services the VM's queue.
+    fn Bun__VMInterrupts__createServiceTask() -> *mut crate::cpp_task::CppTask;
 }
 
 #[repr(u8)]
@@ -409,10 +411,12 @@ impl VmHandle {
     }
 
     /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over; null
-    /// to only fire the trap) for the VM's thread and ask it to run its queue
-    /// at its next safepoint, even in the middle of synchronous script
-    /// (Node's `RequestInterrupt`). Any thread (a parent's
-    /// `worker.getHeapSnapshot()`); once closed the work is dropped unrun.
+    /// to only ask) for the VM's thread and ask it to run its queue at its
+    /// next safepoint, even in the middle of synchronous script (Node's
+    /// `RequestInterrupt`): a VM trap for script that does not return to the
+    /// loop, and a loop task for a VM idle in its loop. Any thread (a
+    /// parent's `worker.getHeapSnapshot()`); once closed the work is dropped
+    /// unrun.
     pub fn request_interrupt(&self, work: *mut c_void) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate before `Closed` ⇒ the VM and its
@@ -425,6 +429,8 @@ impl VmHandle {
                     Bun__VMInterrupts__enqueue(jsc_vm, work);
                 }
                 jsc_vm.notify_need_interrupt();
+                // SAFETY: a fresh heap task, handed over.
+                self.post_cpp_task(LoopKind::Regular, Bun__VMInterrupts__createServiceTask());
             }
         } else if !work.is_null() {
             // SAFETY: `work` is ours to give up (fn contract).

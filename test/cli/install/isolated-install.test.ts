@@ -554,6 +554,82 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+describe("link: dependencies", () => {
+  async function runBun(args: string[], cwd: string, env: NodeJS.Dict<string>) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The lockfile records a `link:` dependency by name only, so the `bun link`
+  // registration behind that name can be gone by the time the lockfile is
+  // installed: `bun unlink` removes the global link dir entry, deleting the
+  // package leaves the entry dangling.
+  test.concurrent.each([
+    {
+      name: "linked-pkg",
+      gone: "the package was unlinked",
+      async remove(pkgDir: string, env: NodeJS.Dict<string>) {
+        const result = await runBun(["unlink"], pkgDir, env);
+        expect(result.stdout).toContain(`success: unlinked package "linked-pkg"`);
+        expect(result.exitCode).toBe(0);
+      },
+    },
+    {
+      name: "@scope/linked-pkg",
+      gone: "the linked directory was deleted",
+      async remove(pkgDir: string) {
+        await rm(pkgDir, { recursive: true, force: true });
+      },
+    },
+  ])("installing from the lockfile fails when $gone", async ({ name, remove }) => {
+    using dir = tempDir("isolated-link-target", {
+      "pkg/package.json": JSON.stringify({ name, version: "1.0.0" }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { [name]: `link:${name}` } }),
+      "app/bunfig.toml": `[install]\nlinker = "isolated"\n`,
+    });
+    const pkgDir = join(String(dir), "pkg");
+    const appDir = join(String(dir), "app");
+    // `bun link` registers into $BUN_INSTALL/install/global; keep it private to this test.
+    const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "bun-install") };
+
+    let result = await runBun(["link"], pkgDir, env);
+    expect(result.stdout).toContain(`Success! Registered "${name}"`);
+    expect(result.exitCode).toBe(0);
+
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("Saved lockfile");
+    expect(result.exitCode).toBe(0);
+    expect(await file(join(appDir, "node_modules", name, "package.json")).json()).toEqual({ name, version: "1.0.0" });
+
+    await remove(pkgDir, env);
+
+    // Both reinstalling over the existing node_modules and installing into a
+    // fresh one (a clone with the lockfile checked in) must report the missing
+    // package and exit 1 instead of silently succeeding. As with every other
+    // failed entry, node_modules/<name> still points at the registration and
+    // resolves again once the package is re-linked.
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
+    expect(result.stdout).toContain("Failed to install 1 package");
+    expect(result.exitCode).toBe(1);
+
+    await rm(join(appDir, "node_modules"), { recursive: true, force: true });
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
+    expect(result.stdout).toContain("Failed to install 1 package");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

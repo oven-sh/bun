@@ -1013,6 +1013,9 @@ impl BunxCommand {
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
         let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
+        // Stale or untrusted tree only: `--force` re-links every cached package,
+        // which is slow on Windows (#41211); `--no-cache` alone keeps #4981 fixed.
+        let mut force_reinstall = false;
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
 
@@ -1075,6 +1078,7 @@ impl BunxCommand {
                                 BStr::new(out)
                             );
                             do_cache_bust = true;
+                            force_reinstall = true;
                             break 'try_run_existing;
                         }
                         let is_stale: bool = 'is_stale: {
@@ -1133,6 +1137,7 @@ impl BunxCommand {
                         if is_stale {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
+                            force_reinstall = true;
                             if opts.no_install {
                                 bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
@@ -1246,6 +1251,7 @@ impl BunxCommand {
                                             BStr::new(out)
                                         );
                                         do_cache_bust = true;
+                                        force_reinstall = true;
                                         break 'try_run_existing;
                                     }
                                     let stored = fs.dirname_store.append_slice(out)?;
@@ -1336,8 +1342,9 @@ impl BunxCommand {
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
             args.append(b"--no-cache").expect("unreachable"); // upper bound is known
+        }
 
-            // forcefully re-install packages in this mode too
+        if force_reinstall {
             args.append(b"--force").expect("unreachable"); // upper bound is known
         }
 

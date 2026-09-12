@@ -291,9 +291,14 @@ You can also configure this in `bunfig.toml`:
 # Only install package versions published at least 3 days ago
 minimumReleaseAge = 259200 # seconds
 
-# Exclude trusted packages from the age gate
-minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+# Exclude trusted packages, or individual versions you have vetted, from the age gate
+minimumReleaseAgeExcludes = ["@types/node", "typescript@5.4.5", "esbuild@0.21.4 || 0.21.5"]
 ```
+
+`minimumReleaseAgeExcludes` accepts two kinds of entries:
+
+- A package name (`"typescript"`) exempts every version of that package, including versions published in the future.
+- A package name followed by one or more exact versions (`"typescript@5.4.5"`, `"@types/node@20.11.0"`, `"esbuild@0.21.4 || 0.21.5"`) exempts only those versions. Other versions of the package still go through the age gate, so you can install a specific release early without disabling the gate for the package. Exempted versions are installed as-is: they also skip the stability check described below. Entries whose versions are not exact (`"typescript@^5"`, `"typescript@latest"`, `"typescript@"`) are ignored with a warning.
 
 When the minimum age filter is active:
 

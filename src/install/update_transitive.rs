@@ -12,7 +12,7 @@ use crate::dedupe;
 use crate::dependency::{self, Behavior};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
-use crate::npm::PackageManifest;
+use crate::npm::{MinimumReleaseAgeExcludes, PackageManifest};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
@@ -1239,7 +1239,7 @@ fn later_than(
     manifest: &PackageManifest,
     v: Semver::Version,
     min_age: Option<f64>,
-    excludes: Option<&[&[u8]]>,
+    excludes: Option<&MinimumReleaseAgeExcludes>,
 ) -> Box<[u8]> {
     if v.tag.has_pre() {
         return Box::default();

@@ -2529,6 +2529,23 @@ describe("`bun audit fix`", () => {
     await expectInstall(dir, "--frozen-lockfile", "--minimum-release-age", "3153600000");
   });
 
+  test.concurrent("a fix version listed in minimumReleaseAgeExcludes is not newer than the gate", async () => {
+    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+    using dir = await setupVulnerableADep(server);
+    await writeBunfig(dir, server, undefined, { minimumReleaseAgeExcludes: ["a-dep@1.0.4"] });
+
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--minimum-release-age", "3153600000");
+    expect(stdout).toContain("  ^ a-dep 1.0.2 -> 1.0.4");
+    expect(stdout).not.toContain("newer than --minimum-release-age");
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await lock(dir)).toContain('"a-dep@1.0.4"');
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+
+    await expectInstall(dir, "--frozen-lockfile", "--minimum-release-age", "3153600000");
+  });
+
   test.concurrent(
     "the lowest safe release is taken even when only it is newer than --minimum-release-age",
     async () => {

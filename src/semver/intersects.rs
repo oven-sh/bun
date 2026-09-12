@@ -84,10 +84,76 @@ impl<'a> Interval<'a> {
             _ => true,
         }
     }
+
+    /// Whether a version that satisfies both queries (prereleases included, per `List::satisfies_pre`) lies inside.
+    fn has_version(&self, a: &Query, b: &Query) -> bool {
+        if !self.is_non_empty() {
+            return false;
+        }
+        let (Some(l), Some(u)) = (self.lower, self.upper) else {
+            return true;
+        };
+
+        // The smallest version without a prerelease tag that the lower bound admits.
+        let release = if l.version.tag.has_pre() {
+            Version {
+                major: l.version.major,
+                minor: l.version.minor,
+                patch: l.version.patch,
+                ..Default::default()
+            }
+        } else if l.inclusive {
+            return true;
+        } else {
+            let Some(release) = next_release(l.version) else {
+                return false;
+            };
+            release
+        };
+
+        let admitted = match release.order_without_build(u.version, &[], u.buf) {
+            Ordering::Less => true,
+            Ordering::Equal => u.inclusive,
+            Ordering::Greater => false,
+        };
+        if admitted {
+            return true;
+        }
+
+        allows_pre_of(a, release) && allows_pre_of(b, release)
+    }
+}
+
+/// The smallest release above `v`'s major.minor.patch, with a carry (`>3` desugars to `>3.MAX.MAX`).
+fn next_release(v: Version) -> Option<Version> {
+    let release = |major, minor, patch| Version {
+        major,
+        minor,
+        patch,
+        ..Default::default()
+    };
+    if let Some(patch) = v.patch.checked_add(1) {
+        return Some(release(v.major, v.minor, patch));
+    }
+    if let Some(minor) = v.minor.checked_add(1) {
+        return Some(release(v.major, minor, 0));
+    }
+    v.major.checked_add(1).map(|major| release(major, 0, 0))
+}
+
+fn allows_pre_of(query: &Query, release: Version) -> bool {
+    let mut cur = Some(query);
+    while let Some(q) = cur {
+        if q.range.admits_pre_of(release) {
+            return true;
+        }
+        cur = q.next.as_deref();
+    }
+    false
 }
 
 impl Group {
-    /// Whether some version satisfies both groups; prerelease-exclusion rules are not modelled, comparators are compared directly.
+    /// Whether some version satisfies both groups.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
@@ -102,7 +168,7 @@ impl Group {
                 b = list_b.next.as_deref();
                 let mut i = base;
                 i.and_query(&list_b.head, other_buf);
-                if i.is_non_empty() {
+                if i.has_version(&list_a.head, &list_b.head) {
                     return true;
                 }
             }

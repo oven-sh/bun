@@ -74,11 +74,25 @@ fn set_callbacks(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     Ok(JSValue::UNDEFINED)
 }
 
-fn put_num(obj: JSValue, global: &JSGlobalObject, key: &str, value: u64) {
+fn put_num(obj: JSValue, global: &JSGlobalObject, key: &'static str, value: u64) {
     obj.put(global, key.as_bytes(), JSValue::js_number(value as f64));
 }
 
-fn put_str(obj: JSValue, global: &JSGlobalObject, key: &str, value: &'static [u8]) -> JsResult<()> {
+/// [`put_num`] for a key built at runtime with `format!`.
+fn put_num_formatted(obj: JSValue, global: &JSGlobalObject, key: &str, value: u64) -> JsResult<()> {
+    obj.put_may_be_index(
+        global,
+        &bun_core::String::borrow_utf8(key.as_bytes()),
+        JSValue::js_number(value as f64),
+    )
+}
+
+fn put_str(
+    obj: JSValue,
+    global: &JSGlobalObject,
+    key: &'static str,
+    value: &'static [u8],
+) -> JsResult<()> {
     let value = bun_core::String::static_(value).to_js(global)?;
     obj.put(global, key.as_bytes(), value);
     Ok(())
@@ -123,7 +137,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
 
     // Endpoint constants (node/src/quic/endpoint.cc Endpoint::InitPerContext)
     for (i, name) in endpoint::ENDPOINT_STATS_FIELDS.iter().enumerate() {
-        put_num(obj, global, &format!("IDX_STATS_ENDPOINT_{name}"), i as u64);
+        put_num_formatted(obj, global, &format!("IDX_STATS_ENDPOINT_{name}"), i as u64)?;
     }
     put_num(
         obj,
@@ -217,7 +231,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
     )?;
     put_str(obj, global, "DEFAULT_GROUPS", b"X25519:P-256:P-384:P-521")?;
     for (i, name) in session::SESSION_STATS_FIELDS.iter().enumerate() {
-        put_num(obj, global, &format!("IDX_STATS_SESSION_{name}"), i as u64);
+        put_num_formatted(obj, global, &format!("IDX_STATS_SESSION_{name}"), i as u64)?;
     }
     put_num(
         obj,
@@ -247,7 +261,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
 
     // Stream constants (node/src/quic/streams.cc Stream::InitPerContext)
     for (i, name) in stream::STREAM_STATS_FIELDS.iter().enumerate() {
-        put_num(obj, global, &format!("IDX_STATS_STREAM_{name}"), i as u64);
+        put_num_formatted(obj, global, &format!("IDX_STATS_STREAM_{name}"), i as u64)?;
     }
     put_num(
         obj,

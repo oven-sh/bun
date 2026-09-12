@@ -133,3 +133,23 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+// A file named `[0].tsx` gives a route parameter whose name is a canonical
+// array index. The params object has to keep it in its indexed storage, or
+// Object.keys() lists a key that `params[0]` cannot read.
+test("match() stores a param named like an array index under the index", () => {
+  using dir = tempDir("fsr-index-param", {
+    "index.tsx": "1",
+    "[0].tsx": "1",
+    "posts/[0]/[1].tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+  const single = router.match("/hello");
+  expect(single.params).toEqual({ 0: "hello" });
+  expect(single.params[0]).toBe("hello");
+
+  const nested = router.match("/posts/a/b");
+  expect(nested.params).toEqual({ 0: "a", 1: "b" });
+  expect([nested.params[0], nested.params[1]]).toEqual(["a", "b"]);
+});

@@ -1928,3 +1928,102 @@ describe("stream release after a queued END_STREAM", () => {
     }
   });
 });
+
+// nghttp2 keeps one token bucket per session for frames a peer has no reason to send often: 10,000
+// tokens, 330 back per second. A PRIORITY frame, a frame of an unknown type, and an ALTSVC or ORIGIN
+// frame sent to a server each take one. With none left the session ends with
+// GOAWAY(ENHANCE_YOUR_CALM), which node reports as ERR_HTTP2_ERROR "Protocol error".
+describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
+  const BURST = 10_000;
+  const PRIORITY = encodeFrame(FrameType.PRIORITY, 0, 1001, Buffer.from([0, 0, 0, 0, 16]));
+  const UNKNOWN = encodeFrame(0xfa, 0, 0, Buffer.from("12345"));
+  const ALTSVC = encodeFrame(0x0a, 0, 0, Buffer.concat([Buffer.from([0, 1]), Buffer.from('xh2=":1"')]));
+  const ORIGIN = encodeFrame(0x0c, 0, 0, Buffer.concat([Buffer.from([0, 1]), Buffer.from("x")]));
+  const PROTOCOL_ERROR_SESSION = { code: "ERR_HTTP2_ERROR", message: "Protocol error" };
+  const pingFrame = (id: number) => encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, id));
+  const isPingAck = (id: number) => (f: Frame) =>
+    f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === id;
+  const isFatal = (f: Frame) => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY;
+
+  /** `count` frames that cycle through `kinds`, so each kind makes up an equal share. */
+  const flood = (kinds: Buffer[], count: number) =>
+    Buffer.concat(Array.from({ length: count }, (_, i) => kinds[i % kinds.length]));
+
+  async function listenRaw(server: http2.Http2Server): Promise<RawH2> {
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    return c;
+  }
+
+  // BURST frames are always tolerated: the bucket starts with that many tokens. BURST more empty it
+  // unless they take 30 seconds to get here. With two kinds, both have to be charged for that.
+  test.each([
+    ["PRIORITY", [PRIORITY]],
+    ["unknown frame types", [UNKNOWN]],
+    ["ALTSVC and ORIGIN", [ALTSVC, ORIGIN]],
+  ])(
+    "server: %s",
+    async (_, kinds) => {
+      let sessionError: any;
+      const server = http2.createServer();
+      server.on("sessionError", e => (sessionError = e));
+      const c = await listenRaw(server);
+      try {
+        c.send(Buffer.concat([flood(kinds, BURST), pingFrame(1)]));
+        await c.waitFor(isPingAck(1), 10_000);
+        expect(c.frames.filter(isFatal)).toEqual([]);
+        c.send(flood(kinds, BURST));
+        expect(goawayErrorCode(await c.waitForGoaway(10_000))).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+        await c.waitClosed(10_000);
+        expect({ code: sessionError?.code, message: sessionError?.message }).toEqual(PROTOCOL_ERROR_SESSION);
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    },
+    30_000,
+  );
+
+  test("client: PRIORITY and unknown frame types", async () => {
+    const kinds = [PRIORITY, UNKNOWN];
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionError = once(client, "error");
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.socket!.write(Buffer.concat([flood(kinds, BURST), pingFrame(1)]));
+      await raw.waitFor(isPingAck(1), 10_000);
+      expect(raw.frames.filter(isFatal)).toEqual([]);
+      raw.socket!.write(flood(kinds, BURST));
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY, 10_000))).toBe(
+        ErrorCode.ENHANCE_YOUR_CALM,
+      );
+      const [err] = await sessionError;
+      expect({ code: err.code, message: err.message }).toEqual(PROTOCOL_ERROR_SESSION);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }, 30_000);
+
+  test("an empty bucket gets 330 tokens back per second", async () => {
+    const server = http2.createServer();
+    const c = await listenRaw(server);
+    try {
+      c.send(Buffer.concat([flood([PRIORITY], BURST), pingFrame(1)]));
+      await c.waitFor(isPingAck(1), 10_000);
+      await Bun.sleep(1100); // the refill under test is per whole second of wall clock
+      c.send(Buffer.concat([flood([PRIORITY], 300), pingFrame(2)]));
+      await c.waitFor(isPingAck(2), 10_000);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }, 30_000);
+});

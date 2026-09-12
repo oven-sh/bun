@@ -150,6 +150,47 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST / _RATE.
+/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.h#L109-L111
+const GLITCH_BURST: u32 = 10_000;
+const GLITCH_RATE: u32 = 330;
+
+/// nghttp2_ratelim: `rate` tokens per whole elapsed second, capped at `burst`.
+struct RateLimit {
+    burst: u32,
+    rate: u32,
+    tokens: u32,
+    last_refill: std::time::Instant,
+}
+
+impl RateLimit {
+    fn new(burst: u32, rate: u32) -> Self {
+        RateLimit {
+            burst,
+            rate,
+            tokens: burst,
+            last_refill: std::time::Instant::now(),
+        }
+    }
+
+    /// Returns false once the bucket is empty.
+    fn drain(&mut self) -> bool {
+        let elapsed = self.last_refill.elapsed().as_secs();
+        if elapsed > 0 {
+            let gain = u32::try_from(elapsed)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(self.rate);
+            self.tokens = self.tokens.saturating_add(gain).min(self.burst);
+            self.last_refill += std::time::Duration::from_secs(elapsed);
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -301,6 +342,8 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
+    /// nghttp2's glitch_ratelim.
+    glitch_limit: RateLimit,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -339,6 +382,7 @@ impl Connection {
             data_in_flight: None,
             terminated: false,
             obq_ack_pending: 0,
+            glitch_limit: RateLimit::new(GLITCH_BURST, GLITCH_RATE),
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -657,10 +701,8 @@ impl Connection {
             Some(FrameType::PushPromise) => self.handle_push_promise(sink, hdr, payload),
             Some(FrameType::AltSvc) => self.handle_altsvc(sink, hdr, payload),
             Some(FrameType::Origin) => self.handle_origin(sink, hdr, payload),
-            // PRIORITY has no scheduling effect here; structurally validated above, otherwise ignored.
-            Some(FrameType::Priority) => false,
-            // §4.1: unknown frame types are silently discarded.
-            _ => false,
+            // Both are ignored (§4.1 for unknown types). nghttp2 charges each one as a glitch.
+            Some(FrameType::Priority) | None => self.note_glitch(sink),
         }
     }
 
@@ -794,6 +836,15 @@ impl Connection {
             wire::lib_error::FLOODED,
             b"too many outbound control frames queued",
         );
+        true
+    }
+
+    /// nghttp2's session_update_glitch_ratelim. Returns true when the session was torn down.
+    fn note_glitch(&mut self, sink: &impl Sink) -> bool {
+        if self.glitch_limit.drain() {
+            return false;
+        }
+        self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"too many ignored frames");
         true
     }
 
@@ -1760,6 +1811,9 @@ impl Connection {
 
     /// RFC 7838 §4 ALTSVC: optional 2-byte origin-length + origin, then the Alt-Svc field value.
     fn handle_altsvc(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+        if self.is_server {
+            return self.note_glitch(sink);
+        }
         if payload.len() < 2 {
             return false; // malformed ALTSVC is ignored (§4)
         }
@@ -1769,12 +1823,9 @@ impl Connection {
         }
         let origin = &payload[2..2 + origin_len];
         let value = &payload[2 + origin_len..];
-        // RFC 7838 4 MUST-ignore rules: a server never accepts ALTSVC; on stream 0 the origin
-        // must be present; on a request stream it must be empty (the stream's own origin applies).
-        if self.is_server
-            || (hdr.stream_id == 0 && origin.is_empty())
-            || (hdr.stream_id != 0 && !origin.is_empty())
-        {
+        // RFC 7838 4 MUST-ignore rules: on stream 0 the origin must be present; on a request
+        // stream it must be empty (the stream's own origin applies).
+        if (hdr.stream_id == 0 && origin.is_empty()) || (hdr.stream_id != 0 && !origin.is_empty()) {
             return false;
         }
         sink.on_altsvc(hdr.stream_id, origin, value);
@@ -1787,7 +1838,7 @@ impl Connection {
         // only - a server receiving it must ignore it. The whole payload is delivered once; the
         // embedder iterates the (2-byte length, origin) entries and surfaces a single event.
         if hdr.stream_id != 0 || self.is_server {
-            return false;
+            return self.note_glitch(sink);
         }
         sink.on_origin(payload);
         false

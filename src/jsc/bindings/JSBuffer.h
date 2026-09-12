@@ -49,6 +49,10 @@ bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScop
 namespace Buffer {
 
 const size_t kMaxLength = MAX_ARRAY_BUFFER_SIZE;
+// Node's validateOffset bound (its kMaxLength, 2**53 - 1). Separate from
+// kMaxLength here because JSC caps an ArrayBuffer at 2**32 bytes, and a
+// start offset past the end of a buffer is an empty range, not an error.
+const size_t kMaxOffset = (size_t(1) << 53) - 1;
 const size_t kStringMaxLength = WTF::String::MaxLength;
 const size_t MAX_LENGTH = MAX_ARRAY_BUFFER_SIZE;
 const size_t MAX_STRING_LENGTH = WTF::String::MaxLength;

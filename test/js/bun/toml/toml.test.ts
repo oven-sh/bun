@@ -889,9 +889,133 @@ describe("TOML.stringify", () => {
     expect(TOML.stringify(undefined)).toBeUndefined();
   });
 
-  test("replacer is rejected; space is accepted and ignored", () => {
-    expect(() => TOML.stringify({}, (() => 1) as any)).toThrow("TOML.stringify does not support the replacer argument");
-    expect(TOML.stringify({ a: { b: 1 } }, null, 2)).toBe(TOML.stringify({ a: { b: 1 } }));
+  test("space is accepted and ignored", () => {
+    expect(TOML.stringify({ a: { b: 1 } }, null, 2)).toBe("[a]\nb = 1\n");
+    expect(TOML.stringify({ a: { b: 1 } }, null, "\t")).toBe("[a]\nb = 1\n");
+  });
+
+  // The replacer protocol (keys, holders, call order, how the list is read) is
+  // shared with JSON5.stringify and covered in json5.test.ts. These tests
+  // cover what is specific to the TOML output.
+  describe("replacer", () => {
+    test("a function replaces values in keyvals, tables, arrays and arrays of tables", () => {
+      const input = {
+        name: "app",
+        id: 7n,
+        server: { port: 8080n, secret: "s" },
+        points: [{ x: 1n, secret: "s" }, { x: 2n }],
+      };
+      const snapshot = structuredClone(input);
+      const calls: [string, boolean][] = [];
+      const replacer = function (this: unknown, key: string, value: unknown) {
+        calls.push([key, Array.isArray(this)]);
+        if (key === "secret") return undefined;
+        return typeof value === "bigint" ? Number(value) : value;
+      };
+      expect(TOML.stringify(input, replacer)).toBe(
+        'name = "app"\nid = 7\n\n[server]\nport = 8080\n\n[[points]]\nx = 1\n\n[[points]]\nx = 2\n',
+      );
+      expect(input).toEqual(snapshot);
+      // Once per property, in property order. An array element comes with its index, and the array is the holder.
+      expect(calls).toEqual([
+        ["", false],
+        ["name", false],
+        ["id", false],
+        ["server", false],
+        ["port", false],
+        ["secret", false],
+        ["points", false],
+        ["0", true],
+        ["x", false],
+        ["secret", false],
+        ["1", true],
+        ["x", false],
+      ]);
+    });
+
+    test("Date and Temporal values the replacer returns are still written as date/times", () => {
+      const input = {
+        date: new Date(0),
+        day: Temporal.PlainDate.from("1979-05-27"),
+        list: [Temporal.PlainTime.from("07:32:00")],
+      };
+      const keep = (key: string, value: unknown) => value;
+      expect(TOML.stringify(input, keep)).toBe(TOML.stringify(input));
+      expect(TOML.stringify(input, keep)).toBe("date = 1970-01-01T00:00:00Z\nday = 1979-05-27\nlist = [07:32:00]\n");
+      expect(TOML.stringify(input, ["date", "day"])).toBe("date = 1970-01-01T00:00:00Z\nday = 1979-05-27\n");
+      expect(TOML.stringify(input, (key, value) => (value instanceof Date ? value.getTime() : value))).toBe(
+        "date = 0\nday = 1979-05-27\nlist = [07:32:00]\n",
+      );
+    });
+
+    test("the layout follows the replaced values", () => {
+      const points = { points: [{ id: 1 }, { id: 2 }] };
+      expect(TOML.stringify(points)).toBe("[[points]]\nid = 1\n\n[[points]]\nid = 2\n");
+      expect(
+        TOML.stringify(points, (key, value: any) =>
+          key !== "" && typeof value === "object" && "id" in value ? `#${value.id}` : value,
+        ),
+      ).toBe('points = ["#1", "#2"]\n');
+
+      const names = { names: ["a", "b"] };
+      expect(TOML.stringify(names)).toBe('names = ["a", "b"]\n');
+      expect(TOML.stringify(names, (key, value) => (/^\d+$/.test(key) ? { name: value } : value))).toBe(
+        '[[names]]\nname = "a"\n\n[[names]]\nname = "b"\n',
+      );
+    });
+
+    test("replaced values follow the same rules as written values", () => {
+      const toNull = (key: string, value: unknown) => (key === "a" ? null : value);
+      expect(() => TOML.stringify({ a: 1 }, toNull)).toThrow(
+        "TOML cannot represent null (key 'a'); remove the key or use a sentinel value",
+      );
+      expect(TOML.stringify({ a: 1, b: 2 }, (key, value) => (key === "a" ? undefined : value))).toBe("b = 2\n");
+      expect(() => TOML.stringify({ list: [1, 2] }, (key, value) => (key === "0" ? undefined : value))).toThrow(
+        "TOML cannot represent undefined in an array",
+      );
+      expect(() => TOML.stringify({ n: 1 }, (key, value) => (key === "n" ? 1n : value))).toThrow(
+        "TOML.stringify cannot serialize BigInt",
+      );
+      const cyclic: any = { a: 1 };
+      cyclic.self = cyclic;
+      expect(() => TOML.stringify(cyclic, (key, value) => value)).toThrow("Converting circular structure to TOML");
+      expect(TOML.stringify(cyclic, (key, value) => (key === "self" ? "(cycle)" : value))).toBe(
+        'a = 1\nself = "(cycle)"\n',
+      );
+    });
+
+    test("the root goes through the replacer and must still come out as a table", () => {
+      expect(TOML.stringify(5, (key, value) => (key === "" ? { value } : value))).toBe("value = 5\n");
+      expect(() => TOML.stringify({ a: 1 }, () => 5)).toThrow(
+        "TOML.stringify expects an object at the top level (a TOML document is a table)",
+      );
+      expect(TOML.stringify({ a: 1 }, () => undefined)).toBeUndefined();
+    });
+
+    test("an array lists the keys to write in every table: root, sub-tables, inline tables and arrays of tables", () => {
+      const input = {
+        secret: "s",
+        name: "app",
+        server: { secret: "s", host: "h", tls: { secret: "s", cert: "c" } },
+        points: [{ secret: "s", id: 1 }],
+        mixed: [1, { secret: "s", id: 2 }],
+      };
+      expect(TOML.stringify(input, ["name", "server", "host", "tls", "cert", "points", "mixed", "id"])).toBe(
+        'name = "app"\nmixed = [1, { id = 2 }]\n\n[server]\nhost = "h"\n\n[server.tls]\ncert = "c"\n\n[[points]]\nid = 1\n',
+      );
+    });
+
+    test("an array decides the order of the keyvals and of the tables", () => {
+      const input = { a: 1, b: 2, t1: { x: 1 }, t2: { x: 2 } };
+      expect(TOML.stringify(input, ["b", "t2", "a", "t1", "x"])).toBe("b = 2\na = 1\n\n[t2]\nx = 2\n\n[t1]\nx = 1\n");
+      expect(TOML.stringify(input, [])).toBe("");
+    });
+
+    test("a replacer that is neither callable nor an array is ignored, as JSON.stringify ignores it", () => {
+      for (const replacer of [undefined, null, "a", 1, true, { 0: "a", length: 1 }]) {
+        expect(TOML.stringify({ a: 1, b: 2 }, replacer as any)).toBe("a = 1\nb = 2\n");
+      }
+    });
   });
 
   test("undefined, function, and symbol properties are skipped", () => {

@@ -152,6 +152,47 @@ function, and symbol properties are skipped (inside arrays they throw,
 since TOML arrays cannot have holes), and passing one of those as the
 top-level value returns `undefined`, as `JSON.stringify` does.
 
+#### Replacer
+
+The `replacer` argument works like the `replacer` of `JSON.stringify`.
+
+Pass a function to change or drop values. Bun calls it once for the document, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. The returned value follows the same rules as any other value:
+
+- `undefined` drops the property. For the document itself, `TOML.stringify` returns `undefined`.
+- `null` throws.
+- A `Date` or a Temporal value becomes a date/time.
+- An array of objects becomes an array of tables.
+
+```ts
+const config = { name: "app", token: "secret", limits: { requests: 100n } };
+
+Bun.TOML.stringify(config, (key, value) => {
+  if (key === "token") return undefined;
+  if (typeof value === "bigint") return Number(value);
+  return value;
+});
+// name = "app"
+//
+// [limits]
+// requests = 100
+```
+
+Pass an array of property names to write only those properties. Bun applies the list to the document and to every table in it, and writes the keys in the order of the list. Bun writes every element of an array.
+
+```ts
+const config = { token: "secret", name: "app", server: { token: "secret", port: 8080 } };
+
+Bun.TOML.stringify(config, ["name", "server", "port"]);
+// name = "app"
+//
+// [server]
+// port = 8080
+```
+
+Unlike `JSON.stringify`, Bun does not call `toJSON` methods. The replacer receives values such as `Date` objects as they are.
+
+Bun ignores a `replacer` that is neither a function nor an array, as `JSON.stringify` does.
+
 ---
 
 ## Module Import

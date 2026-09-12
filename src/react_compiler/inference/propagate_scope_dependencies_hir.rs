@@ -2288,7 +2288,7 @@ fn handle_function_deps(
                 None => block.terminal.evaluation_order(),
             };
             for phi in &block.phis {
-                ctx.visit_phi(phi, EvaluationOrder(first.0 - 1), env);
+                ctx.visit_phi(phi, EvaluationOrder(first.0.saturating_sub(1)), env);
             }
         }
 

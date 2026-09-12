@@ -6,7 +6,7 @@
 
 namespace WebCore {
 
-extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
+extern "C" void* Blob__dupeFromJSForFormData(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
 extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
@@ -48,9 +48,10 @@ public:
         return m_impl.get();
     }
 
+    // The value of a new FormData entry: https://xhr.spec.whatwg.org/#create-an-entry
     static RefPtr<Blob> create(JSC::JSValue impl)
     {
-        return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
+        return createAdopted(Blob__dupeFromJSForFormData(JSValue::encode(impl)));
     }
 
     static RefPtr<Blob> create(std::span<const uint8_t> bytes, JSC::JSGlobalObject* globalThis)

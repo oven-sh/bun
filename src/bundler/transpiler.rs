@@ -829,7 +829,7 @@ impl<'a> Transpiler<'a> {
                 };
                 env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
-            DotEnvBehavior::disable => {
+            DotEnvBehavior::disable | DotEnvBehavior::disable_without_inlining => {
                 env.load_process()?;
                 if env.is_production() {
                     self.options.set_production(true);

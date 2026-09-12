@@ -7214,13 +7214,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+                }
+
+                // Allow globalThis.X to match a define for X (e.g. globalThis.process.env.NODE_ENV)
+                if parts.len() == 1 && strings::eql(&parts[0], &ex.name) {
+                    return self.is_global_this(ex.target);
                 }
             }
             js_ast::ExprData::EImportMeta(_) => {
@@ -7231,48 +7233,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
             js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
+                if let js_ast::ExprData::EString(mut s) = index.index.data {
+                    if s.is_utf8() {
+                        if parts.len() > 1 {
                             let last = parts.len() - 1;
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match
                                 && self.is_dot_define_match(index.target, &parts[..last]);
                         }
+
+                        // Allow globalThis["X"] to match a define for X
+                        if parts.len() == 1 && strings::eql(&parts[0], s.slice(self.arena)) {
+                            return self.is_global_this(index.target);
+                        }
                     }
                 }
             }
-            js_ast::ExprData::EIdentifier(ex) => {
+            js_ast::ExprData::EIdentifier(_) => {
                 // The last expression must be an identifier
                 if parts.len() == 1 {
-                    let name = self.load_name_from_ref(ex.ref_);
-                    if !strings::eql(name, &parts[0]) {
-                        return false;
-                    }
-
-                    let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, name)
-                    else {
-                        return false;
-                    };
-
-                    // We must not be in a "with" statement scope
-                    if result.is_inside_with_scope {
-                        return false;
-                    }
-
-                    // when there's actually no symbol by that name, we return Ref.None
-                    // If a symbol had already existed by that name, we return .unbound
-                    return result.r#ref.is_empty()
-                        || self.symbols[result.r#ref.inner_index() as usize].kind
-                            == js_ast::symbol::Kind::Unbound;
+                    return self.is_unbound_identifier_named(expr, &parts[0]);
                 }
             }
             _ => {}
         }
         false
+    }
+
+    /// `expr` is the identifier `name`, unshadowed and not inside a `with`.
+    fn is_unbound_identifier_named(&mut self, expr: Expr, name: &[u8]) -> bool {
+        let js_ast::ExprData::EIdentifier(ex) = expr.data else {
+            return false;
+        };
+        let ident_name = self.load_name_from_ref(ex.ref_);
+        if !strings::eql(ident_name, name) {
+            return false;
+        }
+
+        let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, ident_name) else {
+            return false;
+        };
+
+        if result.is_inside_with_scope {
+            return false;
+        }
+
+        // No symbol by that name yields Ref::None; a pre-existing one is Unbound.
+        result.r#ref.is_empty()
+            || self.symbols[result.r#ref.inner_index() as usize].kind
+                == js_ast::symbol::Kind::Unbound
+    }
+
+    fn is_global_this(&mut self, expr: Expr) -> bool {
+        self.is_unbound_identifier_named(expr, b"globalThis")
     }
 }
 

@@ -1324,29 +1324,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // while iterating without laundering.
         let defines = p.define;
         if let Some(parts) = defines.dots_for(e_.name.slice()) {
+            let mut best_value: Option<&crate::DefineData> = None;
+            let mut best_value_len: usize = 0;
+            let mut best_drop_len: usize = 0;
             for define in parts.as_slice() {
-                if p.is_dot_define_match(expr, &define.parts) {
-                    if in_.assign_target == js_ast::AssignTarget::None {
-                        // Substitute user-specified defines
-                        if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
-                            return;
-                        }
+                if !p.is_dot_define_match(expr, &define.parts) {
+                    continue;
+                }
 
-                        if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
-                        {
-                            p.method_call_must_be_replaced_with_undefined = true;
-                        }
-                    }
+                if in_.assign_target == js_ast::AssignTarget::None
+                    && !define.data.valueless()
+                    && define.parts.len() >= best_value_len
+                {
+                    best_value = Some(&define.data);
+                    best_value_len = define.parts.len();
+                }
 
-                    // Copy the side effect flags over in case this expression is unused
+                if in_.assign_target == js_ast::AssignTarget::None
+                    && define.data.method_call_must_be_replaced_with_undefined()
+                    && in_.property_access_for_method_call_maybe_should_replace_with_undefined
+                    && define.parts.len() >= best_drop_len
+                {
+                    best_drop_len = define.parts.len();
+                }
+
+                // `a?.b` short-circuits observably, so `Symbol?.for(...)` is not pure.
+                if e_.optional_chain.is_none() {
                     if define.data.can_be_removed_if_unused() {
                         e_.can_be_removed_if_unused = true;
                     }
@@ -1357,9 +1360,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.call_can_be_unwrapped_if_unused =
                             define.data.call_can_be_unwrapped_if_unused();
                     }
-
-                    break;
                 }
+            }
+
+            if best_drop_len > best_value_len {
+                p.method_call_must_be_replaced_with_undefined = true;
+            } else if let Some(data) = best_value {
+                *e = p.value_for_define(expr.loc, in_.assign_target, is_delete_target, data);
+                return;
             }
         }
 

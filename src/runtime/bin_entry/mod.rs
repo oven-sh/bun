@@ -154,6 +154,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
+    // Everything below this point (crash handler included) calls into simdutf.
+    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+        abort_for_unsupported_simdutf();
+    }
+
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -246,4 +251,32 @@ fn use_mimalloc_in_dependencies() {
             Some(bun_alloc::mimalloc::mi_free),
         );
     }
+}
+
+unsafe extern "C" {
+    fn bun_abort_missing_simd(
+        requirement: *const core::ffi::c_char,
+        hint: *const core::ffi::c_char,
+    ) -> !;
+}
+
+#[cold]
+fn abort_for_unsupported_simdutf() -> ! {
+    // x64 builds are -march=nehalem, so simdutf's lowest kernel is SSE4.2.
+    let requirement: &core::ffi::CStr = if cfg!(target_arch = "x86_64") {
+        c"SSE4.2"
+    } else if cfg!(target_arch = "aarch64") {
+        c"NEON"
+    } else {
+        c"SIMD"
+    };
+
+    let hint: &core::ffi::CStr = if cfg!(target_arch = "x86_64") {
+        c"  Bun's x64 builds target Nehalem-class (2008+) CPUs.\n  If this is a VM, enable host CPU passthrough (e.g. -cpu host for QEMU/KVM).\n"
+    } else {
+        c""
+    };
+
+    // SAFETY: both arguments are NUL-terminated static C strings.
+    unsafe { bun_abort_missing_simd(requirement.as_ptr(), hint.as_ptr()) }
 }

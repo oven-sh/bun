@@ -5,6 +5,7 @@ use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
+use crate::webcore::readable_stream::SourceRef;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
@@ -72,7 +73,7 @@ pub type Source = readable_stream::NewSource<ByteStream>;
 /// can be collected (`SourceHandle::consumer_collected`).
 #[derive(Default)]
 pub struct ProducerHold {
-    source: Cell<Option<core::ptr::NonNull<Source>>>,
+    source: JsCell<Option<SourceRef<ByteStream>>>,
     parked: Cell<bool>,
 }
 
@@ -88,18 +89,17 @@ pub enum AfterDelivery {
 }
 
 impl ProducerHold {
-    /// Take the producer ref on the stream's source (JS thread).
-    ///
-    /// # Safety
-    /// `bytes` is the live ByteStream of a stream the caller holds.
-    pub unsafe fn hold(&self, bytes: *mut ByteStream) {
+    /// Take the producer ref on `readable`'s source, if it is a byte stream (JS thread; the
+    /// caller holds the stream).
+    pub fn hold(&self, readable: &readable_stream::ReadableStream) {
         self.release();
-        // SAFETY: fn contract; the ref keeps the Source alive past this call.
-        unsafe {
-            let source = Source::from_context_ptr(bytes);
-            (*source).increment_count();
-            self.source.set(core::ptr::NonNull::new(source));
-        }
+        self.source.set(SourceRef::byte_stream(readable));
+    }
+
+    /// [`hold`](Self::hold) for a source the caller has in hand.
+    pub fn hold_source(&self, source: &Source) {
+        self.release();
+        self.source.set(Some(SourceRef::new(source)));
     }
 
     pub fn is_held(&self) -> bool {
@@ -109,22 +109,16 @@ impl ProducerHold {
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and while parked the wrapper is not rooted.
     pub fn bytes(&self) -> Option<PinnedBytes> {
-        let source = self.source.get()?;
-        // SAFETY: live through our ref; no borrow of the source exists yet.
-        unsafe { (*source.as_ptr()).increment_count() };
-        Some(PinnedBytes(source))
+        self.source.get().clone().map(PinnedBytes)
     }
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
     /// still deliver a terminal chunk. Touches no JS cell.
     pub fn take(&self) -> Option<PinnedBytes> {
-        let source = self.source.take()?;
+        let source = self.source.replace(None)?;
         self.parked.set(false);
-        // SAFETY: still pinned by our ref, which the guard now owns.
-        unsafe {
-            (*source.as_ptr()).producer.set(streams::SourceHandle::None);
-            (*source.as_ptr()).wrapper_unrooted.set(false);
-        }
+        source.producer.set(streams::SourceHandle::None);
+        source.wrapper_unrooted.set(false);
         Some(PinnedBytes(source))
     }
 
@@ -151,9 +145,7 @@ impl ProducerHold {
             return false;
         }
         if let Some(source) = self.source.get() {
-            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
-            // source (the chunk it just delivered), which is why this is not a method call.
-            unsafe { Source::unroot_wrapper(source.as_ptr()) };
+            source.unroot_wrapper();
         }
         true
     }
@@ -165,8 +157,7 @@ impl ProducerHold {
             return false;
         }
         if let Some(source) = self.source.get() {
-            // SAFETY: as in `park`.
-            unsafe { Source::root_wrapper(source.as_ptr()) };
+            source.root_wrapper();
         }
         true
     }
@@ -179,20 +170,12 @@ impl Drop for ProducerHold {
 }
 
 /// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
-pub struct PinnedBytes(core::ptr::NonNull<Source>);
+pub struct PinnedBytes(SourceRef<ByteStream>);
 
 impl core::ops::Deref for PinnedBytes {
     type Target = ByteStream;
     fn deref(&self) -> &ByteStream {
-        // SAFETY: pinned by this guard's ref; ByteStream is `&self`-only.
-        unsafe { &(*self.0.as_ptr()).context }
-    }
-}
-
-impl Drop for PinnedBytes {
-    fn drop(&mut self) {
-        // SAFETY: balances the ref this guard owns. Can free the source.
-        unsafe { Source::decrement_count(self.0.as_ptr()) };
+        &self.0.context
     }
 }
 

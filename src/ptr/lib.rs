@@ -162,7 +162,48 @@ impl<T: ?Sized> BackRef<T, Mut> {
     }
 }
 
-impl<T, P> BackRef<T, P> {
+/// The root pointer of a value built by [`RefPtr::new_cyclic`], stored inside
+/// that value. It has no accessors of its own: the only way to use it is
+/// [`SelfRoot::this_ptr`], which takes the enclosing `&T` — so it cannot be
+/// followed before the value exists or after it is gone.
+#[repr(transparent)]
+pub struct SelfRoot<T>(pub(crate) core::ptr::NonNull<T>);
+
+impl<T> SelfRoot<T> {
+    /// The enclosing value as a [`ThisPtr`]. `owner` must be the value this
+    /// token is stored in (checked).
+    #[inline]
+    pub fn this_ptr(&self, owner: &T) -> ThisPtr<T> {
+        assert!(
+            core::ptr::eq(self.0.as_ptr().cast_const(), owner),
+            "SelfRoot used from a value it does not belong to"
+        );
+        // SAFETY: `owner` is a live `&T` at `self.0` (asserted), so the value is
+        // constructed; `self.0` keeps the allocation-root provenance a last
+        // release needs.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// The enclosing value as a root back-reference.
+    #[inline]
+    pub fn backref(&self, owner: &T) -> BackRef<T, Root> {
+        self.this_ptr(owner).into()
+    }
+}
+
+/// Provenance markers a placeholder [`BackRef::dangling`] may carry. Not
+/// [`Root`]: a `Root` back-reference can hand out a [`ThisPtr`], so it is
+/// only ever minted from a real one (see [`RefPtr::new_cyclic`]).
+pub trait DanglingOk: sealed::Sealed {}
+impl DanglingOk for Shared {}
+impl DanglingOk for Mut {}
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::Shared {}
+    impl Sealed for super::Mut {}
+}
+
+impl<T, P: DanglingOk> BackRef<T, P> {
     #[inline]
     pub const fn dangling() -> Self {
         BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
@@ -232,6 +273,13 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     #[inline]
     fn from(p: ThisPtr<T>) -> Self {
         BackRef(p.0, core::marker::PhantomData)
+    }
+}
+
+impl<T> From<ThisPtr<T>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        p.0
     }
 }
 
@@ -612,6 +660,14 @@ impl<T> ThisPtr<T> {
         self.0.as_ptr()
     }
 
+    /// Record this pointer as a write-capable back-reference (for handle enums
+    /// whose dispatcher forms the `&mut`). The holder takes on the `BackRef`
+    /// invariant.
+    #[inline]
+    pub fn backref_mut(self) -> BackRef<T, Mut> {
+        BackRef(self.0, core::marker::PhantomData)
+    }
+
     /// Fresh shared borrow of the pointee.
     ///
     /// Sound under the [`new`](Self::new) invariant: the pointee is live and
@@ -639,6 +695,49 @@ impl<T> core::ops::Deref for ThisPtr<T> {
     #[inline]
     fn deref(&self) -> &T {
         self.get()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OwnedThis<T> — single-owner heap allocation that hands out `ThisPtr`s.
+//
+// `Box<T>` asserts unique access on every touch, which is wrong for a callback
+// hub whose address is also held by C / JS / a task queue and re-entered while
+// a method on it is running. `OwnedThis` keeps the ownership (drop frees) but
+// only ever lends the pointee as `ThisPtr<T>` / `&T`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The unique owner of a heap-allocated `T` that is otherwise reached through
+/// [`ThisPtr`] copies. Dropping it drops and frees the `T`; every `ThisPtr`
+/// lent from it must be dead by then (the usual back-reference obligation).
+pub struct OwnedThis<T>(core::ptr::NonNull<T>);
+
+impl<T> OwnedThis<T> {
+    #[inline]
+    pub fn new(value: T) -> Self {
+        OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
+    }
+
+    /// A dispatch handle to the pointee (root provenance).
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        ThisPtr(self.0)
+    }
+}
+
+impl<T> core::ops::Deref for OwnedThis<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: we own the live allocation.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Drop for OwnedThis<T> {
+    fn drop(&mut self) {
+        // SAFETY: `new` leaked exactly this `Box`; we are its unique owner.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
     }
 }
 

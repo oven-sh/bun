@@ -103,11 +103,15 @@ impl<T> Weak<T> {
         }
     }
 
+    /// A weak handle whose `ref_type` finalize callback is handed `owner` when
+    /// `value` is collected. The owner keeps the returned handle (dropping it
+    /// clears the callback) for as long as it lives at that address, and is
+    /// the type that callback expects.
     pub fn create(
         value: JSValue,
         global_this: &JSGlobalObject,
         ref_type: WeakRefType,
-        ctx: &mut T,
+        owner: bun_ptr::BackRef<T>,
     ) -> Self {
         if !value.is_empty() {
             return Self {
@@ -115,7 +119,7 @@ impl<T> Weak<T> {
                     global_this,
                     value,
                     ref_type,
-                    Some(NonNull::from(ctx).cast::<c_void>()),
+                    Some(NonNull::from(owner).cast::<c_void>()),
                 )),
                 _ctx: PhantomData,
             };

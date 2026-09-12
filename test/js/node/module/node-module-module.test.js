@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -890,6 +890,145 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+
+  // Runs main.js with a preload that replaces Module.runMain, the way Node's
+  // bootstrap calls it: `Module.runMain(main)` after the preloads ran.
+  async function runWithRunMainPreload(preloadSource) {
+    using dir = tempDir("module-run-main", {
+      "preload.cjs": preloadSource,
+      "main.js": `console.log("main ran");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--require", "./preload.cjs", "./main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, String(dir)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    };
+  }
+
+  test("Module.runMain override is called with Module as this", async () => {
+    const { stdout, stderr, exitCode } = await runWithRunMainPreload(`
+      const Module = require("module");
+      const original = Module.runMain;
+      Module.runMain = function (...args) {
+        console.log("this is Module:", this === Module);
+        return original.apply(this, args);
+      };
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "this is Module: true
+      main ran"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node stores whatever is assigned and fails when its bootstrap calls it;
+  // the object and string cases used to segfault here, the primitives were
+  // silently ignored and main ran anyway.
+  test.each(["{}", '"not a function"', "undefined", "null", "5"])(
+    "Module.runMain = %s in a preload throws instead of running main",
+    async source => {
+      const { stdout, stderr, exitCode } = await runWithRunMainPreload(`require("module").runMain = ${source};`);
+      expect(stderr).toContain("TypeError: Module.runMain is not a function");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.each([
+    ["a function that throws", `() => { throw new TypeError("runMain override threw"); }`, "runMain override threw"],
+    ["a class", `class NotCallable {}`, "class constructor"],
+  ])("Module.runMain override that throws (%s) reports the exception", async (_, source, expectedError) => {
+    const { stdout, stderr, exitCode } = await runWithRunMainPreload(`require("module").runMain = ${source};`);
+    expect(stderr).toContain(expectedError);
+    expect(stderr).not.toContain("Error occurred loading entry point");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["a function that throws", `() => { throw new TypeError("runMain override threw"); }`, "runMain override threw"],
+    ["a non-callable", `{}`, "Module.runMain is not a function"],
+  ])("Module.runMain override failure (%s) goes to process.on('uncaughtException')", async (_, source, message) => {
+    const { stdout, stderr, exitCode } = await runWithRunMainPreload(`
+      process.on("uncaughtException", (err, origin) => console.log("caught:", err.message, origin));
+      require("module").runMain = ${source};
+    `);
+    expect(stdout).toBe(`caught: ${message} uncaughtException`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A Worker's own preloads go through the same path; the failure has to end
+  // up as that worker's error (the non-callable case took down the whole process).
+  test.each([
+    ["a function that throws", `() => { throw new TypeError("runMain override threw"); }`, "runMain override threw"],
+    ["a non-callable", `{}`, "Module.runMain is not a function"],
+  ])(
+    "Module.runMain override failure (%s) in a Worker preload is reported as the worker's error",
+    async (_, source, message) => {
+      using dir = tempDir("module-run-main-worker", {
+        "preload.cjs": `require("module").runMain = ${source};`,
+        "worker.js": `console.log("worker ran");`,
+        "main.js": `
+          const worker = new Worker("./worker.js", { preload: ["./preload.cjs"] });
+          worker.onerror = event => console.log("worker error mentions it:", event.message.includes(${JSON.stringify(message)}));
+          worker.addEventListener("close", event => console.log("worker exit code:", event.code));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "./main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+        "worker error mentions it: true
+        worker exit code: 1"
+      `);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("Module.runMain reads back whatever was assigned", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const Module = require("module");
+          const original = Module.runMain;
+          const roundTrips = [];
+          for (const value of [undefined, null, 5, "str", {}]) {
+            Module.runMain = value;
+            roundTrips.push(Module.runMain === value);
+          }
+          Module.runMain = original;
+          roundTrips.push(Module.runMain === original);
+          console.log(JSON.stringify(roundTrips));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("[true,true,true,true,true,true]\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

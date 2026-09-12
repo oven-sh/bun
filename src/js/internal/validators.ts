@@ -85,6 +85,10 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
+function validateUndefined(value, name) {
+  if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
+}
+
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
@@ -122,7 +126,7 @@ function getValidatedFsPath(p: any, propName: string = "path") {
 }
 
 hideFromStack(validateLinkHeaderValue);
-hideFromStack(validateString, validateFunction, validateBoolean);
+hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
@@ -155,6 +159,8 @@ export default {
   validateFunction,
   /** `(value, name)` */
   validateBoolean,
+  /** `(value, name)` */
+  validateUndefined,
   /** `(port, name = 'Port', allowZero = true)` */
   validatePort: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePort", 0),
   /** `(signal, name)` */

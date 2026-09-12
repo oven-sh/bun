@@ -928,6 +928,31 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
 
 extern "C" bool isBunTest;
 
+// Node.js: `import default` and `require()` of a JSON file return one object.
+static JSC::JSValue reconcileDataModuleWithRequireCache(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierJS,
+    JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue entry = globalObject->requireMap()->get(globalObject, specifierJS);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(entry)) {
+        JSValue existing = mod->exportsObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return existing;
+    }
+    if (!entry.isUndefined())
+        return value; // user-installed require.cache entry; don't clobber it
+
+    auto* mod = Bun::JSCommonJSModule::create(globalObject, specifierJS, value, true, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->requireMap()->set(globalObject, specifierJS, mod);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
+
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
@@ -1159,6 +1184,13 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
+        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
+        }
+
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(
             globalObject,
@@ -1174,6 +1206,13 @@ static JSValue fetchESMSourceCode(
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
+
+        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"

@@ -40,6 +40,7 @@
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
+#include "DefineLazyProperties.h"
 
 #include "BunProcess.h"
 
@@ -95,6 +96,8 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
 
         bool hasDefault = false;
         bool hasLazyExports = false;
+        // With defineLazyProperties (node:util), only pending lazy properties defer, and they bind the loader result.
+        JSObject* lazyValues = Bun::lazyPropertyValues(vm, object);
 
         for (auto& entry : properties) {
             if (entry == vm.propertyNames->defaultKeyword) [[unlikely]] {
@@ -107,7 +110,11 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on
             // first binding. An accessor user code defined on the exports object is read now instead (see isBunDefinedGetter).
-            if (hasOwn && (slot.isCustom() || (slot.isAccessor() && Zig::isBunDefinedGetter(slot.getterSetter()->getter())))) {
+            bool isLazy = hasOwn
+                && (lazyValues
+                        ? Bun::isPendingLazyProperty(slot)
+                        : slot.isCustom() || (slot.isAccessor() && Zig::isBunDefinedGetter(slot.getterSetter()->getter())));
+            if (isLazy) {
                 exportValues.append(JSValue());
                 hasLazyExports = true;
                 continue;
@@ -123,7 +130,9 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
             exportValues.append(object);
         }
 
-        return hasLazyExports ? object : nullptr;
+        if (!hasLazyExports)
+            return nullptr;
+        return lazyValues ? lazyValues : object;
     };
 }
 

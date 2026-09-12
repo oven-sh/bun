@@ -1182,30 +1182,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Is `expr` the import item that `maybe_rewrite_property_access` made of
-    /// `ns.a`, where `ns` is a local that holds an `import()` / `require()`
-    /// result? The linker binds it only to an export of a bundled ES module.
-    /// Otherwise it prints `ns.a`, a property read on an object: a getter can
-    /// run, and a call through it passes `ns` as `this`.
-    ///
-    /// Only valid before `to_ast`: `ImportScanner::scan` runs there and sets
-    /// the same bit on the items of `import * as ns`. Every caller runs in the
-    /// visit pass or at the end of `append_part`, both earlier.
+    /// Is `expr` an item read off a local that holds an `import()` / `require()` result (`ns.a`)?
     pub(crate) fn is_namespace_local_read(&self, expr: &Expr) -> bool {
-        matches!(
-            expr.data,
-            js_ast::ExprData::EImportIdentifier(id)
-                if self.symbols[id.ref_.inner_index() as usize]
-                    .namespace_alias
-                    .as_ref()
-                    .is_some_and(|alias| alias.was_originally_property_access)
-        )
+        let js_ast::ExprData::EImportIdentifier(id) = expr.data else {
+            return false;
+        };
+        self.symbols[id.ref_.inner_index() as usize]
+            .namespace_alias
+            .as_ref()
+            .is_some_and(|alias| {
+                self.dynamic_import_namespace_locals
+                    .contains_key(&alias.namespace_ref)
+            })
     }
 
-    /// Does a call through `expr` pass a `this`? If so, a wrapper that strips
-    /// it, such as `(0, expr)()`, has to stay.
+    /// Does `expr()` pass a `this`? A namespace-local item can: unbound, it prints `ns.a`.
     pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
-        expr.has_value_for_this_in_call() || self.is_namespace_local_read(expr)
+        matches!(
+            expr.data,
+            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_)
+        ) || self.is_namespace_local_read(expr)
     }
 
     /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
@@ -6299,6 +6295,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return true;
                 }
             }
+            // Unless the linker binds it, this is a property read that can run a getter.
+            js_ast::ExprData::EImportIdentifier(_) if self.is_namespace_local_read(expr) => {
+                return false;
+            }
             js_ast::ExprData::ECommonjsExportIdentifier(_)
             | js_ast::ExprData::EImportIdentifier(_) => {
                 // References to an ES6 import item are always side-effect free in an
@@ -6317,10 +6317,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // So we deliberately ignore this edge case and always treat import item
                 // references as being side-effect free.
-                //
-                // `ns.a` off a `require()` / `import()` local is not an ES6 import in
-                // the source. It stays a property read unless the linker binds it.
-                return !self.is_namespace_local_read(expr);
+                return true;
             }
             js_ast::ExprData::EIf(ex) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test)

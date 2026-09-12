@@ -4315,6 +4315,7 @@ describe("bundler", () => {
     Object.defineProperty(exports, "count", { enumerable: true, get() { return count; } });
     Object.defineProperty(exports, "first", { enumerable: true, get() { log.push("first"); return 1; } });
     Object.defineProperty(exports, "second", { enumerable: true, get() { log.push("second"); return 2; } });
+    Object.defineProperty(exports, "bump", { enumerable: true, get() { globalThis.bumpLocal(); return 100; } });
     exports.log = log;
   `;
 
@@ -4326,8 +4327,9 @@ describe("bundler", () => {
       files: {
         "/entry.js": /* js */ `
           const util_1 = require("./util.cjs");
-          console.log(util_1.who(), (0, util_1.who)(), (0, util_1.who)?.());
+          console.log(util_1.who(), (0, util_1.who)(), (0, util_1.who)?.(), (0, util_1["who"])());
           console.log((true ? util_1.who : 0)(), (1 && util_1.who)(), (0 || util_1.who)(), (null ?? util_1.who)());
+          console.log((false ? 0 : util_1.who)(), [util_1.who][0]());
           function viaLocal() {
             const who = util_1.who;
             return who();
@@ -4353,8 +4355,9 @@ describe("bundler", () => {
       minifySyntax,
       run: {
         stdout: [
-          "exports undefined undefined",
+          "exports undefined undefined undefined",
           "undefined undefined undefined undefined",
+          "undefined undefined",
           "undefined",
           "exports undefined",
           "exports undefined",
@@ -4363,7 +4366,7 @@ describe("bundler", () => {
       },
     });
 
-    // An unused read stays, and a read does not move past another read.
+    // An unused read stays, and nothing moves past a read.
     itBundled(`dynamic_import_dce/UnboundItemReadRunsGetter${suffix}`, {
       files: {
         "/entry.js": /* js */ `
@@ -4379,10 +4382,28 @@ describe("bundler", () => {
           }
           order();
           console.log(ns.log.join());
+          let local = 0;
+          globalThis.bumpLocal = () => { local++; };
+          function pastRead() {
+            local = 0;
+            const copy = local;
+            return ns.bump + copy;
+          }
+          console.log(pastRead());
           const ext = require("ext");
           ext.boot;
           void ext.boot;
           console.log(ext.count);
+          const awaited = await import("./lazy.cjs");
+          awaited.boot;
+          void awaited.boot;
+          console.log(ns.count);
+          await import("./lazy.cjs").then(m => {
+            m.boot;
+            void m.boot;
+            const unused = m.boot;
+          });
+          console.log(ns.count);
         `,
         "/lazy.cjs": lazyExports,
       },
@@ -4390,7 +4411,7 @@ describe("bundler", () => {
       external: ["ext"],
       target: "bun",
       minifySyntax,
-      run: { stdout: "4\nfirst,second\n2" },
+      run: { stdout: "4\nfirst,second\n100\n2\n6\n9" },
     });
   }
 

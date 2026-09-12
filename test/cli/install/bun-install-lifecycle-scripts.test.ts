@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, statSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -11,6 +12,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
+import { tmpdir } from "os";
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
@@ -298,6 +300,76 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
+
+// Reproducing issue #38079 needs $TMPDIR and the install cache on different
+// filesystems so that renameat() fails with EXDEV. /dev/shm is a separate
+// tmpfs mount on Linux; skip when it is unavailable or on the same device.
+const canForceExdevTmpdir =
+  isLinux &&
+  (() => {
+    try {
+      // also proves /dev/shm is writable, not just present
+      const probe = mkdtempSync("/dev/shm/bun-exdev-probe-");
+      rmSync(probe, { recursive: true, force: true });
+      return statSync("/dev/shm").dev !== statSync(tmpdir()).dev;
+    } catch {
+      return false;
+    }
+  })();
+
+test.concurrent.skipIf(!canForceExdevTmpdir)(
+  "node-gyp shim is reachable when the tempdir falls back to cache/.tmp",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const fakeNodeGyp = join(packageDir, "fake-node-gyp.sh");
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "exdev-node-gyp",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      ),
+      write(fakeNodeGyp, "#!/bin/sh\necho fake-node-gyp-ok\n"),
+    ]);
+    chmodSync(fakeNodeGyp, 0o755);
+
+    const shmTmp = mkdtempSync("/dev/shm/bun-exdev-");
+    try {
+      // the repro requires renameat() from $TMPDIR into the cache to cross
+      // devices; otherwise this test passes without exercising the fallback
+      expect(statSync(shmTmp).dev).not.toBe(statSync(packageDir).dev);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: {
+          ...env,
+          TMPDIR: shmTmp,
+          BUN_TMPDIR: shmTmp,
+          TEMP: shmTmp,
+          // keep `node-gyp` resolvable only via the shim dir bun appends to
+          // PATH; the shim execs $npm_config_node_gyp so the test stays offline
+          PATH: "/usr/bin:/bin",
+          npm_config_node_gyp: fakeNodeGyp,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("command not found");
+      expect(out).toContain("fake-node-gyp-ok");
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(shmTmp, { recursive: true, force: true });
+    }
+  },
+);
 
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();

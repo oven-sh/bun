@@ -307,9 +307,21 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
+    // After a fallback `handle` is `<cache>/.tmp`, so paths built from `name`
+    // (the node-gyp shim's PATH entry) must say that too.
+    let name: &'static [u8] = if tried_dot_tmp {
+        let joined = path::resolve_path::join::<path::platform::Auto>(&[
+            manager.cache_directory_path.as_bytes(),
+            b".tmp",
+        ]);
+        bun_core::handle_oom(FileSystem::instance().dirname_store().append(joined))
+    } else {
+        temp_dir_name
+    };
+
     TemporaryDirectory {
         handle: tempdir,
-        name: temp_dir_name,
+        name,
         #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     }

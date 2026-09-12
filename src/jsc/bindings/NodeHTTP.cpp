@@ -754,6 +754,17 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
+// server.maxHeaderSize is a plain property and only the constructor option is validated, so any
+// number reaches this. Node casts the double to uint64_t, which is undefined for NaN, a negative
+// and 2^64 or more. Here the first two select the default limit (0) and the last one no limit.
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L688-L692
+static uint64_t maxHTTPHeaderSizeFromNumber(double value)
+{
+    if (!(value >= 1)) return 0;
+    if (value >= 18446744073709551616.0) return UINT64_MAX;
+    return static_cast<uint64_t>(value);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -777,7 +788,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
+    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));

@@ -2153,6 +2153,8 @@ const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
 // line, so it is rendered natively with the other auto headers rather than being
 // pushed into the flat array (which goes out first).
 const AUTO_HEADER_TRANSFER_ENCODING_CHUNKED = 1 << 4;
+// The largest Keep-Alive timeout, in seconds, handed to the native writeHead (it takes a uint32).
+const kMaxNativeKeepAliveSecs = 0x7fffffff;
 // Out-parameters of renderNativeHeaders, read by its callers in the same
 // tick (no JS can run in between).
 let renderedAutoHeaders = 0;
@@ -2284,16 +2286,25 @@ function renderNativeHeaders(res) {
       ) {
         const keepAliveTimeout = res._keepAliveTimeout;
         const maxRequestsPerSocket = res._maxRequestsPerSocket;
-        if (keepAliveTimeout && !hasKeepAlive && ~~maxRequestsPerSocket > 0) {
-          // Rare path (maxRequestsPerSocket set): render both lines in JS.
-          flat.push("Connection", "keep-alive");
-          flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
+        if (keepAliveTimeout && !hasKeepAlive) {
+          const timeoutSecs = MathFloor(keepAliveTimeout / 1000);
+          const hasMax = ~~maxRequestsPerSocket > 0;
+          if (!hasMax && timeoutSecs >= 0 && timeoutSecs <= kMaxNativeKeepAliveSecs) {
+            autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
+            keepAliveSecs = timeoutSecs;
+          } else {
+            // Rare path (maxRequestsPerSocket set, or a server.keepAliveTimeout assigned after
+            // construction that is negative or too large for it): render both lines in JS. Node
+            // prints the number as is, so -5000 is "timeout=-5" there too.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L513-L518
+            flat.push("Connection", "keep-alive");
+            flat.push(
+              "Keep-Alive",
+              hasMax ? `timeout=${timeoutSecs}, max=${maxRequestsPerSocket}` : `timeout=${timeoutSecs}`,
+            );
+          }
         } else {
           autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
-          if (keepAliveTimeout && !hasKeepAlive) {
-            autoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-            keepAliveSecs = MathFloor(keepAliveTimeout / 1000);
-          }
         }
       } else {
         // Like Node's shouldSendKeepAlive/_last handling: a user-cleared

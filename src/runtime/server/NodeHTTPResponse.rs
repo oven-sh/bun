@@ -887,7 +887,7 @@ impl NodeHTTPResponse {
             .get(4)
             .copied()
             .filter(|v| v.is_number())
-            .map_or(0, |v| v.to_int32() as u32);
+            .map_or(0, |v| v.to_u32());
         self.write_head_impl(
             global_object,
             arguments,
@@ -1083,7 +1083,7 @@ impl NodeHTTPResponse {
             .get(7)
             .copied()
             .filter(|v| v.is_number())
-            .map_or(0, |v| v.to_int32() as u32);
+            .map_or(0, |v| v.to_u32());
         // write_or_end::<true> reads (chunk, encoding, _, strictContentLength).
         let end_args = [
             arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),

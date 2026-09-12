@@ -2192,3 +2192,38 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
     ),
   );
 });
+
+// RenameVariables reaches a nested function expression through its
+// `visit_value` override. The shared walker for a function body recursed into
+// it a second time, so a function at depth d was walked 2^d times: depth 25
+// took 5 seconds and depth 30 did not finish.
+test("react-compiler compile time is not exponential in the function nesting depth", async () => {
+  const depth = 40;
+  const open = "(() => ";
+  const close = ")()";
+  using dir = tempDir("react-compiler-nesting", {
+    "entry.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Buffer.alloc(open.length * depth, open)}p.a + s${Buffer.alloc(close.length * depth, close)};
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // The outermost call is inlined. The other arrows stay, in one memoized scope.
+  expect(stdout).toContain("p.a + s");
+  expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
+});

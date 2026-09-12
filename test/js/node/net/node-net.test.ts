@@ -30,7 +30,8 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { Duplex } from "node:stream";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -2957,6 +2958,405 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   // read were delivered with no gap and no socket 'error'.
   expect(stdout.split("\n").filter(Boolean)).toEqual(["uncaught:onread-boom", "calls:abcd,efgh,ijkl"]);
   expect(exitCode).toBe(0);
+});
+
+// Node reads one onread buffer per callback scope (MakeCallback), and a scope
+// ends with the tick queue and the microtasks drained. Bun slices one larger
+// native read into several callbacks, so it runs that checkpoint between two
+// slices. Every expectation below is what node v26.3.0 does.
+// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L207
+describe("net.Socket onread: the callbacks of one native read are separate callback scopes", () => {
+  // One 12-byte write is one native read; a 4-byte onread buffer makes three callbacks out of it.
+  const payload = "abcdefghijkl";
+  const slices = ["abcd", "efgh", "ijkl"];
+  const transports = ["tcp", "tls"] as const;
+
+  async function startServer(transport: (typeof transports)[number]) {
+    const onConnection = (c: Socket) => {
+      c.on("error", () => {});
+      c.end(payload);
+    };
+    const server =
+      transport === "tls"
+        ? createTLSServer({ key: tlsCert.key, cert: tlsCert.cert }, onConnection)
+        : createServer(onConnection);
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    server.off("error", listening.reject);
+    return server;
+  }
+
+  function dial(
+    transport: (typeof transports)[number],
+    server: Server,
+    callback: (this: unknown, nread: number, buf: Buffer) => boolean | void,
+  ): Socket {
+    const options = {
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      onread: { buffer: Buffer.alloc(4), callback },
+    };
+    return transport === "tls" ? tlsConnect({ ...options, rejectUnauthorized: false }) : createConnection(options);
+  }
+
+  const immediate = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  it.each(transports)(
+    "%s: the ticks and microtasks a callback queued run before the next callback",
+    async transport => {
+      const server = await startServer(transport);
+      const log: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      let socket: Socket | undefined;
+      try {
+        socket = dial(transport, server, (n, buf) => {
+          log.push(`callback ${buf.toString("latin1", 0, n)}`);
+          // The tick and the microtask read the static buffer: it still holds the bytes of their own callback.
+          process.nextTick(() => log.push(`tick ${buf.toString("latin1", 0, n)}`));
+          queueMicrotask(() => log.push(`microtask ${buf.toString("latin1", 0, n)}`));
+        });
+        socket.on("error", closed.reject);
+        socket.on("close", () => closed.resolve());
+        await closed.promise;
+        expect(log).toEqual(slices.flatMap(slice => [`callback ${slice}`, `tick ${slice}`, `microtask ${slice}`]));
+      } finally {
+        socket?.destroy();
+        server.close();
+      }
+    },
+  );
+
+  it.each([
+    ["queueMicrotask", (fn: () => void) => queueMicrotask(fn)],
+    ["process.nextTick", (fn: () => void) => process.nextTick(fn)],
+    ["a promise reaction", (fn: () => void) => void Promise.resolve().then(fn)],
+  ])("a pause() deferred with %s stops the rest of the read until resume()", async (_name, defer) => {
+    const server = await startServer("tcp");
+    const received: string[] = [];
+    const paused = Promise.withResolvers<string[]>();
+    const done = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      socket = dial("tcp", server, (n, buf) => {
+        received.push(buf.toString("latin1", 0, n));
+        if (received.length === 1) {
+          defer(() => {
+            socket!.pause();
+            paused.resolve([...received]);
+          });
+        }
+        if (received.length === slices.length) done.resolve();
+      });
+      socket.on("error", done.reject);
+      socket.on("close", () => done.reject(new Error(`closed before all data was delivered: ${received.join("|")}`)));
+      expect(await paused.promise).toEqual(["abcd"]);
+      // The rest of the read waits for resume(), it is not delivered on a later turn.
+      for (let i = 0; i < 4; i++) await immediate();
+      expect(received).toEqual(["abcd"]);
+      socket.resume();
+      await done.promise;
+      expect(received).toEqual(slices);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  it("a deferred destroy() drops the rest of the read", async () => {
+    const server = await startServer("tcp");
+    const received: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      socket = dial("tcp", server, (n, buf) => {
+        received.push(buf.toString("latin1", 0, n));
+        queueMicrotask(() => socket!.destroy());
+      });
+      socket.on("error", closed.reject);
+      socket.on("close", () => closed.resolve());
+      await closed.promise;
+      expect(received).toEqual(["abcd"]);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  it("a deferred destroy() then connect() does not hand the rest of the old read to the new connection", async () => {
+    const first = await startServer("tcp");
+    const second = createServer(c => {
+      c.on("error", () => {});
+      c.end("XXXXYYYY");
+    });
+    const listening = Promise.withResolvers<void>();
+    second.once("error", listening.reject);
+    second.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    const received: [number, string][] = [];
+    const done = Promise.withResolvers<void>();
+    let generation = 1;
+    const socket = new Socket({
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          const slice = buf.toString("latin1", 0, n);
+          received.push([generation, slice]);
+          if (received.length === 1) {
+            process.nextTick(() => {
+              socket.destroy();
+              generation = 2;
+              socket.connect((second.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+            });
+          }
+          if (slice === "YYYY") done.resolve();
+        },
+      },
+    });
+    try {
+      socket.on("error", done.reject);
+      socket.connect((first.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      await done.promise;
+      expect(received).toEqual([
+        [1, "abcd"],
+        [2, "XXXX"],
+        [2, "YYYY"],
+      ]);
+    } finally {
+      socket.destroy();
+      first.close();
+      second.close();
+    }
+  });
+
+  it("the tail that resume() redelivers gets the same checkpoints", async () => {
+    const server = await startServer("tcp");
+    const log: string[] = [];
+    const declined = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      socket = dial("tcp", server, (n, buf) => {
+        const slice = buf.toString("latin1", 0, n);
+        log.push(`callback ${slice}`);
+        process.nextTick(() => log.push(`tick ${slice}`));
+        queueMicrotask(() => log.push(`microtask ${slice}`));
+        if (slice === "abcd") {
+          declined.resolve();
+          return false;
+        }
+      });
+      socket.on("error", closed.reject);
+      socket.on("close", () => closed.resolve());
+      await declined.promise;
+      await immediate();
+      log.push("resume");
+      socket.resume();
+      await closed.promise;
+      expect(log).toEqual([
+        "callback abcd",
+        "tick abcd",
+        "microtask abcd",
+        "resume",
+        ...slices.slice(1).flatMap(slice => [`callback ${slice}`, `tick ${slice}`, `microtask ${slice}`]),
+      ]);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  // The checkpoint runs user code while the loop still holds the rest of the read.
+  it.each([
+    ["pause() then resume() in one tick", (socket: Socket) => process.nextTick(() => socket.pause().resume())],
+    [
+      "pause() in a tick, resume() in the microtask after it",
+      (socket: Socket) =>
+        process.nextTick(() => {
+          socket.pause();
+          queueMicrotask(() => socket.resume());
+        }),
+    ],
+    ["read() in a microtask", (socket: Socket) => queueMicrotask(() => socket.read())],
+    // pause() stops the handle and read() starts it again: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L845
+    ["pause() then read() in one tick", (socket: Socket) => process.nextTick(() => void socket.pause().read())],
+    ["pause() then read() in one microtask", (socket: Socket) => queueMicrotask(() => void socket.pause().read())],
+    [
+      "pause() then read() in one promise reaction",
+      (socket: Socket) => void Promise.resolve().then(() => void socket.pause().read()),
+    ],
+  ])("%s keeps the read going, each slice once and in order", async (_name, reenter) => {
+    const server = await startServer("tcp");
+    const received: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket | undefined;
+    try {
+      socket = dial("tcp", server, (n, buf) => {
+        received.push(buf.toString("latin1", 0, n));
+        reenter(socket!);
+      });
+      socket.on("error", closed.reject);
+      socket.on("close", () => closed.resolve());
+      await closed.promise;
+      expect(received).toEqual(slices);
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  // A tail drain is a tick, so the checkpoint of one socket would run the tail drain of the next one inside it.
+  it("tail drains of several sockets that come due in one turn do not nest", async () => {
+    const server = await startServer("tcp");
+    const count = 3;
+    const received: string[][] = [];
+    const sockets: Socket[] = [];
+    const closed: Promise<void>[] = [];
+    const allDeclined = Promise.withResolvers<void>();
+    let declined = 0;
+    // Callbacks whose tick did not run yet: 1 when every callback is followed by its own checkpoint.
+    let pending = 0;
+    let maxPending = 0;
+    try {
+      for (let i = 0; i < count; i++) {
+        const mine: string[] = [];
+        received.push(mine);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        closed.push(promise);
+        const socket = dial("tcp", server, (n, buf) => {
+          mine.push(buf.toString("latin1", 0, n));
+          if (mine.length === 1) {
+            if (++declined === count) allDeclined.resolve();
+            return false;
+          }
+          maxPending = Math.max(maxPending, ++pending);
+          process.nextTick(() => pending--);
+        });
+        socket.on("error", reject);
+        socket.on("close", () => resolve());
+        sockets.push(socket);
+      }
+      await allDeclined.promise;
+      await immediate();
+      for (const socket of sockets) socket.resume();
+      await Promise.all(closed);
+      expect(received).toEqual([slices, slices, slices]);
+      expect(maxPending).toBe(1);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
+  // A socket that wraps another stream reads from inside that stream's 'data' emit: a nested scope, which does not
+  // drain. Holds the same if `onread` is ignored for a wrapped socket, as in node.
+  it("a TLS socket over a generic Duplex does not run the Duplex's ticks inside its 'data' emit", async () => {
+    const server = createTLSServer({ key: tlsCert.key, cert: tlsCert.cert }, c => {
+      c.on("error", () => {});
+      c.once("data", () => c.end(payload));
+    });
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+    const log: string[] = [];
+    let received = "";
+    let secure = false;
+    const closed = Promise.withResolvers<void>();
+    const raw = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+    });
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        raw.write(chunk, callback);
+      },
+      final(callback) {
+        raw.end(callback);
+      },
+    });
+    let client: Socket | undefined;
+    try {
+      raw.on("error", closed.reject);
+      raw.on("end", () => transport.push(null));
+      raw.on("data", chunk => {
+        if (!secure) return void transport.push(chunk);
+        // One tick emits 'data' on the transport, a second one is queued right behind it.
+        process.nextTick(() => {
+          log.push("push begin");
+          transport.push(chunk);
+          log.push("push end");
+        });
+        process.nextTick(() => log.push("next tick"));
+      });
+      client = tlsConnect({
+        socket: transport,
+        rejectUnauthorized: false,
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            received += buf.toString("latin1", 0, n);
+          },
+        },
+      });
+      client.on("data", chunk => (received += chunk.toString("latin1")));
+      client.on("secureConnect", () => {
+        secure = true;
+        client!.write("go");
+      });
+      client.on("error", closed.reject);
+      client.on("close", () => closed.resolve());
+      await closed.promise;
+      expect(received).toBe(payload);
+      expect(log.slice(0, 3)).toEqual(["push begin", "push end", "next tick"]);
+      expect(log.join(",")).not.toContain("push begin,next tick");
+    } finally {
+      client?.destroy();
+      raw.destroy();
+      server.close();
+    }
+  });
+
+  it("a tick that throws during the checkpoint is an uncaught exception and the read goes on", async () => {
+    const fixture = /* js */ `
+      const log = [];
+      process.on("uncaughtException", e => log.push("uncaught " + e.message));
+      const net = require("net");
+      const server = net.createServer(c => c.end("abcdefghijkl"));
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          onread: {
+            buffer: Buffer.alloc(4),
+            callback(n, buf) {
+              const slice = buf.toString("latin1", 0, n);
+              log.push("callback " + slice);
+              process.nextTick(() => { throw new Error("tick-boom " + slice); });
+            },
+          },
+        });
+        client.on("error", e => log.push("socket-error " + e.message));
+        client.on("close", () => { console.log(JSON.stringify(log)); server.close(); });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ log: stdout.trim() && JSON.parse(stdout), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual(
+      {
+        log: slices.flatMap(slice => [`callback ${slice}`, `uncaught tick-boom ${slice}`]),
+        exitCode: 0,
+        failureDetail: "",
+      },
+    );
+  });
 });
 
 // On Windows the native layer does not report fatal send errors yet (the WSA

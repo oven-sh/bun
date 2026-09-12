@@ -173,3 +173,16 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let maybe_tls = prev.as_::<TLSSocket>();
     Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }
+
+/// The checkpoint that ends a callback scope, for net.ts to run between two `onread` callbacks that
+/// it slices out of one native read: node makes one read, and so one callback scope, per callback.
+#[bun_jsc::host_fn]
+pub(crate) fn drain_microtasks_and_next_ticks(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    global
+        .drain_microtasks_and_next_ticks()
+        .map_err(|stopped| stopped.throw(global))?;
+    Ok(JSValue::UNDEFINED)
+}

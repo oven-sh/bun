@@ -122,6 +122,7 @@ function lazyBlockList() {
 }
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const drainMicrotasksAndNextTicks = $newRustFunction("node_net_binding.rs", "drainMicrotasksAndNextTicks", 0);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -194,6 +195,8 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 // Node's handle.reading: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L845
 const kOnreadReading = Symbol("kOnreadReading");
 const kOnreadEmptyTail = Buffer.alloc(0);
+// Not zero while the checkpoint between two onread slices runs: see drainOnreadTailNT.
+let onreadCheckpoints = 0;
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -1775,7 +1778,23 @@ function Socket(options?) {
           reportError(e);
         }
         if (self.destroyed) return;
-        if (ret === false || !self[kOnreadReading]) {
+        let stop = ret === false || !self[kOnreadReading];
+        // Each read is its own MakeCallback in node, which ends with the tick queue and the microtasks drained. A nested
+        // scope skips that, and a socket that wraps a stream is called from inside that stream's 'data' emit.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L165-L207
+        if (!stop && offset < total && !self[kupgraded]) {
+          const handle = self._handle;
+          onreadCheckpoints++;
+          try {
+            drainMicrotasksAndNextTicks();
+          } finally {
+            onreadCheckpoints--;
+          }
+          // The rest of the chunk belongs to the connection that read it.
+          if (self.destroyed || self.connecting || self._handle !== handle) return;
+          stop = !self[kOnreadReading];
+        }
+        if (stop) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
           readStop(self, self._handle);
@@ -2351,6 +2370,12 @@ function drainOnreadTail(self) {
 }
 
 function drainOnreadTailNT(socket) {
+  // This tick came due inside the checkpoint between two slices of another socket. Its own slices and checkpoints
+  // would nest in there, one level per socket with a tail, so it runs from the event loop instead.
+  if (onreadCheckpoints !== 0) {
+    setImmediate(drainOnreadTailNT, socket);
+    return;
+  }
   socket[kOnreadDraining] = false;
   const tail = socket[kOnreadTail];
   if (tail === undefined || socket.destroyed) return;

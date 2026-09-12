@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -1980,6 +1980,69 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+});
+
+// Three passes kept one copy of their work per basic block or per nesting
+// level of a value, so memory grew with the square of the size of a component
+// that has no loop at all. The fixpoint in InferMutationAliasingEffects kept
+// the incoming state of every block. Codegen cloned the instructions of a
+// sequence expression at each level of a `||` chain. The post-dominator graph
+// rebuilt a hash index for each block it took out of a map. A chain of 400
+// terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
+test("react-compiler memory does not grow with the square of the size of a component", async () => {
+  // A debug build is 20 times slower, and its larger frames overflow the stack
+  // on a longer chain.
+  const small = isDebug || isASAN;
+  const terms = small ? 100 : 400;
+  const elements = small ? 120 : 300;
+  using dir = tempDir("react-compiler-memory", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "chain.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Array.from({ length: terms }, (_, i) => `(p.a === ${i})`).join(" || ")} || "f";
+        return <div>{v}{s}</div>;
+      }
+    `,
+    "pattern.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+        return <div>{e0 + e${elements - 1}}{s}</div>;
+      }
+    `,
+  });
+
+  const peakMB = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The component compiled, or there is no component.
+    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+    expect(exitCode).toBe(0);
+    return proc.resourceUsage()!.maxRSS / 1024 / 1024;
+  };
+
+  const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
+  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
+  // inputs, 940 MB and 1050 MB for the large ones.
+  const bound = small ? 70 : 300;
+  expect(chain - empty).toBeLessThan(bound);
+  expect(pattern - empty).toBeLessThan(bound);
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

@@ -1732,11 +1732,12 @@ fn codegen_instruction_value(
             value,
             ..
         } => {
-            let block_items: Vec<ReactiveStatement> = instructions
-                .iter()
-                .map(|i| ReactiveStatement::Instruction(i.clone()))
-                .collect();
-            let body = codegen_block_no_reset(cx, &block_items)?;
+            let mut body: Vec<Stmt> = Vec::with_capacity(instructions.len());
+            for instr in instructions {
+                if let Some(stmt) = codegen_instruction_nullable(cx, instr)? {
+                    body.push(stmt);
+                }
+            }
             let mut expressions: Vec<Expr> = Vec::new();
             for stmt in body {
                 match stmt.data {

@@ -1,7 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { rss } from "harness";
+import { expectRssDeltaBelow, rss } from "harness";
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
@@ -131,6 +131,42 @@ describe("SocketAddress constructor", () => {
     if (debug) console.log("after", after);
 
     expect(after).toBeLessThanOrEqual(before * growthFactor);
+  });
+
+  it("does not leak the address string on validation-error paths", async () => {
+    // Each case reads options.address into a native string and then throws
+    // from a later validator. The string is 512 KiB, so a leaked ref pins
+    // about 50 MiB per case over 100 iterations.
+    const code = /* js */ `
+      const net = require("node:net");
+      const big = Buffer.alloc(512 * 1024, "a").toString();
+      const cases = {
+        // Options::from_js: a later option validator throws after the address was read
+        bad_family:      i => new net.SocketAddress({ address: big + i, family: "bad!" }),
+        bad_port:        i => new net.SocketAddress({ address: big + i, port: NaN }),
+        bad_flow_type:   i => new net.SocketAddress({ address: big + i, family: "ipv6", flowlabel: "x" }),
+        bad_flow_range:  i => new net.SocketAddress({ address: big + i, family: "ipv6", flowlabel: -1 }),
+        // init_js: pton rejects an invalid IP after the options were accepted
+        pton_reject:     i => new net.SocketAddress({ address: big + i, family: "ipv4" }),
+        // init_from_addr_family: AF::from_js throws after the address was read
+        blocklist_bad_family: i => new net.BlockList().addAddress(big + i, "bad!"),
+      };
+      for (const fn of Object.values(cases))
+        for (let i = 0; i < 20; i++) try { fn(i); } catch {}
+      Bun.gc(true);
+      const out = {};
+      for (const [name, fn] of Object.entries(cases)) {
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 100; i++) try { fn(i); } catch {}
+        Bun.gc(true);
+        out[name] = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      }
+      console.log(JSON.stringify(out));
+      console.log(JSON.stringify({ deltaMiB: Math.max(...Object.values(out)) }));
+    `;
+
+    // Unfixed: about 50 MiB on every path. Fixed: allocator slack only.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 30 });
   });
 }); // </SocketAddress constructor>
 

@@ -908,6 +908,28 @@ describe("expect()", () => {
       // sanity: holes still equal undefined under toEqual
       expect([, 1]).toEqual([undefined, 1]);
     });
+
+    it("should treat a missing element as undefined when the array that holds the asymmetric matcher is longer", () => {
+      // no hole: the matcher sits at an index past the end of the other array
+      expect([expect.any(Number)]).not.toEqual([]);
+      expect([1, expect.any(Number)]).not.toEqual([1]);
+      expect([expect.stringContaining("a")]).not.toEqual([]);
+      expect([expect.stringMatching(/a/)]).not.toEqual([]);
+      expect([expect.objectContaining({ a: 1 })]).not.toEqual([]);
+      expect({ x: [expect.any(Number)] }).not.toEqual({ x: [] });
+      // matchers that compare each candidate as the receiver
+      expect([]).not.toBeOneOf([[expect.any(Number)]]);
+      expect([[expect.any(Number)]]).not.toContainEqual([]);
+      expect(new Map([[expect.any(Number), 2]])).not.toContainEqual([]);
+      // expect.anything() rejects undefined, so it must also reject a missing element
+      expect([expect.anything()]).not.toEqual([]);
+      // an accessor at the index is skipped the same way
+      const withGetter = [0];
+      Object.defineProperty(withGetter, 0, { get: () => "s", enumerable: true });
+      expect(withGetter).not.toEqual([expect.any(Number)]);
+      // sanity: the matcher in the shorter array was already a clean mismatch
+      expect([]).not.toEqual([expect.any(Number)]);
+    });
   });
 
   test("toThrow asymmetric matchers", () => {

@@ -343,8 +343,9 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
-    // Array holes reach here as the empty JSValue; treat them as undefined so
-    // matcher paths never dereference a null cell (matches Jest semantics).
+    // getIndexWithoutAccessors returns the empty JSValue for an array hole, an
+    // index past the end of the shorter array, and an accessor. Read it as
+    // undefined so no matcher below dereferences a null cell.
     if (otherProp.isEmpty()) {
         otherProp = jsUndefined();
     }

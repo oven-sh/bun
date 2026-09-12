@@ -1324,6 +1324,8 @@ pub struct Options<'a> {
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
+    /// Print `import.meta` as `E::ImportMeta::CJS_WRAPPER_ARG`, a parameter of the `@bun-cjs` wrapper.
+    pub inside_bun_cjs_wrapper: bool,
     pub hmr_ref: Ref,
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
@@ -1409,6 +1411,7 @@ impl<'a> Default for Options<'a> {
             module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
+            inside_bun_cjs_wrapper: false,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
@@ -1554,9 +1557,12 @@ pub enum PrintResult {
     Err(crate::Error),
 }
 
+#[derive(Default)]
 pub struct PrintResultSuccess {
     pub code: Box<[u8]>,
     pub source_map: Option<SourceMap::Chunk>,
+    /// `code` refers to `E::ImportMeta::CJS_WRAPPER_ARG` (see `Options::inside_bun_cjs_wrapper`).
+    pub uses_import_meta_arg: bool,
 }
 
 // do not make this a packed struct
@@ -1678,6 +1684,7 @@ pub(crate) mod __gated_printer {
         pub(crate) stack_overflowed: bool,
 
         pub(crate) was_lazy_export: bool,
+        pub(crate) uses_import_meta_arg: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
@@ -3291,23 +3298,22 @@ pub(crate) mod __gated_printer {
                         debug_assert!(self.options.hmr_ref.is_valid());
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".importMeta");
-                    } else if !self.options.import_meta_ref.is_valid() {
-                        // Most of the time, leave it in there
-                        if let Some(mi) = self.module_info() {
-                            mi.flags.contains_import_meta = true;
-                        }
-                        self.print(b"import.meta");
-                    } else {
-                        // Note: The bundler will not hit this code path. The bundler will replace
-                        // the ImportMeta AST node with a regular Identifier AST node.
-                        //
-                        // This is currently only used in Bun's runtime for CommonJS modules
-                        // referencing import.meta
+                    } else if self.options.import_meta_ref.is_valid() {
+                        // The runtime's CommonJS wrapper (`WrapMode::BunCommonjs`).
                         //
                         // TODO: This assertion trips when using `import.meta` with `--format=cjs`
                         debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
 
                         self.print_symbol(self.options.import_meta_ref);
+                    } else if self.options.inside_bun_cjs_wrapper {
+                        self.print(E::ImportMeta::CJS_WRAPPER_ARG);
+                        self.uses_import_meta_arg = true;
+                    } else {
+                        // Most of the time, leave it in there
+                        if let Some(mi) = self.module_info() {
+                            mi.flags.contains_import_meta = true;
+                        }
+                        self.print(b"import.meta");
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
@@ -7027,6 +7033,7 @@ pub(crate) mod __gated_printer {
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
+                uses_import_meta_arg: false,
                 module_info: None,
             }
         }
@@ -8217,6 +8224,7 @@ pub(crate) fn print_with_writer_and_platform<
     PrintResult::Result(PrintResultSuccess {
         code: buffer.take_slice().into(),
         source_map,
+        uses_import_meta_arg: printer.uses_import_meta_arg,
     })
 }
 

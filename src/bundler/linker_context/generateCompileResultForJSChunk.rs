@@ -121,6 +121,7 @@ fn generate_compile_result_for_js_chunk_impl(
                 .follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_),
         )
     };
+    let inside_bun_cjs_wrapper = c.chunk_has_bun_cjs_wrapper(chunk);
 
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
@@ -149,6 +150,7 @@ fn generate_compile_result_for_js_chunk_impl(
         to_common_js_ref,
         to_esm_ref,
         runtime_require_ref,
+        inside_bun_cjs_wrapper,
         stmt_list,
         worker_alloc,
         &**arena,

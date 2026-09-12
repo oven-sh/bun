@@ -822,11 +822,28 @@ impl AnyRoute {
                     let stat_cache = argument
                         .get_boolean_loose(global, b"statCache")?
                         .unwrap_or(true);
+                    let mut fetch_headers = match argument.get(global, b"headers")? {
+                        Some(headers_js) => HeadersRef::create_from_js(global, headers_js)?,
+                        None => None,
+                    };
+                    if let Some(h) = fetch_headers.as_mut() {
+                        // The route computes framing and ranges per file.
+                        use bun_jsc::HTTPHeaderName;
+                        h.fast_remove(HTTPHeaderName::TransferEncoding);
+                        h.fast_remove(HTTPHeaderName::ContentLength);
+                        h.fast_remove(HTTPHeaderName::ContentRange);
+                        h.fast_remove(HTTPHeaderName::AcceptRanges);
+                    }
+                    let headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+                        fetch_headers.as_deref(),
+                        None,
+                    );
                     let route = super::DirectoryRoute::create(
                         global,
                         relative_root,
                         url_prefix,
                         stat_cache,
+                        headers,
                     )?;
                     return Ok(Some(AnyRoute::Directory(route)));
                 }

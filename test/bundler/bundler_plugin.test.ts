@@ -1960,7 +1960,7 @@ describe("bundler", () => {
 
   // The private plugin object is a gcProtect'ed cell, so bun:jsc.getProtectedObjects() returns it.
   const findPluginSource = /* js */ `
-    const { getProtectedObjects } = require("bun:jsc");
+    import { getProtectedObjects } from "bun:jsc";
     const hasOwn = Object.prototype.hasOwnProperty;
     function findPlugin() {
       for (const object of getProtectedObjects()) {

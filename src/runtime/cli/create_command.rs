@@ -6,7 +6,7 @@ use std::io::Write as _;
 use crate::api::bun_process::sync as spawn_sync;
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
-use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
+use bun_core::{Global, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
@@ -24,6 +24,7 @@ use bun_which::which;
 use bun_zlib as Zlib;
 
 use crate::Command;
+use crate::cli::run_command::RunCommand;
 use crate::cli::which_npm_client::NPMClient;
 
 // `cli/create/` has no mod.rs yet; mount the generator directly here
@@ -57,75 +58,70 @@ const SKIP_FILES: &[&OSPathSlice] = &[
 
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
 
-const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
+/// Erases the local borrow on a string that lives in the JSON arena.
+fn arena_str(s: &[u8]) -> &'static [u8] {
+    // SAFETY: the JSON arena (`initialize_store()`) lives for the rest of the process.
+    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+}
 
-fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
+/// Runs one `bun-create` hook like a package.json script. A non-zero exit ends the process.
+fn exec_task(
+    ctx: Command::Context<'_>,
+    task_: &[u8],
+    name: &[u8],
+    cwd: &[u8],
+    env_loader: &mut DotEnv::Loader,
+    script_names: &[&[u8]],
+) -> crate::Result<()> {
     let task = strings::trim(task_, b" \n\r\t");
     if task.is_empty() {
-        return;
+        return Ok(());
     }
 
-    let mut count: usize = 0;
-    for _ in strings::split(task, b" ") {
-        count += 1;
-    }
+    // A bare package.json script name still runs as `bun run <name>`.
+    let run_script: Box<[u8]>;
+    let task: &[u8] = if script_names.contains(&task) {
+        run_script = strings::concat(&[b"bun run ", task]);
+        &run_script
+    } else {
+        task
+    };
 
-    let npm_args = 2 * usize::from(npm_client.is_some());
-    let total = count + npm_args;
-    // `set_len` + index-write into uninitialized `&[u8]` slots is UB (invalid
-    // references exist before assignment). Build with `push` instead — same
-    // allocation, no unsafe.
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
-
-    if let Some(ref client) = npm_client {
-        argv.push(client.bin);
-        argv.push(NPM_TASK_ARGS[0]);
-    }
-
-    for split in strings::split(task, b" ") {
-        argv.push(split);
-    }
-    debug_assert_eq!(argv.len(), total);
-
-    let mut argv: &[&[u8]] = &argv;
-    if npm_client.is_some() && strings::starts_with(task, b"bun ") {
-        argv = &argv[2..];
-    }
-
-    pretty!("\n<r><d>$<b>");
-    for (i, arg) in argv.iter().enumerate() {
-        if i > argv.len() - 1 {
-            Output::print(format_args!(" {} ", bstr::BStr::new(arg)));
-        } else {
-            Output::print(format_args!(" {}", bstr::BStr::new(arg)));
-        }
-    }
-    pretty!("<r>");
-    Output::print(format_args!("\n"));
+    let use_system_shell = ctx.debug.use_system_shell;
     Output::flush();
-
     let _unbuffered = Output::disable_buffering_scope();
+    RunCommand::run_package_script_foreground(
+        ctx,
+        task,
+        name,
+        cwd,
+        env_loader,
+        &[],
+        false,
+        use_system_shell,
+    )
+}
 
-    let _ = spawn_sync::spawn(&spawn_sync::Options {
-        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-        envp: None,
-        cwd: Box::from(cwd),
-        stderr: spawn_sync::SyncStdio::Inherit,
-        stdout: spawn_sync::SyncStdio::Inherit,
-        stdin: spawn_sync::SyncStdio::Inherit,
-        // `WindowsOptions::default()` zeroes `loop_` (UB — null `uv_loop` deref
-        // in `spawn_process_windows`), so populate it.
-        #[cfg(windows)]
-        windows: spawn_sync::WindowsOptions {
-            loop_: bun_event_loop::EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
-            ),
-            ..Default::default()
-        },
-        #[cfg(not(windows))]
-        windows: (),
-        ..Default::default()
-    });
+/// Puts `<destination>/node_modules/.bin` and the `bun`/`node` shim dir in front of `PATH`.
+fn configure_path_for_tasks(
+    env_loader: &mut DotEnv::Loader,
+    destination: &[u8],
+) -> crate::Result<()> {
+    let current: Vec<u8> = env_loader.get(b"PATH").unwrap_or(b"").to_vec();
+    let mut path: Vec<u8> = Vec::with_capacity(current.len() + destination.len() + 64);
+    path.extend_from_slice(strings::without_trailing_slash(destination));
+    path.push(bun_paths::SEP);
+    path.extend_from_slice(b"node_modules");
+    path.push(bun_paths::SEP);
+    path.extend_from_slice(b".bin");
+    let mut bun_path: &[u8] = b"";
+    RunCommand::create_fake_temporary_node_executable(&mut path, &mut bun_path)?;
+    if !current.is_empty() {
+        path.push(bun_paths::DELIMITER);
+        path.extend_from_slice(&current);
+    }
+    env_loader.map.put(b"PATH", &path)?;
+    Ok(())
 }
 
 // We don't want to allocate memory each time
@@ -261,7 +257,7 @@ pub(crate) struct CreateCommand;
 impl CreateCommand {
     #[cold]
     pub(crate) fn exec(
-        ctx: &Command::Context<'_>,
+        ctx: Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
     ) -> crate::Result<()> {
@@ -271,16 +267,21 @@ impl CreateCommand {
         });
         HTTP::http_thread::init(&Default::default());
 
-        let mut create_options = CreateOptions::parse(ctx)?;
+        let mut create_options = CreateOptions::parse(&ctx)?;
         let positionals = &create_options.positionals;
 
         if positionals.is_empty() {
-            return CreateListExamplesCommand::exec(ctx);
+            return CreateListExamplesCommand::exec(&ctx);
         }
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader = DotEnv::Loader::init();
+        // The process `dotenv::INSTANCE`, so every mini event loop here shares one env.
+        let env_loader_ptr: *mut DotEnv::Loader =
+            bun_core::heap::into_raw(Box::new(DotEnv::Loader::init()));
+        DotEnv::set_instance(env_loader_ptr);
+        // SAFETY: just allocated, never freed, and only this thread dereferences it.
+        let env_loader: &'static mut DotEnv::Loader = unsafe { &mut *env_loader_ptr };
 
         env_loader.load_process()?;
 
@@ -347,12 +348,12 @@ impl CreateCommand {
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(ctx, example_tag, template, node);
+                return run_on_entry_point(&ctx, example_tag, template, node);
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
                     ExampleTag::Official => {
-                        match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
+                        match Example::fetch(&ctx, env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
                                 if matches!(
@@ -369,10 +370,7 @@ impl CreateCommand {
                                     Output::flush();
 
                                     let examples = Example::fetch_all_local_and_remote(
-                                        ctx,
-                                        None,
-                                        &mut env_loader,
-                                        filesystem,
+                                        &ctx, None, env_loader, filesystem,
                                     )?;
                                     Example::print(&examples, Some(dirname));
                                     Global::exit(1);
@@ -388,8 +386,8 @@ impl CreateCommand {
                         }
                     }
                     ExampleTag::GithubRepository => match Example::fetch_from_github(
-                        ctx,
-                        &mut env_loader,
+                        &ctx,
+                        env_loader,
                         template,
                         &mut progress,
                         node,
@@ -432,10 +430,7 @@ impl CreateCommand {
                                 Output::flush();
 
                                 let examples = Example::fetch_all_local_and_remote(
-                                    ctx,
-                                    None,
-                                    &mut env_loader,
-                                    filesystem,
+                                    &ctx, None, env_loader, filesystem,
                                 )?;
                                 Example::print(&examples, Some(dirname));
                                 Global::crash();
@@ -742,8 +737,10 @@ impl CreateCommand {
         let create_react_app_entry_point_path: &[u8] = b"";
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
+        let mut script_names: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
-        let path_env = env_loader.map.get(b"PATH").unwrap_or(b"");
+        let path_env: Vec<u8> = env_loader.map.get(b"PATH").unwrap_or(b"").to_vec();
+        let path_env: &[u8] = &path_env;
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
@@ -954,6 +951,14 @@ impl CreateCommand {
                                 scripts_obj
                                     .properties
                                     .shrink_retaining_capacity(script_property_out_i);
+
+                                for prop in scripts_obj.properties.slice() {
+                                    if let Some(name) =
+                                        prop.key.as_ref().and_then(|k| k.as_utf8_string_literal())
+                                    {
+                                        script_names.push(arena_str(name));
+                                    }
+                                }
                             }
                         }
 
@@ -965,19 +970,6 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        // `as_property` returns an owned `Query`
-                        // (Copy types backed by an arena `StoreRef`). Borrowck
-                        // ties any `&[u8]` we pull out of it to the `if let`
-                        // scope even though the underlying `EString.data` is
-                        // `&'static [u8]`. Erase the local borrow lifetime via
-                        // raw-pointer round-trip so the task slices can outlive
-                        // the temporary `Query`.
-                        let arena_str = |s: &[u8]| -> &'static [u8] {
-                            // SAFETY: `s` always points into the JSON arena
-                            // (initialized via `initialize_store()`), which
-                            // lives for the rest of `exec`.
-                            unsafe { &*std::ptr::from_ref::<[u8]>(s) }
-                        };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match postinstall.expr.data {
                                 LExprData::EString(single_task) => {
@@ -1069,16 +1061,24 @@ impl CreateCommand {
 
         let mut npm_client_: Option<NPMClient> = None;
 
-        // Remember whether the user explicitly opted out (`--no-install`)
-        // before this is widened to also cover dependency-less templates:
-        // the flag must skip template tasks, but a template with no
-        // dependencies should still run its documented postinstall hooks.
-        let user_skipped_install = create_options.skip_install;
+        // `--no-install` skips the hooks too. No dependencies skips only `bun install`.
+        let run_tasks = !create_options.skip_install
+            && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
+        if run_tasks {
+            configure_path_for_tasks(env_loader, destination)?;
+            env_loader
+                .map
+                .put(b"npm_package_name", bun_paths::basename(destination))?;
+        }
+
+        // A failing hook ends the process, so git does not run on a thread when hooks exist.
+        let mut git_thread_pending = false;
         if !create_options.skip_git {
-            if !create_options.skip_install {
+            if !create_options.skip_install && !run_tasks {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
+                git_thread_pending = true;
             } else {
                 if create_options.verbose {
                     create_options.skip_git =
@@ -1097,9 +1097,16 @@ impl CreateCommand {
             });
         }
 
-        if npm_client_.is_some() && !preinstall_tasks.is_empty() {
+        if run_tasks {
             for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+                exec_task(
+                    ctx,
+                    task,
+                    b"preinstall",
+                    destination,
+                    env_loader,
+                    &script_names,
+                )?;
             }
         }
 
@@ -1156,13 +1163,20 @@ impl CreateCommand {
             let _ = process?;
         }
 
-        if !user_skipped_install && !postinstall_tasks.is_empty() {
+        if run_tasks {
             for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+                exec_task(
+                    ctx,
+                    task,
+                    b"postinstall",
+                    destination,
+                    env_loader,
+                    &script_names,
+                )?;
             }
         }
 
-        if !create_options.skip_install && !create_options.skip_git {
+        if git_thread_pending {
             create_options.skip_git = !GitHandler::wait();
         }
 

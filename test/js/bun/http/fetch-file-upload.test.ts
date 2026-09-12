@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -158,6 +158,38 @@ test.todoIf(isBroken && isWindows)(
   },
   10_000,
 );
+
+// The plain-HTTP upload path uses sendfile(2) on Linux for files >= 32 KiB.
+// The fixture installs a seccomp filter that refuses sendfile with one errno
+// and checks the body still arrives, byte-exact, through the stream path.
+describe.skipIf(!isLinux)("Bun.file() upload falls back to a stream when sendfile(2) is refused", () => {
+  for (const errno of ["EINVAL", "ENOSYS", "EOPNOTSUPP", "EPERM"]) {
+    test.concurrent(errno, async () => {
+      using dir = tempDir("fetch-sendfile-refused", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fetch-file-upload-sendfile-refused-fixture.ts"), errno, String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode === 77) {
+        console.warn(`SKIP ${errno}: ${stdout.trim()}`);
+        return;
+      }
+      expect(stderr).toBe("");
+      const upload = (bytes: number) => ({
+        status: 200,
+        ok: true,
+        contentLength: String(bytes),
+        received: bytes,
+        expected: bytes,
+      });
+      expect(JSON.parse(stdout)).toEqual([upload(256 * 1024 + 123), upload(256 * 1024 + 123), upload(100_000)]);
+      expect(exitCode).toBe(0);
+    });
+  }
+});
 
 describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
   // The sendfile fast path is entered when the backing file is >= 32 KiB.

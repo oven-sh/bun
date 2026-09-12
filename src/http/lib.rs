@@ -61,7 +61,7 @@ pub use http_thread::HttpThread as HTTPThread;
 pub use http_thread::shutdown_for_exit;
 pub use internal_state::InternalState;
 pub use proxy_tunnel::ProxyTunnel;
-pub use send_file::SendFile;
+pub use send_file::{SendFile, SendfileFallback};
 pub use signals::Signals;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
@@ -462,6 +462,8 @@ pub struct HTTPClientResult<'a> {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     pub body_size: BodySize,
     pub certificate_info: Option<CertificateInfo>,
+    /// Set once, when `sendfile(2)` refused the body fd after the head went out.
+    pub sendfile_fallback: Option<SendfileFallback>,
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -539,6 +541,7 @@ impl<'a> HTTPClientResult<'a> {
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
+            sendfile_fallback: self.sendfile_fallback,
         }
     }
 }
@@ -3225,6 +3228,41 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Turn the rest of a refused sendfile body into a stream body that the
+    /// JS thread feeds from `offset` for `remain` bytes.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn switch_sendfile_to_stream<const IS_SSL: bool>(
+        &mut self,
+        offset: usize,
+        remain: usize,
+        socket: HttpSocket<IS_SSL>,
+    ) {
+        bun_core::scoped_log!(
+            fetch,
+            "sendfile refused, streaming from offset={} remain={}",
+            offset,
+            remain
+        );
+        // Two initial refs: one for `Stream::buffer`, one for the JS thread.
+        let buffer = core::ptr::NonNull::new(ThreadSafeStreamBuffer::new(
+            ThreadSafeStreamBuffer::default(),
+        ))
+        .expect("Box::into_raw is never null");
+        self.state.original_request_body = HTTPRequestBody::Stream(http_request_body::Stream {
+            buffer: Some(buffer),
+            ended: false,
+        });
+        self.flags.is_streaming_request_body = true;
+        self.state.sendfile_fallback = Some(SendfileFallback {
+            // SAFETY: adopts the second of the two initial refs.
+            buffer: unsafe { bun_ptr::RefPtr::from_raw(buffer.as_ptr()) },
+            offset,
+            remain,
+        });
+        let ctx = self.get_ssl_ctx::<IS_SSL>();
+        self.progress_update::<IS_SSL>(ctx, socket);
+    }
+
     pub(crate) fn on_writable<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -3367,6 +3405,12 @@ impl<'a> HTTPClient<'a> {
                             #[cfg(not(windows))]
                             crate::send_file::Status::Err(err) => {
                                 self.close_and_fail::<IS_SSL>(err, socket);
+                                return;
+                            }
+                            #[cfg(any(target_os = "linux", target_os = "android"))]
+                            crate::send_file::Status::Refused => {
+                                let (offset, remain) = (sendfile.offset, sendfile.remain);
+                                self.switch_sendfile_to_stream::<IS_SSL>(offset, remain, socket);
                                 return;
                             }
                             crate::send_file::Status::Again => {
@@ -4423,6 +4467,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    sendfile_fallback: self.state.sendfile_fallback.take(),
                 };
             }
         }
@@ -4444,6 +4489,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            sendfile_fallback: self.state.sendfile_fallback.take(),
         }
     }
 

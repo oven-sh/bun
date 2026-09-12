@@ -13,6 +13,15 @@ pub struct SendFile {
     pub content_size: usize,
 }
 
+/// The rest of a refused sendfile body: the JS thread streams the file from
+/// `offset` for `remain` bytes into `buffer`.
+pub struct SendfileFallback {
+    /// The JS side's ref; the HTTP thread holds the other one.
+    pub buffer: bun_ptr::RefPtr<crate::ThreadSafeStreamBuffer>,
+    pub offset: usize,
+    pub remain: usize,
+}
+
 impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
@@ -55,12 +64,19 @@ impl SendFile {
                 .saturating_sub((self.offset as u64).saturating_sub(begin as u64))
                 as usize;
 
-            if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
-                if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+            match errcode {
+                bun_sys::E::SUCCESS => {
+                    if self.remain == 0 || val == 0 {
+                        return Status::Done;
+                    }
                 }
-
-                return Status::Err(bun_errno::from_errno(errcode as i32).into());
+                bun_sys::E::EAGAIN => {}
+                // Same set as the statx and copy_file_range fallbacks.
+                bun_sys::E::EINVAL
+                | bun_sys::E::ENOSYS
+                | bun_sys::E::EOPNOTSUPP
+                | bun_sys::E::EPERM => return Status::Refused,
+                _ => return Status::Err(bun_errno::from_errno(errcode as i32).into()),
             }
         }
 
@@ -139,5 +155,8 @@ pub(crate) enum Status {
     Done,
     #[cfg(not(windows))]
     Err(crate::Error),
+    /// `sendfile(2)` is refused for this fd. Nothing was sent by this call.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    Refused,
     Again,
 }

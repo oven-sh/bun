@@ -16,6 +16,22 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
+/// node-semver's `SemVer` constructor `.trim()`s its input. JS
+/// `String.prototype.trim()` removes ECMA-262 `WhiteSpace` + `LineTerminator`,
+/// which includes non-ASCII code points (NBSP, BOM, Zs, LS/PS).
+fn trim_semver_input(bytes: &[u8]) -> &[u8] {
+    fn is_js_trimmed(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x0009 | 0x000A | 0x000B | 0x000C | 0x000D | 0x2028 | 0x2029 | 0xFEFF
+        ) || strings::is_unicode_space_separator(c as u32)
+    }
+    match core::str::from_utf8(bytes) {
+        Ok(s) => s.trim_matches(is_js_trimmed).as_bytes(),
+        Err(_) => strings::trim(bytes, &strings::WHITESPACE_CHARS),
+    }
+}
+
 #[bun_jsc::host_fn]
 fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
@@ -29,15 +45,26 @@ fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let left = left_view.to_utf8();
     let right = right_view.to_utf8();
 
-    if !strings::is_all_ascii(left.slice()) {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-    if !strings::is_all_ascii(right.slice()) {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
+    let left_trimmed = trim_semver_input(left.slice());
+    let right_trimmed = trim_semver_input(right.slice());
 
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    let right_result = Version::parse(SlicedString::init(right.slice(), right.slice()));
+    let left_result = if strings::is_all_ascii(left_trimmed) {
+        Version::parse(SlicedString::init(left_trimmed, left_trimmed))
+    } else {
+        return Err(global.throw(format_args!(
+            "Invalid SemVer: {}\n",
+            bstr::BStr::new(left.slice()),
+        )));
+    };
+
+    let right_result = if strings::is_all_ascii(right_trimmed) {
+        Version::parse(SlicedString::init(right_trimmed, right_trimmed))
+    } else {
+        return Err(global.throw(format_args!(
+            "Invalid SemVer: {}\n",
+            bstr::BStr::new(right.slice()),
+        )));
+    };
 
     if !left_result.valid {
         return Err(global.throw(format_args!(
@@ -57,7 +84,7 @@ fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let right_version = right_result.version.max();
 
     Ok(
-        match left_version.order_without_build(right_version, left.slice(), right.slice()) {
+        match left_version.order_without_build(right_version, left_trimmed, right_trimmed) {
             Ordering::Equal => JSValue::js_number_from_int32(0),
             Ordering::Greater => JSValue::js_number_from_int32(1),
             Ordering::Less => JSValue::js_number_from_int32(-1),
@@ -78,15 +105,18 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let left = left_view.to_utf8();
     let right = right_view.to_utf8();
 
-    if !strings::is_all_ascii(left.slice()) {
+    let left_trimmed = trim_semver_input(left.slice());
+    let right_trimmed = trim_semver_input(right.slice());
+
+    if !strings::is_all_ascii(left_trimmed) {
         return Ok(JSValue::FALSE);
     }
-    if !strings::is_all_ascii(right.slice()) {
+    if !strings::is_all_ascii(right_trimmed) {
         return Ok(JSValue::FALSE);
     }
 
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    if left_result.wildcard != query::token::Wildcard::None {
+    let left_result = Version::parse(SlicedString::init(left_trimmed, left_trimmed));
+    if !left_result.valid || left_result.wildcard != query::token::Wildcard::None {
         return Ok(JSValue::FALSE);
     }
 
@@ -94,8 +124,8 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
-        right.slice(),
-        SlicedString::init(right.slice(), right.slice()),
+        right_trimmed,
+        SlicedString::init(right_trimmed, right_trimmed),
     ) {
         Ok(g) => g,
         Err(_) => return Err(global.throw_out_of_memory()),
@@ -107,7 +137,7 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     Ok(JSValue::js_boolean(right_group.satisfies(
         left_version,
-        right.slice(),
-        left.slice(),
+        right_trimmed,
+        left_trimmed,
     )))
 }

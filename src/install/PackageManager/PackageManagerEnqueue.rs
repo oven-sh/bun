@@ -2739,6 +2739,19 @@ fn get_or_put_resolved_package(
 
             let find_result_opt: Option<Npm::FindResult> = match version_result {
                 Npm::FindVersionResult::Found(result) => Some(result),
+                Npm::FindVersionResult::FoundLatestFallback { result, .. } => {
+                    let package_name = this.lockfile.str(&name);
+                    this.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "\"{}\" dist-tags.latest does not match a published version, falling back to {}",
+                            bstr::BStr::new(package_name),
+                            result.version.fmt(&manifest.string_buf),
+                        ),
+                    );
+                    Some(result)
+                }
                 Npm::FindVersionResult::FoundWithFilter {
                     result,
                     newest_filtered,

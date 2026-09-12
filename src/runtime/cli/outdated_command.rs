@@ -421,7 +421,10 @@ impl OutdatedCommand {
                     continue;
                 };
 
-                let Some(actual_latest) = manifest.find_by_dist_tag(b"latest") else {
+                let Some(actual_latest) = manifest
+                    .find_by_dist_tag_with_filter(b"latest", None, None)
+                    .unwrap()
+                else {
                     continue;
                 };
 

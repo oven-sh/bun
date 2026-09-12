@@ -620,6 +620,103 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+// RFC 9112 9.3 / 9.6: an HTTP/1.0 request (Bun never answers one with
+// keep-alive), a request carrying Connection: close, or a response carrying
+// Connection: close makes the connection non-persistent. That mark belongs to
+// the connection, so an HTTP/1.1 request pipelined behind such a request in the
+// same TCP segment must not clear it: the server still has to close once it has
+// answered what it dispatched.
+describe("a request pipelined behind a non-persistent request does not keep the connection alive", () => {
+  const keepAliveFirst = "GET /first HTTP/1.1\r\nHost: x\r\n\r\n";
+  const pipelinedSecond = "GET /second HTTP/1.1\r\nHost: x\r\n\r\n";
+  const probe = "GET /probe HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  // The handler must answer synchronously: Bun.serve only dispatches a
+  // pipelined request when the previous response has already completed
+  // (otherwise it closes the connection at the second request instead).
+  function startServer(firstResponseHeaders?: Record<string, string>) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        // The ";" terminates the marker: the next response's status line
+        // follows the body directly on the wire.
+        return new Response("body:" + pathname + ";", {
+          headers: pathname === "/first" ? firstResponseHeaders : undefined,
+        });
+      },
+    });
+  }
+
+  // Writes both requests in one segment. Once the response to the pipelined
+  // request has arrived, sends a probe request: a server that closed the
+  // connection can never answer it, a server that was talked back into
+  // keep-alive answers it. Settles on whichever of the two happens.
+  async function pipelineThenProbe(port: number, first: string) {
+    const { promise, resolve } = Promise.withResolvers<"server closed" | "probe answered">();
+    let received = "";
+    let probeSent = false;
+    const socket = net.connect(port, "127.0.0.1");
+    socket.setEncoding("latin1");
+    socket.on("connect", () => socket.write(first + pipelinedSecond));
+    socket.on("data", chunk => {
+      received += chunk;
+      if (received.includes("body:/probe;")) {
+        resolve("probe answered");
+      } else if (!probeSent && received.includes("body:/second;")) {
+        probeSent = true;
+        socket.write(probe);
+      }
+    });
+    socket.on("end", () => resolve("server closed"));
+    socket.on("close", () => resolve("server closed"));
+    // ECONNRESET / EPIPE once the server has closed; "close" follows.
+    socket.on("error", () => {});
+    const outcome = await promise;
+    socket.destroy();
+    return { outcome, firstBody: received.match(/body:[^;]*;/)?.[0] ?? null };
+  }
+
+  it.each([
+    { label: "HTTP/1.0 request", first: "GET /first HTTP/1.0\r\nHost: x\r\n\r\n" },
+    {
+      label: "HTTP/1.0 request with Connection: keep-alive",
+      first: "GET /first HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+    },
+    {
+      label: "HTTP/1.0 request with Connection: close",
+      first: "GET /first HTTP/1.0\r\nHost: x\r\nConnection: close\r\n\r\n",
+    },
+    {
+      label: "HTTP/1.1 request with Connection: close",
+      first: "GET /first HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    },
+    {
+      label: "HTTP/1.1 request answered with Connection: close",
+      first: keepAliveFirst,
+      firstResponseHeaders: { connection: "close" },
+    },
+  ])(
+    "$label + pipelined HTTP/1.1 request: the server closes the connection",
+    async ({ first, firstResponseHeaders }) => {
+      using server = startServer(firstResponseHeaders);
+      expect(await pipelineThenProbe(server.port, first)).toEqual({
+        outcome: "server closed",
+        firstBody: "body:/first;",
+      });
+    },
+  );
+
+  it("control: a persistent HTTP/1.1 request + pipelined HTTP/1.1 request keeps the connection alive", async () => {
+    using server = startServer();
+    expect(await pipelineThenProbe(server.port, keepAliveFirst)).toEqual({
+      outcome: "probe answered",
+      firstBody: "body:/first;",
+    });
+  });
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     // The body source fails before any byte is written. The Response's status

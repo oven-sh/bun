@@ -240,9 +240,9 @@ static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(globalObject, Identifier::fromString(vm, name))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
@@ -263,11 +263,11 @@ JSC_DEFINE_CUSTOM_GETTER(setImmediatePromisifyCustomGetter, (JSGlobalObject * gl
 static JSValue createTimerFunction(VM& vm, JSObject* globalObject, ASCIILiteral name, NativeFunction function, JSC::CustomGetterSetter::CustomGetter promisifyCustomGetter)
 {
     auto* timerFunction = JSFunction::create(vm, globalObject->globalObject(), 1, name, function, ImplementationVisibility::Public);
-    // Same shape as Node's lib/timers.js: an enumerable, non-configurable accessor.
+    // Node's shape: enumerable, non-configurable, getter only. ReadOnly makes a write throw like Node's getter-only property.
     timerFunction->putDirectCustomAccessor(vm,
         Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),
         CustomGetterSetter::create(vm, promisifyCustomGetter, nullptr),
-        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete | 0);
+        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     return timerFunction;
 }
 

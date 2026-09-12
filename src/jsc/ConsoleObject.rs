@@ -2129,13 +2129,16 @@ pub mod formatter {
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
+                        // Like util.inspect: a hook expects an instance, not the prototype.
+                        if !crate::cpp::JSC__JSValue__isConstructorPrototype(global_this, value)? {
+                            return Ok(TagResult {
+                                tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                                    function: callback_value,
+                                    this: value,
+                                }),
+                                cell: js_type,
+                            });
+                        }
                     }
                     _ => {}
                 }

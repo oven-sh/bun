@@ -141,11 +141,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject *
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    // A listener created inside a ShadowRealm reports through the realm's host global:
+    // the realm global's own nextTick queue is never drained.
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject)->hostGlobal();
     Bun::Process* process = globalObject->processObject();
     auto exception = callFrame->argument(0);
     auto func = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
-    process->queueNextTick(lexicalGlobalObject, func, exception);
+    process->queueNextTick(globalObject, func, exception);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

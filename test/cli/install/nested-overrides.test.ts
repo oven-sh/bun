@@ -1553,7 +1553,7 @@ snapshots:
   }
 
   const migratedLine = /\[[\d.]+m?s\] migrated lockfile from pnpm-lock\.yaml\n/;
-  const movedOverridesLine = "moved pnpm.overrides to overrides in package.json";
+  const copiedOverridesLine = "copied pnpm.overrides to overrides in package.json";
 
   test("pnpm-lock.yaml parent>child overrides become nested rules that package.json agrees with", async () => {
     const dir = await project(
@@ -1565,7 +1565,7 @@ snapshots:
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
     expect(migrated.err).toMatch(migratedLine);
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
@@ -1575,6 +1575,7 @@ snapshots:
     expect(JSON.parse(packageJson)).toStrictEqual({
       name: "nested-overrides",
       dependencies: { "one-dep": "1.0.0" },
+      pnpm: { overrides: { "one-dep>no-deps": "2.0.0" } },
       overrides: { "one-dep>no-deps": "2.0.0" },
     });
     await installOk(dir, "--frozen-lockfile");
@@ -1589,7 +1590,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
@@ -1607,7 +1608,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"lockfileVersion": 3');
@@ -1638,7 +1639,7 @@ snapshots:
       })
       .then(({ packageDir }) => packageDir);
     const migrated = await migrate(dir);
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.err).not.toContain("error:");
     expect(migrated.exitCode).toBe(0);
     const packageJson = await packageJsonText(dir);
@@ -1649,10 +1650,11 @@ snapshots:
       name: "nested-overrides",
       dependencies: { "one-dep": "1.0.0" },
       overrides: { "a-dep": "1.0.1", "one-dep>no-deps": "2.0.0" },
+      pnpm: { overrides: { "one-dep>no-deps": "2.0.0" } },
     });
   });
 
-  test("an empty pnpm.overrides is not moved and package.json is not announced as modified", async () => {
+  test("an empty pnpm.overrides is not copied and package.json is not announced as modified", async () => {
     const dir = await project({ dependencies: { "one-dep": "1.0.0" }, pnpm: { overrides: {} } }, "hoisted", {
       "pnpm-lock.yaml": await pnpmLock({ noDepsVersion: "1.0.1" }),
     });
@@ -1660,7 +1662,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(migrated.err).not.toContain(movedOverridesLine);
+    expect(migrated.err).not.toContain(copiedOverridesLine);
     expect(migrated.err).toMatch(migratedLine);
     expect(migrated.exitCode).toBe(0);
     expect(await packageJsonText(dir)).toBe(before);
@@ -1696,14 +1698,14 @@ snapshots:
       ),
     );
 
-  test("bun install warns once per rejected rule that the migration moved into package.json", async () => {
+  test("bun install warns once per rejected rule that the migration copied into package.json", async () => {
     const dir = await rejectedRulesProject();
     const { err, exitCode } = await install(dir);
     expect(occurrences(err, 'warn: Removing "left-pad" with "-" is not supported')).toBe(1);
     expect(occurrences(err, 'warn: Bun currently only supports one level of nested "overrides"')).toBe(1);
     expect(occurrences(err, "warn:")).toBe(2);
     expect(err).toMatch(migratedLine);
-    expect(occurrences(err, movedOverridesLine)).toBe(1);
+    expect(occurrences(err, copiedOverridesLine)).toBe(1);
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
     expect((await file(join(dir, "package.json")).json()).overrides).toStrictEqual({

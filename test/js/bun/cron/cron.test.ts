@@ -67,14 +67,20 @@ function readCrontab(): string {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return result.exitCode === 0 ? result.stdout.toString() : "";
+  if (result.exitCode === 0) return result.stdout.toString();
+  // Exit code 1 is "no crontab for <user>"; Bun.cron reads it the same way.
+  if (result.exitCode === 1) return "";
+  throw new Error(`crontab -l exited with ${result.exitCode}: ${result.stderr.toString()}`);
 }
 
 function writeCrontab(content: string) {
   const tmpFile = `/tmp/bun-cron-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tmpFile, content);
   try {
-    Bun.spawnSync({ cmd: [crontabPath!, tmpFile] });
+    const result = Bun.spawnSync({ cmd: [crontabPath!, tmpFile], stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) {
+      throw new Error(`crontab exited with ${result.exitCode}: ${result.stderr.toString()}`);
+    }
   } finally {
     try {
       unlinkSync(tmpFile);
@@ -90,6 +96,38 @@ function saveCrontabState(): Disposable {
     },
   };
 }
+
+// Every title this file registers starts with this prefix, so entries left
+// behind by a run that was killed mid-test (nothing restores the crontab then)
+// can be removed without touching the user's own jobs.
+const TEST_TITLE_PREFIX = "test-";
+
+/**
+ * The lines Bun.cron installs for `title`: its `# bun-cron: <title>` marker and
+ * the command line after it. Assertions go through this rather than searching
+ * the whole crontab, which also holds whatever the user (or an earlier, killed
+ * run of this file) has installed.
+ */
+function entryLines(crontab: string, title: string): string[] {
+  return crontab
+    .split("\n")
+    .filter(line => line === `# bun-cron: ${title}` || line.includes(` --cron-title=${title} `));
+}
+
+function removeStaleTestEntries() {
+  const marker = `# bun-cron: ${TEST_TITLE_PREFIX}`;
+  const lines = readCrontab().split("\n");
+  const kept = lines.filter((line, i) => {
+    if (line.startsWith(marker)) return false;
+    // A command line goes only together with the test marker right above it.
+    const previous = i > 0 ? lines[i - 1] : "";
+    if (!previous.startsWith(marker)) return true;
+    return !line.includes(` --cron-title=${previous.slice("# bun-cron: ".length)} `);
+  });
+  if (kept.length !== lines.length) writeCrontab(kept.join("\n"));
+}
+
+if (hasCrontab) beforeAll(removeStaleTestEntries);
 
 // ==========================================================================
 // API shape
@@ -544,10 +582,10 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
     const scriptPath = `${dir}/job.ts`;
     await Bun.cron(scriptPath, "30 2 * * 1", "test-register");
 
-    const crontab = readCrontab();
-    expect(crontab).toContain("# bun-cron: test-register");
-    expect(crontab).toContain("30 2 * * 1");
-    expect(crontab).toContain(scriptPath);
+    const [marker, command] = entryLines(readCrontab(), "test-register");
+    expect(marker).toBe("# bun-cron: test-register");
+    expect(command).toStartWith("30 2 * * 1 ");
+    expect(command).toEndWith(` '${scriptPath}'`);
   });
 
   test("crontab entry contains correct format", async () => {
@@ -576,14 +614,18 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
       "job.ts": `export default { scheduled() {} };`,
     });
 
+    // A foreign line shares the schedule that gets replaced.
+    writeCrontab("0 * * * * /usr/bin/some-other-job\n");
     await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-replace");
     await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-replace");
 
     const crontab = readCrontab();
-    const count = (crontab.match(/# bun-cron: test-replace/g) || []).length;
-    expect(count).toBe(1);
-    expect(crontab).toContain("30 2 * * 1");
-    expect(crontab).not.toContain("0 * * * *");
+    expect(crontab).toContain("0 * * * * /usr/bin/some-other-job\n");
+    // One marker and one command line: the first entry's pair is gone.
+    expect(entryLines(crontab, "test-replace")).toEqual([
+      "# bun-cron: test-replace",
+      expect.stringMatching(/^30 2 \* \* 1 /),
+    ]);
   });
 
   test("registers multiple different cron jobs", async () => {
@@ -593,14 +635,18 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
       "b.ts": `export default { scheduled() {} };`,
     });
 
-    await Bun.cron(`${dir}/a.ts`, "0 * * * *", "multi-a");
-    await Bun.cron(`${dir}/b.ts`, "30 12 * * 5", "multi-b");
+    await Bun.cron(`${dir}/a.ts`, "0 * * * *", "test-multi-a");
+    await Bun.cron(`${dir}/b.ts`, "30 12 * * 5", "test-multi-b");
 
     const crontab = readCrontab();
-    expect(crontab).toContain("# bun-cron: multi-a");
-    expect(crontab).toContain("# bun-cron: multi-b");
-    expect(crontab).toContain("0 * * * *");
-    expect(crontab).toContain("30 12 * * 5");
+    expect(entryLines(crontab, "test-multi-a")).toEqual([
+      "# bun-cron: test-multi-a",
+      expect.stringMatching(/^0 \* \* \* \* /),
+    ]);
+    expect(entryLines(crontab, "test-multi-b")).toEqual([
+      "# bun-cron: test-multi-b",
+      expect.stringMatching(/^30 12 \* \* 5 /),
+    ]);
   });
 
   test("preserves existing non-bun crontab entries", async () => {
@@ -646,21 +692,22 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
       "job.ts": `export default { scheduled() {} };`,
     });
 
-    await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "rm-target");
+    await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-rm-target");
 
-    let crontab = readCrontab();
-    expect(crontab).toContain("# bun-cron: rm-target");
+    expect(entryLines(readCrontab(), "test-rm-target")).toEqual([
+      "# bun-cron: test-rm-target",
+      expect.stringMatching(/^30 2 \* \* 1 /),
+    ]);
 
-    await Bun.cron.remove("rm-target");
+    await Bun.cron.remove("test-rm-target");
 
-    crontab = readCrontab();
-    expect(crontab).not.toContain("# bun-cron: rm-target");
-    expect(crontab).not.toContain("30 2 * * 1");
+    // Both the marker and its command line are removed.
+    expect(entryLines(readCrontab(), "test-rm-target")).toEqual([]);
   });
 
   test("removing non-existent entry resolves without error", async () => {
     using _restore = saveCrontabState();
-    const result = await Bun.cron.remove("rm-nonexistent");
+    const result = await Bun.cron.remove("test-rm-nonexistent");
     expect(result).toBeUndefined();
   });
 
@@ -671,14 +718,20 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
       "b.ts": `export default { scheduled() {} };`,
     });
 
-    await Bun.cron(`${dir}/a.ts`, "0 * * * *", "rm-keep");
-    await Bun.cron(`${dir}/b.ts`, "30 2 * * 1", "rm-delete");
+    // A foreign line and another entry share the removed entry's schedule.
+    writeCrontab("30 2 * * 1 /usr/bin/some-other-job\n");
+    await Bun.cron(`${dir}/a.ts`, "30 2 * * 1", "test-rm-keep");
+    await Bun.cron(`${dir}/b.ts`, "30 2 * * 1", "test-rm-delete");
 
-    await Bun.cron.remove("rm-delete");
+    await Bun.cron.remove("test-rm-delete");
 
     const crontab = readCrontab();
-    expect(crontab).toContain("# bun-cron: rm-keep");
-    expect(crontab).not.toContain("# bun-cron: rm-delete");
+    expect(crontab).toContain("30 2 * * 1 /usr/bin/some-other-job\n");
+    expect(entryLines(crontab, "test-rm-keep")).toEqual([
+      "# bun-cron: test-rm-keep",
+      expect.stringMatching(/^30 2 \* \* 1 /),
+    ]);
+    expect(entryLines(crontab, "test-rm-delete")).toEqual([]);
   });
 
   test("register after remove works", async () => {
@@ -687,17 +740,49 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
       "job.ts": `export default { scheduled() {} };`,
     });
 
-    await Bun.cron(`${dir}/job.ts`, "0 * * * *", "rm-reregister");
-    await Bun.cron.remove("rm-reregister");
+    await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-rm-reregister");
+    await Bun.cron.remove("test-rm-reregister");
 
-    let crontab = readCrontab();
-    expect(crontab).not.toContain("# bun-cron: rm-reregister");
+    expect(entryLines(readCrontab(), "test-rm-reregister")).toEqual([]);
 
-    await Bun.cron(`${dir}/job.ts`, "30 6 * * *", "rm-reregister");
+    await Bun.cron(`${dir}/job.ts`, "30 6 * * *", "test-rm-reregister");
 
-    crontab = readCrontab();
-    expect(crontab).toContain("# bun-cron: rm-reregister");
-    expect(crontab).toContain("30 6 * * *");
+    expect(entryLines(readCrontab(), "test-rm-reregister")).toEqual([
+      "# bun-cron: test-rm-reregister",
+      expect.stringMatching(/^30 6 \* \* \* /),
+    ]);
+  });
+
+  test("entries left behind by a killed run are removed, everything else is kept", () => {
+    using _restore = saveCrontabState();
+    writeCrontab(
+      [
+        // Two runs died in different tests, leaving adjacent blocks.
+        "# bun-cron: test-stale",
+        "30 2 * * 1 '/old/bun' run --cron-title=test-stale --cron-period='30 2 * * 1' '/gone/job.ts'",
+        "# bun-cron: test-rm-keep",
+        "0 * * * * '/old/bun' run --cron-title=test-rm-keep --cron-period='0 * * * *' '/gone/a.ts'",
+        "30 2 * * 1 /usr/bin/some-other-job",
+        "# bun-cron: not-a-test-job",
+        "* * * * * /usr/bin/not-a-test-job",
+        // A marker whose command line went missing: only the marker goes.
+        "# bun-cron: test-orphaned-marker",
+        "0 0 * * * /usr/bin/unrelated-line",
+        "",
+      ].join("\n"),
+    );
+
+    removeStaleTestEntries();
+
+    expect(readCrontab()).toBe(
+      [
+        "30 2 * * 1 /usr/bin/some-other-job",
+        "# bun-cron: not-a-test-job",
+        "* * * * * /usr/bin/not-a-test-job",
+        "0 0 * * * /usr/bin/unrelated-line",
+        "",
+      ].join("\n"),
+    );
   });
 });
 

@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
@@ -650,6 +651,56 @@ describe("Bun.build", () => {
     expect(blob.loader).toBe("jsx");
     expect(blob.sourcemap).toBe(null);
     Bun.gc(true);
+  });
+
+  // macOS cannot open an outdir longer than its PATH_MAX (1024) in the first place.
+  test.skipIf(!isLinux)("BuildArtifact.path of an output whose absolute path is longer than PATH_MAX", async () => {
+    using dir = tempDir("build-artifact-long-path", { "e.js": "export default 1;" });
+    const cwd = String(dir);
+    // 200-byte components, `length` bytes in total.
+    const components = (length: number, char: string) => {
+      const parts: string[] = [];
+      let remaining = length;
+      while (remaining > 201) {
+        parts.push(Buffer.alloc(200, char).toString());
+        remaining -= 201;
+      }
+      parts.push(Buffer.alloc(remaining, char).toString());
+      return parts.join("/");
+    };
+    // Each piece is a legal path on its own; only outdir + "/" + the rendered
+    // name passes PATH_MAX. The bundler writes the file relative to the open
+    // outdir, so it exists.
+    const outdir = join(cwd, "o", components(2600 - cwd.length - 3, "d"));
+    const nameDir = components(1587, "n");
+    writeFileSync(
+      join(cwd, "build.mjs"),
+      `const result = await Bun.build(${JSON.stringify({
+        entrypoints: [join(cwd, "e.js")],
+        outdir,
+        naming: nameDir + "/[name].[ext]",
+        throw: false,
+      })});
+      console.log(JSON.stringify({
+        success: result.success,
+        logs: result.logs.map(log => log.message),
+        paths: result.outputs.map(output => output.path),
+      }));`,
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expectedPath = join(outdir, nameDir, "e.js");
+    expect(expectedPath.length).toBeGreaterThan(4096);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: [], paths: [expectedPath] });
+    expect(exitCode).toBe(0);
   });
 
   test("BuildArtifact properties sourcemap", async () => {

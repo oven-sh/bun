@@ -27,7 +27,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string_buf, join_abs_string_spill, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -702,16 +702,20 @@ impl JSBundleCompletionTask {
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
+                // Written relative to the outdir fd, so the absolute path can exceed a PathBuffer.
+                let mut path_spill = Vec::new();
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
                         if outdir_is_abs {
-                            Box::from(join_abs_string::<platform::Auto>(
+                            Box::from(join_abs_string_spill::<platform::Auto>(
                                 &outdir,
+                                &mut path_spill,
                                 &[&output_file.dest_path],
                             ))
                         } else {
-                            Box::from(join_abs_string::<platform::Auto>(
+                            Box::from(join_abs_string_spill::<platform::Auto>(
                                 top_level_dir,
+                                &mut path_spill,
                                 &[&dir, &outdir, &output_file.dest_path],
                             ))
                         }

@@ -65,6 +65,12 @@ Defining `trustedDependencies` in `package.json` **replaces** the default list r
 
 Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`). Bun no longer trusts those packages implicitly.
 
+### Workspaces
+
+In a [monorepo](/pm/workspaces), `bun install` reads `trustedDependencies` from the root `package.json` only. The list applies to the dependencies of every workspace. A `trustedDependencies` field in a workspace package's own `package.json` has no effect, and `bun install` prints a warning for it. `bun add --trust <pkg>` and `bun pm trust <pkg>` write to the root `package.json` even when you run them inside a workspace.
+
+The lifecycle scripts of the workspace packages themselves always run. They are your own code, not a dependency.
+
 ---
 
 ## `--ignore-scripts`

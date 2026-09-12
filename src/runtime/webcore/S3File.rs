@@ -244,29 +244,28 @@ fn construct_s3_file_internal_store(
 ) -> JsResult<Blob> {
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
     // for the process-singleton dotenv loader (set during init).
-    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
+    let existing_credentials = RefPtr::new(crate::webcore::fetch::s3_credentials_from_env(
         global
             .bun_vm()
             .as_mut()
             .transpiler
             .env_mut()
             .get_s3_credentials(),
-    );
+    ));
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
-/// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike<'static>,
     options: Option<JSValue>,
-    default_credentials: &s3::S3Credentials,
+    default_credentials: &RefPtr<s3::S3Credentials>,
     default_options: s3::MultiPartUploadOptions,
     default_acl: Option<s3::ACL>,
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
 ) -> JsResult<Blob> {
-    let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
         default_options,
         options,
@@ -275,13 +274,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         default_request_payer,
         global,
     )?;
-
-    let credentials = if aws_options.changed_credentials {
-        std::mem::take(&mut aws_options.credentials)
-    } else {
-        default_credentials.clone()
-    };
-    let store = blob::Store::init_s3(path, None, credentials).expect("oom");
+    let store = blob::Store::init_s3(path, None, aws_options.credentials.clone()).expect("oom");
     finish_s3_blob(global, store, &aws_options, options)
 }
 
@@ -289,9 +282,9 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
     path: PathLike<'static>,
     options: Option<JSValue>,
-    existing_credentials: &s3::S3Credentials,
+    existing_credentials: &RefPtr<s3::S3Credentials>,
 ) -> JsResult<Blob> {
-    let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         existing_credentials,
         Default::default(),
         options,
@@ -300,8 +293,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
         false,
         global,
     )?;
-    let credentials = std::mem::take(&mut aws_options.credentials);
-    let store = blob::Store::init_s3(path, None, credentials).expect("oom");
+    let store = blob::Store::init_s3(path, None, aws_options.credentials.clone()).expect("oom");
     finish_s3_blob(global, store, &aws_options, options)
 }
 
@@ -572,9 +564,8 @@ pub(crate) fn get_presign_url_from(
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
     let mut credentials_with_options = s3::S3CredentialsWithOptions {
-        credentials: (**s3.get_credentials()).clone(),
         request_payer: s3.request_payer,
-        ..Default::default()
+        ..s3::S3CredentialsWithOptions::new(s3.get_credentials().clone())
     };
 
     if let Some(options) = extra_options {

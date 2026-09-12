@@ -1154,7 +1154,13 @@ impl Response {
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
+        let etag = arguments[0]
+            .as_class_ref::<crate::api::BuildArtifact>()
+            .and_then(crate::api::BuildArtifact::etag_bytes);
         if let BodyValue::Blob(blob) = body.value.get() {
+            if etag.is_some() && init.headers.is_none() {
+                init.headers = Some(HeadersRef::create_empty());
+            }
             if let Some(headers) = init.headers.as_deref_mut() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
@@ -1163,6 +1169,11 @@ impl Response {
                         &BunString::ascii(content_type),
                         global_this,
                     )?;
+                }
+                if let Some(etag) = &etag {
+                    if !headers.fast_has(HTTPHeaderName::ETag) {
+                        headers.put(HTTPHeaderName::ETag, &BunString::ascii(etag), global_this)?;
+                    }
                 }
             }
         }

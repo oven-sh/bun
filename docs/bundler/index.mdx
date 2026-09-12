@@ -1609,7 +1609,7 @@ const build = await Bun.build({
 
 const artifact = build.outputs[0];
 
-// Content-Type header is automatically set
+// Content-Type and ETag headers are automatically set
 return new Response(artifact);
 ```
 

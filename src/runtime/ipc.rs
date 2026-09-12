@@ -502,7 +502,7 @@ mod json {
                 json_ipc_data_string_free_cb,
             );
             if s.tag() == bun_core::Tag::Dead {
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
             s

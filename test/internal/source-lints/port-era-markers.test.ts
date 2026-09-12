@@ -45,6 +45,10 @@ const banned: { pattern: RegExp; reason: string }[] = [
     pattern: /\bun-gated\b/i,
     reason: "'un-gated' is port-era progress narrative, not useful documentation",
   },
+  {
+    pattern: /@branchHint\b/i,
+    reason: "'@branchHint' notes describe a hint the port dropped; the Rust spelling is core::hint::cold_path()",
+  },
 ];
 
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

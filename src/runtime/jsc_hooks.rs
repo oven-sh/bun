@@ -4225,7 +4225,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
 
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
-        // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
+        core::hint::cold_path();
         debug_assert!(!is_commonjs_require);
         lr.loader = Some(loader_type);
     } else if is_commonjs_require

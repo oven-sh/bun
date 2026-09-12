@@ -77,6 +77,10 @@ pub(crate) fn view(
     });
 
     let scope = manager.scope_for_package_name(name);
+    if let Err(err) = scope.check_url_protocol() {
+        Output::err_generic("{}", (err,));
+        Global::exit(1);
+    }
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(

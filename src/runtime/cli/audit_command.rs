@@ -349,6 +349,10 @@ struct AuditRegistry {
 
 impl AuditRegistry {
     fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
+        if let Err(err) = scope.check_url_protocol() {
+            Output::err_generic("{}", (err,));
+            Global::exit(1);
+        }
         AuditRegistry {
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,

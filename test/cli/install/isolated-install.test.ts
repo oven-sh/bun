@@ -554,6 +554,56 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+test("a folder dependency shared by several folder dependencies is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const siblings = Array.from({ length: 6 }, (_, i) => `sib${i}`);
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-shared-folder-dep",
+        dependencies: {
+          shared: "file:./vend/shared",
+          ...Object.fromEntries(siblings.map(name => [name, `file:./vend/${name}`])),
+        },
+      }),
+    ),
+    write(join(packageDir, "vend", "shared", "package.json"), JSON.stringify({ name: "shared", version: "1.0.0" })),
+    write(join(packageDir, "vend", "shared", "index.js"), "module.exports = 'shared';"),
+    ...siblings.flatMap(name => [
+      write(
+        join(packageDir, "vend", name, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", dependencies: { shared: "file:../shared" } }),
+      ),
+      write(join(packageDir, "vend", name, "index.js"), "module.exports = require('shared');"),
+    ]),
+  ]);
+
+  // A fresh resolve made one `shared` package per declarer. Each one linked
+  // into the same store entry at the same time: EEXIST from link().
+  const { out } = await runBunInstall(bunEnv, packageDir);
+  expect(out).toContain(`${siblings.length + 1} packages installed`);
+
+  const store = join(packageDir, "node_modules", ".bun");
+  expect(readlinkSync(join(packageDir, "node_modules", "shared"))).toBe(
+    join(".bun", "shared@file+vend+shared", "node_modules", "shared"),
+  );
+  expect(
+    await Promise.all(
+      siblings.map(name => readlink(join(store, `${name}@file+vend+${name}`, "node_modules", "shared"))),
+    ),
+  ).toEqual(siblings.map(() => join("..", "..", "shared@file+vend+shared", "node_modules", "shared")));
+  expect(await readdirSorted(join(store, "shared@file+vend+shared", "node_modules", "shared"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+
+  const requireFromRoot = createRequire(packageJson);
+  expect(siblings.map(name => requireFromRoot(name))).toEqual(siblings.map(() => "shared"));
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

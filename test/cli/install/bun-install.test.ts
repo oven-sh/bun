@@ -10811,9 +10811,9 @@ it("installs file: dependencies that depend on each other", async () => {
 
         "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
 
-        "a/b": ["b@file:packages/b", {}],
+        "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
 
-        "b/a": ["a@file:packages/a", {}],
+        "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
       }
     }"
   `);
@@ -10857,6 +10857,85 @@ it("installs file: dependencies that depend on each other from a lockfile that o
         "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
 
         "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+      }
+    }"
+  `);
+});
+
+it("reloads the lockfile it wrote when a file: dependency and the root declare the same folder", async () => {
+  using dir = tempDir("shared-file-dep", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        lib: "file:./vendor/lib",
+        shared: "file:./vendor/shared",
+      },
+    }),
+    "vendor/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      dependencies: { shared: "file:../shared" },
+    }),
+    "vendor/shared/package.json": JSON.stringify({
+      name: "shared",
+      version: "1.0.0",
+      dependencies: { nested: "file:../nested" },
+    }),
+    "vendor/nested/package.json": JSON.stringify({ name: "nested", version: "1.0.0" }),
+  });
+
+  const install = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  };
+
+  const [, err, exitCode] = await install();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  const lock = await file(join(String(dir), "bun.lock")).text();
+
+  // `lib/shared` was a second `shared` package with no dependencies. The parser
+  // makes one package of the two rows, so it looked for a `lib/shared/nested` row:
+  // "Failed to resolve prod dependency 'nested' for package 'lib/shared'".
+  await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+  const [, err2, exitCode2] = await install("--frozen-lockfile");
+  expect(err2).not.toContain("error:");
+  expect(err2).not.toContain("Ignoring lockfile");
+  expect(exitCode2).toBe(0);
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(lock);
+
+  expect(normalizeBunSnapshot(lock, dir)).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 2,
+      "configVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "my-app",
+          "dependencies": {
+            "lib": "file:./vendor/lib",
+            "shared": "file:./vendor/shared",
+          },
+        },
+      },
+      "packages": {
+        "lib": ["lib@file:vendor/lib", { "dependencies": { "shared": "file:../shared" } }],
+
+        "shared": ["shared@file:vendor/shared", { "dependencies": { "nested": "file:../nested" } }],
+
+        "lib/shared": ["shared@file:vendor/shared", { "dependencies": { "nested": "file:../nested" } }],
+
+        "shared/nested": ["nested@file:vendor/nested", {}],
+
+        "lib/shared/nested": ["nested@file:vendor/nested", {}],
       }
     }"
   `);

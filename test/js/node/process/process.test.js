@@ -1294,6 +1294,39 @@ describe.concurrent(() => {
     it("process.getgroups", () => {
       expect(process.getgroups()).toBeInstanceOf(Array);
       expect(process.getgroups().length).toBeGreaterThan(0);
+      // POSIX leaves it unspecified whether the effective gid is in the list. Node always includes it.
+      expect(process.getgroups()).toContain(process.getegid());
+    });
+
+    // Node appends the effective gid to getgroups(2) when the kernel does not return it.
+    // Needs root and setpriv (util-linux) to drop to an identity with no supplementary groups.
+    const setpriv = (() => {
+      if (process.platform !== "linux" || process.getuid() !== 0) return null;
+      const path = which("setpriv");
+      if (!path) return null;
+      // BusyBox ships a setpriv applet without --reuid and friends.
+      const { stdout } = spawnSync({ cmd: [path, "--help"], stdout: "pipe", stderr: "pipe" });
+      return stdout.toString().includes("--reuid") ? path : null;
+    })();
+    it.skipIf(!setpriv)("process.getgroups includes the effective gid when the supplementary list omits it", () => {
+      const script = "console.log(JSON.stringify([process.getgroups(), process.getegid()]))";
+      const run = (...privArgs) => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [setpriv, ...privArgs, bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(stderr.toString()).toBe("");
+        expect(exitCode).toBe(0);
+        return JSON.parse(stdout.toString());
+      };
+
+      expect(run("--reuid", "61234", "--regid", "61234", "--clear-groups")).toEqual([[61234], 61234]);
+      expect(run("--reuid", "61234", "--regid", "61234", "--groups", "5,6")).toEqual([[5, 6, 61234], 61234]);
+      // The kernel sorts the supplementary list. When it already holds the egid, nothing is appended.
+      expect(run("--reuid", "61234", "--regid", "61234", "--groups", "5,61234,6")).toEqual([[5, 6, 61234], 61234]);
+      expect(run("--clear-groups")).toEqual([[0], 0]);
     });
     it("process.getuid", () => {
       expect(typeof process.getuid()).toBe("number");

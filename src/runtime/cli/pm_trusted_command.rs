@@ -636,8 +636,8 @@ impl TrustCommand {
         // holds the only `&mut`. Same projection pattern as `migrate` in
         // `package_manager_command.rs`.
         // SAFETY: `load_lockfile` is `Ok` (errors exited in
-        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
+        // `handle_load_lockfile_errors`). `save_to_disk` reads only the scalar
+        // `format`/`migrated` fields of `load_result`, never `ok.lockfile`.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);

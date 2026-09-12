@@ -59,7 +59,7 @@ impl ExprStr for Expr {
     }
 }
 
-enum JsonObjectStringRows<'a> {
+pub(crate) enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
         &'a bun_alloc::Arena,
@@ -68,7 +68,7 @@ enum JsonObjectStringRows<'a> {
 }
 
 impl<'a> JsonObjectStringRows<'a> {
-    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
+    pub(crate) fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
         match &expr.data {
             ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
             ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
@@ -124,6 +124,38 @@ fn invalid_trusted_dependencies(
         "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
     crate::Error::InvalidPackageJSON
+}
+
+/// Appends a package.json `"trustedDependencies"` array to `set` (left `None` if the key is absent).
+pub(crate) fn append_trusted_dependencies(
+    set: &mut Option<TrustedDependenciesSet>,
+    bump: &bun_alloc::Arena,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    json: &Expr,
+) -> crate::Result<()> {
+    let Some(q) = json.as_property(b"trustedDependencies") else {
+        return Ok(());
+    };
+    let count = match &q.expr.data {
+        ExprData::EArray(arr) => arr.items.len_u32() as usize,
+        ExprData::EArrayJSON(arr) => arr.get().items().len(),
+        _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
+    };
+    let trusted = set.get_or_insert_with(Default::default);
+    trusted.ensure_unused_capacity(count)?;
+    if let Some(mut items) = q.expr.as_array() {
+        while let Some(item) = items.next() {
+            let Some(name) = item.as_string(bump) else {
+                return Err(invalid_trusted_dependencies(log, source, q.loc));
+            };
+            trusted.put_assume_capacity(
+                semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                Box::<[u8]>::from(name),
+            );
+        }
+    }
+    Ok(())
 }
 
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
@@ -2523,29 +2555,13 @@ impl Package<u64> {
         }
 
         if FEATURES.trusted_dependencies {
-            if let Some(q) = json.as_property(b"trustedDependencies") {
-                let count = match &q.expr.data {
-                    ExprData::EArray(arr) => arr.items.len_u32() as usize,
-                    ExprData::EArrayJSON(arr) => arr.get().items().len(),
-                    _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
-                };
-                if lockfile.trusted_dependencies.is_none() {
-                    lockfile.trusted_dependencies = Some(Default::default());
-                }
-                let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
-                trusted.ensure_unused_capacity(count)?;
-                if let Some(mut items) = q.expr.as_array() {
-                    while let Some(item) = items.next() {
-                        let Some(name) = item.as_string(&bump) else {
-                            return Err(invalid_trusted_dependencies(log, source, q.loc));
-                        };
-                        trusted.put_assume_capacity(
-                            semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
-                            Box::<[u8]>::from(name),
-                        );
-                    }
-                }
-            }
+            append_trusted_dependencies(
+                &mut lockfile.trusted_dependencies,
+                &bump,
+                log,
+                source,
+                &json,
+            )?;
         }
 
         if FEATURES.is_main {

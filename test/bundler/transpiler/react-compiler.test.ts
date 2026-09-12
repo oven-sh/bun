@@ -11,59 +11,108 @@ import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // InferTypes stores the type of a phi as `Phi[TypeVar, ..]` and resolves it by
 // walking into the phis that feed it. Those form a DAG, and every path to a
-// phi used to produce its own copy of that phi's resolved type. Here a `let`
-// is reassigned in a nested `try` in a loop that holds another loop. Each
-// added statement multiplied the copies by 3 to 5: three of them took 700 MB,
-// four took 1.9 GB and five ran out of memory.
-test("react-compiler resolves a phi type once however many paths reach it", async () => {
-  const mutate = Array.from({ length: 3 }, () => "if (Array.isArray(v0)) v0.push(p.a);").join("\n");
-  using dir = tempDir("react-compiler-phi-types", {
-    "empty.jsx": `export default function App() { return null; }`,
-    "entry.jsx": `
-      export default function App(p) {
-        let v0 = [p.a];
-        let v3;
-        for (const x of p.items) {
-          try {
-            if (p.a > 1) { v0 = p.b; }
-            ${mutate}
-            JSON.parse(p.t);
-          } catch {
-            try {
-              ${mutate}
-              v0 = p.b;
-            } catch {}
-          }
-          for (const y of p.items) {
-            v3 = {};
-            if (y > 3) v0 = "k";
+// phi used to produce its own copy of that phi's resolved type.
+describe("react-compiler InferTypes", () => {
+  // `locals` variables rotated in a `while (true)` inside another loop: every
+  // phi of the inner loop reaches every other one through two back edges.
+  const rotation = (locals: number) => {
+    const names = Array.from({ length: locals }, (_, i) => String.fromCharCode(97 + i));
+    return `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        ${names.map(name => `let ${name} = {};`).join(" ")}
+        for (let i = 0; i < props.n; i++) {
+          while (true) {
+            let z = a;
+            ${names.map((name, i) => `${name} = ${names[i + 1] ?? "z"};`).join(" ")}
+            if (cond(a)) break;
           }
         }
-        return <div data-v={v3} />;
+        return a;
       }
-    `,
-  });
+    `;
+  };
 
-  const build = async (entry: string) => {
+  const build = async (cwd: string, entry: string) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
       env: bunEnv,
-      cwd: String(dir),
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return { stdout, peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
   };
 
-  const [empty, entry] = await Promise.all([build("empty.jsx"), build("entry.jsx")]);
-  // The component compiled: it reads its memo cache.
-  expect(entry.stdout).toMatch(/\b_c\(\d+\)/);
-  // A build without the fix is 450 MB or more above the empty build, when it
-  // finishes in time at all. With the fix it is 20 MB above.
-  expect(entry.peakMB - empty.peakMB).toBeLessThan(150);
+  // A `let` reassigned in a nested `try` in a loop that holds another loop:
+  // each added statement multiplied the copies by 3 to 5. Three took 700 MB,
+  // four took 1.9 GB and five ran out of memory. Four rotated locals ran out
+  // of memory at once: `occurs_check` and `try_resolve_type` walked the same
+  // DAG as a tree.
+  test("resolves a phi type once however many paths reach it", async () => {
+    const mutate = Array.from({ length: 3 }, () => "if (Array.isArray(v0)) v0.push(p.a);").join("\n");
+    using dir = tempDir("react-compiler-phi-types", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "try.jsx": `
+        export default function App(p) {
+          let v0 = [p.a];
+          let v3;
+          for (const x of p.items) {
+            try {
+              if (p.a > 1) { v0 = p.b; }
+              ${mutate}
+              JSON.parse(p.t);
+            } catch {
+              try {
+                ${mutate}
+                v0 = p.b;
+              } catch {}
+            }
+            for (const y of p.items) {
+              v3 = {};
+              if (y > 3) v0 = "k";
+            }
+          }
+          return <div data-v={v3} />;
+        }
+      `,
+      "rotation.jsx": rotation(4),
+    });
+
+    const [empty, tryCatch, rotated] = await Promise.all(
+      ["empty.jsx", "try.jsx", "rotation.jsx"].map(entry => build(String(dir), entry)),
+    );
+    // Without the fix `try.jsx` is 660 MB above the empty build on a release
+    // build, and neither finishes in time on a debug build. With it both are
+    // 10 MB above on a release build and 30 MB on a debug build.
+    const bound = isASAN || isDebug ? 300 : 100;
+    expect({
+      tryCatch: { memoized: tryCatch.memoized, bounded: tryCatch.peakMB - empty.peakMB < bound },
+      rotated: { memoized: rotated.memoized, bounded: rotated.peakMB - empty.peakMB < bound },
+    }).toEqual({
+      tryCatch: { memoized: true, bounded: true },
+      rotated: { memoized: true, bounded: true },
+    });
+  });
+
+  // The memos make a walk linear in the number of distinct type nodes, but
+  // that number still grows 3.7 times per rotated local, because a phi has a
+  // different resolved type under each variable that reaches it through a
+  // cycle. Past half a million steps InferTypes gives the function up, and it
+  // is left as written. A debug build takes 8 seconds to count that far.
+  test.skipIf(isDebug || isASAN)(
+    "leaves a function as written when its phi types take too long to resolve",
+    async () => {
+      using dir = tempDir("react-compiler-phi-budget", {
+        "rotation.jsx": rotation(12),
+      });
+      expect(await build(String(dir), "rotation.jsx")).toEqual({ memoized: false, peakMB: expect.any(Number) });
+    },
+  );
 });
 
 describe("bundler", () => {

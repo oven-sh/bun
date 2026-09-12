@@ -8,6 +8,7 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -1088,6 +1089,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn get(&mut self, ty: &Type) -> Type {
+        self.unifier.step();
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.unifier.substitutions.get(id) {
                 if let Some(resolved) = self.vars.get(id) {
@@ -1128,15 +1130,57 @@ impl<'a> Resolver<'a> {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn too_many_steps() -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Todo,
+        "(InferTypes) Handle phi types that take this many steps to resolve",
+        None,
+    )
+}
+
+/// The nodes one `occurs_check` has walked. The search stops at the first
+/// hit, so a node it reaches again had no hit below it.
+#[derive(Default)]
+struct Visited {
+    vars: HashSet<TypeId>,
+    phis: HashSet<*const Type>,
+}
+
+/// The results of one top-level `try_resolve_type`, for the nodes it can reach
+/// along more than one path. A second walk of a node returns an equal type:
+/// the first walk replaced the substitution of each bound variable below it
+/// with the resolved type, and resolving that again changes nothing.
+#[derive(Default)]
+struct Stripped {
+    vars: HashMap<TypeId, Type>,
+    /// Keyed like `Resolver::phis`.
+    phis: HashMap<*const Type, (Arc<[Type]>, Type)>,
+}
+
 // =============================================================================
 // Unifier
 // =============================================================================
+
+/// How many type nodes `get`, `try_resolve_type` and `occurs_check` may walk
+/// for one function before InferTypes gives up on it.
+///
+/// The memos make a walk linear in the number of distinct nodes. That number
+/// can still be exponential: `try_resolve_type` stores a phi's resolved type
+/// with the references to the variable it is binding removed, so one phi has a
+/// different resolved type under each variable that reaches it through a
+/// cycle. Six locals rotated in a `while (true)` inside a loop take 113 000
+/// steps, eight take 1.4 million, and each one more multiplies that by 3.7.
+/// The largest function in the upstream fixtures takes 719.
+const MAX_RESOLVE_STEPS: u64 = 500_000;
 
 struct Unifier {
     substitutions: HashMap<TypeId, Type>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
     custom_hook_type: Option<Type>,
+    steps: Cell<u64>,
 }
 
 impl Unifier {
@@ -1150,7 +1194,17 @@ impl Unifier {
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
+            steps: Cell::new(0),
         }
+    }
+
+    #[inline]
+    fn step(&self) {
+        self.steps.set(self.steps.get() + 1);
+    }
+
+    fn out_of_steps(&self) -> bool {
+        self.steps.get() > MAX_RESOLVE_STEPS
     }
 
     fn unify(
@@ -1159,7 +1213,11 @@ impl Unifier {
         t_b: Type,
         shapes: &ShapeRegistry,
     ) -> Result<(), CompilerDiagnostic> {
-        self.unify_impl(t_a, t_b, shapes)
+        self.unify_impl(t_a, t_b, shapes)?;
+        if self.out_of_steps() {
+            return Err(too_many_steps());
+        }
+        Ok(())
     }
 
     fn unify_impl(
@@ -1314,11 +1372,14 @@ impl Unifier {
             }
         }
 
-        if self.occurs_check(&v, &ty) {
-            let resolved_type = self.try_resolve_type(&v, &ty);
+        if self.occurs_check(&v, &ty, &mut Visited::default()) {
+            let resolved_type = self.try_resolve_type(&v, &ty, &mut Stripped::default());
             if let Some(resolved) = resolved_type {
                 self.substitutions.insert(v_id, resolved);
                 return Ok(());
+            }
+            if self.out_of_steps() {
+                return Err(too_many_steps());
             }
             return Err(CompilerDiagnostic {
                 category: ErrorCategory::Invariant,
@@ -1333,9 +1394,13 @@ impl Unifier {
         Ok(())
     }
 
-    fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+    fn try_resolve_type(&mut self, v: &Type, ty: &Type, stripped: &mut Stripped) -> Option<Type> {
+        self.step();
         match ty {
             Type::Phi { operands } => {
+                if let Some((_, resolved)) = stripped.phis.get(&operands.as_ptr()) {
+                    return Some(resolved.clone());
+                }
                 let mut new_operands = Vec::with_capacity(operands.len());
                 for operand in operands.iter() {
                     if let Type::TypeVar { id } = operand {
@@ -1345,18 +1410,29 @@ impl Unifier {
                             }
                         }
                     }
-                    let resolved = self.try_resolve_type(v, operand)?;
+                    let resolved = self.try_resolve_type(v, operand, stripped)?;
                     new_operands.push(resolved);
                 }
-                Some(Type::Phi {
+                let resolved = Type::Phi {
                     operands: new_operands.into(),
-                })
+                };
+                stripped
+                    .phis
+                    .insert(operands.as_ptr(), (operands.clone(), resolved.clone()));
+                Some(resolved)
             }
             Type::TypeVar { id } => {
+                if let Some(resolved) = stripped.vars.get(id) {
+                    return Some(resolved.clone());
+                }
+                if self.out_of_steps() {
+                    return None;
+                }
                 let substitution = self.get(ty);
                 if !type_equals(&substitution, ty) {
-                    let resolved = self.try_resolve_type(v, &substitution)?;
+                    let resolved = self.try_resolve_type(v, &substitution, stripped)?;
                     self.substitutions.insert(*id, resolved.clone());
+                    stripped.vars.insert(*id, resolved.clone());
                     Some(resolved)
                 } else {
                     Some(ty.clone())
@@ -1368,7 +1444,7 @@ impl Unifier {
                 property_name,
             } => {
                 let resolved_obj = self.get(object_type);
-                let object_type = self.try_resolve_type(v, &resolved_obj)?;
+                let object_type = self.try_resolve_type(v, &resolved_obj, stripped)?;
                 Some(Type::Property {
                     object_type: Box::new(object_type),
                     object_name: *object_name,
@@ -1381,7 +1457,7 @@ impl Unifier {
                 is_constructor,
             } => {
                 let resolved_ret = self.get(return_type);
-                let return_type = self.try_resolve_type(v, &resolved_ret)?;
+                let return_type = self.try_resolve_type(v, &resolved_ret, stripped)?;
                 Some(Type::Function {
                     shape_id: *shape_id,
                     return_type: Box::new(return_type),
@@ -1394,23 +1470,30 @@ impl Unifier {
         }
     }
 
-    fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
+    fn occurs_check(&self, v: &Type, ty: &Type, visited: &mut Visited) -> bool {
+        self.step();
         if type_equals(v, ty) {
             return true;
         }
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.occurs_check(v, sub);
+                if !visited.vars.insert(*id) {
+                    return false;
+                }
+                return self.occurs_check(v, sub, visited);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            return operands.iter().any(|o| self.occurs_check(v, o));
+            if !visited.phis.insert(operands.as_ptr()) {
+                return false;
+            }
+            return operands.iter().any(|o| self.occurs_check(v, o, visited));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.occurs_check(v, return_type);
+            return self.occurs_check(v, return_type, visited);
         }
 
         false

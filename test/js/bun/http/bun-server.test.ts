@@ -477,14 +477,16 @@ describe.concurrent("Server", () => {
     // Test that HTTPS keep-alive doesn't cause it to re-use the connection on
     // the next attempt, when the next attempt has reject unauthorized enabled
     {
-      expect(
-        async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
-      ).toThrow("self signed certificate");
+      await expect(
+        fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
+      ).rejects.toMatchObject({ code: "DEPTH_ZERO_SELF_SIGNED_CERT" });
     }
 
     {
       using _ = rejectUnauthorizedScope(true);
-      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+      await expect(fetch(server.url).then(res => res.text())).rejects.toMatchObject({
+        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      });
     }
 
     {

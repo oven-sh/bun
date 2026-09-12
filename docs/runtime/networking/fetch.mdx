@@ -336,6 +336,19 @@ Bun's fetch implementation includes several specific error cases:
 - TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)
 - S3 operations may throw specific errors related to authentication or permissions
 
+Network failures (connection refused, DNS lookup failures, TLS errors, a connection dropped before or during the response, malformed responses, too many redirects) reject with the same shape Node.js uses: a `TypeError` whose message is `"fetch failed"`, or `"terminated"` when the response headers had already arrived and reading the body failed. The underlying error is the `cause`, and carries an error code (`ECONNREFUSED`, `ECONNRESET`, `ENOTFOUND`, a TLS code such as `DEPTH_ZERO_SELF_SIGNED_CERT`, or one of Bun's own names such as `TooManyRedirects`), a descriptive message, and the URL as `path`. The code is also available as `code` on the `TypeError` itself.
+
+```ts
+try {
+  await fetch("http://127.0.0.1:1/");
+} catch (error) {
+  error.message; // "fetch failed"
+  error.cause.code; // "ECONNREFUSED"
+  error.cause.message; // "Unable to connect. Is the computer able to access the url?"
+  error.code; // "ECONNREFUSED" (same as error.cause.code)
+}
+```
+
 ### Content-Type handling
 
 Bun automatically sets the `Content-Type` header for request bodies when not explicitly provided:

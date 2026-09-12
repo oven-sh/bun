@@ -422,7 +422,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
       `const out = [];
        const report = p => p.then(
          () => "resolved",
-         ({ name, code, syscall, hostname, message }) => ({ name, code, syscall, hostname, message }),
+         e => ({ name: e.name, code: e.code, cause: e.cause && { code: e.cause.code, syscall: e.cause.syscall, hostname: e.cause.hostname, message: e.cause.message } }),
        );
        for (let i = 0; i < 3; i++) {
          out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
@@ -450,9 +450,12 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   const notFound = (hostname: string) => ({
     name: "TypeError",
     code: "ENOTFOUND",
-    syscall: "getaddrinfo",
-    hostname,
-    message: `getaddrinfo ENOTFOUND ${hostname}`,
+    cause: {
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+    },
   });
   // `out` is the raw stdout if it is not JSON (the subprocess crashed), so the
   // failure diff shows what the child actually printed alongside stderr.
@@ -508,11 +511,11 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${server.address().port}`, {
       redirect: "error",
     }),
-  ).rejects.toThrow(/UnexpectedRedirect/);
+  ).rejects.toMatchObject({ name: "TypeError", code: "UnexpectedRedirect" });
 });
 
 test("Receiving non-Latin1 headers", async () => {

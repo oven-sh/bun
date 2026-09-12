@@ -47,9 +47,10 @@ describe("native error name/code preservation", () => {
     expect(err).toBeDefined();
     // The exact message string from the fetch error match arm (was a
     // ~40-arm `e if e == err!(X)` guard chain, now a real match).
-    expect({ code: err.code, message: String(err.message) }).toEqual({
-      code: "ConnectionRefused",
-      message: "Unable to connect. Is the computer able to access the url?",
+    expect({ code: err.code, message: String(err.message), cause: String(err.cause?.message) }).toEqual({
+      code: "ECONNREFUSED",
+      message: "fetch failed",
+      cause: "Unable to connect. Is the computer able to access the url?",
     });
   });
 });

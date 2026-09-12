@@ -3780,12 +3780,7 @@ pub mod formatter {
             })?;
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
-                if writer_
-                    .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
-                    .is_err()
-                {
-                    self.failed = true;
-                }
+                self.print_custom_inspect_string(writer_, result)?;
             } else {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
@@ -3796,6 +3791,34 @@ pub mod formatter {
                     Tag::get(result, self.global_this)?
                 };
                 self.format::<C>(tag, writer_, result, self.global_this)?;
+            }
+            Ok(())
+        }
+
+        /// Re-indents the hook's result to the value's nesting level, like util.inspect.
+        #[inline(never)]
+        fn print_custom_inspect_string(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let str = value.to_slice(self.global_this)?;
+            let mut rest = str.slice();
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            if self.indent > 0 {
+                while let Some(newline) = strings::index_of_char_usize(rest, b'\n') {
+                    writer.write_all(&rest[..=newline]);
+                    writer.write_indent(self.indent);
+                    rest = &rest[newline + 1..];
+                }
+            }
+            writer.write_all(rest);
+            if writer.failed {
+                self.failed = true;
             }
             Ok(())
         }
@@ -5434,9 +5457,9 @@ pub mod formatter {
                 }
             } else {
                 self.depth -= 1;
+                self.indent = self.indent.saturating_sub(1);
 
                 if iter_always_newline {
-                    self.indent = self.indent.saturating_sub(1);
                     self.print_comma::<C>(writer_).expect("unreachable");
                     let _ = writer_.write_all(b"\n");
                     let _ = self.write_indent(writer_);

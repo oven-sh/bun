@@ -43,6 +43,15 @@ describe("Bun.inspect", () => {
     );
   });
 
+  it("compact keeps the indentation balanced after an object", () => {
+    // The "more items" marker is the one line break compact mode still prints.
+    // It sits two levels deep, no matter how many objects came before it.
+    const items = Array.from({ length: 101 }, (_, i) => i);
+    const marker = ",\n    ... 1 more items ] }";
+    expect(Bun.inspect({ z: items }, { compact: true })).toEndWith(marker);
+    expect(Bun.inspect({ a: { x: 1 }, b: { x: 1 }, z: items }, { compact: true })).toEndWith(marker);
+  });
+
   it("depth < 0 throws", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();

@@ -432,6 +432,67 @@ describe("bundler", async () => {
     },
   });
 
+  // The runtime resolves `./a.txt?raw` to `a.txt` and loads it as text. The bundler does the same.
+  itBundled("bun/loader-raw-query", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import text from "./a.txt?raw";
+        import { x } from "./x.js?v=1";
+        const { x: dynamic } = await import("./x.js?v=2");
+        console.log(text, x, dynamic);
+      `,
+      "/a.txt": "hello",
+      "/x.js": "export const x = 1;",
+    },
+    run: { stdout: "hello 1 1" },
+  });
+
+  itBundled("bun/loader-raw-query-and-module-of-one-file", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import source from "./lib.js?raw";
+        import { value } from "./lib.js";
+        console.log(JSON.stringify([source, value]));
+      `,
+      "/lib.js": "export const value = 42;",
+    },
+    run: { stdout: '["export const value = 42;",42]' },
+  });
+
+  // Like in the runtime, the `type` attribute wins over `?raw`.
+  itBundled("bun/loader-raw-query-with-type-attribute", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import parsed from "./data.json?raw" with { type: "json" };
+        console.log(JSON.stringify(parsed));
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    run: { stdout: '{"a":1}' },
+  });
+
+  // Like the runtime, each query gives the file its own module instance.
+  itBundled("bun/import-query-suffix-module-identity", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import { count as a } from "./counter.js?a";
+        import { count as b } from "./counter.js?b";
+        import { count as aAgain } from "./counter.js?a";
+        import { count as plain } from "./counter.js";
+        console.log(a, b, aAgain, plain);
+      `,
+      "/counter.js": /* js */ `
+        globalThis.instances = (globalThis.instances ?? 0) + 1;
+        export const count = globalThis.instances;
+      `,
+    },
+    run: { stdout: "1 2 1 3" },
+  });
+
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {

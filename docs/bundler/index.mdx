@@ -222,7 +222,7 @@ An array of paths corresponding to the entrypoints of your application. Bun gene
 
 A map of file paths to their contents for in-memory bundling: bundle virtual files that don't exist on disk, or override the contents of files that do. This option is only available in the JavaScript API.
 
-You can provide file contents as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
+You can provide file contents as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`. Keys are file paths: a relative key is resolved against the current working directory, like a relative entrypoint, and an import uses the in-memory file when it resolves to that path.
 
 #### Bundle entirely from memory
 

@@ -1348,16 +1348,12 @@ impl CanonicalRequest {
             BStr::new(query)
         );
         if key.content_disposition {
-            w!(
-                "content-disposition:{}\n",
-                BStr::new(content_disposition.unwrap())
-            );
+            let v = sigv4_trimall(content_disposition.unwrap());
+            w!("content-disposition:{}\n", BStr::new(&v));
         }
         if key.content_encoding {
-            w!(
-                "content-encoding:{}\n",
-                BStr::new(content_encoding.unwrap())
-            );
+            let v = sigv4_trimall(content_encoding.unwrap());
+            w!("content-encoding:{}\n", BStr::new(&v));
         }
         if key.content_md5 {
             w!("content-md5:{}\n", BStr::new(content_md5.unwrap()));
@@ -1375,10 +1371,8 @@ impl CanonicalRequest {
             w!("x-amz-request-payer:requester\n");
         }
         if key.session_token {
-            w!(
-                "x-amz-security-token:{}\n",
-                BStr::new(session_token.unwrap())
-            );
+            let v = sigv4_trimall(session_token.unwrap());
+            w!("x-amz-security-token:{}\n", BStr::new(&v));
         }
         if key.storage_class {
             w!(
@@ -1402,6 +1396,53 @@ impl CanonicalRequest {
 /// which would allow HTTP header injection if used in a header value.
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+/// SigV4 CanonicalHeaders "Trimall": trim outer whitespace, collapse interior runs to one space.
+fn sigv4_trimall(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    #[inline]
+    fn is_ws(b: u8) -> bool {
+        b == b' ' || b == b'\t'
+    }
+    let mut start = 0usize;
+    let mut end = value.len();
+    while start < end && is_ws(value[start]) {
+        start += 1;
+    }
+    while end > start && is_ws(value[end - 1]) {
+        end -= 1;
+    }
+    let trimmed = &value[start..end];
+    let mut prev_ws = false;
+    let mut needs_rewrite = false;
+    for &b in trimmed {
+        if is_ws(b) {
+            if prev_ws || b != b' ' {
+                needs_rewrite = true;
+                break;
+            }
+            prev_ws = true;
+        } else {
+            prev_ws = false;
+        }
+    }
+    if !needs_rewrite {
+        return std::borrow::Cow::Borrowed(trimmed);
+    }
+    let mut out = Vec::with_capacity(trimmed.len());
+    let mut prev_ws = false;
+    for &b in trimmed {
+        if is_ws(b) {
+            if !prev_ws {
+                out.push(b' ');
+            }
+            prev_ws = true;
+        } else {
+            out.push(b);
+            prev_ws = false;
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

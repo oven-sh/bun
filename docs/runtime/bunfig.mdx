@@ -37,17 +37,27 @@ preload = ["./preload.ts"]
 Configure how Bun handles JSX. You can also set these fields in the `compilerOptions` of your `tsconfig.json`, but `bunfig.toml` supports them for non-TypeScript projects.
 
 ```toml title="bunfig.toml" icon="settings"
-jsx = "react"
+jsx = "react" # "react" | "react-jsx" | "react-jsxDEV"
 jsxFactory = "h"
 jsxFragment = "Fragment"
 jsxImportSource = "react"
 ```
 
-Refer to the tsconfig docs for more information on these fields.
+`jsx` accepts three values. The match is case-sensitive.
+
+| `jsx`            | Transform                                                     |
+| ---------------- | ------------------------------------------------------------- |
+| `"react"`        | Classic: `React.createElement`, or `jsxFactory` when set      |
+| `"react-jsx"`    | Automatic: `jsx` from `react/jsx-runtime`                     |
+| `"react-jsxDEV"` | Automatic, development: `jsxDEV` from `react/jsx-dev-runtime` |
+
+Any other value is a configuration error. That includes `"preserve"` and the lowercase `"react-jsxdev"` that `tsconfig.json` accepts. Bun prints `Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported`, and commands such as `bun <file>`, `bun test`, `bun install`, and `bun build` exit with code 1.
+
+Refer to the tsconfig docs for more information on these fields. `jsxFragment` is the `bunfig.toml` name for `jsxFragmentFactory`.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)
 - [`jsxFactory`](https://www.typescriptlang.org/tsconfig#jsxFactory)
-- [`jsxFragment`](https://www.typescriptlang.org/tsconfig#jsxFragment)
+- [`jsxFragment`](https://www.typescriptlang.org/tsconfig#jsxFragmentFactory)
 - [`jsxImportSource`](https://www.typescriptlang.org/tsconfig#jsxImportSource)
 
 ### `smol`

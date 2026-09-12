@@ -3463,6 +3463,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         VirtualMachine::get().as_mut(),
                         global,
                         t,
+                        is_server,
                     )?;
                 }
             }
@@ -3473,9 +3474,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     VirtualMachine::get().as_mut(),
                     global,
                     tls_js,
+                    is_server,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
+                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -4627,9 +4629,9 @@ pub fn js_upgrade_duplex_to_tls(
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
-            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls)?;
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls, is_server)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
+            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {

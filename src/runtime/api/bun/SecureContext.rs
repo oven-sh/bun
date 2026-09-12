@@ -73,7 +73,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // A SecureContext carries no client/server role; keep the client default.
+        let config = SSLConfig::from_js(vm, global, opts, false)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -231,7 +232,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // A SecureContext carries no client/server role; keep the client default.
+        let config = SSLConfig::from_js(vm, global, opts, false)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -271,7 +273,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // A SecureContext carries no client/server role; keep the client default.
+        let config = SSLConfig::from_js(vm, global, opts, false)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();

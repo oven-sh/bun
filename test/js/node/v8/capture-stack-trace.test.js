@@ -551,6 +551,265 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
+// getFunction() hands out the frame's callee. A JSC frame can carry a callee
+// that user code could never call itself: a host function, a builtin, the body
+// function JSC compiles for an async function or a generator, or no function at
+// all for a wasm or program frame. A body function takes JSC's own arguments, so
+// a call from JS crashes the interpreter. Each such frame now reports undefined.
+//
+// The frames below one of them keep their own function. A frame only hides its
+// caller's function when it is really strict, which is the Flags::IsStrict
+// cascade. The `...Caller=self` rows pin that half.
+//
+// The fixture is CommonJS because a strict frame already returns undefined.
+test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
+  using dir = tempDir("callsite-internal-callee", {
+    "internal-callee-fixture.cjs": `
+      const { nativeFrameForTesting } = require("bun:internal-for-testing");
+      Error.prepareStackTrace = (e, sites) => sites;
+
+      const out = [];
+      const show = v => (typeof v === "function" ? "function/" + v.length : typeof v === "object" && v !== null ? "object" : String(v));
+      const named = (sites, name) => sites.find(s => s.getFunctionName() === name);
+
+      function sloppy() {
+        out.push("sloppy=" + (new Error().stack[0].getFunction() === sloppy ? "self" : "?"));
+      }
+      sloppy();
+
+      nativeFrameForTesting(function underNativeFrame() {
+        const sites = new Error().stack;
+        out.push("nativeIsNative=" + sites[1].isNative());
+        out.push("native=" + show(sites[1].getFunction()));
+        return 0;
+      });
+
+      function hostCaller() {
+        [0].map(function underHostFunction() {
+          const sites = new Error().stack;
+          const host = named(sites, "map");
+          out.push("hostFound=" + !!host);
+          out.push("host=" + show(host && host.getFunction()));
+          const caller = named(sites, "hostCaller");
+          out.push("hostCaller=" + (caller && caller.getFunction() === hostCaller ? "self" : show(caller && caller.getFunction())));
+        });
+      }
+      hostCaller();
+
+      // A program frame's callee is a JSCallee, not a function at all. Stock bun
+      // handed the JSCallee object itself to getFunction().
+      out.push("evalProgram=" + show(eval("new Error().stack")[0].getFunction()));
+
+      // A wasm frame has no JSFunction callee either, and merely reading
+      // getFunction() on one crashed stock bun.
+      const wasmBytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,4,1,0x60,0,0, 2,7,1,1,0x65,1,0x66,0,0, 3,2,1,0, 7,7,1,3,0x72,0x75,0x6e,0,1, 10,6,1,4,0,0x10,0,0x0b]);
+      function wasmCaller() {
+        const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {
+          e: {
+            f() {
+              const sites = new Error().stack;
+              const wasmFrames = sites.filter(s => s.getFileName() === "[wasm code]");
+              out.push("wasmFrames=" + (wasmFrames.length > 0));
+              out.push("wasm=" + [...new Set(wasmFrames.map(s => show(s.getFunction())))].join(","));
+              const caller = named(sites, "wasmCaller");
+              out.push("wasmCaller=" + (caller && caller.getFunction() === wasmCaller ? "self" : show(caller && caller.getFunction())));
+            },
+          },
+        });
+        instance.exports.run();
+      }
+      wasmCaller();
+
+      function asyncPrefixCaller() {
+        // Read the stack before the first await: JSC runs even the synchronous
+        // prefix of an async function in the body function.
+        return (async function af() {
+          const sites = new Error().stack;
+          out.push("asyncPrefix=" + show(sites[0].getFunction()));
+          const caller = named(sites, "asyncPrefixCaller");
+          out.push("asyncPrefixCaller=" + (caller && caller.getFunction() === asyncPrefixCaller ? "self" : show(caller && caller.getFunction())));
+          await 1;
+
+          const asyncBody = new Error().stack[0].getFunction();
+          out.push("asyncBody=" + show(asyncBody));
+          if (typeof asyncBody === "function") asyncBody();
+
+          function* gen() {
+            yield 1;
+            const generatorBody = new Error().stack[0].getFunction();
+            out.push("generatorBody=" + show(generatorBody));
+            if (typeof generatorBody === "function") generatorBody();
+          }
+          const it = gen();
+          it.next();
+          it.next();
+
+          console.log(out.join("\\n"));
+        })();
+      }
+      asyncPrefixCaller();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "internal-callee-fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual([
+    "sloppy=self",
+    "nativeIsNative=true",
+    "native=undefined",
+    "hostFound=true",
+    "host=undefined",
+    "hostCaller=self",
+    "evalProgram=undefined",
+    "wasmFrames=true",
+    "wasm=undefined",
+    "wasmCaller=self",
+    "asyncPrefix=undefined",
+    "asyncPrefixCaller=self",
+    "asyncBody=undefined",
+    "generatorBody=undefined",
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Bun installs native promise reactions so that a pending user promise can
+// resume native work. Each reaction reads its trailing argument as a native
+// context, so each of the three below crashed the process when user code got
+// hold of it and called it. Every fixture keeps the nameless native function
+// that getFunction() reports and then calls it.
+const grabNativeReaction = `
+  let leaked;
+  let namelessNativeSites = 0;
+  function grabNativeReaction() {
+    const previous = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, sites) => sites;
+    for (const site of new Error().stack) {
+      if (site.isNative() && !site.getFunctionName()) namelessNativeSites++;
+      let fn;
+      try {
+        fn = site.getFunction();
+      } catch {}
+      if (typeof fn === "function" && site.isNative() && !fn.name) leaked = fn;
+    }
+    Error.prepareStackTrace = previous;
+  }
+  function reportAndCallLeaked() {
+    // The reaction frame has to be on the stack, or "leaked=undefined" would
+    // hold for a reason that has nothing to do with getFunction().
+    console.log("reactionFrameSeen=" + (namelessNativeSites > 0));
+    console.log("leaked=" + typeof leaked);
+    if (typeof leaked === "function") leaked({}, undefined);
+    console.log("survived");
+  }
+`;
+
+async function runNativeReactionFixture(prefix, files) {
+  using dir = tempDir(prefix, files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(["reactionFrameSeen=true", "leaked=undefined", "survived"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}
+
+test.concurrent("CallFrame.p.getFunction does not expose the HTMLRewriter reaction", async () => {
+  await runNativeReactionFixture("callsite-rewriter-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      new HTMLRewriter()
+        .on("p", {
+          element() {
+            grabNativeReaction();
+            // The rewriter suspends only while this promise is pending. The
+            // suspension installs the reaction whose frame the handler for the
+            // second <p> can see.
+            return new Promise(resolve => setTimeout(resolve, 1));
+          },
+        })
+        .transform(new Response("<p>a</p><p>b</p>"))
+        .text()
+        .then(reportAndCallLeaked);
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the serve reject reaction", async () => {
+  await runNativeReactionFixture("callsite-serve-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // error() runs under the reaction that rejected the fetch() promise.
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Promise((resolve, reject) => setTimeout(() => reject(new Error("x")), 1)),
+        error() {
+          grabNativeReaction();
+          return new Response("e");
+        },
+      });
+
+      fetch(server.url)
+        .then(response => response.text())
+        .then(async () => {
+          await server.stop(true);
+          reportAndCallLeaked();
+        });
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the module loader reaction", async () => {
+  await runNativeReactionFixture("callsite-module-loader-reaction", {
+    "mod.xyzzy": "",
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // The reaction reads the plugin result object, so this getter runs under
+      // its frame.
+      Bun.plugin({
+        name: "x",
+        setup(build) {
+          build.onLoad({ filter: /\\.xyzzy$/ }, () =>
+            new Promise(resolve =>
+              setTimeout(
+                () =>
+                  resolve({
+                    get contents() {
+                      grabNativeReaction();
+                      return "export default 1";
+                    },
+                    loader: "js",
+                  }),
+                1,
+              ),
+            ),
+          );
+        },
+      });
+
+      import(require("path").join(__dirname, "mod.xyzzy")).then(reportAndCallLeaked);
+    `,
+  });
+});
+
 test("return non-strings from Error.prepareStackTrace", () => {
   // This behavior is allowed by V8 and used by the node-depd npm package.
   let prevPrepareStackTrace = Error.prepareStackTrace;

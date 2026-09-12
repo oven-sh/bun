@@ -656,14 +656,14 @@ impl VMHolder {
             if let Err(e) =
                 crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
             {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+                e.report("CPU profile");
             }
         }
         if let Some(config) = vm.heap_profiler_config.take() {
             if let Err(e) =
                 crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
             {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
+                e.report("heap profile");
             }
         }
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
@@ -1859,7 +1859,7 @@ impl VirtualMachine {
             if let Err(e) =
                 crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
             {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+                e.report("CPU profile");
             }
         }
         // Write heap profile if profiling was enabled - do this after CPU
@@ -1868,7 +1868,7 @@ impl VirtualMachine {
             if let Err(e) =
                 crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
             {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
+                e.report("heap profile");
             }
         }
 

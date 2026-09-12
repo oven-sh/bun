@@ -316,7 +316,7 @@ test.skipIf(isWindows).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("done");
-  expect(stderr).toContain("MaxPathExceeded");
+  expect(stderr).toContain("FilenameTooLong");
   expect(stderr).toContain("Failed to write heap profile");
   expect(exitCode).toBe(0);
   expect(proc.signalCode).toBeNull();
@@ -358,4 +358,25 @@ test("--heap-prof --heap-prof-interval is accepted", async () => {
   const glob = new Bun.Glob("*.heapprofile");
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
+});
+
+// A profile that cannot be written (full disk) is reported with the errno and
+// the output path, and no empty file is left behind. bun ignores SIGXFSZ, so
+// `ulimit -f 0` makes the write fail with EFBIG on the same path as ENOSPC.
+test.skipIf(isWindows)("--heap-prof reports errno and path when the profile cannot be written", async () => {
+  using dir = tempDir("heap-prof-write-fails", {});
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", `ulimit -f 0 && exec "$@"`, "sh", bunExe(), "--heap-prof", "-e", testScript],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("done");
+  expect(stderr).toContain("EFBIG");
+  expect(stderr).toContain("Failed to write heap profile to " + join(String(dir), "Heap."));
+  expect(Array.from(new Bun.Glob("*.heapprofile").scanSync({ cwd: String(dir) }))).toEqual([]);
+  // Like node, the process still exits with the script's own exit code.
+  expect(exitCode).toBe(0);
 });

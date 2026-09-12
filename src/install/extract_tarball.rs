@@ -697,6 +697,8 @@ impl ExtractTarball {
                     );
                     return Err(crate::Error::InstallFailed);
                 }
+                // After an exchange the temporary name holds the cache entry that was replaced.
+                let _ = tmpdir.delete_tree(tmpname.as_bytes());
             }
 
             // We return a resolved absolute absolute file path to the cache dir.

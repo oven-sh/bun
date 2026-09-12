@@ -43,11 +43,7 @@ pub(crate) trait ReactiveFunctionVisitor {
     /// Walk an inner HIR function, visiting params, instructions (with lvalues,
     /// value-lvalues and operands), and terminal operands.
     /// TS: `visitHirFunction`
-    ///
-    /// Nested functions are not walked here. A visitor reaches them through
-    /// its `visit_value` override, which fires for each instruction below and
-    /// calls this method again. Upstream also recurses here, so with the
-    /// override a function at depth `d` is walked 2^d times.
+    /// Nested functions are left to the visitor's `visit_value` override; upstream also recurses here, which walks depth `d` 2^d times.
     fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
         let inner_func = &self.env().functions[func_id.0 as usize];
         for param in &inner_func.params {

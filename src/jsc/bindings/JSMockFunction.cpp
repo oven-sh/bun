@@ -1502,29 +1502,26 @@ enum class SpyWrite : uint8_t {
     DefineAccessor,
 };
 
-// putDirect() and putDirectAccessor() skip [[DefineOwnProperty]], so spyOn checks its invariants for the
-// write it is about to do. A new property needs an extensible object. A new value for an own data
-// property needs it to be writable or configurable (a function's `prototype` is writable only).
-// Turning an own property into an accessor needs it to be configurable.
+// putDirect() and putDirectAccessor() skip the [[DefineOwnProperty]] invariants.
 static bool canWriteSpy(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* object, JSC::PropertyName propertyKey, SpyWrite write)
 {
     JSC::PropertyDescriptor own;
     bool hasOwn = object->getOwnPropertyDescriptor(globalObject, propertyKey, own);
     RETURN_IF_EXCEPTION(scope, false);
+
     if (!hasOwn) {
-        bool extensible = object->isExtensible(globalObject);
+        bool canAddProperty = object->isExtensible(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        if (extensible)
-            return true;
-        throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because the object is not extensible"_s));
-        return false;
+        if (!canAddProperty)
+            throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because the object is not extensible"_s));
+        return canAddProperty;
     }
-    if (own.configurable())
-        return true;
-    if (write == SpyWrite::ReplaceValue && own.isDataDescriptor() && own.writable())
-        return true;
-    throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because it is not configurable"_s));
-    return false;
+
+    bool canReplaceValue = own.isDataDescriptor() && own.writable();
+    bool canRedefine = own.configurable() || (write == SpyWrite::ReplaceValue && canReplaceValue);
+    if (!canRedefine)
+        throwTypeError(globalObject, scope, makeString("Cannot spy on "_s, String(propertyKey.uid()), " because it is not configurable"_s));
+    return canRedefine;
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

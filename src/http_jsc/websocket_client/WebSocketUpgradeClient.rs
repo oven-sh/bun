@@ -563,7 +563,8 @@ where
     /// may free `this`.
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
         if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
-            ws.did_abrupt_close(code);
+            // The upgrade handshake has no send buffer yet, so the backlog is 0.
+            ws.did_abrupt_close(code, 0);
         }
     }
 

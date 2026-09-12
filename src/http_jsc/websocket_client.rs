@@ -225,7 +225,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the destructor's finalize() — does not leak. When reached via
         // fail(), outgoing_websocket is already None and this is a no-op.
         if had_tunnel {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
         }
     }
 
@@ -235,7 +235,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         if let Some((ws, _cpp_ref)) = self.outgoing_websocket.replace(None) {
             log!("fail ({})", <&'static str>::from(code));
-            ws.did_abrupt_close(code);
+            // Snapshot the backlog before did_abrupt_close(): it drops the
+            // connection (kind -> None) then fires the JS close event, so C++
+            // must be handed the amount now or an onclose read of bufferedAmount
+            // would see 0 (the send buffer lives until cancel() below).
+            let buffered = self.buffered_amount();
+            ws.did_abrupt_close(code, buffered);
         }
 
         self.cancel_guarded();
@@ -290,18 +295,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         if let Some((code, reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
-            // user-initiated code/reason (not an abrupt 1006).
+            // user-initiated code/reason (not an abrupt 1006). Snapshot the
+            // backlog before clear_data() frees it so bufferedAmount stays
+            // non-zero when frames went unsent.
+            let buffered = self.buffered_amount();
             self.detach_tcp();
             self.clear_data();
-            self.dispatch_close(code, reason);
+            self.dispatch_close(code, reason, buffered);
             // For the socket.
             self.release_io_ref();
             return;
         }
+        // Snapshot the backlog before clear_data() frees it, so the close event
+        // does not see bufferedAmount reset to 0 (e.g. peer RST with unsent
+        // frames).
+        let buffered = self.buffered_amount();
         self.clear_data();
         self.detach_tcp();
 
-        self.dispatch_abrupt_close(ErrorCode::Ended);
+        self.dispatch_abrupt_close(ErrorCode::Ended, Some(buffered));
 
         // For the socket.
         self.release_io_ref();
@@ -1050,9 +1062,20 @@ impl<const SSL: bool> WebSocket<SSL> {
                 true
             }
             Err(true) => {
-                // `terminate → clear_data` resets `send_buffer`; drop the
-                // taken fifo without restoring.
-                drop(buf);
+                // Restore the backlog before terminating: fail() snapshots
+                // send_buffer.readable_length() for bufferedAmount, so it must
+                // still be here. `terminate → cancel → clear_data` frees it
+                // immediately afterward, so this does not leak.
+                //
+                // KNOWN GAP (tunnel only): if the tunnel's SslWrapper::write_data
+                // hits a fatal SSL error it fires on_close → fail() *synchronously
+                // inside* the write above — before this restore — so that
+                // bufferedAmount snapshot reads 0. `self.send_buffer` cannot be
+                // kept populated across the write without either aliasing UB (the
+                // slice handed to write is borrowed from it) or an extra per-flush
+                // copy; the window is a fatal-handshake/close-notify error
+                // mid-flush, and 0 there is no worse than the pre-feature behavior.
+                self.send_buffer.replace(buf);
                 self.terminate(ErrorCode::FailedToWrite);
                 false
             }
@@ -1065,7 +1088,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn send_pong(&self) -> bool {
         if !self.has_tcp() {
-            self.dispatch_abrupt_close(ErrorCode::Ended);
+            self.dispatch_abrupt_close(ErrorCode::Ended, None);
             return false;
         }
 
@@ -1104,7 +1127,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         if !self.has_tcp() {
-            self.dispatch_abrupt_close(ErrorCode::Ended);
+            self.dispatch_abrupt_close(ErrorCode::Ended, None);
             self.clear_data();
             return;
         }
@@ -1144,9 +1167,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
+                // Snapshot the unsent backlog before clear_data() frees it, so
+                // the JS close event does not see bufferedAmount reset to 0
+                // (spec: it does not reset once the connection closes).
+                let buffered = self.buffered_amount();
                 self.shutdown_after_close_frame();
                 self.clear_data();
-                self.dispatch_close(dispatch_code, reason);
+                self.dispatch_close(dispatch_code, reason, buffered);
             } else {
                 // The close frame was only partially written; the remainder is
                 // in send_buffer. clear_data() would discard it (and the
@@ -1173,9 +1200,12 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn finish_pending_close(&self) {
         if let Some((code, reason)) = self.close_dispatch_pending.take() {
+            // Snapshot the backlog before clear_data() frees it so a deferred
+            // close still reports any bytes that went unsent.
+            let buffered = self.buffered_amount();
             self.shutdown_after_close_frame();
             self.clear_data();
-            self.dispatch_close(code, reason);
+            self.dispatch_close(code, reason, buffered);
         }
     }
 
@@ -1271,7 +1301,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _guard = RefPtr::from_this(this);
 
         if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
             return;
         }
 
@@ -1312,7 +1342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _guard = RefPtr::from_this(this);
 
         if !this.has_tcp() {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
             return;
         }
 
@@ -1348,23 +1378,30 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// May free `self`.
-    fn dispatch_abrupt_close(&self, code: ErrorCode) {
+    ///
+    /// `buffered_override` lets a caller that already cleared the send buffer
+    /// (e.g. `handle_close()` calls `clear_data()` first) pass the backlog it
+    /// captured beforehand. `None` snapshots the live send buffer here.
+    fn dispatch_abrupt_close(&self, code: ErrorCode, buffered_override: Option<usize>) {
         let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
-        out.did_abrupt_close(code);
+        // Capture the unsent backlog so C++ can keep bufferedAmount from
+        // resetting to 0 on abrupt close.
+        let buffered = buffered_override.unwrap_or_else(|| self.buffered_amount());
+        out.did_abrupt_close(code, buffered);
     }
 
     /// May free `self`.
-    fn dispatch_close(&self, code: u16, reason: bun_core::String) {
+    fn dispatch_close(&self, code: u16, reason: bun_core::String, buffered_amount: usize) {
         let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
-        out.did_close(code, reason);
+        out.did_close(code, reason, buffered_amount);
     }
 
     pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {

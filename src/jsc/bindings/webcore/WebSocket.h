@@ -208,10 +208,10 @@ public:
 
     void didConnect();
     void didStartClosingHandshake();
-    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
+    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason, size_t bufferedAmountSnapshot = 0);
     void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
+    void didFailWithErrorCode(Bun::WebSocketErrorCode code, size_t bufferedAmount = 0);
 
     void didReceiveMessage(String&& message);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
@@ -336,6 +336,9 @@ private:
     void cancelUpgradeClient();
     bool applyPauseToConnectedClient();
     void cancelConnectedClient();
+    // The connected client's unsent backlog (framed bytes), or the snapshot kept from close once
+    // the client is gone. Excludes m_bufferedAmountAfterClose.
+    unsigned connectedClientBufferedAmount() const;
     bool m_rejectUnauthorized { false };
     bool m_paused { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade

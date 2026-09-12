@@ -168,6 +168,13 @@ static unsigned saturateAdd(unsigned a, unsigned b)
     return a + b;
 }
 
+static unsigned clampToUnsigned(size_t value)
+{
+    return value > std::numeric_limits<unsigned>::max()
+        ? std::numeric_limits<unsigned>::max()
+        : static_cast<unsigned>(value);
+}
+
 ASCIILiteral WebSocket::subprotocolSeparator()
 {
     return ", "_s;
@@ -730,6 +737,14 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Mirror the String/ArrayBuffer/ArrayBufferView send() overloads: per
+        // spec, send() after close increases bufferedAmount by the size of the
+        // data instead of transmitting it. Clamp before saturateAdd: a
+        // file-backed Blob can exceed 4 GiB, and the implicit size_t->unsigned
+        // narrowing would wrap before the saturation check runs.
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
@@ -752,7 +767,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
         Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -771,7 +785,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
     case ConnectedWebSocketKind::Client: {
         auto slice = Zig::toEncodedSlice(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -849,6 +862,9 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
+        // No eager bufferedAmount snapshot (unlike terminate()): close() keeps
+        // the kind set for deferred close, so bufferedAmount() reads the live
+        // buffer and didClose() applies the native client's final snapshot.
         EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonSlice);
         break;
@@ -880,6 +896,10 @@ ExceptionOr<void> WebSocket::terminate()
         return {};
     }
     m_state = CLOSING;
+    // cancelConnectedClient() detaches the native client before it frees the
+    // send buffer, so any callback it makes can no longer report the backlog;
+    // snapshot it first so bufferedAmount does not reset to 0 (see bufferedAmount()).
+    m_bufferedAmount = connectedClientBufferedAmount();
     cancelConnectedClient();
     return {};
 }
@@ -968,6 +988,9 @@ ExceptionOr<void> WebSocket::ping()
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match ping(String) with an empty payload: both send the same frame
+        // when OPEN, so both account the same 6 framing bytes after close.
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(0));
         return {};
     }
 
@@ -1054,6 +1077,8 @@ ExceptionOr<void> WebSocket::pong()
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match pong(String) with an empty payload: see ping().
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(0));
         return {};
     }
 
@@ -1143,24 +1168,28 @@ WebSocket::State WebSocket::readyState() const
     return m_state;
 }
 
-unsigned WebSocket::bufferedAmount() const
+unsigned WebSocket::connectedClientBufferedAmount() const
 {
-    // Live: bytes queued in the native client (frames not yet written to the
-    // socket, plus the proxy tunnel's pending ciphertext). m_bufferedAmount
-    // only carries the leftover reported at close.
-    size_t live = 0;
+    // While the connection is live (including the deferred-close window) query
+    // the live send-buffer size so backpressure is observable; it falls as the
+    // peer drains. Once the connection is gone, m_bufferedAmount holds the final
+    // snapshot from didClose()/didFailWithErrorCode() (or terminate()'s eager one).
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client:
-        live = Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client);
-        break;
+        return clampToUnsigned(Bun__WebSocketClient__bufferedAmount(this->m_connectedWebSocket.client));
     case ConnectedWebSocketKind::ClientSSL:
-        live = Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL);
-        break;
+        return clampToUnsigned(Bun__WebSocketClientTLS__bufferedAmount(this->m_connectedWebSocket.clientSSL));
     case ConnectedWebSocketKind::None:
-        break;
+        return m_bufferedAmount;
     }
-    unsigned clamped = live > std::numeric_limits<unsigned>::max() ? std::numeric_limits<unsigned>::max() : static_cast<unsigned>(live);
-    return saturateAdd(saturateAdd(m_bufferedAmount, clamped), m_bufferedAmountAfterClose);
+    return m_bufferedAmount;
+}
+
+unsigned WebSocket::bufferedAmount() const
+{
+    // m_bufferedAmountAfterClose counts the payloads of send()/ping()/pong()
+    // calls made once the socket was closing or closed; they are never written.
+    return saturateAdd(connectedClientBufferedAmount(), m_bufferedAmountAfterClose);
 }
 
 String WebSocket::protocol() const
@@ -1456,7 +1485,7 @@ void WebSocket::didStartClosingHandshake()
     // });
 }
 
-void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason)
+void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason, size_t bufferedAmountSnapshot)
 {
     // LOG(Network, "WebSocket %p didClose()", this);
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::None)
@@ -1464,7 +1493,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
-    m_bufferedAmount = unhandledBufferedAmount;
+    // Don't reset the backlog: the native client captures the unsent bytes
+    // before teardown and passes them via bufferedAmountSnapshot. Per spec
+    // bufferedAmount must not drop to 0 once closed, so keep the largest.
+    m_bufferedAmount = std::max({ m_bufferedAmount, unhandledBufferedAmount, clampToUnsigned(bufferedAmountSnapshot) });
     ASSERT(scriptExecutionContext());
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
@@ -1526,12 +1558,21 @@ void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMes
     this->didConnect();
 }
 
-void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
+void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code, size_t bufferedAmount)
 {
     // from new WebSocket() -> connect()
 
     if (m_state == CLOSED)
         return;
+
+    // Keep the backlog reported before this abrupt close (captured on the Rust
+    // side, since the connection's send buffer is freed during teardown) so
+    // bufferedAmount does not reset to 0 — see bufferedAmount(). Keep the larger
+    // value; this also makes the socket-close path (buffer already cleared → 0)
+    // a no-op.
+    unsigned clamped = clampToUnsigned(bufferedAmount);
+    if (clamped > m_bufferedAmount)
+        m_bufferedAmount = clamped;
 
     this->m_upgradeClient = nullptr;
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
@@ -1747,11 +1788,11 @@ extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSo
     webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), body.span());
 }
 
-extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
+extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, size_t bufferedAmount)
 {
-    webSocket->didFailWithErrorCode(errorCode);
+    webSocket->didFailWithErrorCode(errorCode, bufferedAmount);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString reason, size_t bufferedAmount)
 {
     WTF::String wtf_reason = reason.transferToWTFString();
     // The Rust client only calls this after a completed close handshake
@@ -1759,8 +1800,13 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     // server-initiated close m_state is still OPEN here; transition to
     // CLOSING so didClose() reports wasClean = true. Abnormal closes go
     // through WebSocket__didAbruptClose instead.
+    //
+    // Pass the queued backlog as bufferedAmountSnapshot (not as
+    // unhandledBufferedAmount): this close handshake completed cleanly, so
+    // wasClean must stay true regardless of any application data still queued,
+    // but bufferedAmount must not reset to 0 (spec).
     webSocket->didStartClosingHandshake();
-    webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
+    webSocket->didClose(0, errorCode, WTF::move(wtf_reason), bufferedAmount);
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const EncodedSlice* str)
@@ -1808,6 +1854,12 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match the String/ArrayBuffer/ArrayBufferView ping() overloads, which
+        // accumulate into bufferedAmount after close rather than transmitting.
+        // clampToUnsigned: see send(JSBlob*).
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
@@ -1832,6 +1884,12 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match the String/ArrayBuffer/ArrayBufferView pong() overloads, which
+        // accumulate into bufferedAmount after close rather than transmitting.
+        // clampToUnsigned: see send(JSBlob*).
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, clampToUnsigned(payloadSize));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 

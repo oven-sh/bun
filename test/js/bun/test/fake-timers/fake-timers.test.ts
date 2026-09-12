@@ -1,7 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -194,6 +194,40 @@ describe("getTimerCount", () => {
   test("throws error if fake timers not active", () => {
     expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
   });
+
+  // Timers inserted with decreasing deadlines form one long chain of child
+  // links in the pairing heap. getTimerCount() and runOnlyPendingTimers()
+  // walk every node, and that walk used to recurse once per node, so a few
+  // hundred thousand timers overflowed the 8 MB main stack (SIGSEGV, no
+  // trace). The child runs with a 1 MB stack so that 60k timers are enough.
+  test.skipIf(isWindows)(
+    "walks a deep timer heap without overflowing the stack",
+    async () => {
+      const N = 60_000;
+      const script = `
+        import { jest } from "bun:test";
+        jest.useFakeTimers();
+        let fired = 0;
+        const N = ${N};
+        for (let i = 0; i < N; i++) setTimeout(() => fired++, N - i);
+        console.log("count", jest.getTimerCount());
+        jest.runOnlyPendingTimers();
+        console.log("fired", fired, "left", jest.getTimerCount());
+        jest.useRealTimers();
+      `;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -s 1024 && exec "$0" -e "$1"', bunExe(), script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(`count ${N}\nfired ${N} left 0\n`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 });
 describe("clearAllTimers", () => {
   test("clears all pending timers", () => {

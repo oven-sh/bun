@@ -655,6 +655,46 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("Overridden _resolveFilename returning a path with a null byte makes require() throw", async () => {
+    using dir = tempDir("resolve-filename-null-byte", {
+      "x.js": `module.exports = "loaded:" + __filename;`,
+      "main.cjs": `
+        const path = require("node:path");
+        const { Module } = require("node:module");
+        const real = path.join(__dirname, "x.js");
+        Module._resolveFilename = () => real + "\\u0000IGNORED";
+        const out = {};
+        try {
+          out.require = "loaded " + require("anything");
+        } catch (e) {
+          out.require = e.code;
+          out.requireMessageMentionsNullBytes = e.message.includes("without null bytes");
+        }
+        // Node returns the override's value from require.resolve() unchanged.
+        try {
+          out.resolveKeepsNullByte = require.resolve("anything").endsWith("\\u0000IGNORED");
+        } catch (e) {
+          out.resolveKeepsNullByte = e.code;
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Node v26.3.0 prints this exact object.
+    expect(JSON.parse(stdout)).toEqual({
+      require: "ERR_INVALID_ARG_VALUE",
+      requireMessageMentionsNullBytes: true,
+      resolveKeepsNullByte: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
     using dir = tempDir("resolve-filename-args-esm", {
       "real.cjs": "module.exports = 'REAL';",

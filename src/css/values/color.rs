@@ -508,7 +508,7 @@ impl CssColor {
                 // `as_css_color` drops here.
             }
             CssColor::LightDark { light, dark } => {
-                if !dest.targets.is_compatible(Feature::LightDark) {
+                if dest.targets.should_compile_same(Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
                     light.to_css(dest)?;

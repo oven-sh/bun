@@ -474,11 +474,20 @@ let flags = [
   "double_position_gradients",
   "vendor_prefixes",
   "logical_properties",
+  "light_dark",
   ["selectors", ["nesting", "not_selector_list", "dir_selector", "lang_selector_list", "is_selector"]],
   ["media_queries", ["media_interval_syntax", "media_range_syntax", "custom_media_queries"]],
   [
     "colors",
-    ["color_function", "oklab_colors", "lab_colors", "p3_colors", "hex_alpha_colors", "space_separated_color_notation"],
+    [
+      "color_function",
+      "oklab_colors",
+      "lab_colors",
+      "p3_colors",
+      "hex_alpha_colors",
+      "space_separated_color_notation",
+      "light_dark",
+    ],
   ],
 ];
 

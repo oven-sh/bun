@@ -1,9 +1,60 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, Parser, ParserError, PrintErr, Printer};
+use crate::css_parser::{CssResult, Parser, ParserError, ParserOptions, PrintErr, Printer, Token};
+use crate::generics::{Parse, ParseWithOptions};
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 
 pub type CSSNumber = f32;
+
+/// The next token's value if it is a number, percentage or dimension; not consumed.
+pub(crate) fn peek_number_literal(input: &mut Parser) -> Option<CSSNumber> {
+    let start = input.state();
+    let value = match input.next() {
+        Ok(Token::Number(num)) => Some(num.value),
+        Ok(Token::Dimension(dim)) => Some(dim.num.value),
+        Ok(Token::Percentage { unit_value, .. }) => Some(*unit_value),
+        _ => None,
+    };
+    input.reset(&start);
+    value
+}
+
+/// A `[0,∞]` range: a negative literal is invalid, a math result clamps (css-values-4 #calc-range).
+pub(crate) trait ClampNegative: Sized {
+    /// Clamps a resolved negative value to zero; unresolved math is left alone.
+    fn clamp_negative(self) -> Self;
+}
+
+impl ClampNegative for CSSNumber {
+    fn clamp_negative(self) -> Self {
+        if self < 0.0 { 0.0 } else { self }
+    }
+}
+
+/// Parses a value with a `[0,∞]` range. See [ClampNegative].
+pub(crate) fn parse_non_negative<T: ClampNegative>(
+    input: &mut Parser,
+    parse: impl FnOnce(&mut Parser) -> CssResult<T>,
+) -> CssResult<T> {
+    if peek_number_literal(input).is_some_and(|v| v < 0.0) {
+        return Err(input.new_custom_error(ParserError::invalid_value));
+    }
+    parse(input).map(T::clamp_negative)
+}
+
+/// Applies [parse_non_negative] to `T` inside generic containers (`SmallList`).
+pub struct NonNegative<T>(pub T);
+
+impl<T: Parse + ClampNegative> Parse for NonNegative<T> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        parse_non_negative(input, T::parse).map(NonNegative)
+    }
+}
+impl<T: Parse + ClampNegative> ParseWithOptions for NonNegative<T> {
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
+    }
+}
 
 pub struct CSSNumberFns;
 

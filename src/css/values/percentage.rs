@@ -3,13 +3,31 @@ use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
-use crate::values::number::CSSNumber;
+use crate::values::number::{CSSNumber, ClampNegative};
 use crate::values::protocol;
 use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Percentage {
     pub(crate) v: CSSNumber,
+}
+
+impl ClampNegative for Percentage {
+    fn clamp_negative(self) -> Self {
+        Percentage {
+            v: self.v.clamp_negative(),
+        }
+    }
+}
+
+impl<D: ClampNegative> ClampNegative for DimensionPercentage<D> {
+    fn clamp_negative(self) -> Self {
+        match self {
+            Self::Dimension(d) => Self::Dimension(d.clamp_negative()),
+            Self::Percentage(p) => Self::Percentage(p.clamp_negative()),
+            Self::Calc(c) => Self::Calc(c),
+        }
+    }
 }
 
 impl Percentage {
@@ -160,11 +178,13 @@ impl<D> DimensionPercentage<D> {
         Self: crate::values::calc::CalcValue,
         D: protocol::Parse,
     {
-        if let Ok(calc_value) = input.try_parse(Calc::<Self>::parse) {
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+        match input.try_parse(Calc::<Self>::parse) {
+            Ok(Calc::Value(v)) => return Ok(*v),
+            Ok(calc) if calc.resolves_to_number() => {
+                return Err(input.new_custom_error(ParserError::invalid_value));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
         if let Ok(length) = input.try_parse(D::parse) {

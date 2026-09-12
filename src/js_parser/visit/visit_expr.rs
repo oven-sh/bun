@@ -374,8 +374,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
 
-                // Not in the parse pass: a `@jsxRuntime` pragma, anywhere in the file,
-                // reaches `options.jsx.runtime` only in `prepare_for_visit_pass`.
                 if is_key_after_spread
                     && runtime == options::JSX::Runtime::Automatic
                     && !p.has_classic_runtime_warned

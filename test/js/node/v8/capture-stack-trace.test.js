@@ -1223,3 +1223,45 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(exitCode).toBe(0);
   },
 );
+
+test("default Error.prepareStackTrace formats a non-Error object", () => {
+  // The original prepareStackTrace is forwarded whatever captureStackTrace was
+  // given; Node's default formatter accepts any object, not only Errors.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    const target = { message: "not an error" };
+    expect(() => Error.captureStackTrace(target)).not.toThrow();
+    expect(typeof target.stack).toBe("string");
+    expect(target.stack).toStartWith("Error: not an error");
+    expect(target.stack).toMatch(/\n    at /);
+
+    const bare = Object.create(null);
+    expect(() => Error.captureStackTrace(bare)).not.toThrow();
+    expect(typeof bare.stack).toBe("string");
+
+    expect(() => Error.captureStackTrace(1)).toThrow(TypeError);
+    // The default formatter itself: any object is accepted, primitives are still rejected.
+    expect(typeof original({ message: "plain" }, [])).toBe("string");
+    expect(() => original(1, [])).toThrow(TypeError);
+    expect(() => original(null, [])).toThrow(TypeError);
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});
+
+test("captureStackTrace with a delegating prepareStackTrace and a caller not on the stack", () => {
+  // Repro from https://github.com/oven-sh/bun/issues/41151: `this.constructor` is Error, which is
+  // not on the stack, so every frame is elided and the stack is just the header, as in Node.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    function CustomError() {
+      Error.captureStackTrace(this, this.constructor);
+    }
+    CustomError.prototype = new Error();
+    expect(new CustomError().stack).toBe("Error");
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});

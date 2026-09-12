@@ -792,10 +792,12 @@ pub(crate) fn post_process_js_chunk(
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
 
     if c.options.source_maps != options::SourceMapOption::None {
+        // Paths written over placeholders shift the text after them, and so does
+        // escaping the chunk for the <script> element of a standalone HTML file.
         let can_have_shifts = matches!(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
-        );
+        ) || c.options.compile_mode.is_standalone_html();
         // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
         // local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)`.

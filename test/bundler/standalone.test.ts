@@ -97,6 +97,69 @@ console.log(x);`,
     expect(html).toContain("<\\/script>");
   });
 
+  // Inside <script>, `<!--` switches the HTML tokenizer to "script data escaped",
+  // and a `<script` after that to "double escaped", where `</script>` no longer
+  // closes the element. The inlined script then runs to EOF unclosed and the
+  // browser never executes it. Escaping `<!--` keeps the tokenizer out of those
+  // states; the escape must mean the same thing in every JS context it can
+  // appear in (strings, templates, regex literals incl. /u and lookbehind).
+  test("escapes <!-- in inlined JS so the script element still closes", async () => {
+    using dir = tempDir("compile-browser-escape-comment-open", {
+      "index.html": `<!DOCTYPE html><html><body><p>page</p><script src="./app.js"></script></body></html>`,
+      "app.js": `function inspect(open, tag) {
+  return [
+    open.length,
+    open.charCodeAt(3),
+    tag,
+    \`<!--\${tag}\`,
+    /<!--/u.test(open),
+    /(?<!--)>/.test("->"),
+    /(?<!--)>/.test("-\\x2D>"),
+    /[<!--x]/.test("-"),
+    /[<!--x]/.test("."),
+  ];
+}
+const open = "<!--";
+const tag = "<script>";
+console.log(JSON.stringify(inspect(open, tag)));`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+    expect(result.success).toBe(true);
+    const html = await result.outputs[0].text();
+
+    // What an HTML tokenizer sees as the script's text must end where the JS ends.
+    let scriptText = "";
+    await new HTMLRewriter()
+      .on("script", {
+        text(chunk) {
+          scriptText += chunk.text;
+        },
+      })
+      .transform(new Response(html))
+      .text();
+    expect(scriptText).not.toContain("</body>");
+    expect(scriptText.trimEnd().endsWith("console.log(JSON.stringify(inspect(open, tag)));")).toBe(true);
+    expect(scriptText).not.toContain("<!--");
+
+    // The escaped script must evaluate exactly as the unescaped one would.
+    await Bun.write(`${dir}/inlined.mjs`, scriptText);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `${dir}/inlined.mjs`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([4, 45, "<script>", "<!--<script>", true, true, false, true, false]);
+    expect(exitCode).toBe(0);
+  });
+
   test("escapes </style> in inlined CSS", async () => {
     using dir = tempDir("compile-browser-escape-style", {
       "index.html": `<!DOCTYPE html>
@@ -734,6 +797,47 @@ console.log(greet("world"));`,
       expect(html.match(/\/\/# debugId=/g)).toHaveLength(1);
       expect(html).toEndWith("</html>\n");
       await expectInlinedScriptToBeMapped(html, map);
+    });
+
+    // `</script` and `<!--` in the script are escaped for the <script> element
+    // (1 and 3 extra bytes each). The map must account for those bytes: a
+    // mapping after the escapes moves by their total, and one before them (but
+    // after non-ASCII text on the same line) stays where it is.
+    test("the inlined script's map accounts for </script and <!-- escapes", async () => {
+      const marker = "<!--".repeat(8) + "</script>";
+      const appJs = `export const pre = "h\u00e9llo w\u00f6rld";\nexport const marker = ${JSON.stringify(marker)};\nexport function greet(name) {\n  return name + pre + marker;\n}\nconsole.log(greet("x"));\n`;
+      const lines = appJs.split("\n");
+      for (const outdir of [undefined, "dist"]) {
+        using dir = tempDir("compile-browser-escape-sourcemap", { ...assetFixture, "app.js": appJs });
+        const { html, map } = await buildWithAsset(String(dir), {
+          sourcemap: "linked",
+          outdir: outdir && `${dir}/${outdir}`,
+        });
+
+        const open = '<script type="module">';
+        const script = html.slice(html.indexOf(open) + open.length, html.indexOf("</script>"));
+        const [firstLine] = script.split("\n");
+        const escaped = "<!-\\x2D".repeat(8) + "<\\/script>";
+        expect(firstLine).toContain("h\u00e9llo w\u00f6rld");
+        expect(firstLine).toContain(escaped);
+        const before = firstLine.indexOf("marker");
+        const after = firstLine.indexOf("function greet");
+        expect(before).toBeGreaterThan(firstLine.indexOf("w\u00f6rld"));
+        expect(before).toBeLessThan(firstLine.indexOf(escaped));
+        expect(after).toBeGreaterThan(firstLine.indexOf(escaped));
+
+        const original = await SourceMapConsumer.with(map, null, consumer => ({
+          before: consumer.originalPositionFor({ line: 1, column: before }),
+          after: consumer.originalPositionFor({ line: 1, column: after }),
+        }));
+        expect({
+          before: { line: original.before.line, column: original.before.column },
+          after: { line: original.after.line, column: original.after.column },
+        }).toEqual({
+          before: { line: 2, column: lines[1].indexOf("marker") },
+          after: { line: 3, column: lines[2].indexOf("function greet") },
+        });
+      }
     });
   });
 });

@@ -2116,19 +2116,41 @@ folded: >
           expect(YAML.parse(doc)).toEqual(JSON.parse(doc));
           // `\U` 32-bit escapes for the same code point still work.
           expect(YAML.parse('"\\U0001F600"')).toBe("😀");
-          // Lone or mis-ordered surrogates are rejected.
-          expect(() => YAML.parse('"\\uD83D"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uD83Dx"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uDE00"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uDE00\\uD83D"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uD83D\\uD83D"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uD83D\\u0041"')).toThrow(SyntaxError);
-          expect(() => YAML.parse('"\\uD83D\\n"')).toThrow(SyntaxError);
           // `\U` ([60] ns-esc-32-bit) names a Unicode character; surrogate
           // code points are not characters and are never combined.
           expect(() => YAML.parse('"\\U0000D83D"')).toThrow(SyntaxError);
           expect(() => YAML.parse('"\\U0000D83D\\uDE00"')).toThrow(SyntaxError);
           expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
+        });
+
+        test("`\\uHHHH` unpaired surrogates are kept as lone code units, like JSON.parse", () => {
+          // JSON allows an unpaired `\uD83D` and `JSON.parse` keeps it as one
+          // UTF-16 code unit (RFC 8259 §8.2). js-yaml and eemeli/yaml do the
+          // same, and so does `YAML.stringify` when it writes such a string.
+          for (const doc of [
+            '"\\uD83D"',
+            '"\\uDE00"',
+            '"\\uD83Dx"',
+            '"\\uD83D\\u0041"',
+            '"\\uDE00\\uD83D"',
+            '"\\uD83D\\uD83D"',
+            '"\\uD83D\\uD83D\\uDE00"',
+            '"\\uD83D\\n"',
+            '"a\\ud800b"',
+            '{"a\\ud800b": 1, "a\\udc00b": 2, "a\\ufffdb": 3}',
+          ]) {
+            expect(YAML.parse(doc)).toEqual(JSON.parse(doc));
+          }
+          expect(YAML.parse('"\\uD83D"')).toHaveLength(1);
+          expect(YAML.parse('"\\uD83D\\uD83D\\uDE00"')).toBe("\uD83D😀");
+          expect(Object.keys(YAML.parse('{"a\\ud800b": 1, "a\\udc00b": 2, "a\\ufffdb": 3}'))).toEqual([
+            "a\uD800b",
+            "a\uDC00b",
+            "a\uFFFDb",
+          ]);
+          // The escape still needs four hex digits.
+          expect(() => YAML.parse('"\\uD83D\\uDE0"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\uZZZZ"')).toThrow(SyntaxError);
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -2932,6 +2954,63 @@ config:
         expect(YAML.parse(YAML.stringify("\u2028"))).toBe("\u2028");
         expect(YAML.parse(YAML.stringify("\u2029"))).toBe("\u2029");
         expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
+      });
+
+      test("escapes unpaired surrogates as \\uHHHH, like JSON.stringify", () => {
+        // An unpaired surrogate is not a Unicode character. Written as is, it
+        // becomes U+FFFD at the next string to UTF-8 boundary (a file, stdout,
+        // or `YAML.parse` itself). A surrogate pair is a character and is
+        // written as is.
+        expect(YAML.stringify("\uD800")).toBe('"\\ud800"');
+        expect(YAML.stringify("\uDC00")).toBe('"\\udc00"');
+        expect(YAML.stringify("x\uD800y")).toBe('"x\\ud800y"');
+        expect(YAML.stringify("\uDC00\uD800")).toBe('"\\udc00\\ud800"');
+        expect(YAML.stringify("\uD83D\uD83D\uDE00")).toBe('"\\ud83d😀"');
+        expect(YAML.stringify("\uD83D\uDE00")).toBe("😀");
+        expect(YAML.stringify(["\uD800", "a\uD800", "\uD83D\uDE00"])).toBe('["\\ud800","a\\ud800",😀]');
+        expect(YAML.stringify({ ["a\uD800b"]: 1, ["a\uDC00b"]: 2, ["a\uFFFDb"]: 3 })).toBe(
+          '{"a\\ud800b": 1,"a\\udc00b": 2,a\uFFFDb: 3}',
+        );
+        expect(YAML.stringify({ ["a\uD800b"]: 1 }, null, 2)).toBe('"a\\ud800b": 1');
+      });
+
+      test("round-trips unpaired surrogates in values and keys", () => {
+        const obj = { ["a\uD800b"]: 1, ["a\uDC00b"]: 2, ["a\uFFFDb"]: 3 };
+        expect(YAML.parse(YAML.stringify(obj))).toEqual(obj);
+        expect(YAML.parse(YAML.stringify(obj, null, 2))).toEqual(obj);
+        expect(Object.keys(YAML.parse(YAML.stringify(obj)))).toEqual(Object.keys(JSON.parse(JSON.stringify(obj))));
+
+        const values = {
+          lead: "x\uD800y",
+          trail: "x\uDC00y",
+          reversed: "\uDC00\uD800",
+          pair: "\uD83D\uDE00",
+          leadThenPair: "\uD83D\uD83D\uDE00",
+          leadAtEnd: "abc\uDBFF",
+          trailAtStart: "\uDFFFabc",
+          list: ["\uD800", "\uDC00", "a\uD800"],
+        };
+        expect(YAML.parse(YAML.stringify(values))).toEqual(values);
+        expect(YAML.parse(YAML.stringify(values, null, 2))).toEqual(values);
+      });
+
+      test("round-trips every surrogate code unit", () => {
+        let all = "";
+        for (let cp = 0xd800; cp <= 0xdfff; cp++) {
+          // Separated so that no lead is followed by a trail.
+          all += String.fromCharCode(cp) + "|";
+        }
+        const back = YAML.parse(YAML.stringify(all));
+        expect(typeof back).toBe("string");
+        expect(back.length).toBe(all.length);
+        for (let i = 0; i < all.length; i++) {
+          if (back.charCodeAt(i) !== all.charCodeAt(i)) {
+            throw new Error(
+              `U+${all.charCodeAt(i).toString(16).padStart(4, "0")} did not round-trip: ` +
+                `got U+${back.charCodeAt(i).toString(16).padStart(4, "0")}`,
+            );
+          }
+        }
       });
 
       test("round-trips every non-surrogate BMP code point", () => {

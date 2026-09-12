@@ -1500,7 +1500,11 @@ impl FileSink {
                 }
                 // A Windows uv_write is always async: Pending with an empty
                 // outgoing buffer is not backpressure, so keep the source flowing.
-                if !self.writer.get().is_backed_up() {
+                // A direct JS caller (no source) awaits the promise to know the
+                // bytes reached the file, so it always gets one.
+                if !self.writer.get().is_backed_up()
+                    && !matches!(self.source.get(), streams::SourceHandle::None)
+                {
                     return streams::Writable::Owned(accepted);
                 }
                 self.source_pending_pull.set(true);

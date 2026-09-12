@@ -205,6 +205,19 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
+    /// `bit[id] == true` ⇔ a dependency other than an optional peer resolved
+    /// to package `id` in the lockfile as loaded. An optional peer slot never
+    /// keeps such a package alive through `clean_with_logger` (it is bound in
+    /// `Cloner::flush` if something else still reaches it), so a package whose
+    /// last real dependent leaves package.json is dropped. A loaded package
+    /// with the bit unset was held by optional peers alone; 1.3.x wrote such
+    /// entries and they are kept, otherwise every resolve would prune them and
+    /// rewrite the file on any unrelated change. Sized to
+    /// `loaded_package_count`, so packages appended during this resolve read
+    /// as held (a fresh resolve never creates peer-only entries). Set by
+    /// `mark_loaded_packages`; runtime-only — never serialised.
+    pub(crate) held_at_load: DynamicBitSet,
+
     /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
     /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
     /// — pinned this exact version somewhere in the tree). `get_package_id`'s
@@ -1028,9 +1041,6 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
-        // A frozen install never saves, so dropping peer-held targets could only fail its check.
-        let keep_optional_peer_targets =
-            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
         let mut cloner = Cloner {
@@ -1039,7 +1049,6 @@ impl Lockfile {
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
             optional_peers: PendingResolutions::new(),
-            keep_optional_peer_targets,
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1268,7 +1277,6 @@ pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
     /// Bound in `flush`, once `clone_queue` has decided which targets survive.
     pub(crate) optional_peers: PendingResolutions,
-    pub(crate) keep_optional_peer_targets: bool,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -2076,16 +2084,32 @@ impl Lockfile {
             // session-appended, so the order-independence guard in
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
+            held_at_load: DynamicBitSet::default(),
             exact_pinned: DynamicBitSet::default(),
         }
     }
 
-    /// Snapshot `packages.len()` as the "loaded from lockfile" watermark.
-    /// Call exactly once after `load_from_cwd` (including npm/pnpm/yarn
-    /// migration) before any manifest-driven `append_package`.
-    #[inline]
-    pub(crate) fn mark_loaded_packages(&mut self) {
-        self.loaded_package_count = self.packages.len() as PackageID;
+    /// Snapshot `packages.len()` as the "loaded from lockfile" watermark and
+    /// which of those packages a non-peer dependency resolves to
+    /// (`held_at_load`). Call exactly once after `load_from_cwd` (including
+    /// npm/pnpm/yarn migration), before the differ, an update or a dedupe
+    /// re-points any resolution and before any manifest-driven
+    /// `append_package`.
+    pub(crate) fn mark_loaded_packages(&mut self) -> Result<(), AllocError> {
+        let packages_len = self.packages.len();
+        self.loaded_package_count = packages_len as PackageID;
+        let mut held = DynamicBitSet::init_empty(packages_len)?;
+        // A load that failed partway leaves `resolutions` shorter than `dependencies`;
+        // that lockfile is replaced by `init_empty` before anything reads the set.
+        let dependencies = self.buffers.dependencies.as_slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        for (dependency, &package_id) in dependencies.iter().zip(resolutions) {
+            if !dependency.behavior.is_optional_peer() && (package_id as usize) < packages_len {
+                held.set(package_id as usize);
+            }
+        }
+        self.held_at_load = held;
+        Ok(())
     }
 
     /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its

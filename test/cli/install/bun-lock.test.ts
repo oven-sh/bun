@@ -1450,6 +1450,51 @@ it("--frozen-lockfile keeps a package that an older lockfile lists only as an op
   expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
 
+// Same entries, but the install that re-resolves and saves: a package.json change
+// unrelated to them (here a dependency bun.lock already has) must not prune them
+// either. Only a package whose real dependent leaves is dropped (the tests above).
+it("a re-resolving install keeps the packages an older lockfile holds through optional peers alone", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+  });
+  const run = makeInstallRunner(packageDir);
+  const noDepsEntry = '"no-deps": ["no-deps@1.0.0"';
+  const locked = { "optional-peer-deps": "1.0.0", "uses-a-dep-1": "1.0.0" };
+  await Promise.all([
+    // a-dep is already in bun.lock through uses-a-dep-1, so nothing resolves differently.
+    write(packageJson, JSON.stringify({ name: "foo", dependencies: { ...locked, "a-dep": "1.0.1" } })),
+    write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: locked } },
+        packages: {
+          "a-dep": ["a-dep@1.0.1", "", {}, ""],
+          // only optional-peer-deps's optional peer refers to this entry
+          "no-deps": ["no-deps@1.0.0", "", {}, ""],
+          "optional-peer-deps": [
+            "optional-peer-deps@1.0.0",
+            "",
+            { peerDependencies: { "no-deps": "*" }, optionalPeers: ["no-deps"] },
+            "",
+          ],
+          "uses-a-dep-1": ["uses-a-dep-1@1.0.0", "", { dependencies: { "a-dep": "1.0.1" } }, ""],
+        },
+      }),
+    ),
+  ]);
+
+  await run(["install"]);
+  const saved = await file(join(packageDir, "bun.lock")).text();
+  expect(saved).toContain('"a-dep": "1.0.1"');
+  expect(saved).toContain(noDepsEntry);
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+
+  await run(["install", "--frozen-lockfile"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+});
+
 // The optional-peer-hoist-* fixtures are described in
 // registry/packages/create-optional-peer-hoist-packages.ts. In short: consumer
 // has an optional peer on target, and deep -> deep-child reaches target@1.0.0

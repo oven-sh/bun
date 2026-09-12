@@ -613,8 +613,14 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
-            if old_dependencies[i].behavior.is_optional_peer() && !cloner.keep_optional_peer_targets
+            // A peer slot must not keep a target alive that something else held
+            // when the lockfile was loaded; it is bound in `Cloner::flush` if that
+            // holder survived. A target the loaded lockfile held through optional
+            // peers alone is cloned like a dependency (see `Lockfile::held_at_load`).
+            if old_dependencies[i].behavior.is_optional_peer()
+                && old
+                    .held_at_load
+                    .is_set_allow_out_of_bound(*old_resolution as usize, true)
             {
                 cloner.optional_peers.push(pending);
                 continue;

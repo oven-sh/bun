@@ -129,7 +129,7 @@ test("npm lockfile with relative workspaces", async () => {
   expect(exitCode).toBe(0);
 });
 
-const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
+const lockfiles = ["npm-shrinkwrap.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
 
 for (const lockfile of lockfiles) {
   test(`should create bun.lock if ${lockfile} migration fails`, async () => {
@@ -1819,6 +1819,125 @@ describe("package-lock.json migration fixes", () => {
     expect(exitCode).toBe(0);
     expect(lock.workspaces).toStrictEqual({ "": { name: "link-no-resolved" } });
     expect(lock.packages).toStrictEqual({});
+  });
+
+  // npm-shrinkwrap.json is package-lock.json under another name, and npm reads it in preference to package-lock.json.
+  describe("npm-shrinkwrap.json", () => {
+    test.concurrent("bun install keeps the versions it pins instead of resolving afresh", async () => {
+      using registry = localRegistry();
+      // The registry also has no-deps 1.0.1 and 1.1.0, which a fresh resolve of this range would pick.
+      const dependencies = { "no-deps": "^1.0.0" };
+      using dir = synthetic(
+        "npm-migrate-shrinkwrap-install",
+        {
+          "package.json": JSON.stringify({ name: "shrinkwrapped", dependencies }),
+          "npm-shrinkwrap.json": npmLock("shrinkwrapped", {
+            "": { name: "shrinkwrapped", dependencies },
+            "node_modules/no-deps": {
+              version: "1.0.0",
+              resolved: registry.tarball("no-deps", "1.0.0"),
+              integrity: registry.integrity("no-deps", "1.0.0"),
+            },
+          }),
+        },
+        registry.url,
+      );
+
+      const { stderr, exitCode } = await run(dir, "install");
+      expect(stderr).toContain("migrated lockfile from npm-shrinkwrap.json");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+        name: "no-deps",
+        version: "1.0.0",
+      });
+      const { lock } = await readLock(dir);
+      expect(lock.packages["no-deps"]).toStrictEqual([
+        "no-deps@1.0.0",
+        registry.tarball("no-deps", "1.0.0"),
+        {},
+        registry.integrity("no-deps", "1.0.0"),
+      ]);
+      expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
+      await frozen(dir);
+    });
+
+    test.concurrent("bun pm migrate reads it", async () => {
+      const dependencies = { x: "^1.0.0" };
+      using dir = synthetic("npm-migrate-shrinkwrap-pm-migrate", {
+        "package.json": JSON.stringify({ name: "shrinkwrapped", dependencies }),
+        "npm-shrinkwrap.json": npmLock("shrinkwrapped", {
+          "": { name: "shrinkwrapped", dependencies },
+          "node_modules/x": { version: "1.0.0" },
+        }),
+      });
+      const { stderr, lock } = await migrate(dir);
+      expect(stderr).toContain("migrated lockfile from npm-shrinkwrap.json");
+      expect(lock.packages.x).toStrictEqual(["x@1.0.0", `${OFFLINE_REGISTRY}x/-/x-1.0.0.tgz`, {}, ""]);
+      await frozen(dir);
+    });
+
+    test.concurrent("takes precedence over a package-lock.json next to it, as in npm", async () => {
+      const dependencies = { x: "^1.0.0" };
+      using dir = synthetic("npm-migrate-shrinkwrap-precedence", {
+        "package.json": JSON.stringify({ name: "both", dependencies }),
+        "npm-shrinkwrap.json": npmLock("both", {
+          "": { name: "both", dependencies },
+          "node_modules/x": { version: "1.0.0" },
+        }),
+        "package-lock.json": npmLock("both", {
+          "": { name: "both", dependencies },
+          "node_modules/x": { version: "1.0.1" },
+        }),
+      });
+      const { stderr, lock } = await migrate(dir);
+      expect(stderr).toContain("migrated lockfile from npm-shrinkwrap.json");
+      expect(stderr).not.toContain("package-lock.json");
+      expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0"]);
+      await frozen(dir);
+    });
+
+    test.concurrent("migration warnings name it", async () => {
+      const dependencies = { x: "1.0.0" };
+      using dir = synthetic("npm-migrate-shrinkwrap-warnings", {
+        "package.json": JSON.stringify({ name: "warned", dependencies }),
+        "npm-shrinkwrap.json": npmLock("warned", {
+          "": { name: "warned", dependencies },
+          "node_modules/x": { version: "1.0.0", patched: { "patches/x.patch": "sha512-x" } },
+          "node_modules/y": { version: "1.0.0" },
+        }),
+      });
+      const { stderr, lock } = await migrate(dir);
+      expect(stderr).toContain(
+        'warn: skipped 1 npm-shrinkwrap.json entry not depended on by any package: "node_modules/y"\n',
+      );
+      expect(stderr).toContain('warn: skipped npm patches for "x" from npm-shrinkwrap.json\nnote: bun patch <pkg>\n');
+      expect(stderr).not.toContain("package-lock.json");
+      expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0"]);
+    });
+
+    test.concurrent("an unsupported lockfileVersion is reported under its own name", async () => {
+      using dir = synthetic("npm-migrate-shrinkwrap-v1", {
+        "package.json": JSON.stringify({ name: "v1", dependencies: { "dep-1": "file:dep-1" } }),
+        "dep-1/package.json": JSON.stringify({ name: "dep-1" }),
+        "npm-shrinkwrap.json": JSON.stringify({ name: "v1", lockfileVersion: 1, requires: true, dependencies: {} }),
+      });
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      expect(stderr).toBe(
+        "error: npm-shrinkwrap.json is lockfileVersion 1, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      );
+      expect(exitCode).toBe(1);
+      expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
+
+      const install = await run(dir, "install");
+      expect(install.stderr).toContain(
+        "warn: npm-shrinkwrap.json is lockfileVersion 1, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      );
+      expect(install.stderr).not.toContain("migrated lockfile");
+      expect(install.stderr).not.toContain("failed to migrate");
+      expect(install.exitCode).toBe(0);
+      expect((await readLock(dir)).lock.packages["dep-1"]).toStrictEqual(["dep-1@file:dep-1", {}]);
+      expect(fs.existsSync(join(String(dir), "node_modules", "dep-1", "package.json"))).toBeTrue();
+    });
   });
 
   describe("arborist fixtures", () => {

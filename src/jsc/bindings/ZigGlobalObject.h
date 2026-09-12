@@ -34,7 +34,7 @@ class JSBuiltinInternalFunctions;
 
 namespace Bun {
 class InternalModuleRegistry;
-class NapiHandleScopeImpl;
+class HandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
@@ -299,7 +299,7 @@ public:
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
-    Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
+    Structure* HandleScopeImplStructure() const { return m_HandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
     Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
@@ -509,10 +509,10 @@ public:
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
-    /* The handle scope where all new NAPI values will be created. You must not pass any napi_values */      \
-    /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \
-    /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
-    V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
+    /* The innermost open handle scope (Node-API or V8), where new napi_values and V8 handles are */         \
+    /* created. You must not pass any napi_values back to a NAPI function without putting them in the */     \
+    /* handle scope, as the NAPI function may move them off the stack, and they would then be collected. */  \
+    V(public, JSC::WriteBarrier<Bun::HandleScopeImpl>, m_currentHandleScopeImpl)                             \
                                                                                                              \
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
@@ -651,7 +651,7 @@ public:
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiPrototypeStructure)                              \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiHandleScopeImplStructure)                        \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_HandleScopeImplStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \

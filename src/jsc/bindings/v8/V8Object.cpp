@@ -101,7 +101,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
         return MaybeLocal<Value>();
     }
 
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<Value>(vm, result);
 }
 
@@ -118,7 +118,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
         return MaybeLocal<Value>();
     }
 
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<Value>(vm, result);
 }
 
@@ -142,7 +142,7 @@ Local<Data> Object::SlowGetInternalField(int index)
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
     auto* globalObject = dynamicDowncast<Zig::GlobalObject>(js_object->globalObject());
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
         return handleScope->createLocal<Data>(globalObject->vm(), field.get());

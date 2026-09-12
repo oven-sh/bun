@@ -57,14 +57,13 @@ public:
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
-    IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };
+    IsoSubspace* m_subspaceForHandleScopeImpl { nullptr };
     IsoSubspace* m_subspaceForStrongRootBlock { nullptr };
     IsoSubspace* m_subspaceForNapiTypeTag { nullptr };
     IsoSubspace* m_subspaceForNativePromiseContext { nullptr };
     IsoSubspace* m_subspaceForObjectTemplate { nullptr };
     IsoSubspace* m_subspaceForInternalFieldObject { nullptr };
     IsoSubspace* m_subspaceForV8GlobalInternals { nullptr };
-    IsoSubspace* m_subspaceForHandleScopeBuffer { nullptr };
     IsoSubspace* m_subspaceForFunctionTemplate { nullptr };
     IsoSubspace* m_subspaceForJSMIMEType { nullptr };
     IsoSubspace* m_subspaceForJSMIMEParams { nullptr };

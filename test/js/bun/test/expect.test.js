@@ -3941,6 +3941,14 @@ describe("expect()", () => {
     expect(NaN).not.toBeInteger();
     expect("").not.toBeInteger();
     expect({}).not.toBeInteger();
+    // Number.isInteger semantics: integers outside the Int52 range still count.
+    expect(2 ** 51).toBeInteger();
+    expect(-(2 ** 51) - 1).toBeInteger();
+    expect(Number.MAX_SAFE_INTEGER).toBeInteger();
+    expect(Number.MIN_SAFE_INTEGER).toBeInteger();
+    expect(1e21).toBeInteger();
+    expect(-0).toBeInteger();
+    expect(2 ** 51 + 0.5).not.toBeInteger();
   });
 
   test("toBeObject()", () => {

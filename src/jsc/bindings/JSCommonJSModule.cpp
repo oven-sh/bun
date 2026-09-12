@@ -1659,20 +1659,20 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
 {
-    ASSERT(!pathString.startsWith("file://"_s));
+    return createBoundRequireFunction(vm, lexicalGlobalObject, JSC::jsStringWithCache(vm, pathString));
+}
 
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, JSString* filename)
+{
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSString* filename = JSC::jsStringWithCache(vm, pathString);
-    auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
-    JSString* dirname;
-    if (index != WTF::notFound) {
-        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } else {
-        dirname = jsEmptyString(vm);
-    }
+    auto pathString = filename->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(!pathString->startsWith("file://"_s));
+
+    auto index = pathString->reverseFind(PLATFORM_SEP);
+    JSString* dirname = index != WTF::notFound ? JSC::jsSubstringOfResolved(vm, filename, 0, index) : jsEmptyString(vm);
 
     auto moduleObject = Bun::JSCommonJSModule::create(
         vm,

@@ -347,6 +347,40 @@ it("import.meta is correct in a module that was required with a query param", as
   expect(cjs.file).toBe("other-cjs.js");
 });
 
+it("import.meta of a virtual module whose id is a path with . and .. segments is normalized like its url", async () => {
+  // The registry key of a build.module() virtual module is the id verbatim. import.meta.path and
+  // import.meta.url must still describe the same file.
+  const id = [import.meta.dir, ".", "sub", "..", "import-meta-virtual.mjs"].join(sep);
+  const bare = "import-meta-virtual-bare";
+  Bun.plugin({
+    name: "import-meta-virtual",
+    setup(build) {
+      for (const specifier of [id, bare]) {
+        build.module(specifier, () => ({
+          contents: `export default { path: import.meta.path, dir: import.meta.dir, file: import.meta.file, url: import.meta.url };`,
+          loader: "js",
+        }));
+      }
+    },
+  });
+  try {
+    const { default: dotted } = await import(id);
+    expect(dotted).toEqual({
+      path: join(import.meta.dir, "import-meta-virtual.mjs"),
+      dir: import.meta.dir,
+      file: "import-meta-virtual.mjs",
+      url: new URL("./import-meta-virtual.mjs", import.meta.url).href,
+    });
+    expect(Bun.fileURLToPath(dotted.url)).toBe(dotted.path);
+
+    const { default: plain } = await import(bare);
+    expect(plain.file).toBe(bare);
+    expect(plain.url).toBe("file:///" + bare);
+  } finally {
+    Bun.plugin.clearAll();
+  }
+});
+
 it("import.meta of a collected module does not leak its url", async () => {
   // 200 module records with a 512 KB url each: 100 MiB when every one leaks.
   await expectRssDeltaBelow(["--smol", join(import.meta.dir, "import-meta-url-leak-fixture.mjs"), "200"], {

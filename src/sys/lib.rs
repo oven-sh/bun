@@ -3694,6 +3694,61 @@ mod windows_impl {
         // the caller's HANDLE, so it leaked a CRT slot per call).
         fstat_handle(fd)
     }
+    /// The reparse tag of `fd`, 0 when it is not a reparse point.
+    fn reparse_tag(fd: Fd) -> Maybe<u32> {
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        let mut info: w::FILE_ATTRIBUTE_TAG_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `fd` is a live HANDLE and `info` is valid for write.
+        let rc = unsafe {
+            w::ntdll::NtQueryInformationFile(
+                fd.native(),
+                &mut io,
+                core::ptr::from_mut(&mut info).cast(),
+                core::mem::size_of::<w::FILE_ATTRIBUTE_TAG_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileAttributeTagInformation,
+            )
+        };
+        if w::NT_ERROR(rc) {
+            return Err(Error::new(rc, Tag::fstat).with_fd(fd));
+        }
+        if (info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+            return Ok(0);
+        }
+        Ok(info.ReparseTag)
+    }
+    /// POSIX `O_NOFOLLOW` after an `O::NOFOLLOW` open: a link fails `ELOOP`, other tags `reopen()`.
+    pub fn finish_no_follow_open(
+        fd: Fd,
+        path: &[u8],
+        reopen: impl FnOnce() -> Maybe<Fd>,
+    ) -> Maybe<Fd> {
+        let tag = match reparse_tag(fd) {
+            Ok(tag) => tag,
+            Err(err) => {
+                let _ = close(fd);
+                return Err(err);
+            }
+        };
+        if tag == 0 {
+            return Ok(fd);
+        }
+        let _close = CloseOnDrop::new(fd);
+        let eloop = || Error::from_code(E::ELOOP, Tag::open).with_path(path);
+        if bun_windows_sys::is_reparse_tag_name_surrogate(tag) {
+            return Err(eloop());
+        }
+        // Dedup and cloud-file tags: only an open without the flag reads through their filter.
+        let reopened = reopen()?;
+        let same_file = match (fstat_handle(fd), fstat_handle(reopened)) {
+            (Ok(a), Ok(b)) => a.st_ino == b.st_ino && a.st_dev == b.st_dev,
+            _ => false,
+        };
+        if !same_file {
+            let _ = close(reopened);
+            return Err(eloop());
+        }
+        Ok(reopened)
+    }
     /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
     /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
     /// raw HANDLE without touching the CRT fd table.

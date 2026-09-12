@@ -426,7 +426,7 @@ impl Dir {
     /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path
     /// access.
     ///
-    /// On POSIX, `iterate` / `access_sub_paths` are advisory (the handle is
+    /// On POSIX, `iterate` is advisory and `no_follow` adds `O_NOFOLLOW` (the handle is
     /// opened with `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows
     /// the flags select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`,
     /// and the handle is opened **without** `read_only` so the caller may
@@ -436,22 +436,34 @@ impl Dir {
     pub fn open_dir(&self, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         #[cfg(windows)]
         {
-            return open_dir_at_windows_a(
-                self.fd,
-                sub_path,
-                WindowsOpenDirOptions {
-                    iterable: opts.iterate,
-                    no_follow: opts.no_follow,
-                    ..Default::default()
-                },
-            )
-            .map(Dir::from_fd)
-            .map_err(Into::into);
+            let open = |no_follow: bool| {
+                open_dir_at_windows_a(
+                    self.fd,
+                    sub_path,
+                    WindowsOpenDirOptions {
+                        iterable: opts.iterate,
+                        no_follow,
+                        ..Default::default()
+                    },
+                )
+            };
+            let fd = open(opts.no_follow)?;
+            if !opts.no_follow {
+                return Ok(Dir::from_fd(fd));
+            }
+            // `no_follow` opened a link itself instead of failing; refuse it as POSIX does.
+            return finish_no_follow_open(fd, sub_path, || open(false)).map(Dir::from_fd);
         }
         #[cfg(not(windows))]
         {
-            let _ = opts;
-            open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+            let no_follow = if opts.no_follow { O::NOFOLLOW } else { 0 };
+            openat_a(
+                self.fd,
+                sub_path,
+                O::DIRECTORY | O::CLOEXEC | O::RDONLY | no_follow,
+                0,
+            )
+            .map(Dir::from_fd)
         }
     }
 }

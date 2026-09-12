@@ -894,38 +894,36 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                /// Keys are stored with forward slashes (`file_map_from_js`).
+                fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
                     }
                     #[cfg(not(windows))]
                     {
-                        self.map.get(specifier).map(|b| b.as_ref())
+                        self.map
+                            .get_key_value(specifier)
+                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
                     }
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
+                        if specifier.len() > buf.len() {
+                            return None;
+                        }
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.get(normalized).map(|b| b.as_ref())
+                        self.map
+                            .get_key_value(normalized)
+                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
                     }
+                }
+                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                    self.get_key_value(specifier).map(|(_, value)| value)
                 }
                 #[inline]
                 pub fn contains(&self, specifier: &[u8]) -> bool {
-                    if self.map.is_empty() {
-                        return false;
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        self.map.contains_key(specifier)
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.contains_key(normalized)
-                    }
+                    self.get_key_value(specifier).is_some()
                 }
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
                 /// not found. Handles direct key matches and relative specifiers
@@ -957,20 +955,9 @@ pub mod bv2_impl {
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                     };
 
-                    // Direct key match (must use `getKey` to return the map-owned
-                    // key, not the parameter).
-                    #[cfg(not(windows))]
-                    if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
+                    // Direct key match. Return the map-owned key, not the parameter.
+                    if let Some((key, _)) = self.get_key_value(specifier) {
+                        return Some(Self::result_for_key(dupe(key)));
                     }
 
                     // Also try joining a relative specifier against the importer's
@@ -984,12 +971,15 @@ pub mod bv2_impl {
                             source_file
                         } else {
                             bun_resolver::fs::FileSystem::instance()
-                                .abs_buf(&[source_file], &mut *abs_source_buf)
+                                .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                         };
 
                         // Normalize `source_file` to forward slashes (Windows paths
                         // from the real filesystem may use backslashes).
                         let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                        if abs_source_file.len() > source_file_buf.len() {
+                            return None;
+                        }
                         let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
                             abs_source_file,
                             &mut **source_file_buf,
@@ -1019,11 +1009,11 @@ pub mod bv2_impl {
                         };
                         // `.loose` preserves Windows drive letters; normalize
                         // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+                        let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
                             bun_paths::platform::Loose,
                         >(
                             effective_source_dir, &mut **buf, &[specifier]
-                        )
+                        )?
                         .len();
                         if cfg!(windows) {
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(

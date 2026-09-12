@@ -106,6 +106,10 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// An external matched by resolved path: `path.text` is the file's
+        /// absolute path and prints relative to the output file's directory.
+        const PRINT_PATH_RELATIVE_TO_OUTPUT = 1 << 19;
     }
 }
 

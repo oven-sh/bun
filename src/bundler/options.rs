@@ -120,8 +120,10 @@ pub(crate) fn init_external_modules(
 ) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
+        exact: StringSet::default(),
         abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
+        abs_patterns: Vec::new(),
     };
 
     match target {
@@ -166,11 +168,25 @@ pub(crate) fn init_external_modules(
                 prefix: Box::from(&external[0..i]),
                 suffix: Box::from(&external[i + 1..]),
             });
+
+            // `./lib/*` also matches resolved paths (`../lib/x.js` from a subdirectory).
+            if !bun_paths::is_package_path(external) {
+                let normalized = validate_path(log, fs, cwd, external, b"external path");
+                if let Some(star) = strings::index_of_char(&normalized, b'*') {
+                    let star = star as usize;
+                    result.abs_patterns.push(WildcardPattern {
+                        prefix: Box::from(&normalized[0..star]),
+                        suffix: Box::from(&normalized[star + 1..]),
+                    });
+                }
+            }
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            // Matched as written (and then printed as written), or by resolved path below.
+            result.exact.insert(external).expect("unreachable");
 
+            let normalized = validate_path(log, fs, cwd, external, b"external path");
             if !normalized.is_empty() {
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
@@ -1228,6 +1244,9 @@ pub struct BundleOptions<'a> {
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
+    /// `bun build --outfile`; the CLI writes it, the linker reads its directory
+    /// (`Chunk::output_dir_abs`).
+    pub outfile: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
     pub(crate) write: bool,
@@ -1472,6 +1491,7 @@ impl<'a> BundleOptions<'a> {
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
+            outfile: self.outfile.clone(),
             root_dir: self.root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
@@ -1702,6 +1722,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
+            outfile: Box::default(),
             target,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
@@ -2463,6 +2484,29 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Directory part of the expanded template, `/`-separated. A `[hash]` not yet
+    /// known takes a stand-in; hashes have no separators, so the depth is right.
+    pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
+        let mut rel = Vec::<u8>::new();
+        path_template_print(
+            &mut rel,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            Some(
+                self.placeholder
+                    .hash
+                    .unwrap_or_else(|| bun_core::fmt::ContentHash::new(0, self.hash_len())),
+            ),
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Box::from(bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&rel))
     }
 }
 

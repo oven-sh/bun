@@ -19,10 +19,19 @@ pub enum Packages {
     External,
 }
 
+/// Like esbuild, file-path externals match the specifier as written (`exact`,
+/// `patterns`) or the resolved absolute path (`abs_paths`, `abs_patterns`).
 #[derive(Default)]
 pub struct ExternalModules {
+    /// Wildcard patterns, matched against the specifier as written.
     pub patterns: Vec<WildcardPattern>,
+    /// File-path externals as written, matched against the specifier as written.
+    pub exact: StringSet,
+    /// `./`, `../` and absolute wildcards made absolute; matched like `abs_paths`.
+    pub abs_patterns: Vec<WildcardPattern>,
+    /// File-path externals made absolute, matched against the resolved path.
     pub abs_paths: StringSet,
+    /// Package names; a name also covers its subpaths.
     pub node_modules: StringSet,
 }
 impl Clone for ExternalModules {
@@ -31,15 +40,37 @@ impl Clone for ExternalModules {
         // `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
         Self {
             patterns: self.patterns.clone(),
+            exact: self.exact.clone().expect("oom"),
+            abs_patterns: self.abs_patterns.clone(),
             abs_paths: self.abs_paths.clone().expect("oom"),
             node_modules: self.node_modules.clone().expect("oom"),
         }
+    }
+}
+impl ExternalModules {
+    /// Whether the specifier as written is external (exact text or wildcard).
+    pub fn matches_specifier(&self, import_path: &[u8]) -> bool {
+        (self.exact.count() > 0 && self.exact.contains(import_path))
+            || self.patterns.iter().any(|p| p.matches(import_path))
+    }
+
+    /// Whether a resolved absolute path is external (file path or path wildcard).
+    pub fn matches_abs_path(&self, abs_path: &[u8]) -> bool {
+        (self.abs_paths.count() > 0 && self.abs_paths.contains(abs_path))
+            || self.abs_patterns.iter().any(|p| p.matches(abs_path))
     }
 }
 #[derive(Debug, Clone)]
 pub struct WildcardPattern {
     pub prefix: Box<[u8]>,
     pub suffix: Box<[u8]>,
+}
+impl WildcardPattern {
+    pub fn matches(&self, path: &[u8]) -> bool {
+        path.len() >= self.prefix.len() + self.suffix.len()
+            && path.starts_with(&self.prefix)
+            && path.ends_with(&self.suffix)
+    }
 }
 /// Re-export the real set type so `bun_bundler` can project user-supplied
 /// `--external` `abs_paths`/`node_modules` through. The previous local ZST

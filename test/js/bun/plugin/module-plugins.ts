@@ -41,6 +41,35 @@ plugin({
       };
     });
 
+    builder.module("my-virtual-module-cjs-sync", () => ({
+      contents: `globalThis.__cjsSyncSideEffect = 42; module.exports = { hello: "cjs-sync", named: 1 };`,
+      loader: "js",
+    }));
+
+    builder.module("my-virtual-module-cjs-async", async () => {
+      await Bun.sleep(1);
+      return {
+        contents: `globalThis.__cjsAsyncSideEffect = 99; module.exports = { hello: "cjs-async" };`,
+        loader: "js",
+      };
+    });
+
+    builder.module("my-virtual-module-cjs-exports-dot", () => ({
+      contents: `exports.foo = "F"; exports.bar = "B";`,
+      loader: "js",
+    }));
+
+    builder.module("my-virtual-module-cjs-throws", () => ({
+      contents: `module.exports = {}; throw new Error("cjs body threw");`,
+      loader: "js",
+    }));
+
+    builder.onResolve({ filter: /.*/, namespace: "onload-cjs" }, a => ({ path: a.path, namespace: "onload-cjs-load" }));
+    builder.onLoad({ filter: /.*/, namespace: "onload-cjs-load" }, () => ({
+      contents: `module.exports = { fromOnLoad: true };`,
+      loader: "js",
+    }));
+
     builder.onLoad({ filter: /.*/, namespace: "rejected-promise" }, async ({ path }) => {
       throw new Error("Rejected Promise");
     });

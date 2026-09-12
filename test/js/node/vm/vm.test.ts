@@ -972,9 +972,10 @@ describe.concurrent("File and fs.Stats accept a newTarget that belongs to a cont
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: JSON.stringify(expected),
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });

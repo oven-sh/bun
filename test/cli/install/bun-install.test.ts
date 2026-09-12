@@ -120,6 +120,39 @@ function serveDirectory(root: string) {
   });
 }
 
+/**
+ * Serves URL dependencies (`http://github.com/<user>/<repo>/tarball/<ref>`, `http://some.url/path?stuff`) without
+ * the network. `bun install` downloads such URLs as-is (there is no `GITHUB_API_URL` equivalent to point at a test
+ * server), so the returned `env` instead points the install's `http_proxy` at this server. A proxied plain-http
+ * request arrives in absolute form, so `request.url` is the dependency URL itself and the specifiers keep the real
+ * hosts bun classifies them by. The dependencies must use `http://`: `https://` would be tunneled (CONNECT) to the
+ * real host. Every URL seen is pushed to `urls`. A URL registered with a file map is answered with a gzipped tarball of
+ * those files, one registered with a `Response` (e.g. a redirect) with that response, anything else with a 404. The
+ * context's registry bypasses the proxy, so its `urls`/`requested` are unaffected.
+ */
+function urlTarballProxy(
+  ctx: TestContext,
+  urls: string[],
+  responses: Record<string, Record<string, string> | Response>,
+) {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      urls.push(request.url);
+      const registered = responses[request.url];
+      if (!registered) return new Response(`nothing registered for ${request.url}`, { status: 404 });
+      if (registered instanceof Response) return registered.clone();
+      return new Response(await new Bun.Archive(registered, { compress: "gzip" }).bytes());
+    },
+  });
+  const proxy_url = server.url.href.replace(/\/+$/, "");
+  const registry_host = new URL(ctx.registry_url).hostname;
+  return {
+    env: { ...env, http_proxy: proxy_url, HTTP_PROXY: proxy_url, no_proxy: registry_host, NO_PROXY: registry_host },
+    [Symbol.asyncDispose]: () => server.stop(true),
+  };
+}
+
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {
     it(`bun install --network-concurrency=${input} fails`, async () => {
@@ -4607,126 +4640,96 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)", async () => {
-    await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-      await writeFile(
-        join(ctx.package_dir, "package.json"),
-        JSON.stringify({
-          name: "Foo",
-          version: "0.0.1",
-          dependencies: {
-            when: "https://github.com/cujojs/when/tarball/1.0.2",
-          },
-        }),
-      );
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const err = await stderr.text();
-      expect(err).toContain("Saved lockfile");
-      let out = await stdout.text();
-      out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
-      out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-      expect(out.split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ when@https://github.com/cujojs/when/tarball/1.0.2",
-        "",
-        "1 package installed",
-      ]);
-      expect(await exited).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "when"))).toEqual([
-        ".gitignore",
-        ".gitmodules",
-        "LICENSE.txt",
-        "README.md",
-        "apply.js",
-        "cancelable.js",
-        "delay.js",
-        "package.json",
-        "test",
-        "timed.js",
-        "timeout.js",
-        "when.js",
-      ]);
-      const package_json = await file(join(ctx.package_dir, "node_modules", "when", "package.json")).json();
-      expect(package_json.name).toBe("when");
-      await access(join(ctx.package_dir, "bun.lockb"));
-    });
-  });
+  // The second variant also sets GITHUB_API_URL: it only applies to `github:` dependencies, so the tarball URL
+  // must still be fetched verbatim (any request reaching the local stand-in would show up in `urls`).
+  for (const with_github_api_url of [false, true]) {
+    it(
+      "should handle GitHub tarball URL in dependencies (http://github.com/user/repo/tarball/ref)" +
+        (with_github_api_url ? " with custom GITHUB_API_URL" : ""),
+      async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          const tarball_url = "http://github.com/cujojs/when/tarball/1.0.2";
+          // github.com answers /tarball/ URLs with a redirect to codeload.github.com, whose tarballs have a single
+          // `<user>-<repo>-<short commit>` root directory.
+          const codeload_url = "http://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
+          const proxied_urls: string[] = [];
+          await using proxy = urlTarballProxy(ctx, proxied_urls, {
+            [tarball_url]: new Response(null, { status: 302, headers: { Location: codeload_url } }),
+            [codeload_url]: {
+              "cujojs-when-1a2b3c4/.gitignore": "",
+              "cujojs-when-1a2b3c4/.gitmodules": "",
+              "cujojs-when-1a2b3c4/LICENSE.txt": "",
+              "cujojs-when-1a2b3c4/README.md": "",
+              "cujojs-when-1a2b3c4/apply.js": "",
+              "cujojs-when-1a2b3c4/cancelable.js": "",
+              "cujojs-when-1a2b3c4/delay.js": "",
+              "cujojs-when-1a2b3c4/package.json": JSON.stringify({ name: "when", version: "1.0.2" }),
+              "cujojs-when-1a2b3c4/test/when-test.js": "",
+              "cujojs-when-1a2b3c4/timed.js": "",
+              "cujojs-when-1a2b3c4/timeout.js": "",
+              "cujojs-when-1a2b3c4/when.js": "",
+            },
+          });
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "Foo",
+              version: "0.0.1",
+              dependencies: {
+                when: tarball_url,
+              },
+            }),
+          );
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "pipe",
+            env: with_github_api_url ? { ...proxy.env, GITHUB_API_URL: `${ctx.registry_url}github/api` } : proxy.env,
+          });
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          let out = await stdout.text();
+          out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+          out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+          expect(out.split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun install v1."),
+            "",
+            `+ when@${tarball_url}`,
+            "",
+            "1 package installed",
+          ]);
+          expect(await exited).toBe(0);
+          expect(proxied_urls).toEqual([tarball_url, codeload_url]);
+          expect(urls.sort()).toBeEmpty();
+          expect(ctx.requested).toBe(0);
+          expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
+          expect(await readdirSorted(join(ctx.package_dir, "node_modules", "when"))).toEqual([
+            ".gitignore",
+            ".gitmodules",
+            "LICENSE.txt",
+            "README.md",
+            "apply.js",
+            "cancelable.js",
+            "delay.js",
+            "package.json",
+            "test",
+            "timed.js",
+            "timeout.js",
+            "when.js",
+          ]);
+          const package_json = await file(join(ctx.package_dir, "node_modules", "when", "package.json")).json();
+          expect(package_json.name).toBe("when");
+          await access(join(ctx.package_dir, "bun.lockb"));
+        });
+      },
+    );
+  }
 
-  it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref) with custom GITHUB_API_URL", async () => {
-    await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-      await writeFile(
-        join(ctx.package_dir, "package.json"),
-        JSON.stringify({
-          name: "Foo",
-          version: "0.0.1",
-          dependencies: {
-            when: "https://github.com/cujojs/when/tarball/1.0.2",
-          },
-        }),
-      );
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env: {
-          ...env,
-          GITHUB_API_URL: "https://example.com/github/api",
-        },
-      });
-      const err = await stderr.text();
-      expect(err).toContain("Saved lockfile");
-      let out = await stdout.text();
-      out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
-      out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-      expect(out.split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ when@https://github.com/cujojs/when/tarball/1.0.2",
-        "",
-        "1 package installed",
-      ]);
-      expect(await exited).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "when"))).toEqual([
-        ".gitignore",
-        ".gitmodules",
-        "LICENSE.txt",
-        "README.md",
-        "apply.js",
-        "cancelable.js",
-        "delay.js",
-        "package.json",
-        "test",
-        "timed.js",
-        "timeout.js",
-        "when.js",
-      ]);
-      const package_json = await file(join(ctx.package_dir, "node_modules", "when", "package.json")).json();
-      expect(package_json.name).toBe("when");
-      await access(join(ctx.package_dir, "bun.lockb"));
-    });
-  });
-
-  it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
+  it("should treat non-GitHub http(s) URLs as tarballs (http://some.url/path?stuff)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(
@@ -4735,14 +4738,26 @@ describe.concurrent("bun-install", () => {
           "4.3.0": { as: "4.3.0" },
         }),
       );
+      const tarball_url = "http://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
+      const proxied_urls: string[] = [];
+      await using proxy = urlTarballProxy(ctx, proxied_urls, {
+        [tarball_url]: {
+          "package/package.json": JSON.stringify({
+            name: "@vercel/turbopack-node",
+            version: "0.0.0",
+            dependencies: { "loader-runner": "^4.3.0" },
+          }),
+          "package/src/index.ts": "",
+          "package/tsconfig.json": "{}",
+        },
+      });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "Foo",
           version: "0.0.1",
           dependencies: {
-            "@vercel/turbopack-node":
-              "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+            "@vercel/turbopack-node": tarball_url,
           },
         }),
       );
@@ -4752,7 +4767,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: proxy.env,
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -4762,12 +4777,13 @@ describe.concurrent("bun-install", () => {
       expect(out.split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+        `+ @vercel/turbopack-node@${tarball_url}`,
         "",
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toHaveLength(2);
+      expect(proxied_urls).toEqual([tarball_url]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}loader-runner`, `${ctx.registry_url}loader-runner-4.3.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".cache",

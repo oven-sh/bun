@@ -30,7 +30,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -3128,5 +3128,360 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
+  });
+});
+
+// bytesRead comes from the native handle, like node. The handle counts what it
+// reads even when a JS 'data' handler never runs (the onread path, an h2
+// session), and the count is kept once the handle is gone.
+describe("net.Socket bytesRead", () => {
+  async function listen(onConnection: (c: Socket) => void, kind: "net" | "tls" = "net") {
+    const server = kind === "tls" ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { server, port: (server.address() as import("node:net").AddressInfo).port };
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L939-L950
+  it("is an enumerable getter on the prototype with no setter, like node", () => {
+    const s = new Socket();
+    const forIn: string[] = [];
+    for (const key in s) forIn.push(key);
+    const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(Socket.prototype, "bytesRead")!;
+    expect({
+      forIn: forIn.includes("bytesRead"),
+      own: Object.hasOwn(s, "bytesRead"),
+      descriptor: { get: typeof get, set: typeof set, enumerable, configurable },
+      value: s.bytesRead,
+    }).toEqual({
+      forIn: true,
+      own: false,
+      descriptor: { get: "function", set: "undefined", enumerable: true, configurable: false },
+      value: 0,
+    });
+  });
+
+  it("equals the bytes the peer wrote and survives 'close'", async () => {
+    const { server, port } = await listen(c => c.end(Buffer.alloc(100_000, "x")));
+    try {
+      const client = createConnection({ port, host: "127.0.0.1" });
+      const duringData: number[] = [];
+      let total = 0;
+      client.on("data", chunk => {
+        total += chunk.length;
+        duringData.push(client.bytesRead);
+      });
+      const [hadError] = await once(client, "close");
+      // Each 'data' sees the count of every byte read so far, including the chunk it got.
+      expect({ hadError, total, lastDuringData: duringData.at(-1), afterClose: client.bytesRead }).toEqual({
+        hadError: false,
+        total: 100_000,
+        lastDuringData: 100_000,
+        afterClose: 100_000,
+      });
+      expect(client._handle).toBeNull();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("covers one connection of a socket that connects again, like node", async () => {
+    const { server, port } = await listen(c => c.end("banner"));
+    const s = new Socket();
+    s.resume();
+    try {
+      const seen: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        s.connect(port, "127.0.0.1");
+        await once(s, "close");
+        seen.push(s.bytesRead);
+      }
+      // node v26.3.0: a new connection has a new handle, which starts at 0.
+      expect(seen).toEqual([6, 6, 6]);
+    } finally {
+      s.destroy();
+      server.close();
+    }
+  });
+
+  it("starts at 0 when connect() replaces a live connection", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "first-banner" : "xyz");
+    });
+    const s = new Socket();
+    s.resume();
+    try {
+      s.connect(port, "127.0.0.1");
+      const [firstChunk] = await once(s, "data");
+      const firstRead = s.bytesRead;
+      // The wrapper is reused for the new connection, the count is not.
+      s.connect(port, "127.0.0.1");
+      await once(s, "close");
+      expect({ firstChunk: String(firstChunk), firstRead, secondRead: s.bytesRead }).toEqual({
+        firstChunk: "first-banner",
+        firstRead: 12,
+        secondRead: 3,
+      });
+    } finally {
+      s.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: connect() from the callback stops the rest of the old chunk", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz");
+    });
+    const calls: [string, number][] = [];
+    const done = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            calls.push([buf.toString("latin1", 0, n), s!.bytesRead]);
+            if (calls.length === 1) s!.connect(port, "127.0.0.1");
+            else done.resolve();
+          },
+        },
+      });
+      s.on("error", done.reject);
+      await done.promise;
+      await once(s, "close");
+      // BBBB and CCCC belong to the first connection and are not delivered after connect().
+      expect({ calls, bytesRead: s.bytesRead }).toEqual({
+        calls: [
+          ["AAAA", 4],
+          ["xyz", 3],
+        ],
+        bytesRead: 3,
+      });
+    } finally {
+      s?.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: a chunk that arrives while connect() waits for its lookup is delivered whole", async () => {
+    const peer = Promise.withResolvers<Socket>();
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.write("AAAABBBBCCCC");
+      peer.resolve(c);
+    });
+    const calls: [string, number][] = [];
+    const firstChunk = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    let serverSocket: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            const slice = buf.toString("latin1", 0, n);
+            calls.push([slice, s!.bytesRead]);
+            if (slice === "CCCC") firstChunk.resolve();
+            // A separate write, after the slicing of the second chunk is over.
+            if (slice === "DDDD") setImmediate(() => serverSocket!.write("Z"));
+            if (slice === "Z") done.resolve();
+          },
+        },
+      });
+      s.on("error", err => {
+        firstChunk.reject(err);
+        done.reject(err);
+      });
+      serverSocket = await peer.promise;
+      await firstChunk.promise;
+      // The lookup never answers: the socket stays in `connecting` and the first connection stays open.
+      s.connect({ port, host: "never-resolved.test", lookup() {} });
+      expect(s.connecting).toBe(true);
+      serverSocket.write("DDDDEEEEFFFF");
+      await done.promise;
+      // node v26.3.0 reports the same slices and counts.
+      expect(calls).toEqual([
+        ["AAAA", 4],
+        ["BBBB", 8],
+        ["CCCC", 12],
+        ["DDDD", 16],
+        ["EEEE", 20],
+        ["FFFF", 24],
+        ["Z", 25],
+      ]);
+    } finally {
+      s?.destroy();
+      serverSocket?.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: a declined tail does not carry over to the next connection", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => {
+      // The client destroys the first connection with unread bytes, which can reset it.
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz");
+    });
+    const calls: string[] = [];
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            calls.push(buf.toString("latin1", 0, n));
+            if (calls.length === 1) {
+              first.resolve();
+              return false;
+            }
+            second.resolve();
+          },
+        },
+      });
+      s.on("error", err => {
+        first.reject(err);
+        second.reject(err);
+      });
+      await first.promise;
+      // 8 bytes sit in the tail: the handle read 12, the callback took 4.
+      expect(s.bytesRead).toBe(4);
+      s.destroy();
+      await once(s, "close");
+      expect(s.bytesRead).toBe(4);
+      s.connect(port, "127.0.0.1");
+      await second.promise;
+      await once(s, "close");
+      expect({ calls, bytesRead: s.bytesRead }).toEqual({ calls: ["AAAA", "xyz"], bytesRead: 3 });
+    } finally {
+      s?.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: counts one slice per callback, and stops at a false return until resume()", async () => {
+    const peer = Promise.withResolvers<Socket>();
+    const { server, port } = await listen(c => {
+      c.write(Buffer.alloc(1024, "a"));
+      peer.resolve(c);
+    });
+    let client: Socket | undefined;
+    try {
+      const seen: number[] = [];
+      const paused = Promise.withResolvers<void>();
+      const done = Promise.withResolvers<void>();
+      client = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(256),
+          callback(n: number) {
+            seen.push(client!.bytesRead);
+            if (seen.length === 1) {
+              paused.resolve();
+              return false;
+            }
+            if (seen.length === 5) done.resolve();
+            return true;
+          },
+        },
+      });
+      client.on("error", err => {
+        paused.reject(err);
+        done.reject(err);
+      });
+      await paused.promise;
+      // The peer's second write lands in the handle while the callback is stopped.
+      const serverSocket = await peer.promise;
+      await new Promise<void>(resolve => serverSocket.end(Buffer.alloc(16, "b"), () => resolve()));
+      for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+      // node v26.3.0: the handle reads at most one onread buffer per callback, so the
+      // count is the bytes the callback has received, not the bytes in the kernel.
+      expect({ seen, whilePaused: client.bytesRead }).toEqual({ seen: [256], whilePaused: 256 });
+      client.resume();
+      await done.promise;
+      await once(client, "close");
+      expect({ seen, afterClose: client.bytesRead }).toEqual({ seen: [256, 512, 768, 1024, 1040], afterClose: 1040 });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  // Expected values observed under node v26.3.0. A TLS count is of decrypted bytes.
+  describe.each(["net", "tls"] as const)("onread over %s", kind => {
+    it("counts each slice as it reaches the callback", async () => {
+      const { server, port } = await listen(c => {
+        c.on("error", () => {});
+        c.end("abcdefghij");
+      }, kind);
+      let client: Socket | undefined;
+      try {
+        const seen: number[][] = [];
+        let delivered = 0;
+        const options = {
+          port,
+          host: "127.0.0.1",
+          onread: {
+            buffer: Buffer.alloc(4),
+            callback(n: number) {
+              delivered += n;
+              seen.push([delivered, client!.bytesRead]);
+            },
+          },
+        };
+        client =
+          kind === "tls" ? tlsConnect({ ...options, ca: tlsCert.cert, servername: "localhost" }) : connect(options);
+        await once(client, "close");
+        // The last slice is shorter than the buffer.
+        expect({ seen, afterClose: client.bytesRead }).toEqual({
+          seen: [
+            [4, 4],
+            [8, 8],
+            [10, 10],
+          ],
+          afterClose: 10,
+        });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+  });
+
+  it("onread: counts a read that reaches the callback as the `true` sentinel", async () => {
+    const { server, port } = await listen(c => c.end("hello"));
+    let client: Socket | undefined;
+    try {
+      const seen: unknown[][] = [];
+      client = connect({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          // A factory that never returns a Uint8Array leaves no buffer to copy into.
+          buffer: () => null as any,
+          callback(n: number, buf: unknown) {
+            seen.push([n, buf, client!.bytesRead]);
+          },
+        },
+      });
+      await once(client, "close");
+      expect({ seen, afterClose: client.bytesRead }).toEqual({ seen: [[5, true, 5]], afterClose: 5 });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
   });
 });

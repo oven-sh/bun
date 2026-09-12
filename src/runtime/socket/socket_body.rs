@@ -326,6 +326,8 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
     pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
+    /// Bytes delivered through `on_data` (plaintext on a TLS view).
+    pub(crate) bytes_read: Cell<u64>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
     /// `upgradeTLS` produces two `TLSSocket` wrappers over one
@@ -1354,6 +1356,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
+        self.bytes_read.set(0);
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -2203,6 +2206,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
+        this.bytes_read
+            .set(this.bytes_read.get() + data.len() as u64);
         if this.native_callback.get().on_data(data)? {
             return Ok(());
         }
@@ -3342,6 +3347,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_bytes_read(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::js_number(this.bytes_read.get() as f64)
+    }
+
     /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
     /// `adoptTLS`'d into the per-VM TLS group with a fresh (or
     /// SecureContext-shared) `SSL_CTX*`. Returns `[raw, tls]` — two
@@ -3550,6 +3560,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            bytes_read: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -3654,6 +3665,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            // Same fd as the retired TCP wrapper: its count moves to the raw view.
+            bytes_read: Cell::new(this.bytes_read.get()),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -4688,6 +4701,7 @@ pub fn js_upgrade_duplex_to_tls(
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
+        bytes_read: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),

@@ -1361,6 +1361,17 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
             return {};
         }
 
+        if (keyType != CryptoKeyType::Public) {
+            auto* xBuf = decodeJwkString(globalObject, scope, xView, "key.x"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto xSpan = xBuf->span();
+            auto derivedPublic = key.rawPublicKey();
+            if (!derivedPublic || xSpan.size() != derivedPublic.size() || CRYPTO_memcmp(xSpan.data(), derivedPublic.get(), xSpan.size()) != 0) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject);
+                return {};
+            }
+        }
+
         return create(keyType, WTF::move(key));
     }
     case Kty::Ec: {

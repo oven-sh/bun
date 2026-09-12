@@ -237,6 +237,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
+    // A split `import()` / `require()` record names its target's chunk
+    // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
+    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::default();
+    for chunk in chunks.iter() {
+        if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
+            entry_of_chunk.put(chunk.unique_key, chunk.entry_point.source_index())?;
+        }
+    }
+
     // Write inputs
     let mut source_index: u32 = 0;
     while (source_index as usize) < sources.len() {
@@ -340,6 +349,17 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                         "{}",
                         bfmt::format_json_string_utf8(record.original_path, Default::default())
                     )?;
+                    j.push_owned(buf.into_boxed_slice());
+                }
+
+                if record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                    && let Some(&entry_point) = entry_of_chunk.get(record.path.text)
+                    && let Some(entry_source) = sources.get(entry_point as usize)
+                    && !entry_source.path.pretty.is_empty()
+                {
+                    j.push_static(b",\n          \"entryPoint\": ");
+                    let mut buf: Vec<u8> = Vec::new();
+                    write_json_string(&mut buf, entry_source.path.pretty)?;
                     j.push_owned(buf.into_boxed_slice());
                 }
 

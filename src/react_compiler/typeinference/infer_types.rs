@@ -1102,7 +1102,7 @@ impl<'a> Resolver<'a> {
                 operands: operands.iter().map(|o| self.get(o)).collect(),
             };
             self.phis
-                .insert(operands.as_ptr(), (operands.clone(), resolved.clone()));
+                .insert(operands.as_ptr(), (Arc::clone(operands), resolved.clone()));
             return resolved;
         }
 
@@ -1403,7 +1403,7 @@ impl Unifier {
                 };
                 stripped
                     .phis
-                    .insert(operands.as_ptr(), (operands.clone(), resolved.clone()));
+                    .insert(operands.as_ptr(), (Arc::clone(operands), resolved.clone()));
                 Some(resolved)
             }
             Type::TypeVar { id } => {

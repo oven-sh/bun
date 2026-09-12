@@ -456,8 +456,7 @@ function pushDataToSocket(self, socket, buffer) {
     self.destroy();
     return;
   }
-  // Node never reads for `readable: false`: only _read() reaches readStart(), and an ended Readable never calls it (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L792).
-  // Our handle is paused for that too, but a reset drains the kernel's unread bytes through a pause (loop.c, drain_for_error). Node leaves them to the kernel.
+  // `readable: false` never reads (node never reaches readStart(): https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L792), but a reset drains unread bytes through the pause.
   if (self.readableEnded) return;
   let full;
   try {

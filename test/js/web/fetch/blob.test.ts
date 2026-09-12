@@ -91,6 +91,38 @@ for (const info of [
     expect(await blob.slice(-3, 4).slice(-2, 3).text()).toBe("F");
     expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
   });
+
+  // https://w3c.github.io/FileAPI/#dfn-slice: start and end are `[Clamp] long long`,
+  // so a fractional offset rounds to the nearest integer (ties to even) rather than
+  // truncating toward zero.
+  test(`${info.name} converts offsets as [Clamp] long long`, async () => {
+    const blob = info.blob;
+    expect(blob.size).toBe(6); // "BunFoo"
+    const cases: Record<string, [number[], string]> = {
+      "2.5, 5.5": [[2.5, 5.5], "nFoo"],
+      "1.7, 3.2": [[1.7, 3.2], "n"],
+      "1.5": [[1.5], "nFoo"],
+      "-1.5": [[-1.5], "oo"],
+      "0.99999": [[0.99999], "unFoo"],
+      "5.5, 6": [[5.5, 6], ""],
+      "3.5": [[3.5], "oo"],
+      "0, 2.5": [[0, 2.5], "Bu"],
+      "-0.5": [[-0.5], "BunFoo"],
+      "0.5, -2.5": [[0.5, -2.5], "BunF"],
+      "1, Infinity": [[1, Infinity], "unFoo"],
+      "-Infinity, 2": [[-Infinity, 2], "Bu"],
+      "MAX_VALUE, 3": [[Number.MAX_VALUE, 3], ""],
+      "-MAX_VALUE, 3": [[-Number.MAX_VALUE, 3], "Bun"],
+      "NaN, NaN": [[NaN, NaN], ""],
+    };
+    const actual: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [label, [args, text]] of Object.entries(cases)) {
+      actual[label] = await blob.slice(...args).text();
+      expected[label] = text;
+    }
+    expect(actual).toEqual(expected);
+  });
 }
 
 test("new Blob", () => {

@@ -146,6 +146,8 @@ pub mod js_bundler {
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
         pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -212,6 +214,7 @@ pub mod js_bundler {
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
                 min_chunk_size: None,
+                fold_chunks: true,
                 module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -848,6 +851,12 @@ pub mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
             }
 
             if let Some(min_chunk_size) =

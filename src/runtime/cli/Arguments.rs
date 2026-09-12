@@ -1226,8 +1226,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // sets (VirtualMachine::configure_from_env): allows resolving
             // `bun:internal-for-testing` / `internal/test/binding` in release
             // builds. Debug builds always allow them.
-            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_jsc::module_loader::set_is_allowed_to_use_internal_testing_apis(true);
             bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 

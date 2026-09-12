@@ -480,6 +480,127 @@ bun build ./app.tsx --outdir ./out
 
 </CodeGroup>
 
+### reactCompiler
+
+<Warning>The React Compiler integration is experimental.</Warning>
+
+Runs the [React Compiler](https://react.dev/learn/react-compiler) over `.jsx` and `.tsx` files while bundling. The compiler memoizes the values, callbacks, and JSX inside each component and hook it compiles, so you don't write `useMemo`, `useCallback`, or `React.memo` by hand. It is built into Bun: you don't install Babel or `babel-plugin-react-compiler`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      reactCompiler: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --react-compiler
+    ```
+  </Tab>
+</Tabs>
+
+For example, take this component:
+
+```tsx Counter.tsx icon="/icons/typescript.svg"
+import { useState } from "react";
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+```
+
+The compiled function keeps the click handler and the element in a cache (`$`), and creates them again only when `count` changes. This is the output with `NODE_ENV=production`:
+
+{/* prettier-ignore */}
+```js out/index.js icon="/icons/javascript.svg"
+import { useState } from "react";
+import { jsx } from "react/jsx-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Counter() {
+  let $ = _c(5);
+  let [count, setCount] = useState(0);
+  let t0;
+  if ($[0] !== count)
+    t0 = () => setCount(count + 1), $[0] = count, $[1] = t0;
+  else
+    t0 = $[1];
+  let t1;
+  if ($[2] !== count || $[3] !== t0)
+    t1 = /* @__PURE__ */ jsx("button", {
+      onClick: t0,
+      children: count
+    }), $[2] = count, $[3] = t0, $[4] = t1;
+  else
+    t1 = $[4];
+  return t1;
+}
+```
+
+The output imports `c` from `react/compiler-runtime`. That module is part of React 19. With React 17 or 18 the import does not resolve, and the build fails with `Could not resolve: "react/compiler-runtime"`.
+
+#### Which functions are compiled
+
+Bun uses the default `infer` mode of the compiler, the same as `babel-plugin-react-compiler`. It compiles a function that creates JSX or calls a hook, if the function is one of these:
+
+- A component: the name starts with a capital letter.
+- A hook: the name is `use` plus a capital letter or a digit, such as `useCart`.
+- The argument of `memo()`, `forwardRef()`, `React.memo()`, or `React.forwardRef()`.
+
+It also compiles each function whose body starts with the `"use memo"` directive.
+
+It skips:
+
+- A function whose body starts with the `"use no memo"` directive, and every function of a file that starts with `"use no memo"`.
+- A function that contains an `eslint-disable-next-line` comment for `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`. An `eslint-disable` comment for one of these rules skips every function after it in the file.
+- A function that it cannot compile, for example a function that calls a hook inside an `if`. Bun leaves that function as written, prints no message, and compiles the rest of the file.
+- A file that the `jsx` or `tsx` [loader](/bundler/loaders) does not handle. A hook in a `.ts` or `.js` file is not compiled.
+- A file under `node_modules`.
+
+#### reactCompilerOutputMode
+
+The compiler has two output modes. The default depends on [`target`](#target).
+
+| Mode       | Default for               | Output                                             |
+| ---------- | ------------------------- | -------------------------------------------------- |
+| `"client"` | `target: "browser"`       | Memoized components and hooks, as in the example   |
+| `"ssr"`    | `target: "bun"`, `"node"` | Components reduced to what one server render needs |
+
+`"ssr"` output has no memo cache and no `react/compiler-runtime` import. The compiler replaces `useState` and `useReducer` with their initial values, removes effects, and removes event handler props and `ref` props from built-in elements such as `<button>`. With `--target=bun`, the `Counter` component above becomes:
+
+{/* prettier-ignore */}
+```js out/index.js icon="/icons/javascript.svg"
+function Counter() {
+  let count = 0;
+  return /* @__PURE__ */ jsx("button", {
+    children: count
+  });
+}
+```
+
+Do not send `"ssr"` output to a browser. The components never update and never handle events. To bundle interactive components with `target: "bun"` or `target: "node"`, set the mode in the JavaScript API. The CLI has no flag for it: the mode follows `--target`.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  target: "bun",
+  reactCompiler: true,
+  reactCompilerOutputMode: "client",
+});
+```
+
+Browser code that a server build reaches through an [HTML import](/bundler/fullstack) is always compiled in `"client"` mode.
+
+#### Limits
+
+- `bun build --no-bundle` accepts `--react-compiler` and ignores it.
+- Only `bun build` and `Bun.build()` run the compiler. `bun run`, `bun test`, and the development server do not, and `bunfig.toml` has no key for it.
+
 ### splitting
 
 Whether to enable code splitting.

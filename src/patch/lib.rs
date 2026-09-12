@@ -341,7 +341,13 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     }
 
     for hunk in &patch.hunks {
-        let mut line_cursor = (hunk.header.patched.start - 1) as usize;
+        // A zero-length range (`+5,0`) names the line after which the gap sits.
+        let patched_start = hunk.header.patched.start as usize;
+        let mut line_cursor = if hunk.header.patched.len == 0 {
+            patched_start
+        } else {
+            patched_start.saturating_sub(1)
+        };
 
         // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
@@ -1447,7 +1453,7 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
     }
 
     Ok(HunkHeaderLineImpl {
-        line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
+        line_nr: bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?,
         line_count: bun_core::parse_decimal::<u32>(line_nr_count)
             .ok_or(ParseErr::bad_header_line)?,
         rest: text,

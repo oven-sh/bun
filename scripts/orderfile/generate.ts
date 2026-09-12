@@ -31,9 +31,9 @@
  * thousand that no other workload touches.
  *
  * The file is never committed. Release builds generate it from their own pass-1
- * binary and relink against it; canary builds inherit the last successful
- * build's file and re-publish it (scripts/build/ci.ts — inheritOrderFile /
- * packageAndUpload). Locally:
+ * binary and relink against it; canary builds inherit the file an earlier
+ * build's trace-order step traced from that build's binary (scripts/build/ci.ts
+ * inheritOrderFile; getTraceOrderStep in .buildkite/ci.mjs). Locally:
  *
  *   bun run orderfile                      # uses build/release, writes build/release/linker.order
  *   bun run orderfile -- --build-dir=build/release-lto

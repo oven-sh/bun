@@ -2,12 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  mustGenerateOrderFile,
-  orderFileEligible,
-  shouldGenerateOrderFile,
-  type OrderFileContext,
-} from "../../../../scripts/build/ci.ts";
+import { orderFileEligible, shouldGenerateOrderFile, type OrderFileContext } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
 import {
   linkDepends,
@@ -254,6 +249,9 @@ describe("deciding whether a build generates its own order file", () => {
   });
 
   it("a canary does not by default — it inherits, and pays no second link", () => {
+    // cfg() can run what it links (linux-aarch64 builds on an aarch64 host), and
+    // that changes nothing: the next build's file comes from the target's
+    // trace-order step (.buildkite/ci.mjs), not from this lane.
     expect(shouldGenerateOrderFile(cfg(), ctx())).toBe(false);
   });
 
@@ -261,25 +259,16 @@ describe("deciding whether a build generates its own order file", () => {
     expect(shouldGenerateOrderFile(cfg(), ctx({ commitMessage: "perf: x [generate symbol order]" }))).toBe(true);
   });
 
-  it("a pull request never does, and never publishes", () => {
+  it("a pull request never does, and does not inherit one either", () => {
     const pr = ctx({ pullRequest: true });
     expect(orderFileEligible(cfg(), pr)).toBe(false);
     expect(shouldGenerateOrderFile(cfg({ canary: false }), pr)).toBe(false);
-    expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
   });
 
-  it("a target that cannot run on the host never does", () => {
+  it("a target that cannot run on the host never does, not even for a release", () => {
     const cross = cfg({ canRunOnHost: false } as Partial<Config>);
     expect(shouldGenerateOrderFile(cfg({ ...cross, canary: false } as Partial<Config>), ctx())).toBe(false);
-    expect(mustGenerateOrderFile(cross, ctx(), false)).toBe(false);
     expect(orderFileEligible(cross, ctx())).toBe(true); // ...but it can still inherit one
-  });
-
-  it("a canary that inherited nothing generates anyway, seeding the chain", () => {
-    // Without this the first build publishes nothing, so the next inherits
-    // nothing, so it publishes nothing — and no canary is ever ordered.
-    expect(mustGenerateOrderFile(cfg(), ctx(), false)).toBe(true);
-    expect(mustGenerateOrderFile(cfg(), ctx(), true)).toBe(false);
   });
 
   it("nothing happens off Buildkite", () => {

@@ -2226,6 +2226,22 @@ describe("expect()", () => {
     expect(new Date()).toHaveProperty("getTime");
   });
 
+  test("toHaveProperty() - symbol keys in an array path", () => {
+    const s = Symbol("k");
+    const other = Symbol("k");
+    expect({ [s]: 1 }).toHaveProperty([s]);
+    expect({ [s]: 1 }).toHaveProperty([s], 1);
+    expect({ [s]: 1 }).not.toHaveProperty([s], 2);
+    expect({ [s]: 1 }).not.toHaveProperty([other]);
+    expect({ [s]: undefined }).toHaveProperty([s]);
+    expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s]);
+    expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s, "b"], 2);
+    expect({ a: { [s]: { b: 2 } } }).not.toHaveProperty(["a", s, "c"]);
+    expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
+    expect([]).toHaveProperty([Symbol.iterator]);
+    expect({}).not.toHaveProperty([s]);
+  });
+
   test("toHaveProperty() - all", () => {
     expect({ a: 1 }).toHaveProperty("a");
     expect({ a: 1 }).toHaveProperty("a", 1);

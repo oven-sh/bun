@@ -309,7 +309,7 @@ impl DirectoryRoute {
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
         use bun_sys::FdExt;
-        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
+        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
             .ok()
             .map(File::from_fd)
     }

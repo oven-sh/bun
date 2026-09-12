@@ -2234,16 +2234,13 @@ pub(crate) fn closefd(fd: Fd) {
     let _ = fd.close_allowing_bad_file_descriptor(None);
 }
 
-/// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
-/// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
-/// instead of a raw NT handle.
+/// `bun_sys::dup`, plus the libuv-owned conversion the IOWriter/IOReader uv
+/// paths need on Windows.
 pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
         use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
+        bun_sys::dup(fd)?.make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
     }
     #[cfg(not(windows))]
     {
@@ -2352,10 +2349,7 @@ pub(crate) fn shell_openat(
                     },
                 )
                 .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open);
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2367,7 +2361,7 @@ pub(crate) fn shell_openat(
                 },
             )
             .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open);
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;

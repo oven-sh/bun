@@ -128,6 +128,8 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   fastfail: () => void;
   trap: () => void;
   raiseIgnoringPanicHandler: () => void;
+  // Returns true iff BoundedArray::resize refuses to grow (issue #30861).
+  boundedArrayResizeGrowReturnsErr: () => boolean;
 };
 
 export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {

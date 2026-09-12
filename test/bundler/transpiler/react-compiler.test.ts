@@ -1299,6 +1299,22 @@ describe("bundler", () => {
           const r = ((m = p.f()) ? 1 : 0) + 1;
           return [m, r];
         }
+        // https://github.com/facebook/react/issues/37228: the same invariant
+        // with no assignment, from a \`?:\` in a \`try\` in an inlined IIFE.
+        const check = v => v.ok;
+        function useValue() {
+          return { ok: true };
+        }
+        function ConditionalInTryInIife() {
+          const raw = useValue();
+          return (() => {
+            try {
+              return check(raw) ? raw : null;
+            } catch {
+              return null;
+            }
+          })();
+        }
         function AssignedLocalNotMemoized(p) {
           let m;
           const r = (m = p.f()) ? 1 : 0;
@@ -1318,6 +1334,7 @@ describe("bundler", () => {
           ArrayInTest: render(ArrayInTest, { a: 1 }),
           ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
           useInHook: render(useInHook, { f: () => "y" }),
+          ConditionalInTryInIife: render(ConditionalInTryInIife),
           AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
           Plain: render(Plain, { name: "bun" }),
         }));
@@ -1344,6 +1361,7 @@ describe("bundler", () => {
         ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
         ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
         useInHook: [["y", 2], 0],
+        ConditionalInTryInIife: [{ ok: true }, 0],
         AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
         Plain: [{ children: ["Hello ", "bun"] }, 1],
       }),

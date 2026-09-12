@@ -1366,6 +1366,20 @@ fn iterate_project_tree(
     Ok(())
 }
 
+/// JS truthiness of `private`, like npm's `if (manifest.private)` check.
+pub(crate) fn is_private_package(json: &Expr) -> bool {
+    let Some(private) = json.get(b"private") else {
+        return false;
+    };
+    match &private.data {
+        ExprData::ENull(_) | ExprData::EUndefined(_) => false,
+        ExprData::EBoolean(b) | ExprData::EBranchBoolean(b) => b.value,
+        ExprData::ENumber(n) => n.value() != 0.0 && !n.value().is_nan(),
+        ExprData::EString(s) => s.is_present(),
+        _ => true,
+    }
+}
+
 fn get_bundled_deps(
     json: &Expr,
     field: &'static str,
@@ -2099,14 +2113,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         return Err(PackError::InvalidPackageVersion);
     }
 
-    if FOR_PUBLISH {
-        if let Some(private) = json.root.get(b"private") {
-            if let Some(is_private) = private.as_bool() {
-                if is_private {
-                    return Err(PackError::PrivatePackage);
-                }
-            }
-        }
+    if FOR_PUBLISH && is_private_package(&json.root) {
+        return Err(PackError::PrivatePackage);
     }
 
     // Note: `Transpiler` has no `Default`;
@@ -2296,14 +2304,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         };
 
         // Re-validate private flag after scripts may have modified it.
-        if FOR_PUBLISH {
-            if let Some(private) = json.root.get(b"private") {
-                if let Some(is_private) = private.as_bool() {
-                    if is_private {
-                        return Err(PackError::PrivatePackage);
-                    }
-                }
-            }
+        if FOR_PUBLISH && is_private_package(&json.root) {
+            return Err(PackError::PrivatePackage);
         }
 
         // Re-read name and version from the updated package.json, since lifecycle

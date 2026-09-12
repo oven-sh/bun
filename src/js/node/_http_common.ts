@@ -122,7 +122,7 @@ function parserOnHeadersComplete(
 
   // If parser.maxHeaderPairs <= 0 assume that there's no limit.
   const maxHeaderPairs = parser.maxHeaderPairs;
-  if (maxHeaderPairs > 0) n = Math.min(n, maxHeaderPairs);
+  if (maxHeaderPairs > 0) n = $min(n, maxHeaderPairs);
 
   incoming._addHeaderLines(headers, n);
 

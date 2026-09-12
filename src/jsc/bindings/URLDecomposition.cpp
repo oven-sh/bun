@@ -26,7 +26,6 @@
 #include "URLDecomposition.h"
 
 #include "NodeURLHelpers.h"
-#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
@@ -38,19 +37,31 @@ static bool hasAcceptableHost(const WTF::URL& url)
     return Bun::hasValidPunycodeHost(url.host()) || !url.hasSpecialScheme();
 }
 
+static bool setHostChecked(WTF::URL& url, StringView host)
+{
+    return url.setHost(host) && hasAcceptableHost(url);
+}
+
+// https://infra.spec.whatwg.org/#ascii-tab-or-newline; the URL parser removes these before parsing.
+static bool isASCIITabOrNewline(char16_t c)
+{
+    return c == 0x0009 || c == 0x000A || c == 0x000D;
+}
+
+// https://url.spec.whatwg.org/#concept-url-origin
 String URLDecomposition::origin() const
 {
     auto fullURL = this->fullURL();
 
-    if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIsInFTPFamily() or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
+    // Not protocolIsInFTPFamily(): "ftps" is not a special scheme, so its origin is opaque.
+    if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIs("ftp"_s) or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
         return fullURL.protocolHostAndPort();
     if (fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();
         const URL subUrl { URL {}, path };
-        if (subUrl.isValid()) {
-            if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
-                return subUrl.protocolHostAndPort();
-        }
+        // The spec also lists "file" here, but a file URL's own origin is opaque anyway.
+        if (subUrl.isValid() && subUrl.protocolIsInHTTPFamily())
+            return subUrl.protocolHostAndPort();
     }
     return "null"_s;
 }
@@ -103,49 +114,61 @@ String URLDecomposition::host() const
     return fullURL().hostAndPort();
 }
 
-static unsigned countASCIIDigits(StringView string)
+// Index of the ':' where the spec's host state would enter the port state, or notFound.
+static size_t findHostPortSeparator(StringView value, bool isSpecial)
 {
-    unsigned length = string.length();
-    for (unsigned count = 0; count < length; ++count) {
-        if (!isASCIIDigit(string[count]))
-            return count;
+    bool insideBrackets = false;
+    for (unsigned i = 0; i < value.length(); ++i) {
+        auto c = value[i];
+        if (c == ':' && !insideBrackets)
+            return i;
+        if (c == '/' || c == '?' || c == '#' || (isSpecial && c == '\\'))
+            return notFound;
+        if (c == '[')
+            insideBrackets = true;
+        else if (c == ']')
+            insideBrackets = false;
     }
-    return length;
+    return notFound;
 }
 
+// https://url.spec.whatwg.org/#dom-url-host
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
-        return;
-
-    size_t separator = value.reverseFind(':');
-    if (!separator)
-        return;
-
     if (fullURL.hasOpaquePath())
         return;
 
-    // No port if no colon or rightmost colon is within the IPv6 section.
-    size_t ipv6Separator = value.reverseFind(']');
-    if (separator == notFound || (ipv6Separator != notFound && ipv6Separator > separator))
-        fullURL.setHost(value);
-    else {
-        // Multiple colons are acceptable only in case of IPv6.
-        if (value.find(':') != separator && ipv6Separator == notFound)
-            return;
-        unsigned portLength = countASCIIDigits(value.substring(separator + 1));
-        if (!portLength) {
-            fullURL.setHost(value.left(separator));
-        } else {
-            auto portNumber = parseInteger<uint16_t>(value.substring(separator + 1, portLength));
-            if (portNumber && WTF::isDefaultPortForProtocol(*portNumber, fullURL.protocol()))
-                fullURL.setHostAndPort(value.left(separator));
-            else
-                fullURL.setHostAndPort(value.left(separator + 1 + portLength));
-        }
+    // The file host state has no port state, so any ':' in the value fails the whole assignment.
+    if (fullURL.protocolIsFile()) {
+        if (setHostChecked(fullURL, value))
+            setFullURL(fullURL);
+        return;
     }
-    if (fullURL.isValid() && hasAcceptableHost(fullURL))
+
+    // The host state fails on an empty host for special schemes.
+    if (value.isEmpty() && fullURL.hasSpecialScheme())
+        return;
+
+    size_t separator = findHostPortSeparator(value, fullURL.hasSpecialScheme());
+    if (separator == notFound) {
+        // No port part. URL::setHost truncates the value at the terminator itself.
+        if (setHostChecked(fullURL, value))
+            setFullURL(fullURL);
+        return;
+    }
+
+    // A ':' with nothing before it fails the whole parse.
+    auto hostPart = value.left(separator);
+    if (hostPart.containsOnly<isASCIITabOrNewline>())
+        return;
+
+    // The host is committed before the port is parsed, so an invalid port keeps the old one.
+    if (!setHostChecked(fullURL, hostPart))
+        return;
+    if (auto port = parsePort(value.substring(separator + 1), fullURL.protocol()))
+        fullURL.setPort(*port);
+    if (fullURL.isValid())
         setFullURL(fullURL);
 }
 
@@ -154,15 +177,27 @@ String URLDecomposition::hostname() const
     return fullURL().host().toString();
 }
 
-void URLDecomposition::setHostname(StringView host)
+// https://url.spec.whatwg.org/#dom-url-hostname
+void URLDecomposition::setHostname(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
-        return;
     if (fullURL.hasOpaquePath())
         return;
-    fullURL.setHost(host);
-    if (fullURL.isValid() && hasAcceptableHost(fullURL))
+
+    if (fullURL.protocolIsFile()) {
+        if (setHostChecked(fullURL, value))
+            setFullURL(fullURL);
+        return;
+    }
+
+    if (value.isEmpty() && fullURL.hasSpecialScheme())
+        return;
+
+    // Unlike the host state, the hostname state fails on a ':' instead of parsing a port.
+    if (findHostPortSeparator(value, fullURL.hasSpecialScheme()) != notFound)
+        return;
+
+    if (setHostChecked(fullURL, value))
         setFullURL(fullURL);
 }
 
@@ -174,7 +209,6 @@ String URLDecomposition::port() const
     return String::number(*port);
 }
 
-// Outer optional is whether we could parse at all. Inner optional is "no port specified".
 std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView string, StringView protocol)
 {
     // https://url.spec.whatwg.org/#port-state with state override given.
@@ -182,8 +216,7 @@ std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView st
     bool foundDigit = false;
     for (size_t i = 0; i < string.length(); ++i) {
         auto c = string[i];
-        // https://infra.spec.whatwg.org/#ascii-tab-or-newline
-        if (c == 0x0009 || c == 0x000A || c == 0x000D)
+        if (isASCIITabOrNewline(c))
             continue;
         if (isASCIIDigit(c)) {
             port = port * 10 + c - '0';
@@ -196,16 +229,26 @@ std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView st
             return std::nullopt;
         break;
     }
-    if (!foundDigit || WTF::isDefaultPortForProtocol(static_cast<uint16_t>(port), protocol))
+    // With a state override, an empty buffer (e.g. the input was all tab/newline) is a failure.
+    if (!foundDigit)
+        return std::nullopt;
+    if (WTF::isDefaultPortForProtocol(static_cast<uint16_t>(port), protocol))
         return std::optional<uint16_t> { std::nullopt };
     return { { static_cast<uint16_t>(port) } };
 }
 
+// https://url.spec.whatwg.org/#dom-url-port
 void URLDecomposition::setPort(StringView value)
 {
     auto fullURL = this->fullURL();
     if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
         return;
+    // Only a literally empty value clears the port; "\t\n" reaches parsePort and fails instead.
+    if (value.isEmpty()) {
+        fullURL.setPort(std::nullopt);
+        setFullURL(fullURL);
+        return;
+    }
     auto port = parsePort(value, fullURL.protocol());
     if (!port)
         return;

@@ -3443,6 +3443,11 @@ extern "C" const ::BunVmHandleRef* NapiEnv__vmHandle(napi_env env)
     return env->vmHandle();
 }
 
+extern "C" const char* NapiEnv__moduleNameForCrashReport(napi_env env)
+{
+    return env->moduleNameForCrashReport();
+}
+
 extern "C" void NapiEnv__ref(napi_env env)
 {
     env->ref();

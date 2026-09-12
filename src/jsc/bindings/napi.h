@@ -14,6 +14,7 @@
 #include "ZigGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
+#include "NativeModuleCrashScope.h"
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
@@ -423,9 +424,18 @@ public:
         if (mustDeferFinalizers() && inGC()) {
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
-            finalize_cb(this, data, finalize_hint);
+            {
+                Bun::NativeModuleCrashScope crashScope(Bun::NativeModuleCrashScope::Running, moduleNameForCrashReport());
+                finalize_cb(this, data, finalize_hint);
+            }
             throwPendingException();
         }
+    }
+
+    // The addon's file as a URL when it was loaded through process.dlopen, otherwise whatever name the module registered itself with.
+    const char* moduleNameForCrashReport() const
+    {
+        return filename ? filename : m_napiModule.nm_filename;
     }
 
     void scheduleException(JSC::JSValue exception)
@@ -549,6 +559,7 @@ public:
         void call(napi_env env) const
         {
             if (callback && active) {
+                Bun::NativeModuleCrashScope crashScope(Bun::NativeModuleCrashScope::Running, env->moduleNameForCrashReport());
                 callback(env, data, hint);
             }
         }
@@ -628,6 +639,7 @@ private:
                 continue;
             }
 
+            Bun::NativeModuleCrashScope crashScope(Bun::NativeModuleCrashScope::Running, moduleNameForCrashReport());
             if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
                 ASSERT(sync->function != nullptr);
                 sync->function(sync->data);

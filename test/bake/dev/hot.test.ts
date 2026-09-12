@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readdirSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -525,6 +525,77 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("a file replaced by an atomic save keeps being watched", {
+  // An inotify watch follows the inode. An atomic save replaces the inode, and
+  // the kernel reports the old one as deleted (which evicts its entry, and the
+  // re-bundle watches the new one) only once nothing holds it open. So the dev
+  // server must not keep a descriptor for a watched file. kqueue watches
+  // through a descriptor by design and reports the replaced inode as deleted
+  // at rename time; the descriptor check below also needs /proc.
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./dep";
+      import "pkg";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export default "initial";
+    `,
+    // Not watched (node_modules), so its descriptor reaches the close in
+    // on_parse_task_complete without going through add_file.
+    "node_modules/pkg/index.js": `export const fromPkg = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial");
+
+    // Save the way editors do: write a temp file and rename it over the
+    // target. dep.ts is a new inode afterwards.
+    {
+      await using _wait = await dev.batchChanges();
+      writeFileSync(dev.join("dep.ts.tmp"), 'export default "atomic";\n');
+      renameSync(dev.join("dep.ts.tmp"), dev.join("dep.ts"));
+    }
+    await c.expectMessage("atomic");
+
+    // Neither the replaced inode ("dep.ts (deleted)"), the new one, nor the
+    // unwatched package file may stay open after the bundles that read them.
+    const fdDir = `/proc/${dev.devProcess.pid}/fd`;
+    const openTargets = readdirSync(fdDir).flatMap(fd => {
+      try {
+        return [readlinkSync(`${fdDir}/${fd}`)];
+      } catch {
+        // A socket or pipe closed between readdir and readlink.
+        return [];
+      }
+    });
+    expect(openTargets).toContain("anon_inode:inotify");
+    const dep = dev.join("dep.ts");
+    const pkg = dev.join("node_modules/pkg/index.js");
+    expect(openTargets.filter(target => [dep, `${dep} (deleted)`, pkg].includes(target))).toEqual([]);
+
+    // Only the watch on the file itself reports a rename away from the path
+    // (the directory watch does not subscribe to IN_MOVED_FROM), so this is
+    // noticed only if the new inode is the one being watched.
+    {
+      await using _wait = await dev.batchChanges({
+        errors: ['index.ts:1:19: error: Could not resolve: "./dep"'],
+      });
+      renameSync(dev.join("dep.ts"), dev.join("dep.moved.ts"));
+    }
+
+    {
+      await using _wait = await dev.batchChanges();
+      renameSync(dev.join("dep.moved.ts"), dev.join("dep.ts"));
+    }
+    await c.expectMessage("atomic");
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

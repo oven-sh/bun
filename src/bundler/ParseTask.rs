@@ -68,7 +68,12 @@ mod EventLoop {
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {
-    Fd { dir: Fd, file: Fd },
+    Fd {
+        dir: Fd,
+        file: Fd,
+        /// Opened by this task's read (not the resolver cache); the bundle thread closes it if the watcher does not adopt it.
+        owns_file: bool,
+    },
     // The `'static` is ownership-erased: contents may be arena-owned,
     // plugin-owned, or truly static (runtime source). The producer keeps the
     // backing allocation alive for the duration of the bundle pass.
@@ -160,6 +165,8 @@ impl ResultValue {
 pub(crate) struct WatcherData {
     pub(crate) fd: Fd,
     pub(crate) dir_fd: Fd,
+    /// See `ContentsOrFd::Fd::owns_file`.
+    pub(crate) owns_fd: bool,
 }
 
 impl WatcherData {
@@ -167,6 +174,7 @@ impl WatcherData {
     pub(crate) const NONE: WatcherData = WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
+        owns_fd: false,
     };
 }
 
@@ -261,6 +269,7 @@ impl ParseTask {
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
+                owns_file: false,
             },
             side_effects: resolve_result.primary_side_effects_data,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
@@ -1445,7 +1454,7 @@ pub mod parse_worker {
         _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
-            ContentsOrFd::Fd { dir, file } => 'brk: {
+            ContentsOrFd::Fd { dir, file, .. } => 'brk: {
                 let contents_dir = *dir;
                 let contents_file = *file;
                 let _trace = perf::trace("Bundler.readFile");
@@ -2359,20 +2368,20 @@ pub mod parse_worker {
         // there); closing it leaves a stale fd for the next in-process build.
         let opened_own_fd =
             matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
-        let will_close_file_descriptor = opened_own_fd
-            && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
-        if will_close_file_descriptor {
+        let owns_fd = opened_own_fd && entry.fd.is_valid() && entry.fd.stdio_tag().is_none();
+        if owns_fd && worker_ctx.bun_watcher.is_none() {
             let _ = entry.close_fd();
             task.contents_or_fd = ContentsOrFd::Fd {
                 file: Fd::INVALID,
                 dir: Fd::INVALID,
+                owns_file: false,
             };
         } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
+            // With a watcher, `on_parse_task_complete` hands the fd to the watcher or closes it.
             task.contents_or_fd = ContentsOrFd::Fd {
                 file: entry.fd,
                 dir: Fd::INVALID,
+                owns_file: owns_fd,
             };
         }
         *step = Step::Parse;
@@ -2862,9 +2871,14 @@ pub mod parse_worker {
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
             watcher_data: match this.contents_or_fd {
-                ContentsOrFd::Fd { file, dir } => WatcherData {
+                ContentsOrFd::Fd {
+                    file,
+                    dir,
+                    owns_file,
+                } => WatcherData {
                     fd: file,
                     dir_fd: dir,
+                    owns_fd: owns_file,
                 },
                 ContentsOrFd::Contents(_) => WatcherData::NONE,
             },

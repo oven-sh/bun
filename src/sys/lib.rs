@@ -8885,7 +8885,13 @@ pub fn exists(path: &[u8]) -> bool {
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat_concurrently_without_fallback(
+        from_dir,
+        filename,
+        to_dir,
+        destination,
+        Default::default(),
+    ) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -8966,6 +8972,9 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
+    /// If the destination already exists, keep it and delete the source
+    /// instead of replacing it (first writer wins).
+    pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
@@ -8992,7 +9001,7 @@ pub fn renameat_concurrently(
     to: &ZStr,
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
+    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to, opts) {
         Ok(()) => Ok(()),
         Err(e) => {
             if opts.move_fallback && e.get_errno() == E::EXDEV {
@@ -9012,7 +9021,15 @@ pub(crate) fn renameat_concurrently_without_fallback(
     from: &ZStr,
     to_dir_fd: Fd,
     to: &ZStr,
+    opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
+    let delete_source = || {
+        if from_dir_fd.is_valid() {
+            let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
+        } else {
+            let _ = delete_tree_absolute(from.as_bytes());
+        }
+    };
     'attempt: {
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
@@ -9036,6 +9053,12 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 }
                 Ok(()) => break 'attempt,
             };
+
+            if opts.keep_existing_destination && matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
+            {
+                delete_source();
+                break 'attempt;
+            }
 
             // Windows doesn't have any equivalent of renameat with swap
             #[cfg(not(windows))]
@@ -9065,6 +9088,18 @@ pub(crate) fn renameat_concurrently_without_fallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
+        if opts.keep_existing_destination {
+            // EOPNOTSUPP etc. don't say whether the destination exists; check.
+            let dir_fd = if to_dir_fd.is_valid() {
+                to_dir_fd
+            } else {
+                Fd::cwd()
+            };
+            if directory_exists_at(dir_fd, to).unwrap_or(false) {
+                delete_source();
+                break 'attempt;
+            }
+        }
         if to_dir_fd.is_valid() {
             let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {
@@ -9415,6 +9450,7 @@ mod owned_handle_tests {
             b"sub",
             RenameatConcurrentlyOptions {
                 move_fallback: true,
+                ..Default::default()
             },
         )
         .expect("rename");
@@ -9426,6 +9462,47 @@ mod owned_handle_tests {
         );
 
         // Cleanup.
+        let _ = close(to_dir);
+        let _ = close(root);
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+
+    /// `keep_existing_destination` keeps the destination and deletes the source.
+    #[test]
+    fn renameat_concurrently_keep_existing_destination() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        tmp.extend_from_slice(b"/bun_sys_renameat_keep_test");
+        let _ = open_dir_at(Fd::cwd(), &tmp).map(close);
+        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
+        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
+        let _ = mkdir_recursive_at(root, b"from/sub");
+        let _ = mkdir_recursive_at(root, b"to/sub");
+        let to_dir = open_dir_at(root, b"to").expect("open to");
+        File::write_file(root, ZStr::from_static(b"to/sub/winner\0"), b"").expect("marker");
+
+        renameat_concurrently_a(
+            root,
+            b"from/sub",
+            to_dir,
+            b"sub",
+            RenameatConcurrentlyOptions {
+                move_fallback: true,
+                keep_existing_destination: true,
+            },
+        )
+        .expect("rename");
+
+        assert!(
+            exists_at(to_dir, ZStr::from_static(b"sub/winner\0")),
+            "existing destination was replaced"
+        );
+        // Windows `exists_at` is file-only, so check the directory.
+        assert!(
+            !directory_exists_at(root, ZStr::from_static(b"from/sub\0")).unwrap_or(false),
+            "source left behind"
+        );
+
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));

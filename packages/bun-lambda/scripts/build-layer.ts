@@ -1,7 +1,3 @@
-// HACK: https://github.com/oven-sh/bun/issues/2081
-process.stdout.getWindowSize = () => [80, 80];
-process.stderr.getWindowSize = () => [80, 80];
-
 import { Command, Flags } from "@oclif/core";
 import JSZip from "jszip";
 import { createReadStream, writeFileSync } from "node:fs";

@@ -532,8 +532,7 @@ impl<T: VersionInt> VersionType<T> {
                         let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
                         if number.is_none() {
                             result.valid = false;
-                            // A number after a wildcard has no effect on a range, so
-                            // the range parser still needs the rest of this token read.
+                            // A range ignores a number after a wildcard, so keep reading the token.
                             if result.wildcard == Wildcard::None {
                                 result.overflow = true;
                                 is_done = true;
@@ -1193,9 +1192,7 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
-    /// A major, minor or patch number before any wildcard is above `T::MAX`. The
-    /// range parser ignores `valid`, so it reads this to tell that number apart
-    /// from text it can skip.
+    /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
     pub(crate) overflow: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,

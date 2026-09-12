@@ -184,8 +184,7 @@ pub struct Comparator {
 }
 
 impl Comparator {
-    /// `<0.0.0-0`, the comparator node-semver uses for the empty set. `0.0.0-0`
-    /// is the lowest version, so no version satisfies it.
+    /// `<0.0.0-0`: no version satisfies it. node-semver uses it for the empty set.
     pub(crate) fn null_set() -> Comparator {
         Comparator {
             op: Op::Lt,

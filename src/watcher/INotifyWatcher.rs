@@ -182,6 +182,13 @@ impl INotifyWatcher {
         result
     }
 
+    /// Removes a watch; `EINVAL` (already gone with its inode) is expected.
+    pub(crate) fn unwatch(&mut self, wd: EventListIndex) {
+        debug_assert!(self.loaded);
+        let rc = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
+        bun_core::scoped_log!(watcher, "inotify_rm_watch({}, {}) = {}", self.fd, wd, rc);
+    }
+
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         use bun_sys::linux::IN;
 

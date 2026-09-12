@@ -1,6 +1,7 @@
 // RFC 6455 5.2 + RFC 7692 6.1: RSV1 ("per-message compressed") is only valid on
 // the first frame of a data message. A control or continuation frame setting it
 // must fail the connection, and must not arm the connection's compressed flag.
+import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import net from "node:net";
@@ -16,135 +17,151 @@ function pmdDeflate(payload: Buffer): Buffer {
   return deflated.subarray(0, -4);
 }
 
-describe.concurrent("permessage-deflate RSV1 frames", () => {
-  function frame(opcode: number, payload: Buffer, opts: { fin?: boolean; rsv1?: boolean } = {}): Buffer {
-    const { fin = true, rsv1 = false } = opts;
-    if (payload.length > 0xffff) throw new Error("these tests only build short and medium frames");
-    const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
-    const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
-    const flags = (fin ? 0x80 : 0x00) | (rsv1 ? 0x40 : 0x00) | opcode;
-    const head =
-      payload.length < 126
-        ? Buffer.from([flags, 0x80 | payload.length])
-        : Buffer.from([flags, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
-    return Buffer.concat([head, mask, masked]);
+function frame(opcode: number, payload: Buffer, opts: { fin?: boolean; rsv1?: boolean } = {}): Buffer {
+  const { fin = true, rsv1 = false } = opts;
+  if (payload.length > 0xffff) throw new Error("these tests only build short and medium frames");
+  const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+  const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+  const flags = (fin ? 0x80 : 0x00) | (rsv1 ? 0x40 : 0x00) | opcode;
+  const head =
+    payload.length < 126
+      ? Buffer.from([flags, 0x80 | payload.length])
+      : Buffer.from([flags, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+  return Buffer.concat([head, mask, masked]);
+}
+
+// Raw TCP WebSocket client that offers permessage-deflate to a Bun.serve
+// websocket server, then exposes exactly what the server observed
+// (message/ping/close handlers) and every frame byte the server wrote back.
+async function connectRaw(options: {
+  perMessageDeflate: WebSocketHandler["perMessageDeflate"];
+  onMessage?: (ws: ServerWebSocket<unknown>, message: string | Buffer) => void;
+}) {
+  const received: string[] = [];
+  const pings: string[] = [];
+  const firstMessage = Promise.withResolvers<string>();
+  const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
+  const server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("upgrade failed", { status: 400 });
+    },
+    websocket: {
+      perMessageDeflate: options.perMessageDeflate,
+      message(ws, message) {
+        const hex = Buffer.from(message as Buffer).toString("hex");
+        received.push(hex);
+        firstMessage.resolve(`message:${hex}`);
+        options.onMessage?.(ws, message);
+      },
+      ping(ws, data) {
+        pings.push(Buffer.from(data).toString("hex"));
+      },
+      close(ws, code, reason) {
+        serverClose.resolve({ code, reason });
+      },
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  socket.setNoDelay(true);
+  const upgraded = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<string>();
+  socket.on("close", () => {
+    closed.resolve("socket-closed-by-server");
+    // No-op once the 101 already resolved it; fails the handshake fast otherwise.
+    upgraded.reject(new Error("socket closed before the 101 response"));
+  });
+  socket.on("error", (error: Error) => {
+    closed.resolve("socket-closed-by-server");
+    upgraded.reject(error);
+  });
+
+  // Every byte the server sends after the 101 head is WebSocket frame data.
+  let frameBytes = Buffer.alloc(0);
+  const frameByteListeners: (() => void)[] = [];
+  const onFrameData = (chunk: Buffer) => {
+    frameBytes = Buffer.concat([frameBytes, chunk]);
+    for (const notify of frameByteListeners) notify();
+  };
+
+  let head = Buffer.alloc(0);
+  let negotiated = "";
+  const onHead = (chunk: Buffer) => {
+    head = Buffer.concat([head, chunk]);
+    const end = head.indexOf("\r\n\r\n");
+    if (end === -1) return;
+    socket.off("data", onHead);
+    socket.on("data", onFrameData);
+    const headText = head.subarray(0, end).toString();
+    if (!headText.startsWith("HTTP/1.1 101")) {
+      upgraded.reject(new Error(`upgrade failed: ${headText.split("\r\n")[0]}`));
+      return;
+    }
+    negotiated = headText.split("\r\n").find(line => /^sec-websocket-extensions:/i.test(line)) ?? "";
+    const rest = head.subarray(end + 4);
+    if (rest.length) onFrameData(rest);
+    upgraded.resolve();
+  };
+  socket.on("data", onHead);
+  socket.write(
+    "GET / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+      "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" +
+      "\r\n",
+  );
+  try {
+    await upgraded.promise;
+  } catch (error) {
+    // The disposable below (the only thing that stops the server) is never
+    // created when the handshake fails, so release everything here.
+    socket.destroy();
+    server.stop(true);
+    throw error;
   }
 
-  // Raw TCP WebSocket client that negotiates permessage-deflate against a
-  // Bun.serve websocket server, then exposes exactly what the server observed
-  // (message/ping/close handlers) and every frame byte the server wrote back.
-  async function connectDeflated() {
-    const received: string[] = [];
-    const pings: string[] = [];
-    const firstMessage = Promise.withResolvers<string>();
-    const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
-    const server = serve({
-      port: 0,
-      fetch(req, server) {
-        if (server.upgrade(req)) return;
-        return new Response("upgrade failed", { status: 400 });
-      },
-      websocket: {
-        perMessageDeflate: true,
-        message(ws, message) {
-          const hex = Buffer.from(message as Buffer).toString("hex");
-          received.push(hex);
-          firstMessage.resolve(`message:${hex}`);
-        },
-        ping(ws, data) {
-          pings.push(Buffer.from(data).toString("hex"));
-        },
-        close(ws, code, reason) {
-          serverClose.resolve({ code, reason });
-        },
-      },
-    });
-
-    const socket = net.connect(server.port, "127.0.0.1");
-    socket.setNoDelay(true);
-    const upgraded = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<string>();
-    socket.on("close", () => {
-      closed.resolve("socket-closed-by-server");
-      // No-op once the 101 already resolved it; fails the handshake fast otherwise.
-      upgraded.reject(new Error("socket closed before the 101 response"));
-    });
-    socket.on("error", (error: Error) => {
-      closed.resolve("socket-closed-by-server");
-      upgraded.reject(error);
-    });
-
-    // Every byte the server sends after the 101 head is WebSocket frame data.
-    let frameBytes = Buffer.alloc(0);
-    const frameByteListeners: (() => void)[] = [];
-    const onFrameData = (chunk: Buffer) => {
-      frameBytes = Buffer.concat([frameBytes, chunk]);
-      for (const notify of frameByteListeners) notify();
-    };
-
-    let head = Buffer.alloc(0);
-    let negotiated = "";
-    const onHead = (chunk: Buffer) => {
-      head = Buffer.concat([head, chunk]);
-      const end = head.indexOf("\r\n\r\n");
-      if (end === -1) return;
-      socket.off("data", onHead);
-      socket.on("data", onFrameData);
-      const headText = head.subarray(0, end).toString();
-      if (!headText.startsWith("HTTP/1.1 101")) {
-        upgraded.reject(new Error(`upgrade failed: ${headText.split("\r\n")[0]}`));
-        return;
-      }
-      negotiated = headText.split("\r\n").find(line => /^sec-websocket-extensions:/i.test(line)) ?? "";
-      const rest = head.subarray(end + 4);
-      if (rest.length) onFrameData(rest);
-      upgraded.resolve();
-    };
-    socket.on("data", onHead);
-    socket.write(
-      "GET / HTTP/1.1\r\n" +
-        "Host: localhost\r\n" +
-        "Connection: Upgrade\r\n" +
-        "Upgrade: websocket\r\n" +
-        "Sec-WebSocket-Version: 13\r\n" +
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-        "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" +
-        "\r\n",
-    );
-    try {
-      await upgraded.promise;
-      // Every test here needs a connection that really negotiated compression.
-      expect(negotiated.toLowerCase()).toContain("permessage-deflate");
-    } catch (error) {
-      // The disposable below (the only thing that stops the server) is never
-      // created when the handshake fails, so release everything here.
+  return {
+    socket,
+    received,
+    pings,
+    negotiated: negotiated.toLowerCase(),
+    firstMessage: firstMessage.promise,
+    serverClose: serverClose.promise,
+    closed: closed.promise,
+    frames: () => frameBytes,
+    // Resolves once the server has written `count` bytes of frame data.
+    waitForFrameBytes(count: number): Promise<string> {
+      if (frameBytes.length >= count) return Promise.resolve("server-sent-a-frame");
+      const { promise, resolve } = Promise.withResolvers<string>();
+      frameByteListeners.push(() => {
+        if (frameBytes.length >= count) resolve("server-sent-a-frame");
+      });
+      return promise;
+    },
+    [Symbol.dispose]() {
       socket.destroy();
       server.stop(true);
+    },
+  };
+}
+
+describe.concurrent("permessage-deflate RSV1 frames", () => {
+  // Every test here needs a connection that really negotiated compression.
+  async function connectDeflated() {
+    const raw = await connectRaw({ perMessageDeflate: true });
+    try {
+      expect(raw.negotiated).toContain("permessage-deflate");
+    } catch (error) {
+      // The caller's `using` never binds when this throws, so release here.
+      raw[Symbol.dispose]();
       throw error;
     }
-
-    return {
-      socket,
-      received,
-      pings,
-      firstMessage: firstMessage.promise,
-      serverClose: serverClose.promise,
-      closed: closed.promise,
-      frames: () => frameBytes,
-      // Resolves once the server has written `count` bytes of frame data.
-      waitForFrameBytes(count: number): Promise<string> {
-        if (frameBytes.length >= count) return Promise.resolve("server-sent-a-frame");
-        const { promise, resolve } = Promise.withResolvers<string>();
-        frameByteListeners.push(() => {
-          if (frameBytes.length >= count) resolve("server-sent-a-frame");
-        });
-        return promise;
-      },
-      [Symbol.dispose]() {
-        socket.destroy();
-        server.stop(true);
-      },
-    };
+    return raw;
   }
 
   // A conforming server neither answers an RSV1 ping nor lets it reach ping().
@@ -246,4 +263,102 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     expect(raw.frames()).toEqual(Buffer.from([0x8a, 0x02, 0x68, 0x69]));
     expect(raw.pings).toEqual([Buffer.from("hi").toString("hex")]);
   });
+});
+
+// `perMessageDeflate: { compress, decompress }` turns each direction off with
+// `false` or "disable". RFC 7692 negotiates both directions at once, so the
+// server can only honor "compress off" by never setting RSV1 on what it sends,
+// and "decompress off" by not negotiating the extension at all (and so it
+// refuses "compress on, decompress off").
+describe.concurrent("perMessageDeflate per-direction options", () => {
+  // 320 repeated bytes deflate to a few bytes, so a compressed reply is short
+  // and has RSV1 set, and a plain reply is 320 bytes with RSV1 clear.
+  const reply = Buffer.alloc(320, "x");
+  const plainReply = Buffer.concat([Buffer.from([0x82, 126, reply.length >> 8, reply.length & 0xff]), reply]);
+  const inbound = Buffer.from("hello from the client");
+  // The flags of the first frame the server wrote.
+  function replyHead(raw: Awaited<ReturnType<typeof connectRaw>>) {
+    const head = raw.frames()[0];
+    return { rsv1: (head & 0x40) !== 0 };
+  }
+  const echoCompressed = (ws: ServerWebSocket<unknown>) => {
+    ws.send(reply, true);
+  };
+
+  for (const perMessageDeflate of [
+    { compress: "disable", decompress: "shared" },
+    { compress: false, decompress: true },
+    { compress: false, decompress: "dedicated" },
+    // A sized decompressor must land in the decompressor bits, or the
+    // compressor bits it used to set would compress the reply.
+    { compress: "disable", decompress: "8KB" },
+  ] as const) {
+    it(`${JSON.stringify(perMessageDeflate)} inflates inbound messages and never compresses outbound ones`, async () => {
+      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      expect(raw.negotiated).toContain("permessage-deflate");
+      if (perMessageDeflate.decompress === "8KB") {
+        // An 8KB inflate window is 13 bits, and the server tells the client so.
+        expect(raw.negotiated).toContain("client_max_window_bits=13");
+      }
+      raw.socket.write(frame(0x1, pmdDeflate(inbound), { rsv1: true }));
+      expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
+      // A compressed reply is a few bytes with RSV1 set, so check the head
+      // as soon as it arrives rather than wait for 320 bytes that never come.
+      expect(await Promise.race([raw.waitForFrameBytes(2), raw.closed])).toBe("server-sent-a-frame");
+      expect(replyHead(raw).rsv1).toBe(false);
+      expect(await Promise.race([raw.waitForFrameBytes(plainReply.length), raw.closed])).toBe("server-sent-a-frame");
+      expect(raw.frames()).toEqual(plainReply);
+    });
+  }
+
+  // The protocol cannot compress outbound without inflating inbound, so the
+  // server refuses the combination instead of silently picking one side.
+  for (const perMessageDeflate of [
+    { compress: "shared", decompress: "disable" },
+    { compress: true, decompress: false },
+    { compress: "dedicated", decompress: false },
+  ] as const) {
+    it(`${JSON.stringify(perMessageDeflate)} is rejected by Bun.serve()`, () => {
+      expect(() =>
+        serve({
+          port: 0,
+          fetch: () => new Response(),
+          websocket: { message() {}, perMessageDeflate },
+        }),
+      ).toThrow("websocket perMessageDeflate cannot enable compress and disable decompress");
+    });
+  }
+
+  for (const perMessageDeflate of [
+    { compress: "disable", decompress: "disable" },
+    { compress: false, decompress: false },
+    { decompress: false },
+    { compress: "disable" },
+  ] as const) {
+    it(`${JSON.stringify(perMessageDeflate)} does not negotiate the extension`, async () => {
+      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      expect(raw.negotiated).toBe("");
+      raw.socket.write(frame(0x1, inbound));
+      expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
+      expect(await Promise.race([raw.waitForFrameBytes(plainReply.length), raw.closed])).toBe("server-sent-a-frame");
+      expect(raw.frames()).toEqual(plainReply);
+    });
+  }
+
+  // Control: with both directions on, the same send() is compressed.
+  for (const perMessageDeflate of [
+    true,
+    { compress: "shared", decompress: "shared" },
+    { compress: "shared" },
+  ] as const) {
+    it(`${JSON.stringify(perMessageDeflate)} compresses outbound messages`, async () => {
+      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      expect(raw.negotiated).toContain("permessage-deflate");
+      raw.socket.write(frame(0x1, pmdDeflate(inbound), { rsv1: true }));
+      expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
+      expect(await Promise.race([raw.waitForFrameBytes(2), raw.closed])).toBe("server-sent-a-frame");
+      expect(replyHead(raw).rsv1).toBe(true);
+      expect(raw.frames().length).toBeLessThan(plainReply.length);
+    });
+  }
 });

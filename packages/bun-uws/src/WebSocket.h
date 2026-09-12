@@ -174,8 +174,11 @@ public:
             if (compress) {
                 WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
 
-                /* Check and correct the compress hint. It is never valid to compress 0 bytes */
-                if (message.length() && opCode < 3 && webSocketData->compressionStatus == WebSocketData::ENABLED) {
+                /* Check and correct the compress hint. It is never valid to compress 0 bytes.
+                 * A context with no compressor bits negotiated the extension only to inflate
+                 * inbound messages; it never sends a compressed one. */
+                if (message.length() && opCode < 3 && webSocketData->compressionStatus == WebSocketData::ENABLED
+                    && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK)) {
                     LoopData *loopData = Super::getLoopData();
                     /* Compress using either shared or dedicated deflationStream */
                     if (webSocketData->deflationStream) {

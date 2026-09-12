@@ -204,14 +204,15 @@ bun_core::comptime_string_map! {
         b"disable" => 0,
         b"shared" => uws::SHARED_DECOMPRESSOR,
         b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-        b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
-        b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
-        b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
-        b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
-        b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
-        b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
-        b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
-        b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
+        // The inflate window; deflate windows stop at 32KB.
+        b"3KB" => uws::DEDICATED_DECOMPRESSOR_2KB,
+        b"4KB" => uws::DEDICATED_DECOMPRESSOR_4KB,
+        b"8KB" => uws::DEDICATED_DECOMPRESSOR_8KB,
+        b"16KB" => uws::DEDICATED_DECOMPRESSOR_16KB,
+        b"32KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"64KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"128KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"256KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
     };
 }
 
@@ -254,13 +255,15 @@ pub(crate) fn on_create(
                 )));
             }
 
+            // `None` is absent, `Some(0)` is `false` or "disable".
+            let mut compress: Option<i32> = None;
             if let Some(compression) = per_message_deflate.get_truthy(global_object, "compress")? {
                 if compression.is_boolean() {
-                    server.compression |= if compression.to_boolean() {
+                    compress = Some(if compression.to_boolean() {
                         uws::SHARED_COMPRESSOR
                     } else {
                         0
-                    };
+                    });
                 } else if compression.is_string() {
                     let key = compression.to_js_string_view(global_object)?;
                     let Some(&v) = COMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
@@ -268,7 +271,7 @@ pub(crate) fn on_create(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
                     };
-                    server.compression |= v;
+                    compress = Some(v);
                 } else {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
@@ -276,15 +279,16 @@ pub(crate) fn on_create(
                 }
             }
 
+            let mut decompress: Option<i32> = None;
             if let Some(compression) =
                 per_message_deflate.get_truthy(global_object, "decompress")?
             {
                 if compression.is_boolean() {
-                    server.compression |= if compression.to_boolean() {
+                    decompress = Some(if compression.to_boolean() {
                         uws::SHARED_DECOMPRESSOR
                     } else {
                         0
-                    };
+                    });
                 } else if compression.is_string() {
                     let key = compression.to_js_string_view(global_object)?;
                     let Some(&v) = DECOMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
@@ -292,13 +296,27 @@ pub(crate) fn on_create(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
                     };
-                    server.compression |= v;
+                    decompress = Some(v);
                 } else {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                     )));
                 }
             }
+
+            // Zero compressor bits make `WebSocket::send` skip RSV1.
+            server.compression = match (compress, decompress) {
+                (None, None) | (Some(0), None) | (None | Some(0), Some(0)) => 0,
+                (Some(_), Some(0)) => {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "websocket perMessageDeflate cannot enable compress and disable decompress: permessage-deflate negotiates both directions at once. Use decompress: \"shared\" or perMessageDeflate: false"
+                    )));
+                }
+                (compress, decompress) => {
+                    compress.unwrap_or(uws::SHARED_COMPRESSOR)
+                        | decompress.unwrap_or(uws::SHARED_DECOMPRESSOR)
+                }
+            };
         }
     }
 

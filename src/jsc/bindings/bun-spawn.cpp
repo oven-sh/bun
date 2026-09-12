@@ -14,11 +14,17 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <grp.h>
+#include <atomic>
+#include <errno.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
 #include <sys/prctl.h>
 #include <sched.h>
+#endif
+
+#if OS(DARWIN)
+#include <libproc.h>
 #endif
 
 extern char** environ;
@@ -31,28 +37,98 @@ extern char** environ;
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
-// Helper: get max fd from system, clamped to sane limits and optionally to 'end' parameter
-static inline int getMaxFd(int start, int end)
+// Highest open fd in this process, or -1 if the scan is unusable.
+extern "C" int bun_highest_open_fd()
 {
 #if OS(LINUX)
-    int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-#elif OS(DARWIN) || OS(FREEBSD)
-    int maxfd = getdtablesize();
-#else
-    int maxfd = 1024;
-#endif
-    if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
-    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
-    if (end >= start && end < INT_MAX) {
-        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
+    int dir = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir < 0) return -1;
+    struct linux_dirent64 {
+        uint64_t d_ino;
+        int64_t d_off;
+        uint16_t d_reclen;
+        uint8_t d_type;
+        char d_name[];
+    };
+    alignas(linux_dirent64) char buf[4096];
+    int highest = -1;
+    for (;;) {
+        long n = syscall(SYS_getdents64, dir, buf, sizeof(buf));
+        if (n <= 0) break;
+        for (long off = 0; off < n;) {
+            auto* ent = reinterpret_cast<linux_dirent64*>(buf + off);
+            off += ent->d_reclen;
+            const char* p = ent->d_name;
+            if (*p < '0' || *p > '9') continue;
+            int fd = 0;
+            while (*p >= '0' && *p <= '9')
+                fd = fd * 10 + (*p++ - '0');
+            if (*p != '\0') continue;
+            if (fd > highest) highest = fd;
+        }
     }
-    return maxfd;
+    close(dir);
+    return (highest < dir) ? -1 : highest;
+#elif OS(DARWIN)
+    int n = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+    if (n <= 0) return -1;
+    n += 32 * (int)sizeof(struct proc_fdinfo);
+    struct proc_fdinfo* fds = (struct proc_fdinfo*)malloc(n);
+    if (!fds) return -1;
+    n = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, fds, n);
+    int highest = -1;
+    for (int i = 0; i < n / (int)sizeof(struct proc_fdinfo); i++)
+        if (fds[i].proc_fd > highest) highest = fds[i].proc_fd;
+    free(fds);
+    return highest;
+#else
+    return -1;
+#endif
 }
 
-// Loop-based fallback for closing/cloexec fds
-static inline void closeRangeLoop(int start, int end, bool cloexec_only)
+#if OS(LINUX)
+// Cached close_range(2) capability. The (~0U, ~0U) probe is a no-op range
+// above any fd table: 5.11+ -> 0, 5.9/5.10 -> EINVAL (flag), <5.9 -> ENOSYS.
+enum : int { kCloseRangeUnknown = 0,
+    kCloseRangeCloexec = 1,
+    kCloseRangePlain = 2,
+    kCloseRangeNone = 3 };
+static std::atomic<int> s_closeRangeCapability { kCloseRangeUnknown };
+
+static int closeRangeCapability()
 {
-    int maxfd = getMaxFd(start, end);
+    int cap = s_closeRangeCapability.load(std::memory_order_relaxed);
+    if (cap != kCloseRangeUnknown) return cap;
+    if (bun_close_range(~0U, ~0U, CLOSE_RANGE_CLOEXEC) == 0)
+        cap = kCloseRangeCloexec;
+    else if (errno != EINVAL)
+        cap = kCloseRangeNone;
+    else if (bun_close_range(~0U, ~0U, 0) == 0)
+        cap = kCloseRangePlain;
+    else
+        cap = kCloseRangeNone;
+    s_closeRangeCapability.store(cap, std::memory_order_relaxed);
+    return cap;
+}
+#endif
+
+// Loop-based fallback. open_fd_hint (-1 = unknown) bounds this best-effort
+// sweep at the parent's highest open fd; Bun-owned fds are O_CLOEXEC already.
+static inline void closeRangeLoop(int start, int end, bool cloexec_only, int open_fd_hint)
+{
+    int maxfd;
+    if (open_fd_hint >= 0) {
+        maxfd = open_fd_hint + 1;
+    } else {
+#if OS(LINUX)
+        maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+#else
+        maxfd = getdtablesize();
+#endif
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+    }
+    if (end >= start && end < INT_MAX)
+        maxfd = std::min(maxfd, end + 1);
     for (int fd = start; fd < maxfd; fd++) {
         if (cloexec_only) {
             int current_flags = fcntl(fd, F_GETFD);
@@ -65,17 +141,22 @@ static inline void closeRangeLoop(int start, int end, bool cloexec_only)
     }
 }
 
-// Platform-specific close range implementation
-static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
+// kCloseRangePlain closes outright even when cloexec_only: the vfork child
+// is about to exec, so the effect is the same and Linux uses no errpipe.
+static inline void closeRangeOrLoop(int start, int end, bool cloexec_only, int cap, int open_fd_hint)
 {
 #if OS(LINUX)
-    unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
-    if (bun_close_range(start, end, flags) == 0) {
-        return;
+    if (cap == kCloseRangeCloexec) {
+        if (bun_close_range(start, end, cloexec_only ? CLOSE_RANGE_CLOEXEC : 0) == 0)
+            return;
+    } else if (cap == kCloseRangePlain) {
+        if (bun_close_range(start, end, 0) == 0)
+            return;
     }
-    // Fallback for older kernels or when close_range fails
+#else
+    (void)cap;
 #endif
-    closeRangeLoop(start, end, cloexec_only);
+    closeRangeLoop(start, end, cloexec_only, open_fd_hint);
 }
 
 enum FileActionType : uint8_t {
@@ -233,6 +314,16 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
+    // Resolve the fd-sweep strategy in the parent: opendir/readdir are not
+    // async-signal-safe, so the forked child must not call them.
+#if OS(LINUX)
+    const int close_range_cap = closeRangeCapability();
+    const int open_fd_hint = (close_range_cap == kCloseRangeNone) ? bun_highest_open_fd() : -1;
+#else
+    const int close_range_cap = 0;
+    const int open_fd_hint = bun_highest_open_fd();
+#endif
+
 #if OS(DARWIN) || OS(FREEBSD)
     // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
@@ -270,7 +361,7 @@ extern "C" ssize_t posix_spawn_bun(
         // Write errno to pipe so parent can read it
         (void)write(errpipe[1], &err, sizeof(err));
         close(errpipe[1]);
-        closeRangeOrLoop(0, INT_MAX, false);
+        closeRangeOrLoop(0, INT_MAX, false, close_range_cap, open_fd_hint);
         rawExit(127);
 
         // should never be reached
@@ -449,7 +540,7 @@ extern "C" ssize_t posix_spawn_bun(
             envp = environ;
 
         // Close all fds > current_max_fd, preferring cloexec if available
-        closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
+        closeRangeOrLoop(current_max_fd + 1, INT_MAX, true, close_range_cap, open_fd_hint);
 
         if (execve(path, argv, envp) == -1) {
             return childFailed();

@@ -3947,8 +3947,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn is_stream_open(&self, stream_id: u32) -> Option<bool> {
-        // On a client the legacy map holds every stream except the ones the peer pushed, until
-        // the read after its teardown. A full close and a local RST_STREAM both set CLOSED first.
+        // A pushed stream has no legacy entry. A full close and a local RST_STREAM both set CLOSED.
         let stream = self.streams.get().get(&stream_id).copied()?;
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
         Some(unsafe { (*stream).state != StreamState::CLOSED })
@@ -3975,9 +3974,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_origin(&self, origins: crate::api::h2::wire::OriginEntries<'_>) {
-        // One onOrigin dispatch per ORIGIN frame, always with an array. A frame without origins
-        // gives an empty array.
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1673-L1693
+        // Always an array: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1673-L1693
         if !self.can_dispatch(JSH2FrameParser::Gc::onOrigin) {
             return;
         }

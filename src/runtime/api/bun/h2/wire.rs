@@ -187,10 +187,7 @@ impl FrameHeader {
     }
 }
 
-/// The Origin-Entry sequence of an ORIGIN frame payload (RFC 8336 §2): each entry is a 2-byte
-/// length followed by that many octets of ASCII-Origin. Only built from a payload in which every
-/// entry is complete. Yields the origins in order and skips zero-length entries.
-/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.c#L846-L862
+/// The entries of an ORIGIN payload in which every entry is complete, zero-length ones skipped.
 #[derive(Clone, Debug)]
 pub struct OriginEntries<'a> {
     rest: &'a [u8],
@@ -201,6 +198,7 @@ pub struct OriginEntries<'a> {
 impl<'a> OriginEntries<'a> {
     /// `None` when a length prefix or an origin runs past the end of the payload.
     pub fn parse(payload: &'a [u8]) -> Option<Self> {
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.c#L846-L862
         let mut rest = payload;
         let mut len = 0;
         while !rest.is_empty() {

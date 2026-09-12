@@ -206,8 +206,7 @@ pub trait Sink {
     fn on_push_promise(&self, _parent_id: u32, _promised_id: u32) {}
     /// RFC 7838 ALTSVC.
     fn on_altsvc(&self, _stream_id: u32, _origin: &[u8], _value: &[u8]) {}
-    /// RFC 8336 ORIGIN: the origins of one well-formed frame (possibly none), delivered once per
-    /// frame so the embedder can surface them as a single event.
+    /// RFC 8336 ORIGIN: the origins of one well-formed frame (possibly none), once per frame.
     fn on_origin(&self, _origins: wire::OriginEntries<'_>) {}
     /// The peer exceeded the session's invalid-frame allowance (node's maxSessionInvalidFrames):
     /// the embedder should destroy the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
@@ -222,10 +221,7 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
-    /// Whether `stream_id` is still open on the embedder's side: `Some(false)` once both halves
-    /// closed or the embedder reset it. `None` if the embedder keeps no record of the stream (a
-    /// stream the peer pushed): then this engine's own entry decides. For any other stream this
-    /// engine only sees the inbound half, so it cannot tell on its own.
+    /// `Some(open)` if the embedder tracks both halves of the stream, `None` if not (a pushed one).
     fn is_stream_open(&self, _stream_id: u32) -> Option<bool> {
         None
     }
@@ -417,9 +413,7 @@ impl Connection {
         self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
     }
 
-    /// node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts against
-    /// maxSessionInvalidFrames (same post-increment comparison as node). Returns true once the
-    /// allowance is exceeded: the session is then torn down with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
+    /// node's OnInvalidFrame count. True: past maxSessionInvalidFrames, the session is torn down.
     fn count_invalid_frame(&mut self, sink: &impl Sink) -> bool {
         let count = self.invalid_frame_count;
         self.invalid_frame_count = count.saturating_add(1);
@@ -431,12 +425,9 @@ impl Connection {
         false
     }
 
-    /// A frame nghttp2 reports to on_invalid_frame_recv_callback with NGHTTP2_ERR_PROTO and then
-    /// drops, without terminating the session. node counts it, then destroys the session with
-    /// NghttpError("Protocol error"). That destroy writes the only GOAWAY (INTERNAL_ERROR), so
-    /// none is written here. Always returns true: the connection is closing.
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1128-L1175
+    /// node counts the frame, then destroys the session. That destroy writes the only GOAWAY.
     fn invalid_frame(&mut self, sink: &impl Sink, debug: &[u8]) -> bool {
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1128-L1175
         if self.count_invalid_frame(sink) {
             return true;
         }
@@ -1792,10 +1783,7 @@ impl Connection {
         })
     }
 
-    /// RFC 7838 §4 ALTSVC: 2-byte origin length, origin, then the Alt-Svc field value. Follows
-    /// nghttp2, whose verdicts node turns into session errors where RFC 7838 says to ignore the
-    /// frame (see `invalid_frame`).
-    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4816-L4852
+    /// RFC 7838 §4 ALTSVC, with node's session errors where the RFC says to ignore the frame.
     fn handle_altsvc(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // A server never accepts ALTSVC, whatever its shape.
         if self.is_server {
@@ -1805,12 +1793,11 @@ impl Connection {
             .split_first_chunk::<2>()
             .and_then(|(len, rest)| rest.split_at_checked(usize::from(u16::from_be_bytes(*len))));
         let Some((origin, value)) = parsed else {
-            // RFC 9113 §4.2: too small for its origin length, or for the origin that it announces.
-            // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L5957-L5961
             // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L6347-L6351
             self.send_go_away(sink, ErrorCode::FrameSizeError, b"ALTSVC frame too short");
             return true;
         };
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4816-L4852
         if hdr.stream_id == 0 {
             if origin.is_empty() {
                 return self.invalid_frame(sink, b"ALTSVC on stream 0 without an origin");
@@ -1834,13 +1821,14 @@ impl Connection {
     /// RFC 8336 §2 ORIGIN: a sequence of (2-byte length + origin) entries on stream 0.
     fn handle_origin(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // §2.1: ORIGIN on a non-zero stream is ignored, and like ALTSVC it is server-to-client
-        // only - a server receiving it must ignore it. nghttp2 also ignores a frame with any of
-        // the high four flag bits set.
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L5990-L6006
-        if hdr.stream_id != 0 || self.is_server || hdr.flags & 0xf0 != 0 {
+        // only - a server receiving it must ignore it.
+        if hdr.stream_id != 0 || self.is_server {
             return false;
         }
-        // A frame that does not parse is dropped whole; it is not an invalid frame.
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L5990-L6006
+        if hdr.flags & 0xf0 != 0 {
+            return false;
+        }
         // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4952-L4960
         if let Some(origins) = wire::OriginEntries::parse(payload) {
             sink.on_origin(origins);

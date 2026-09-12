@@ -383,13 +383,26 @@ class Database implements SqliteTypes.Database {
     if (typeof options === "object" && options) {
       flags = 0;
 
+      if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
+
       if (options.readonly) {
+        if (options.create) {
+          throw new TypeError(
+            'The "readonly" and "create" options cannot be used together. SQLite cannot create a database in read-only mode.',
+          );
+        }
+        if (options.readwrite) {
+          throw new TypeError('The "readonly" and "readwrite" options cannot be used together.');
+        }
         flags = constants.SQLITE_OPEN_READONLY;
       }
 
-      if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
-
       if (options.create) {
+        if (options.readwrite === false) {
+          throw new TypeError(
+            'The "create" option requires "readwrite". SQLite cannot create a database in read-only mode.',
+          );
+        }
         flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
       }
 

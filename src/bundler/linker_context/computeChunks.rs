@@ -46,6 +46,8 @@ pub(crate) fn compute_chunks(
     // Keys borrow from `temp`; the map and the arena are both dropped at end of fn.
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
+    // Per `js_chunks` entry: whether a file in it prints code; a chunk with none is dropped.
+    let mut js_chunk_has_code: Vec<bool> = Vec::with_capacity(this.graph.entry_points.len());
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     let mut css_chunks: ArrayHashMap<u64, Chunk> = ArrayHashMap::new();
@@ -191,6 +193,9 @@ pub(crate) fn compute_chunks(
         debug_assert!(!js_chunk_entry.found_existing);
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
+        if !js_chunk_entry.found_existing {
+            js_chunk_has_code.push(true);
+        }
         *js_chunk_entry.value_ptr = Chunk {
             entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
             entry_bits: entry_point_chunk_bits,
@@ -284,30 +289,6 @@ pub(crate) fn compute_chunks(
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 
-    // Files with at least one part that will be printed. A file with none
-    // (nothing survived tree shaking, or only bare imports of unwrapped files
-    // did) gets no code-splitting chunk: it would be an empty file, and two
-    // such chunks share a content hash.
-    let contributes_code = {
-        let mut bits = AutoBitSet::init_empty(this.graph.files.len())?;
-        let parts = this.graph.ast.items_parts();
-        let reachable: &[Index] = if this.graph.code_splitting {
-            this.graph.reachable_files.slice()
-        } else {
-            &[]
-        };
-        for source_index in reachable {
-            let i = source_index.get() as usize;
-            let parts_live = &this.graph.parts_live[i];
-            if parts[i].as_slice().iter().enumerate().any(|(p, part)| {
-                parts_live.is_set(p) && this.should_include_part(source_index.get(), part)
-            }) {
-                bits.set(i);
-            }
-        }
-        bits
-    };
-
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
@@ -324,12 +305,20 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
-                        if !contributes_code.is_set(source_index.get() as usize) {
-                            continue;
-                        }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+
+                        if !js_chunk_entry.found_existing {
+                            js_chunk_has_code.push(false);
+                        }
+                        if this
+                            .graph
+                            .files_with_code
+                            .is_set(source_index.get() as usize)
+                        {
+                            js_chunk_has_code[js_chunk_entry.index] = true;
+                        }
 
                         if !js_chunk_entry.found_existing {
                             let is_browser_chunk_from_server_build =
@@ -418,7 +407,12 @@ pub(crate) fn compute_chunks(
 
         let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count());
 
-        sorted_keys.append_slice_assume_capacity(js_chunks.keys());
+        debug_assert_eq!(js_chunk_has_code.len(), js_chunks.count());
+        for (&key, &has_code) in js_chunks.keys().iter().zip(js_chunk_has_code.iter()) {
+            if has_code {
+                sorted_keys.append_assume_capacity(key);
+            }
+        }
 
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.

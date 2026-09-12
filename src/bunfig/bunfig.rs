@@ -1272,7 +1272,15 @@ impl<'a> Parser<'a> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
-        if let Some(cafile) = install_obj.get(b"cafile") {
+        let cafile = install_obj.get(b"cafile");
+        let ca = install_obj.get(b"ca");
+        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        if cafile.is_some() || ca.is_some() {
+            install.cafile = None;
+            install.ca = None;
+        }
+
+        if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
                 Some(s) => Some(s.into()),
                 None => {
@@ -1282,7 +1290,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = install_obj.get(b"ca") {
+        if let Some(ca) = ca {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();

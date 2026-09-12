@@ -66,6 +66,46 @@ devTest("onLoad", {
     await dev.fetch("/").equals("value: 1");
   },
 });
+devTest("onLoad defer() waits for the rest of the graph to load", {
+  framework: minimalFramework,
+  pluginFile: `
+    let otherLoaded = false;
+    export default [
+      {
+        name: 'a',
+        setup(build) {
+          build.onLoad({ filter: /\\.ts$/ }, async (args) => {
+            if (args.path.endsWith('other.ts')) otherLoaded = true;
+            if (!args.path.endsWith('trigger.ts')) return undefined;
+            await args.defer();
+            return { contents: 'export const value = ' + otherLoaded + ';', loader: 'ts' };
+          });
+        },
+      }
+    ];
+  `,
+  files: {
+    "trigger.ts": `
+      throw new Error('should not be loaded');
+    `,
+    "other.ts": `
+      export const other = 1;
+    `,
+    "routes/index.ts": `
+      import { value } from '../trigger.ts';
+      import { other } from '../other.ts';
+
+      export default function (req, meta) {
+        return new Response('other loaded before defer resolved: ' + value + ', other: ' + other);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("other loaded before defer resolved: true, other: 1");
+    await dev.patch("other.ts", { find: "1", replace: "2" });
+    await dev.fetch("/").equals("other loaded before defer resolved: true, other: 2");
+  },
+});
 devTest("onResolve + onLoad virtual file", {
   framework: minimalFramework,
   pluginFile: `

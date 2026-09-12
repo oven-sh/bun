@@ -41,11 +41,6 @@ use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
 
-#[allow(non_snake_case)]
-mod EventLoop {
-    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
-}
-
 // the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
@@ -129,7 +124,8 @@ pub enum ParseTaskStage {
 
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
-    pub(crate) task: EventLoop::Task,
+    /// Mini-loop queue node for `crate::post` (see `post::Event::NODE`).
+    pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
@@ -212,7 +208,7 @@ impl ParseTask {
     /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
     /// valid until `BundleV2::deinit`. Prefer this over open-coded
     /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
-    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    /// `ParseComplete::run`) must continue to deref the raw `ctx` field directly.
     ///
     /// # Safety
     ///
@@ -233,7 +229,7 @@ impl ParseTask {
         resolve_result: &_resolver::Result,
         source_index: Index,
         // Take `*mut` so the stored BACKREF retains
-        // write provenance for `on_complete` (a `&BundleV2` param would shrink
+        // write provenance for `ParseComplete::run` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'_>,
     ) -> ParseTask {
@@ -345,7 +341,7 @@ impl Default for ParseTask {
 // two callbacks fire for the same `ParseTask` concurrently — the IO→worker
 // hand-off in `run_from_thread_pool_impl` reschedules sequentially). Writes:
 // `ParseTask.{stage, source_index, ...}` (own fields); result is sent via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC queue). Reads `ctx: &BundleV2`
+// `post::<ParseComplete>` (MPSC queue). Reads `ctx: &BundleV2`
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
@@ -2856,7 +2852,7 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
-            task: EventLoop::Task::default(),
+            task: Default::default(),
             value,
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
@@ -2874,55 +2870,9 @@ pub mod parse_worker {
         // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
         drop(core::mem::take(&mut this.jsx));
 
-        // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-        // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-        //
-        // The loop is effectively non-optional — `BundleV2::init`
-        // always sets `linker.r#loop` before scheduling any ParseTask. Running
-        // `on_complete` inline on the worker thread would violate
-        // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-        // bundler graph, which is owned by the main/bundler thread).
-        match worker
-            .ctx
-            .linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
-        {
-            bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct =
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        // SAFETY: `p` is the `result` Box leaked above; ownership
-                        // transfers to `on_complete`, which deallocates it.
-                        unsafe { on_complete(p) };
-                        Ok(())
-                    });
-                let poster = worker
-                    .ctx
-                    .js_poster
-                    .as_ref()
-                    .expect("JS-owned bundle has a poster");
-                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                    // Owning JS VM torn down mid-bundle: free the hop and the result.
-                    // SAFETY: refused ⇒ we own the task box and the leaked result.
-                    unsafe {
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        drop(bun_core::heap::take(result));
-                    }
-                }
-            }
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
-                // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
-                unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                        result,
-                        on_complete_mini,
-                        offset_of!(Result, task),
-                    );
-                }
-            }
-        }
-        // Runs at function exit, i.e. after enqueue.
+        // SAFETY: `result` is a fresh heap allocation that `ParseComplete::run`
+        // (or `refused`) frees; `result.ctx` is the bundle this task belongs to.
+        unsafe { crate::post::post::<ParseComplete>(result) };
         worker.unget();
     }
 
@@ -2936,46 +2886,42 @@ pub mod parse_worker {
         }
     }
 
-    fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
-        // the BACKREF stashed in `result.ctx`.
-        BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // SAFETY: `result` is uniquely owned (callback contract).
-        drop_result_owned_fields(unsafe { &mut *result });
-        // `drop(heap::take(result))` would run full Drop glue:
-        // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
-        // graph's placeholder and moves `result.ast` out, so post-swap
-        // `result.value` holds the *placeholder* `Source` whose
-        // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
-        // graph's swapped-in Source still references (asan use-after-poison at
-        // process_files_to_copy:4241 in bundler_loader/_plugin tests). So:
-        // dealloc the box without running Drop.
-        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
-    }
+    /// A worker finished parsing one file. `Result` is heap-allocated by the
+    /// worker and freed here.
+    pub(crate) struct ParseComplete;
 
-    /// # Safety
-    /// `result` must be a live, uniquely-owned heap allocation produced by
-    /// `bun_core::heap::into_raw(Box<Result>)` in `run_from_thread_pool_impl`
-    /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
-    /// this fn, which deallocates `result` before returning. Must run on the
-    /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub(crate) unsafe fn on_complete(result: *mut Result) {
-        // SAFETY: result allocated via heap::alloc above; uniquely owned here.
-        let r = unsafe { &mut *result };
-        let ctx = r.ctx;
-        // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
-        // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
-        // pass and no other `&mut BundleV2` is live on this (main) thread when the
-        // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
-        BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
-        drop_result_owned_fields(r);
-        // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
-        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+    impl crate::post::Event for ParseComplete {
+        type Item = Result;
+        const NODE: usize = offset_of!(Result, task);
+
+        unsafe fn bundle(result: *mut Result) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract.
+            unsafe { (*result).ctx }.as_mut_ptr()
+        }
+
+        unsafe fn run(result: *mut Result, bv2: &mut BundleV2<'static>) {
+            // SAFETY: `post`'s contract — uniquely owned heap allocation, disjoint from `*bv2`.
+            let r = unsafe { &mut *result };
+            BundleV2::on_parse_task_complete(r, bv2);
+            drop_result_owned_fields(r);
+            // Not `drop(heap::take(result))`: `on_parse_task_complete` SWAPS
+            // `result.value.Success.source` with the graph's placeholder and moves
+            // `result.ast` out, so post-swap `result.value` holds the *placeholder*
+            // `Source` whose `contents: Cow::Borrowed` may alias plugin-/loader-provided
+            // bytes the graph's swapped-in Source still references (asan
+            // use-after-poison in bundler_loader/_plugin tests). Dealloc without Drop.
+            // SAFETY: `result` came from `heap::into_raw(Box<Result>)`; uniquely owned.
+            unsafe {
+                std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>())
+            };
+        }
+
+        unsafe fn refused(result: *mut Result) {
+            // Nothing was swapped out of it, so full Drop is right here.
+            // SAFETY: `result` came from `heap::into_raw(Box<Result>)`; uniquely owned.
+            drop(unsafe { bun_core::heap::take(result) });
+        }
     }
 } // end mod parse_worker
 
-pub(crate) use parse_worker::on_complete;
+pub(crate) use parse_worker::ParseComplete;

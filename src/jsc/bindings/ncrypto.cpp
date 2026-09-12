@@ -953,11 +953,9 @@ BIOPointer X509View::getInfoAccess() const
     return bio;
 }
 
-// BoringSSL's X509 parser accepts a UTCTime with a "+hhmm" / "-hhmm" offset, but
-// its ASN1_TIME_print prints "Bad time value" for one. OpenSSL's, which Node
-// uses, applies the offset and prints the GMT time.
 static void printValidityTime(BIO* bio, const ASN1_TIME* time)
 {
+    // ASN1_TIME_print refuses a UTCTime "+hhmm" offset that the X509 parser accepts. OpenSSL prints it.
     int64_t seconds;
     if (!ASN1_TIME_to_posix(time, &seconds) && ASN1_TIME_to_posix_nonstandard(time, &seconds)) {
         if (DeleteFnPtr<ASN1_TIME, ASN1_TIME_free> utc { ASN1_TIME_set_posix(nullptr, seconds) }) {

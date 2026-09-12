@@ -1909,6 +1909,22 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, which
+ * is why the root directory gets an entry of its own ahead of the files.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
 export class VerdaccioRegistry {
   port: number;
   process: ChildProcess | undefined;

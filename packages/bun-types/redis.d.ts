@@ -58,8 +58,8 @@ declare module "bun" {
     /**
      * Creates a new Redis client
      *
-     * @param url URL to connect to, defaults to `process.env.VALKEY_URL`,
-     * `process.env.REDIS_URL`, or `"valkey://localhost:6379"`
+     * @param url URL to connect to, defaults to `process.env.REDIS_URL`,
+     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`
      * @param options Additional options
      *
      * @example
@@ -80,6 +80,30 @@ declare module "bun" {
      * Amount of data buffered in bytes
      */
     readonly bufferedAmount: number;
+
+    /**
+     * The URL the client was constructed with. When the constructor got no
+     * URL, this is the value it fell back to: `process.env.REDIS_URL`,
+     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`.
+     *
+     * Includes the credentials from the URL. `console.log(client)` prints the
+     * password as `[REDACTED]`. `duplicate()` copies it.
+     *
+     * @example
+     * ```ts
+     * const client = new RedisClient("redis://localhost:6380/2");
+     * const rebuilt = new RedisClient(client.url, client.options);
+     * ```
+     */
+    readonly url: string;
+
+    /**
+     * The options the client runs with, in the shape the constructor accepts.
+     * Each access returns a new object. Fields the constructor did not get
+     * hold their defaults. `tls` is the object passed to the constructor when
+     * one was given, otherwise a boolean (`true` for a `rediss://` URL).
+     */
+    readonly options: Required<RedisOptions>;
 
     /**
      * Callback fired when the client connects to the Redis server
@@ -3987,8 +4011,8 @@ declare module "bun" {
    * Default Redis client
    *
    * Connection information comes from the first of these that is set:
-   * - `process.env.VALKEY_URL`
    * - `process.env.REDIS_URL`
+   * - `process.env.VALKEY_URL`
    * - `"valkey://localhost:6379"`
    */
   export const redis: RedisClient;

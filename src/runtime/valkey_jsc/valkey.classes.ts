@@ -31,6 +31,13 @@ export default [
       bufferedAmount: {
         getter: "getBufferedAmount",
       },
+      url: {
+        getter: "getUrl",
+      },
+      options: {
+        getter: "getOptions",
+        this: true,
+      },
       // Valkey commands
       get: {
         fn: "get",
@@ -638,6 +645,6 @@ export default [
       xgroup: { fn: "xgroup", length: 2 },
       xsetid: { fn: "xsetid", length: 2 },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap", "tls"],
   }),
 ];

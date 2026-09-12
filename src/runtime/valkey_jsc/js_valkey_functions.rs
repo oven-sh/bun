@@ -5,7 +5,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 
-use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
+use super::js_valkey::{JSValkeyClient, Js, SubscriptionCtx};
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
@@ -2078,8 +2078,6 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = frame;
-
         let new_client_ptr = this.clone_without_connecting(global)?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
@@ -2087,6 +2085,9 @@ impl JSValkeyClient {
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
         new_client.this_value.set(JsRef::init_weak(new_client_js));
+        if let Some(tls) = Js::tls_get_cached(frame.this()) {
+            Js::tls_set_cached(new_client_js, global, tls);
+        }
         new_client
             ._subscription_ctx
             .set(SubscriptionCtx::init(new_client)?);

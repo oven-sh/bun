@@ -111,12 +111,16 @@ enum BunSocket {
 /// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
 /// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
 #[derive(Default)]
-struct NativeSocket(Cell<BunSocket>);
+struct NativeSocket {
+    socket: Cell<BunSocket>,
+    /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
+    closed: Cell<bool>,
+}
 
 impl NativeSocket {
     #[inline]
     fn get(&self) -> BunSocket {
-        self.0.get()
+        self.socket.get()
     }
 
     /// `attach_native_callback` stores `h2` (a ref on the parser) in the
@@ -128,12 +132,13 @@ impl NativeSocket {
         socket: *mut crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
-        debug_assert!(matches!(self.0.get(), BunSocket::None));
+        debug_assert!(matches!(self.socket.get(), BunSocket::None));
+        self.closed.set(false);
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper
         // rooted by the caller's `socket_js`.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket = bun_ptr::BackRef::from(socket_nn);
-        self.0
+        self.socket
             .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
                 if SSL {
                     BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -152,13 +157,20 @@ impl NativeSocket {
     }
 
     fn detach(&self) {
-        match self.0.replace(BunSocket::None) {
+        match self.socket.replace(BunSocket::None) {
             BunSocket::Tcp(socket) => socket.detach_native_callback(),
             BunSocket::Tls(socket) => socket.detach_native_callback(),
             // The ref `attach` took.
             BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
             BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
             BunSocket::None => {}
+        }
+    }
+
+    /// The socket released the parser. `detach` gets here too, but with nothing attached.
+    fn note_socket_closed(&self) {
+        if !matches!(self.socket.get(), BunSocket::None) {
+            self.closed.set(true);
         }
     }
 }
@@ -2401,18 +2413,25 @@ impl H2FrameParser {
         );
     }
 
-    pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
+    /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
+    fn call_on_write(&self, bytes: JSValue) -> JSValue {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return JSValue::ZERO;
         };
-        value.ensure_still_alive();
+        bytes.ensure_still_alive();
         let _dispatch = self.enter_dispatch();
-        self.handlers
-            .get()
-            .call_event_handler_with_result(event, this_value, &[ctx_value, value])
+        self.handlers.get().call_event_handler_with_result(
+            JSH2FrameParser::Gc::onWrite,
+            this_value,
+            &[
+                ctx_value,
+                bytes,
+                JSValue::from(self.native_socket.closed.get()),
+            ],
+        )
     }
 
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
@@ -2708,7 +2727,7 @@ impl H2FrameParser {
                         return 0;
                     };
                     self.js_socket_flushing.set(true);
-                    let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                    let result = self.call_on_write(output_value);
                     self.js_socket_flushing.set(false);
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
@@ -2781,7 +2800,7 @@ impl H2FrameParser {
                     .to_js(bytes, &self.handlers.get().global())
                 {
                     Ok(output_value) => {
-                        let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                        let result = self.call_on_write(output_value);
                         if result.is_number() {
                             result.to_int32()
                         } else {
@@ -7513,6 +7532,7 @@ impl H2FrameParser {
         // detach_native_socket can drop the socket's last ref (Writeonly deref),
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
+        self.native_socket.note_socket_closed();
         self.detach_native_socket();
     }
 

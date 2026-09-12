@@ -2303,12 +2303,19 @@ pub fn init(
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
-                abs_ca_file_name =
-                    ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
-                        &original_cwd_clone,
-                        &mut path_buf,
-                        &[options.ca_file_name],
-                    ));
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                    &original_cwd_clone,
+                    &mut path_buf,
+                    &[options.ca_file_name],
+                ) else {
+                    Output::err(
+                        "HTTPThread",
+                        "could not find CA file: '{s}'",
+                        &[&bstr::BStr::new(options.ca_file_name)],
+                    );
+                    Global::crash();
+                };
+                abs_ca_file_name = ZBox::from_bytes(joined);
             }
         }
     }

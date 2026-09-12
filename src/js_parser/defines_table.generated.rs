@@ -190,10 +190,11 @@ pub(crate) fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIden
         }
         9 => {
             #[allow(non_upper_case_globals)]
-            static __LOOKUP_PURE_GLOBAL_IDENTIFIER_L9: [([u8; 9], PureGlobalIdentifierValue); 43] = [
+            static __LOOKUP_PURE_GLOBAL_IDENTIFIER_L9: [([u8; 9], PureGlobalIdentifierValue); 44] = [
                 (*b"Animation", PureGlobalIdentifierValue::Other),
                 (*b"AudioNode", PureGlobalIdentifierValue::Other),
                 (*b"BlobEvent", PureGlobalIdentifierValue::Other),
+                (*b"Clipboard", PureGlobalIdentifierValue::Other),
                 (*b"DOMMatrix", PureGlobalIdentifierValue::Other),
                 (*b"DOMParser", PureGlobalIdentifierValue::Other),
                 (*b"DelayNode", PureGlobalIdentifierValue::Other),
@@ -388,13 +389,14 @@ pub(crate) fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIden
         }
         13 => {
             #[allow(non_upper_case_globals)]
-            static __LOOKUP_PURE_GLOBAL_IDENTIFIER_L13: [([u8; 13], PureGlobalIdentifierValue); 39] = [
+            static __LOOKUP_PURE_GLOBAL_IDENTIFIER_L13: [([u8; 13], PureGlobalIdentifierValue); 40] = [
                 (*b"AudioListener", PureGlobalIdentifierValue::Other),
                 (*b"CSSImportRule", PureGlobalIdentifierValue::Other),
                 (*b"CSSStyleSheet", PureGlobalIdentifierValue::Other),
                 (*b"CSSTransition", PureGlobalIdentifierValue::Other),
                 (*b"CanvasPattern", PureGlobalIdentifierValue::Other),
                 (*b"CharacterData", PureGlobalIdentifierValue::Other),
+                (*b"ClipboardItem", PureGlobalIdentifierValue::Other),
                 (*b"ConvolverNode", PureGlobalIdentifierValue::Other),
                 (*b"DOMStringList", PureGlobalIdentifierValue::Other),
                 (*b"GamepadButton", PureGlobalIdentifierValue::Other),

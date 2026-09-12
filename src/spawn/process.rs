@@ -2360,6 +2360,10 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
+            /// POSIX: arm the process-wide SIGINT/SIGTERM forwarder. Work-pool
+            /// callers that would race the global handlers and pid opt out.
+            pub forward_signals: bool,
+
             #[cfg(windows)]
             pub windows: WindowsOptions,
             #[cfg(not(windows))]
@@ -2427,6 +2431,7 @@ mod spawn_process_body {
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
+                    forward_signals: true,
                     #[cfg(windows)]
                     windows: Default::default(),
                     #[cfg(not(windows))]
@@ -3184,8 +3189,11 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
-            let _signals = SignalForwarding::register();
+            let forward_signals = options.forward_signals;
+            if forward_signals {
+                Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+            }
+            let _signals = forward_signals.then(SignalForwarding::register);
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
@@ -3198,14 +3206,16 @@ mod spawn_process_body {
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
-            Bun__currentSyncPID.store(
-                if no_orphans {
-                    -i64::from(process.pid)
-                } else {
-                    i64::from(process.pid)
-                },
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            if forward_signals {
+                Bun__currentSyncPID.store(
+                    if no_orphans {
+                        -i64::from(process.pid)
+                    } else {
+                        i64::from(process.pid)
+                    },
+                    core::sync::atomic::Ordering::Relaxed,
+                );
+            }
 
             let mut jc = JobControl {
                 prev: 0,
@@ -3261,7 +3271,9 @@ mod spawn_process_body {
                     }
                 }
             });
-            Bun__sendPendingSignalIfNecessary();
+            if forward_signals {
+                Bun__sendPendingSignalIfNecessary();
+            }
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
             let mut out_fds: [Fd; 2] = [

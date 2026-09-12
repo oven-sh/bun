@@ -69,6 +69,9 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
 // Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
 new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
+// Testing hook for test/js/web/clipboard/clipboard.test.ts: seconds the clipboard helper
+// (`xclip` etc., src/runtime/webcore/clipboard.rs) may run before its watchdog kills it.
+platform_specific_new!(pub BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: unsigned, posix = "BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT", windows = None, { default: 10 });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // Testing hook for `bun build --compile`, debug builds only: lowers the 4 GiB
@@ -138,6 +141,7 @@ new!(pub COLORTERM: string, "COLORTERM", {});
 new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
+platform_specific_new!(pub DISPLAY: string, posix = "DISPLAY", windows = None, {});
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
 platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", windows = None, {});
 // TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
@@ -194,6 +198,7 @@ new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
+platform_specific_new!(pub WAYLAND_DISPLAY: string, posix = "WAYLAND_DISPLAY", windows = None, {});
 // The same as system_root.
 // TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
 //                      specify both WINDIR and SYSTEMROOT and the loader would check both?

@@ -209,9 +209,10 @@ constexpr uint32_t kBunVImageDoNotTile = 16;
 // Lanczos-3, which is what we route here.)
 constexpr uint32_t kBunVImageNoAllocate = 512;
 
-// RAII pool so every early-return drains. Declared first in each entry point —
-// the framework calls beneath autorelease into it, and the WorkPool thread has
-// no enclosing pool of its own.
+// RAII pool so every early-return drains. Declared before any framework call in
+// each entry point (after the pasteboard lock, where there is one): the
+// framework calls beneath autorelease into it, and the WorkPool thread has no
+// enclosing pool of its own.
 struct Pool {
     const Syms* s;
     void* p;
@@ -266,6 +267,14 @@ inline CFRef generalPasteboard(const Syms* s)
     }
     return msg<CFRef>(s, cls, s->sel_registerName("generalPasteboard"));
 }
+
+// One thread in NSPasteboard at a time, process-wide. It is not thread-safe:
+// `navigator.clipboard` operations run on several WorkPool threads at once and
+// `Bun.Image.fromClipboard()` on the JS thread, and two of them inside the
+// pasteboard together segfault inside AppKit. Every entry point below that
+// touches the pasteboard takes this before pushing its autorelease pool, so
+// the pool also drains under it.
+std::mutex pasteboardLock;
 
 } // namespace
 
@@ -525,9 +534,9 @@ int32_t bun_coregraphics_reflect(const uint8_t* src, uint32_t w, uint32_t h,
 // AppKit to the dlopen list — `NSPasteboard` is the only symbol we need from
 // it, and AppKit is already loaded in any GUI process. We never decode here:
 // the pasteboard hands back a container (PNG, TIFF, HEIC, …) and Bun.Image's
-// regular decode path handles it. NSPasteboard is documented as main-thread
-// safe to *read*; we still call it on the JS thread (via the static
-// `fromClipboard` accessor), not the WorkPool.
+// regular decode path handles it. Called on the JS thread (via the static
+// `fromClipboard` accessor); `pasteboardLock` serializes it against the
+// `navigator.clipboard` operations on the WorkPool.
 //
 // Two-phase like encode: `out=nullptr` → probe (returns length, 0 = no image),
 // stashes the matched NSData in a thread-local; second call copies and
@@ -538,9 +547,9 @@ int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
-    Pool pool(s);
     thread_local CFRef pending = nullptr;
 
+    // The second phase only touches the NSData retained by the first.
     if (out && pending) {
         long n = s->CFDataGetLength(pending);
         std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
@@ -554,6 +563,8 @@ int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_
         pending = nullptr;
     }
 
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
+    Pool pool(s);
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;
     CFRef dataForType = s->sel_registerName("dataForType:");
@@ -585,9 +596,100 @@ int64_t bun_coregraphics_clipboard_change_count()
 {
     auto s = load();
     if (!s) return -1;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
     Pool pool(s);
     CFRef pb = generalPasteboard(s);
     return pb ? msg<long>(s, pb, s->sel_registerName("changeCount")) : -1;
+}
+
+// ── NSPasteboard reader / writer for `navigator.clipboard` ─────────────────
+// Two-phase read: this call reports size + a retained NSData in `*out_data`; the caller then
+// copies/releases via `bun_coregraphics_clipboard_take_data`. `*out_data` null ⇔ absent.
+int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, size_t* out_len)
+{
+    *out_data = nullptr;
+    *out_len = 0;
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
+    Pool pool(s);
+
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    CFRef ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
+    if (!ustr) return CG_UNAVAILABLE;
+    CFRef nsdata = msg<CFRef>(s, pb, s->sel_registerName("dataForType:"), ustr);
+    s->CFRelease(ustr);
+    if (!nsdata)
+        return CG_OK; // that representation is absent — not an error
+    // dataForType: returns autoreleased; retain so it survives the pool drain
+    // before the caller copies it out. A present 0-byte NSData still retains:
+    // `*out_data` is null ⇔ the representation is absent.
+    *out_data = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+    if (!*out_data) return CG_UNAVAILABLE;
+    long n = s->CFDataGetLength(nsdata);
+    *out_len = n > 0 ? static_cast<size_t>(n) : 0;
+    return CG_OK;
+}
+
+// Copies the bytes of a `bun_coregraphics_clipboard_read_type` handle into `out`
+// (which must have room for the length that call reported) and releases it.
+int32_t bun_coregraphics_clipboard_take_data(void* data, uint8_t* out)
+{
+    auto s = load();
+    // Never report success over an unwritten buffer: the caller would hand a run
+    // of zeroes to JS as the clipboard's contents.
+    if (!s) return CG_UNAVAILABLE;
+    long n = s->CFDataGetLength(data);
+    if (n > 0) std::memcpy(out, s->CFDataGetBytePtr(data), static_cast<size_t>(n));
+    s->CFRelease(data);
+    return CG_OK;
+}
+
+// One `clearContents` then one `setData:forType:` per representation — the
+// documented multi-flavour write. Every CFData/CFString is created before the
+// destructive clear, so a failed write never costs the previous contents.
+int32_t bun_coregraphics_clipboard_write_types(const char* const* utis, const uint8_t* const* datas, const size_t* lens, size_t count)
+{
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
+    Pool pool(s);
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    // The Rust caller never passes 0 or more than the 3 supported MIME types.
+    enum { kMaxRepresentations = 8 };
+    if (count == 0 || count > kMaxRepresentations) return CG_ENCODE_FAILED;
+    // CFData wants a real base pointer even for length 0 (Rust hands us a
+    // dangling sentinel for an empty slice).
+    static const uint8_t kEmpty = 0;
+    CFRef cfData[kMaxRepresentations] = {};
+    CFRef cfType[kMaxRepresentations] = {};
+    int32_t status = CG_OK;
+    for (size_t i = 0; i < count; i++) {
+        cfData[i] = s->CFDataCreateWithBytesNoCopy(nullptr, lens[i] ? datas[i] : &kEmpty, static_cast<long>(lens[i]), *s->kCFAllocatorNull);
+        cfType[i] = cfData[i] ? s->CFStringCreateWithCString(nullptr, utis[i], kBunCFStringEncodingUTF8) : nullptr;
+        if (!cfType[i]) {
+            status = CG_ENCODE_FAILED;
+            break;
+        }
+    }
+    if (status == CG_OK) {
+        msg<long>(s, pb, s->sel_registerName("clearContents"));
+        for (size_t i = 0; i < count; i++) {
+            // BOOL is `signed char` on x86_64 and `bool` on arm64; both return
+            // in the low byte, so read it as `signed char`.
+            if (msg<signed char>(s, pb, s->sel_registerName("setData:forType:"), cfData[i], cfType[i]) == 0) {
+                status = CG_ENCODE_FAILED;
+                break;
+            }
+        }
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (cfData[i]) s->CFRelease(cfData[i]);
+        if (cfType[i]) s->CFRelease(cfType[i]);
+    }
+    return status;
 }
 
 } // extern "C"
@@ -602,4 +704,7 @@ extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*,
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
 extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
 extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
+extern "C" int bun_coregraphics_clipboard_read_type(const char*, void**, unsigned long*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_take_data(void*, unsigned char*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_write_types(const char* const*, const void* const*, const unsigned long*, unsigned long) { return 1; }
 #endif

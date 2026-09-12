@@ -791,8 +791,7 @@ pub mod bv2_impl {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
                 }
 
-                /// JS thread, before a bundle pass takes this plugin. The pass and its parse workers read
-                /// the filter lists with no lock, so `addFilter` / `onBeforeParse` refuse from here on.
+                /// JS thread, before a bundle pass takes this plugin: `addFilter` / `onBeforeParse` throw from here on.
                 pub fn freeze_filters(&self) {
                     JSBundlerPlugin__freezeFilters(self)
                 }

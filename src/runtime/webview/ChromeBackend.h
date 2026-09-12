@@ -351,6 +351,8 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
+    bool acrossCommit = false; // the view's main frame committed another document while this was in flight
+    bool repeat = false; // this is the one re-send a stranded command gets (Transport::repeatStrandedCapture)
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
@@ -477,6 +479,10 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
+    // Recovery for a Page.captureScreenshot that a main-frame commit strands
+    // (Chrome never replies to it). See the definitions.
+    void mainFrameCommitted(JSC::JSGlobalObject*, JSWebView*);
+    void repeatStrandedCapture(JSC::JSGlobalObject*, JSWebView*);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);

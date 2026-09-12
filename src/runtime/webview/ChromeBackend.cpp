@@ -616,6 +616,18 @@ static constexpr ASCIILiteral cdpButton(uint8_t b)
     }
 }
 
+// format is a JSON string; quality is 0-100 and Chrome ignores it for PNG.
+static Command captureScreenshotCommand(uint32_t id, std::span<const char> sessionId,
+    ScreenshotFormat format, uint8_t quality)
+{
+    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
+        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
+                                                           : "\"png\""_s;
+    return Command(id, "Page.captureScreenshot"_s, sessionId)
+        .raw("format"_s, fmtLit)
+        .num("quality"_s, static_cast<int32_t>(quality));
+}
+
 // Bun modifier bits → CDP modifier integer. CDP uses bit 0=Alt, 1=Ctrl,
 // 2=Meta, 3=Shift. ipc_protocol.h's ModShift=1 ModCtrl=2 ModAlt=4 ModMeta=8.
 static constexpr int32_t cdpModifiers(uint8_t m)
@@ -1143,10 +1155,18 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        // An <iframe>'s commit: the page's document, url and in-flight captures are unaffected.
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return;
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
+
+        mainFrameCommitted(g, view);
+        // A back/forward cache restore fires no load event: the restored page is complete now.
+        auto type = jsonString(jsonField(params, { "type", 4 }));
+        if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
+            repeatStrandedCapture(g, view);
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -1168,6 +1188,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        repeatStrandedCapture(g, view);
         return;
     }
 
@@ -1297,6 +1318,47 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto event = WebCore::MessageEvent::create(methodAtom, WTF::move(init), WebCore::Event::IsTrusted::Yes);
     scope.release();
     view->wrapped().dispatchEvent(event);
+}
+
+void Transport::mainFrameCommitted(JSGlobalObject* g, JSWebView* view)
+{
+    uint32_t strandedRepeat = 0;
+    for (auto& [id, entry] : m_pending) {
+        if (entry.viewId != view->m_viewId) continue;
+        entry.acrossCommit = true;
+        if (entry.repeat) strandedRepeat = id;
+    }
+    // One repeat per screenshot() call. A commit over the repeat rejects now,
+    // not at a load event that the new document might never fire.
+    if (strandedRepeat) {
+        m_pending.remove(strandedRepeat);
+        settle(g, view, PendingSlot::Screenshot, false,
+            createError(g, "screenshot: the page navigated before the capture completed"_s));
+    }
+}
+
+// Chrome never answers about half of the Page.captureScreenshot commands that
+// are in flight when the main frame commits another document (all of them for
+// a reload or a back/forward cache restore). Once the new document is in
+// place, drop the stranded id and capture that document instead.
+void Transport::repeatStrandedCapture(JSGlobalObject* g, JSWebView* view)
+{
+    uint32_t strandedId = 0;
+    for (auto& [id, entry] : m_pending) {
+        if (entry.viewId == view->m_viewId && entry.method == Method::PageCaptureScreenshot && entry.acrossCommit) {
+            strandedId = id;
+            break;
+        }
+    }
+    if (!strandedId) return;
+    m_pending.remove(strandedId);
+    if (!view->m_pendingScreenshot) return;
+
+    uint32_t cid = nextId();
+    Pending entry { Method::PageCaptureScreenshot, PendingSlot::Screenshot, view->m_viewId };
+    entry.repeat = true;
+    m_pending.add(cid, entry);
+    send(cid, captureScreenshotCommand(cid, sidSpan(view->m_sessionId), view->m_screenshotFormat, view->m_screenshotQuality));
 }
 
 void Transport::onClose()
@@ -1511,21 +1573,13 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
 {
     auto& t = transport();
     uint32_t id = t.nextId();
-    // CDP takes format as a JSON string. quality is ignored for PNG by
-    // Chrome; for JPEG/WebP it's 0-100. Pass it unconditionally — Chrome
-    // silently ignores quality for PNG, and the builder's && ref-qualifier
-    // means conditionals break the chain (lvalue after materialization).
     // The response handler reads view->m_screenshotFormat (stashed by
     // JSWebView::screenshot before dispatch) to stamp the right MIME type
-    // on the Blob.
-    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
-        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
-                                                           : "\"png\""_s;
+    // on the Blob; repeatStrandedCapture reads both to send the capture again.
+    view->m_screenshotQuality = quality;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
-        Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
-            .raw("format"_s, fmtLit)
-            .num("quality"_s, static_cast<int32_t>(quality)));
+        captureScreenshotCommand(id, sidSpan(view->m_sessionId), format, quality));
 }
 
 // One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is

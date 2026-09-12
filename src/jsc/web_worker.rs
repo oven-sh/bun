@@ -64,11 +64,11 @@ pub struct WebWorker {
     parent: *mut VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
-    /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
+    /// The `bun_jsc::vm_handle` test gate mode the worker VM arms (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
     /// a nested worker parked on a post to its worker parent would keep that
     /// parent from ever reaching its own wait).
-    arm_test_gate: bool,
+    test_gate: crate::vm_handle::TestGate,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -398,10 +398,11 @@ impl WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
-            arm_test_gate: cfg!(debug_assertions)
-                && parent_ref.is_main_thread()
-                && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
-                    .unwrap_or(false),
+            test_gate: if parent_ref.is_main_thread() {
+                crate::vm_handle::TestGate::from_env()
+            } else {
+                crate::vm_handle::TestGate::Off
+            },
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -579,8 +580,8 @@ impl WebWorker {
     }
 
     #[inline]
-    pub(crate) fn arm_test_gate(&self) -> bool {
-        self.arm_test_gate
+    pub(crate) fn test_gate(&self) -> crate::vm_handle::TestGate {
+        self.test_gate
     }
 
     #[inline]

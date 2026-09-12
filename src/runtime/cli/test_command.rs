@@ -2661,11 +2661,32 @@ impl TestCommand {
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
             && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+        let coverage_below_threshold = coverage_options.enabled
+            && coverage_options.fractions.failing
+            && coverage_options.fail_on_low_coverage;
+        if coverage_below_threshold {
+            // A metric the config left out holds 0 and is not enforced.
+            let thresholds = coverage_options.fractions;
+            match (thresholds.functions > 0.0, thresholds.lines > 0.0) {
+                (true, true) => pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Coverage is below the configured <b>test.coverageThreshold<r> (functions: {:.2}%, lines: {:.2}%)",
+                    thresholds.functions * 100.0,
+                    thresholds.lines * 100.0
+                ),
+                (true, false) => pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Function coverage is below the configured <b>test.coverageThreshold<r> of {:.2}%",
+                    thresholds.functions * 100.0
+                ),
+                _ => pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Line coverage is below the configured <b>test.coverageThreshold<r> of {:.2}%",
+                    thresholds.lines * 100.0
+                ),
+            }
+            Output::flush();
+        }
         if should_fail_on_no_tests
             || summary.fail > 0
-            || (coverage_options.enabled
-                && coverage_options.fractions.failing
-                && coverage_options.fail_on_low_coverage)
+            || coverage_below_threshold
             || !write_snapshots_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {

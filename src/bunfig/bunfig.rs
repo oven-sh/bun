@@ -499,22 +499,35 @@ impl<'a> Parser<'a> {
                         }
 
                         self.expect(&expr, ExprTag::EObject)?;
-                        if let Some(functions) = expr.get(b"functions") {
-                            self.expect(&functions, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.functions =
-                                functions.as_number().expect("infallible: type checked");
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                        if let Some(lines) = expr.get(b"lines") {
-                            self.expect(&lines, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.lines =
-                                lines.as_number().expect("infallible: type checked");
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                        if let Some(stmts) = expr.get(b"statements") {
-                            self.expect(&stmts, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.stmts =
-                                stmts.as_number().expect("infallible: type checked");
+                        // A metric the object leaves out stays 0 and so never fails.
+                        self.ctx.test_options.coverage.fractions.functions = 0.0;
+                        self.ctx.test_options.coverage.fractions.lines = 0.0;
+                        self.ctx.test_options.coverage.fractions.stmts = 0.0;
+
+                        let obj = expr.data.e_object().expect("infallible: variant checked");
+                        for prop in obj.properties.slice() {
+                            let key_expr = prop.key.as_ref().expect("infallible: prop has key");
+                            let ExprData::EString(key) = &key_expr.data else {
+                                continue;
+                            };
+                            let value = prop.value.as_ref().expect("infallible: prop has value");
+                            self.expect(value, ExprTag::ENumber)?;
+                            let v = value.as_number().expect("infallible: type checked");
+
+                            if key.eql_comptime(b"functions") || key.eql_comptime(b"function") {
+                                self.ctx.test_options.coverage.fractions.functions = v;
+                            } else if key.eql_comptime(b"lines") || key.eql_comptime(b"line") {
+                                self.ctx.test_options.coverage.fractions.lines = v;
+                            } else if key.eql_comptime(b"statements")
+                                || key.eql_comptime(b"statement")
+                            {
+                                self.ctx.test_options.coverage.fractions.stmts = v;
+                            } else {
+                                return self.add_error(
+                                    key_expr.loc,
+                                    b"coverageThreshold keys must be \"lines\", \"functions\", or \"statements\"",
+                                );
+                            }
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                     }

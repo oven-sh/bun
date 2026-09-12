@@ -136,7 +136,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         };
         // `defer blob.detach()` — RAII via scopeguard.
         let blob = scopeguard::guard(blob, |b: Blob| b.detach());
-        blob.resolve_size();
+        blob.resolve_size_for_stream();
         let size = blob.size.get();
         return ReadableStream::from_blob_copy_ref(this, &blob, size);
     }

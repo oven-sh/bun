@@ -488,7 +488,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return {};
     }
 
-    if (filename.startsWith("file://"_s)) {
+    if (filename.startsWith("file:"_s)) {
         WTF::URL fileURL = WTF::URL(filename);
         if (!fileURL.isValid() || !fileURL.protocolIsFile()) {
             JSC::throwTypeError(globalObject, scope, "invalid file: URL passed to dlopen"_s);

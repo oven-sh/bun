@@ -465,6 +465,12 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
         return {};
     }
 
+    size_t byteLength = castedThis->byteLength();
+    if (offset >= byteLength) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsNumber(0));
+    if (length > byteLength - offset) [[unlikely]]
+        length = byteLength - offset;
+
     size_t written = 0;
 
     // Per Node docs, `'ascii'` on write is equivalent to `'latin1'` —
@@ -2554,16 +2560,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
+        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+        RETURN_IF_EXCEPTION(scope, {});
         encodingValue = offsetValue;
 
         auto* str = stringValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
-        if (castedThis->isDetached()) [[unlikely]] {
-            throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-            return {};
-        }
         offset = 0;
         length = castedThis->byteLength();
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
@@ -2599,15 +2603,19 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
+    size_t byteLength = castedThis->byteLength();
+    if (offset > byteLength) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (length > byteLength - offset) [[unlikely]] {
+        switch (encoding) {
+        case WebCore::BufferEncodingType::utf8:
+        case WebCore::BufferEncodingType::latin1:
+        case WebCore::BufferEncodingType::ascii:
+            return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length"_s);
+        default:
+            length = byteLength - offset;
+        }
     }
-    size_t currentByteLength = castedThis->byteLength();
-    if (offset >= currentByteLength)
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
-    size_t currentRemaining = currentByteLength - offset;
-    if (length > currentRemaining) length = currentRemaining;
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }

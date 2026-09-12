@@ -4967,8 +4967,7 @@ class ClientHttp2Session extends Http2Session {
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
   #reservedStreamsCount: number = 0;
-  // node's kMaxOriginSetSize (CVE-2026-48619): the peer's ORIGIN frames may not grow
-  // originSet past this, or the session is destroyed with ERR_HTTP2_TOO_MANY_ORIGINS.
+  // Cap on originSet entries from the peer's ORIGIN frames (node's maxOriginSetSize option).
   #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
   // Client-side SETTINGS_MAX_CONCURRENT_STREAMS accounting: requests whose HEADERS frame has been
@@ -5325,8 +5324,7 @@ class ClientHttp2Session extends Http2Session {
       // node.js emits value, origin, streamId
       self.emit("altsvc", value, origin, streamId);
     },
-    // The native parser dispatches one origin as a string and several as an array. It never
-    // dispatches an empty frame.
+    // The native parser never dispatches an empty ORIGIN frame.
     origin(self: ClientHttp2Session, origin: string | Array<string>) {
       if (!self) return;
       if (self.encrypted) {

@@ -240,6 +240,12 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
+// Node's checkAborted: reads `.aborted` off the signal object itself (so
+// AbortSignal-shaped polyfills work) and throws before any I/O is started.
+function checkAborted(signal) {
+  if (signal?.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
+}
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
@@ -250,6 +256,7 @@ const exports = {
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    checkAborted(args[1]?.signal);
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
   close: asyncWrap(fs.close, "close"),
@@ -306,10 +313,12 @@ const exports = {
   readdir: asyncWrap(fs.readdir, "readdir"),
   readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    checkAborted(args[0]?.signal);
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: any[]) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    checkAborted(args[1]?.signal);
     if (
       !$isTypedArrayView(args[0]) &&
       typeof args[0] !== "string" &&

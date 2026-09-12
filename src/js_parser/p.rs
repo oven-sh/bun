@@ -353,8 +353,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
-    /// A CommonJS file of a package in `unwrap_commonjs_packages`. `init` sets it
-    /// from the path, `prepare_for_visit_pass` clears it for an ES module.
+    /// The file is CommonJS in a package of `unwrap_commonjs_packages`.
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,

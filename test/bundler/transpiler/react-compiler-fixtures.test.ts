@@ -15,6 +15,17 @@
 // parse, so we retry with the failing files removed (their build error is
 // recorded and asserted on in that fixture's test case).
 //
+// The assertions below only look at slot counts, so to see what a compiler
+// change does to the actual output of the whole corpus, dump both build passes
+// before and after the change and diff the two trees:
+//
+//   REACT_COMPILER_FIXTURE_DUMP=/tmp/rc-before bun bd test test/bundler/transpiler/react-compiler-fixtures.test.ts
+//   REACT_COMPILER_FIXTURE_DUMP=/tmp/rc-after  bun bd test test/bundler/transpiler/react-compiler-fixtures.test.ts
+//   diff -ru /tmp/rc-before /tmp/rc-after
+//
+// Each fixture becomes `<dir>/{plain,minify}/<fixture>.js` holding its output,
+// or a `// build error` comment followed by the error when it failed to build.
+//
 // ## Pragma handling
 //
 // Upstream's snap harness parses `// @key value` directives from each fixture
@@ -26,10 +37,10 @@
 //   - relaxes the slot-count check when the effective `compilationMode` differs
 //     from Bun's hardcoded `infer` default (upstream's snap default is `all`).
 
-import { describe, test, expect, beforeAll } from "bun:test";
-import { readFileSync, existsSync } from "node:fs";
-import { join, basename } from "node:path";
-import { isDebug, isASAN } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 const FIXTURE_ROOT = join(import.meta.dir, "react-compiler-fixtures");
 // `parse_fixture_pragmas` and the lint-mode validation passes are
@@ -37,7 +48,7 @@ const FIXTURE_ROOT = join(import.meta.dir, "react-compiler-fixtures");
 // builds without ASAN compile them out, so pragma-gated fixtures cannot be
 // validated there.
 const HAS_FIXTURE_PRAGMA_SUPPORT = isDebug || isASAN;
-const SNAPSHOT_BUN_OUTPUT = !!process.env.REACT_COMPILER_FIXTURE_SNAPSHOT;
+const DUMP_DIR = process.env.REACT_COMPILER_FIXTURE_DUMP;
 const FILTER = process.env.REACT_COMPILER_FIXTURE_FILTER;
 
 const INPUT_EXTS = [".js", ".jsx", ".ts", ".tsx", ".mjs"];
@@ -383,9 +394,21 @@ async function compileInto(into: Compiled, minify: false | { syntax: true }): Pr
   }
 }
 
+function dumpInto(dir: string, results: Compiled): void {
+  for (const [name, result] of results) {
+    const path = join(dir, name + ".js");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "output" in result ? result.output : `// build error\n${result.error}\n`);
+  }
+}
+
 async function compileAll(): Promise<void> {
   await compileInto(compiled, false);
   await compileInto(compiledMinify, { syntax: true });
+  if (DUMP_DIR) {
+    dumpInto(join(DUMP_DIR, "plain"), compiled);
+    dumpInto(join(DUMP_DIR, "minify"), compiledMinify);
+  }
 }
 
 describe("react-compiler upstream fixtures", () => {
@@ -426,10 +449,6 @@ describe("react-compiler upstream fixtures", () => {
       if (result == null) throw new Error(`no Bun.build result recorded for fixture "${name}"`);
       const output = "output" in result ? result.output : "";
       const buildError = "error" in result ? result.error : null;
-
-      if (SNAPSHOT_BUN_OUTPUT) {
-        expect({ buildError, output }).toMatchSnapshot();
-      }
 
       if (isErrorFixture || isBailFixture) {
         // Upstream expects a compile error / bailout. Bun may surface this as a

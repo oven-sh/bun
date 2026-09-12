@@ -280,6 +280,71 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
+  // Naming a workspace member used to rewrite the entry linking it to `workspace:*` (or, with --latest / an explicit
+  // range, to send the name to the registry), and to add an entry to a root that did not declare the member.
+  test.each([
+    ["workspace:^", ["pkg1"]],
+    ["workspace:~", ["pkg1"]],
+    ["workspace:1.0.0", ["pkg1"]],
+    ["^1.0.0", ["pkg1"]],
+    ["workspace:^", ["pkg1", "--latest"]],
+    ["workspace:^", ["pkg1@^1.0.0"]],
+    ["workspace:^", ["pkg1@latest"]],
+  ])("a %s entry linking a workspace member is kept as written by bun update %j", async (literal, args) => {
+    const dir = await setup(MONOREPO({}, { dependencies: { pkg1: literal } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", ...args);
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  // Same rule for the other non-registry kinds: the registry has a no-deps, so naming this entry with --latest or an
+  // explicit spec used to replace the folder with the registry package (exit 0).
+  test.each([[["no-deps"]], [["no-deps", "--latest"]], [["no-deps@^1.0.0"]], [["no-deps@latest"]]])(
+    "a file: entry is kept as written by bun update %j",
+    async args => {
+      const dir = await setup({
+        "package.json": root({ dependencies: { "no-deps": "file:./local-no-deps" } }),
+        "local-no-deps/package.json": { name: "no-deps", version: "1.0.0" },
+      });
+      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      await run(dir, "update", ...args);
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
+    },
+  );
+
+  test("bun update <workspace member> from a member declaring it keeps the entry as written", async () => {
+    const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:~" } } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir, PKG2), lockText(dir)]);
+    await runIn(dir, PKG2, "update", "pkg1");
+    expect(await pkgText(dir, PKG2)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  test("bun update <workspace member> -r keeps every workspace's entry as written", async () => {
+    const dir = await setup(
+      WORKSPACES(
+        { dependencies: { pkg1: "workspace:^" } },
+        { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:1.0.0" } } },
+      ),
+    );
+    const [rootBefore, pkg2Before, lockBefore] = await Promise.all([pkgText(dir), pkgText(dir, PKG2), lockText(dir)]);
+    await run(dir, "update", "pkg1", "-r");
+    expect(await pkgText(dir)).toBe(rootBefore);
+    expect(await pkgText(dir, PKG2)).toBe(pkg2Before);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  test("bun update <workspace member> does not add it to a root that does not declare it", async () => {
+    const dir = await setup(MONOREPO());
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", "pkg1");
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
   test.each([[[]], [["--latest"]]])("bun update %j leaves folder, tarball and workspace literals alone", async args => {
     const dependencies = {
       "no-deps": "^1.0.0",

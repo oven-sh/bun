@@ -1137,6 +1137,8 @@ pub struct H2FrameParser {
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
+    /// The errno behind `transport_write_fatal`: the code the deferred tick closes with.
+    transport_write_errno: Cell<i32>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -2516,7 +2518,7 @@ impl H2FrameParser {
             );
             let written: u32 = if result < 0 {
                 if Self::is_transport_fatal_write_result(result) {
-                    self.note_transport_write_fatal();
+                    self.note_transport_write_fatal(result);
                 }
                 0
             } else {
@@ -2558,7 +2560,7 @@ impl H2FrameParser {
                 );
                 let written: u32 = if result < 0 {
                     if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
+                        self.note_transport_write_fatal(result);
                     }
                     0
                 } else {
@@ -2588,7 +2590,7 @@ impl H2FrameParser {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
                     if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
+                        self.note_transport_write_fatal(result);
                     }
                     0
                 } else {
@@ -2619,7 +2621,7 @@ impl H2FrameParser {
         let result: i32 = socket.write_maybe_corked(bytes);
         let written: u32 = if result < 0 {
             if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal();
+                self.note_transport_write_fatal(result);
             }
             0
         } else {
@@ -2960,9 +2962,12 @@ impl H2FrameParser {
         result < -1
     }
 
-    fn note_transport_write_fatal(&self) {
+    /// `result` is the negated errno. Keep it: the session has no other source
+    /// for the failure, and a clean close ends the request with no 'error'.
+    fn note_transport_write_fatal(&self, result: i32) {
         if !self.transport_write_fatal.get() {
             self.transport_write_fatal.set(true);
+            self.transport_write_errno.set(-result);
             self.register_auto_flush();
         }
     }
@@ -2977,23 +2982,32 @@ impl H2FrameParser {
     /// a semi-connected socket runs no terminal callback (stranding its refs, see the
     /// close host_fn in socket_body).
     fn close_transport_after_fatal_write(&self) {
+        // Only a client reports the errno: it has a request to fail. A server closes
+        // quietly, as Node's does: an unheard stream 'error' would end the process.
+        let errno = if self.is_server.get() {
+            0
+        } else {
+            self.transport_write_errno.get()
+        };
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<true>(socket.get());
+                Self::close_socket_for_dead_transport::<true>(socket.get(), errno);
             }
             BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<false>(socket.get());
+                Self::close_socket_for_dead_transport::<false>(socket.get(), errno);
             }
             BunSocket::None => {}
         }
     }
 
-    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
-        let handler = socket.socket.get();
-        if !handler.is_established() {
+    fn close_socket_for_dead_transport<const SSL: bool>(
+        socket: &crate::socket::NewSocket<SSL>,
+        errno: i32,
+    ) {
+        if !socket.socket.get().is_established() {
             return;
         }
-        handler.close(bun_uws::CloseCode::Normal);
+        socket.close_after_fatal_send(errno);
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
@@ -3014,6 +3028,7 @@ impl H2FrameParser {
                 self.close_transport_after_fatal_write();
             } else {
                 self.transport_write_fatal.set(false);
+                self.transport_write_errno.set(0);
             }
             return false;
         }
@@ -7630,6 +7645,7 @@ impl H2FrameParser {
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
+            transport_write_errno: Cell::new(0),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),

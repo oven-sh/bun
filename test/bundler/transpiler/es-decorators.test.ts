@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -27,6 +28,21 @@ async function runDecorator(code: string) {
     stderr: "pipe",
   });
 
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
+async function runDecoratorTS(code: string) {
+  using dir = tempDir("es-dec-ts", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": code,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
   const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
@@ -390,21 +406,6 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
     });
-
-    async function runDecoratorTS(code: string) {
-      using dir = tempDir("es-dec-ts", {
-        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "test.ts": code,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: filterStderr(rawStderr), exitCode };
-    }
 
     test("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
@@ -1208,6 +1209,127 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // Lowering a class expression hoists its temporaries (_dec, _init, _class,
+  // accessor storage, ...) as a `var` into the nearest statement list; react
+  // refresh hoists its `_s = $RefreshSig$()` the same way. An enum body is
+  // visited before the statements around it, so these used to land in the list
+  // enclosing the enum's own (none at the top level, where they were dropped)
+  // instead of in the closure the enum body compiles to.
+  describe("declarations hoisted out of enum initializers", () => {
+    test.concurrent("top-level enum", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        const kinds: string[] = [];
+        function dec(_value: any, ctx: any) { kinds.push(ctx.kind); }
+        let Decorated: any;
+        let DecoratedAccessor: any;
+        let PlainAccessor: any;
+        enum E {
+          A = ((Decorated = @dec class { @dec m() {} }), 1),
+          B = ((DecoratedAccessor = class { @dec accessor x = "x" }), 2),
+          C = ((PlainAccessor = class { accessor y = "y" }), 3),
+        }
+        const b = new DecoratedAccessor();
+        b.x += "!";
+        const c = new PlainAccessor();
+        c.y += "!";
+        console.log(JSON.stringify([E.A, E.B, E.C, E[3], kinds, typeof Decorated, b.x, c.y]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([1, 2, 3, "C", ["method", "class", "accessor"], "function", "x!", "y!"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("enum inside a function gets fresh temporaries per call", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        let calls = 0;
+        function dec(_value: any, _ctx: any) {
+          const id = ++calls;
+          return { init: () => id };
+        }
+        function make() {
+          let K: any;
+          enum E {
+            A = ((K = class { @dec accessor x = 0 }), 0),
+          }
+          return K;
+        }
+        const K1 = make();
+        const K2 = make();
+        console.log(new K1().x, new K2().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Each enum body gets its own temporaries, so a class created by the first
+    // enum keeps working after the second enum has been evaluated.
+    test.concurrent("sibling enums do not share temporaries", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        function dec(_value: any, _ctx: any) {}
+        let A: any;
+        let B: any;
+        enum First {
+          M = ((A = class { @dec accessor x = 1 }), 0),
+        }
+        const a = new A();
+        enum Second {
+          M = ((B = class { @dec accessor x = 2 }), 0),
+        }
+        console.log(a.x, new B().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("react refresh declares the hook signature inside the enum closure", async () => {
+      using dir = tempDir("es-dec-enum-refresh", {
+        "hooks.tsx": `
+          import { useState } from "react";
+          export enum E {
+            A = ((globalThis as any).useThing = function useThing() { return useState(1)[0]; }, 0),
+          }
+        `,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "hooks.tsx")],
+        reactFastRefresh: true,
+        target: "browser",
+        external: ["react"],
+      });
+      expect(build.success).toBe(true);
+      const output = await build.outputs[0].text();
+      expect(output).toMatch(/=> \{\s*var _s = \$RefreshSig\$\(\);/);
+      expect(output).toContain("_s(function useThing()");
+    });
+
+    test("Bun.Transpiler declares the temporaries inside the enum closure", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const declaredInsideClosure = /\(\(E\) => \{\s*var [^;]*\b_init\b[^;]*;/;
+
+      const topLevel = transpiler.transformSync(`
+        declare const dec: any;
+        enum E {
+          A = (@dec class {}, 0),
+        }
+      `);
+      expect(topLevel).toMatch(declaredInsideClosure);
+      expect(topLevel).not.toMatch(/^var [^;]*\b_init\b/m);
+
+      const nested = transpiler.transformSync(`
+        declare const dec: any;
+        function make() {
+          enum E {
+            A = (@dec class {}, 0),
+          }
+        }
+      `);
+      expect(nested).toMatch(declaredInsideClosure);
+      expect(nested).not.toMatch(/^var /m);
     });
   });
 });

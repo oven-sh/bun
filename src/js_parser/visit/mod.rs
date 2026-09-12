@@ -1807,10 +1807,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // encounter the constant because we haven't encountered the eval() yet.
             // Inlined constants are not removed if they are in a top-level scope or
             // if they are exported (which could be in a nested TypeScript namespace).
-            //
-            // The cases of a switch share this scope and the later ones are not visited
-            // yet. One of them can read the constant in a `with` body, which is not inlined.
-            if p.const_values.count() > 0 && kind != StmtsKind::SwitchStmt {
+            if p.const_values.count() > 0
+                // A later case of the switch shares this scope, and its reads are not counted yet.
+                && kind != StmtsKind::SwitchStmt
+            {
                 let items: &mut [Stmt] = stmts.as_mut_slice();
                 for stmt in items.iter_mut() {
                     match stmt.data {

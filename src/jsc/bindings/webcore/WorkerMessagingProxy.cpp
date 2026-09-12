@@ -464,7 +464,7 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing, SerializationContext::WorkerErrorReport);
     CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
         return false;

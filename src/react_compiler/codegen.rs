@@ -435,6 +435,22 @@ impl<'a, 'h> Context<'a, 'h> {
         validated
     }
 
+    /// The first `t<n>` that no identifier uses, for a temporary that only codegen creates.
+    fn fresh_temporary_name(&mut self) -> String {
+        let mut itoa = bun_core::fmt::ItoaBuf::new();
+        let mut name = String::new();
+        for index in 0u32.. {
+            name.clear();
+            name.push('t');
+            name.push_str(itoa.format(index));
+            if !self.unique_identifiers.contains(&name) {
+                break;
+            }
+        }
+        self.unique_identifiers.insert(name.clone());
+        name
+    }
+
     fn record_error(&mut self, detail: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(detail)
     }
@@ -671,17 +687,49 @@ fn codegen_reactive_scope(
 
     for dep in &deps {
         let index = cx.alloc_cache_index();
+        let dep_decl = cx.env.identifiers[dep.identifier.0 as usize].declaration_id;
+        // Not in upstream: the stores run last, so a dependency the scope reassigns is copied first.
+        let value_on_entry = if scope_reassignments
+            .iter()
+            .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == dep_decl)
+        {
+            let name = store_str(cx.fresh_temporary_name().as_bytes());
+            let copy_ref = cx.cg.ref_for_name(name);
+            statements.push(Stmt::alloc(
+                S::Local {
+                    kind: S::Kind::KConst,
+                    decls: decl_list([G::Decl {
+                        binding: Binding::alloc(
+                            cx.cg.arena,
+                            b::Identifier { r#ref: copy_ref },
+                            loc,
+                        ),
+                        value: Some(codegen_dependency(cx, dep)?),
+                    }]),
+                    ..Default::default()
+                },
+                loc,
+            ));
+            Some(name)
+        } else {
+            None
+        };
+        let dep_expr = |cx: &mut Context| match value_on_entry {
+            Some(name) => Ok(cx.cg.ident_expr(name, loc)),
+            None => codegen_dependency(cx, dep),
+        };
+
         let comparison = Expr::init(
             E::Binary {
                 op: OpCode::BinStrictNe,
                 left: cache_slot(index),
-                right: codegen_dependency(cx, dep)?,
+                right: dep_expr(cx)?,
             },
             loc,
         );
         change_exprs.push(comparison);
 
-        let dep_value = codegen_dependency(cx, dep)?;
+        let dep_value = dep_expr(cx)?;
         cache_store_exprs.push(Expr::init(
             E::Binary {
                 op: OpCode::BinAssign,

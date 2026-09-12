@@ -581,6 +581,10 @@ fn apply_reactive_flags_replay(
                         operand.reactive = true;
                     }
                 }
+                // Not in upstream: the fixpoint stops at the first reactive operand. Flag the rest.
+                if reactive_ids[operand.identifier.0 as usize] {
+                    operand.reactive = true;
+                }
             }
         }
 

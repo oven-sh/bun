@@ -1781,9 +1781,70 @@ impl<'a> DependencyCollectionContext<'a> {
             }
         }
 
+        // Not in upstream: the enclosing scope has to restore what this scope reassigns.
+        if let Some(parent) = self.current_scope() {
+            let parent_start = env.scopes[parent.0 as usize].range.start;
+            for index in 0..env.scopes[scope_id.0 as usize].reassignments.len() {
+                let id = env.scopes[scope_id.0 as usize].reassignments[index];
+                let decl_id = env.identifiers[id.0 as usize].declaration_id;
+                let declared_before_parent = self
+                    .declarations
+                    .get(decl_id)
+                    .is_some_and(|decl| decl.id < parent_start);
+                let already = env.scopes[parent.0 as usize]
+                    .reassignments
+                    .iter()
+                    .any(|other| env.identifiers[other.0 as usize].declaration_id == decl_id);
+                if declared_before_parent && !already {
+                    env.scopes[parent.0 as usize].reassignments.push(id);
+                }
+            }
+        }
+
         if !pruned {
             self.deps.insert(scope_id, scoped_deps);
         }
+    }
+
+    /// Not in upstream: a value from before the scope that reaches a phi in it is a dependency.
+    fn visit_phi(
+        &mut self,
+        phi: &crate::hir::Phi,
+        before_block: EvaluationOrder,
+        env: &mut Environment,
+    ) {
+        for (_pred_id, operand) in &phi.operands {
+            if let Some(maybe_optional_chain) = self.temporaries.get(operand.identifier) {
+                self.visit_dependency(maybe_optional_chain.clone(), env);
+                continue;
+            }
+            // An operand that is not declared yet comes from a loop back edge, later in the scope.
+            let (Some(scope), Some(decl)) = (
+                self.current_scope(),
+                self.reassignments.get(operand.identifier),
+            ) else {
+                continue;
+            };
+            if decl.id < env.scopes[scope.0 as usize].range.start {
+                self.visit_dependency(
+                    ReactiveScopeDependency {
+                        identifier: operand.identifier,
+                        reactive: operand.reactive,
+                        path: hir_vec![],
+                        loc: operand.loc,
+                    },
+                    env,
+                );
+            }
+        }
+        // A read of this phi inside the scope it sits in is then not a dependency of that scope.
+        self.reassignments.insert(
+            phi.place.identifier,
+            Decl {
+                id: before_block,
+                scope_stack: Vec::new(),
+            },
+        );
     }
 
     fn current_scope(&self) -> Option<ScopeId> {
@@ -2129,6 +2190,25 @@ fn handle_instruction(
             ctx.visit_operand(&lvalue.place, env);
             ctx.visit_operand(val, env);
         }
+        // Not in upstream: `x++` reassigns `x`, so the scope has to restore it on a cache hit.
+        InstructionValue::PrefixUpdate {
+            lvalue, value: val, ..
+        }
+        | InstructionValue::PostfixUpdate {
+            lvalue, value: val, ..
+        } => {
+            ctx.visit_operand(val, env);
+            ctx.visit_reassignment(lvalue, env);
+            let scope_stack_copy = ctx.scope_stack.clone();
+            ctx.declare(
+                lvalue.identifier,
+                Decl {
+                    id,
+                    scope_stack: scope_stack_copy,
+                },
+                env,
+            );
+        }
         _ => {
             // Visit all value operands
             let operands = visitors::each_instruction_value_operand(&instr.value, env);
@@ -2202,11 +2282,13 @@ fn handle_function_deps(
         }
 
         // Record phi operands
-        for phi in &block.phis {
-            for (_pred_id, operand) in &phi.operands {
-                if let Some(maybe_optional_chain) = ctx.temporaries.get(operand.identifier) {
-                    ctx.visit_dependency(maybe_optional_chain.clone(), env);
-                }
+        if !block.phis.is_empty() {
+            let first = match block.instructions.first() {
+                Some(instr_id) => func.instructions[instr_id.0 as usize].id,
+                None => block.terminal.evaluation_order(),
+            };
+            for phi in &block.phis {
+                ctx.visit_phi(phi, EvaluationOrder(first.0.saturating_sub(1)), env);
             }
         }
 

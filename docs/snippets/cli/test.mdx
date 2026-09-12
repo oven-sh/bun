@@ -51,12 +51,12 @@ bun test <patterns>
 ### Reporting
 
 <ParamField path="--reporter" type="string">
-  Test output reporter format. Available: <code>junit</code> (requires --reporter-outfile), <code>dots</code>. Default:
-  console output.
+  Add a test reporter. Available: <code>junit</code> (requires --reporter-outfile), <code>dots</code>. Can be passed
+  more than once. Default: console output.
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter=junit)
+  File that --reporter=junit writes the XML report to (required with --reporter=junit)
 </ParamField>
 
 <ParamField path="--dots" type="boolean">

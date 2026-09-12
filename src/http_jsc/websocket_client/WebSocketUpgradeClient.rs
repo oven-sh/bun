@@ -22,6 +22,7 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_boringssl as boringssl;
@@ -1504,23 +1505,38 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Header name/value pairs decoded to UTF-8 up front (borrowed when 8-bit
-/// ASCII, else transcoded — never raw Latin-1/UTF-16 code units), stored flat
-/// (names at even indices, values at odd) and yielded as pairs via `iter()`.
+/// Header names and values as wire bytes, interleaved: name, value, name, value.
 struct Headers8Bit<'a> {
-    slices: Vec<Utf8Bytes<'a>>,
+    slices: Vec<Cow<'a, [u8]>>,
 }
 
 impl<'a> Headers8Bit<'a> {
     fn init(names_in: &'a [BunString], values_in: &'a [BunString]) -> Self {
         debug_assert_eq!(names_in.len(), values_in.len());
-        let mut slices: Vec<Utf8Bytes<'a>> = Vec::with_capacity(names_in.len() * 2);
+        let mut slices: Vec<Cow<'a, [u8]>> = Vec::with_capacity(names_in.len() * 2);
         for (name, value) in names_in.iter().zip(values_in) {
-            slices.push(name.to_utf8());
-            slices.push(value.to_utf8());
+            slices.push(Self::isomorphic_encode(name));
+            slices.push(Self::isomorphic_encode(value));
         }
 
         Self { slices }
+    }
+
+    /// One byte per code unit, per <https://fetch.spec.whatwg.org/#concept-header-value>.
+    fn isomorphic_encode(s: &'a BunString) -> Cow<'a, [u8]> {
+        if s.is_utf16() {
+            let units = s.utf16();
+            if units.iter().any(|&unit| unit > 0xFF) {
+                return Cow::Owned(s.to_utf8().into_vec());
+            }
+            let mut bytes = vec![0u8; units.len()];
+            strings::copy_u16_into_u8(&mut bytes, units);
+            Cow::Owned(bytes)
+        } else if s.is_8bit() && !s.is_utf8() {
+            Cow::Borrowed(s.latin1())
+        } else {
+            Cow::Owned(s.to_utf8().into_vec())
+        }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
@@ -1528,7 +1544,7 @@ impl<'a> Headers8Bit<'a> {
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|pair| (pair[0].slice(), pair[1].slice()))
+            .map(|pair| (&pair[0][..], &pair[1][..]))
     }
 
     /// Convert to `bun_http::Headers`.
@@ -1539,6 +1555,14 @@ impl<'a> Headers8Bit<'a> {
         }
         headers
     }
+}
+
+/// Append `name: value\r\n` byte-for-byte (`bstr::BStr`'s `Display` is lossy).
+fn write_header_line(buf: &mut Vec<u8>, name: &[u8], value: &[u8]) {
+    buf.extend_from_slice(name);
+    buf.extend_from_slice(b": ");
+    buf.extend_from_slice(value);
+    buf.extend_from_slice(b"\r\n");
 }
 
 /// Build HTTP CONNECT request for proxy tunneling.
@@ -1596,13 +1620,7 @@ fn build_connect_request(
             {
                 continue;
             }
-            write!(
-                &mut buf,
-                "{}: {}\r\n",
-                bstr::BStr::new(name),
-                bstr::BStr::new(hdrs.as_str(values[idx]))
-            )
-            .unwrap();
+            write_header_line(&mut buf, name, hdrs.as_str(values[idx]));
         }
     }
 
@@ -1686,14 +1704,6 @@ fn build_request_body(
         port: Some(port),
     };
 
-    let static_headers = [
-        picohttp::Header::new(b"Sec-WebSocket-Key", key),
-        picohttp::Header::new(b"Sec-WebSocket-Protocol", protocol),
-    ];
-
-    let headers_ = &static_headers[0..1 + (!protocol.is_empty()) as usize];
-    let pico_headers = picohttp::Headers { headers: headers_ };
-
     // Build extra headers string, skipping the ones we handle
     let mut extra_headers_buf: Vec<u8> = Vec::new();
 
@@ -1724,13 +1734,7 @@ fn build_request_body(
         ) {
             continue;
         }
-        write!(
-            &mut extra_headers_buf,
-            "{}: {}\r\n",
-            bstr::BStr::new(name_slice),
-            bstr::BStr::new(value)
-        )
-        .unwrap();
+        write_header_line(&mut extra_headers_buf, name_slice, value);
     }
 
     let extensions_line: &[u8] = if offer_permessage_deflate {
@@ -1741,49 +1745,24 @@ fn build_request_body(
 
     // Build request with user overrides
     let mut body: Vec<u8> = Vec::new();
+    write!(&mut body, "GET {} HTTP/1.1\r\n", bstr::BStr::new(pathname)).unwrap();
     if let Some(h) = user_host {
-        write!(
-            &mut body,
-            "GET {} HTTP/1.1\r\n\
-             Host: {}\r\n\
-             Connection: Upgrade\r\n\
-             Upgrade: websocket\r\n\
-             Sec-WebSocket-Version: 13\r\n\
-             {}\
-             {}\
-             {}\
-             \r\n",
-            bstr::BStr::new(pathname),
-            bstr::BStr::new(h),
-            bstr::BStr::new(extensions_line),
-            pico_headers,
-            bstr::BStr::new(&extra_headers_buf),
-        )
-        .unwrap();
-        return Ok(BuildRequestResult {
-            body,
-            expected_accept,
-        });
+        write_header_line(&mut body, b"Host", h);
+    } else {
+        write!(&mut body, "Host: {}\r\n", host_fmt).unwrap();
     }
-
-    write!(
-        &mut body,
-        "GET {} HTTP/1.1\r\n\
-         Host: {}\r\n\
-         Connection: Upgrade\r\n\
-         Upgrade: websocket\r\n\
-         Sec-WebSocket-Version: 13\r\n\
-         {}\
-         {}\
-         {}\
-         \r\n",
-        bstr::BStr::new(pathname),
-        host_fmt,
-        bstr::BStr::new(extensions_line),
-        pico_headers,
-        bstr::BStr::new(&extra_headers_buf),
-    )
-    .unwrap();
+    body.extend_from_slice(
+        b"Connection: Upgrade\r\n\
+          Upgrade: websocket\r\n\
+          Sec-WebSocket-Version: 13\r\n",
+    );
+    body.extend_from_slice(extensions_line);
+    write_header_line(&mut body, b"Sec-WebSocket-Key", key);
+    if !protocol.is_empty() {
+        write_header_line(&mut body, b"Sec-WebSocket-Protocol", protocol);
+    }
+    body.extend_from_slice(&extra_headers_buf);
+    body.extend_from_slice(b"\r\n");
     Ok(BuildRequestResult {
         body,
         expected_accept,

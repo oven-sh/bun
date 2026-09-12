@@ -1506,12 +1506,14 @@ describe("bundler", () => {
       exports.jsxDEV = (type, props, key) => ({ jsxDEV: type, props, key });
     `,
     "/node_modules/react/compiler-runtime.js": /* js */ `
-      exports.c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      exports.c = function useMemoCache(size) {
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
     `,
   };
   // `App` was compiled when its memo cache is in the bundle.
   const expectCompiled = (api: { readFile(file: string): string }) =>
-    expect(api.readFile("/out.js")).toContain("// node_modules/react/compiler-runtime.js");
+    expect(api.readFile("/out.js")).toContain("useMemoCache");
 
   const classicRuntimes: Record<string, { prelude: string; tsconfig?: string; jsx?: BundlerTestInput["jsx"] }> = {
     Pragma: { prelude: `/** @jsxRuntime classic */ import React from "react";` },
@@ -1623,7 +1625,7 @@ describe("bundler", () => {
     target: "browser",
     backend: "cli",
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).not.toContain("compiler-runtime");
+      expect(api.readFile("/out.js")).not.toContain("useMemoCache");
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });

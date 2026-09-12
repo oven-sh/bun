@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -189,6 +189,39 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+});
+
+// The fd-exhaustion remediation hint must suggest bounded limits. It used to
+// print `ulimit -n 2147483646` (and `sudo launchctl limit maxfiles 2147483646`
+// on macOS, where a maxfiles limit that large makes every new terminal's
+// `login` iterate the fd table for minutes, and SIP blocks lowering it back
+// without a reboot). See #37337.
+test.if(isPosix)("fd limit hint suggests bounded values", async () => {
+  await using proc = Bun.spawn({
+    // The hint only prints when the current fd limit is low (< 16384); lower
+    // it in a wrapper shell so the check triggers deterministically.
+    cmd: [
+      "/bin/sh",
+      "-c",
+      `ulimit -n 8192 && exec "$@"`,
+      "--",
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "rootError",
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("possibly due to low max file descriptors");
+  expect(stderr).toContain("ulimit -n 65536");
+  if (isMacOS) {
+    expect(stderr).toContain("sudo launchctl limit maxfiles 65536 200000");
+  }
+  expect(stderr).not.toContain("2147483646");
+  expect(exitCode).not.toBe(0);
 });
 
 // Windows: the VEH handler must walk the stack from the fault CONTEXT record

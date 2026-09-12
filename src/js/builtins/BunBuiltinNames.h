@@ -25,7 +25,6 @@ using namespace JSC;
     macro($$typeof) \
     macro(AbortSignal) \
     macro(Buffer) \
-    macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -33,7 +32,6 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
@@ -57,31 +55,23 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
-    macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
-    macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
     macro(code) \
-    macro(controller) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
-    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \
@@ -89,6 +79,7 @@ using namespace JSC;
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
+    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -100,7 +91,6 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
-    macro(fulfillModuleSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -111,6 +101,8 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
@@ -152,13 +144,13 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
-    macro(post) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \
     macro(processBindingConstants) \
     macro(props) \
     macro(pull) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readable) \
     macro(readableType) \
@@ -170,24 +162,21 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
-    macro(resume) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
     macro(start) \
-    macro(started) \
-    macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
-    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
@@ -197,7 +186,6 @@ using namespace JSC;
     macro(updateRef) \
     macro(url) \
     macro(validated) \
-    macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \
@@ -214,10 +202,30 @@ class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
-    ~BunBuiltinNames();
 
 public:
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    ~BunBuiltinNames();
+    // For a VM without JSVMClientData that still needs to parse builtins (ahead-of-time bytecode generation).
+    static std::unique_ptr<BunBuiltinNames> createStandalone(JSC::VM& vm) { return std::unique_ptr<BunBuiltinNames>(new BunBuiltinNames(vm)); }
+
+    enum class Name : uint16_t {
+#define BUN_BUILTIN_NAME_ENUM(name) k_##name,
+        BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)
+#undef BUN_BUILTIN_NAME_ENUM
+        Count_
+    };
+    static constexpr size_t count = static_cast<size_t>(Name::Count_);
+
+    // The identifiers live in two arrays (built by a loop over a string table
+    // in the .cpp) rather than one member per name; the accessors index them.
+#define BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR(name) \
+    const JSC::Identifier& name##PublicName() const { return m_publicNames[static_cast<size_t>(Name::k_##name)]; } \
+    const JSC::Identifier& name##PrivateName() const { return m_privateNames[static_cast<size_t>(Name::k_##name)]; }
+    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+#undef BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR
+
+    const JSC::Identifier& publicName(Name name) const { return m_publicNames[static_cast<size_t>(name)]; }
+    const JSC::Identifier& privateName(Name name) const { return m_privateNames[static_cast<size_t>(name)]; }
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
@@ -230,7 +238,8 @@ public:
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
+    std::array<JSC::Identifier, count> m_publicNames;
+    std::array<JSC::Identifier, count> m_privateNames;
 };
 
 } // namespace WebCore

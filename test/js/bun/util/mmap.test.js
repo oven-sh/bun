@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { writeFileSync } from "node:fs";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
+import { truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -128,6 +128,74 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(file, { offset: 100 })).toThrow("EINVAL");
     expect(() => Bun.mmap(file, { offset: 50 })).toThrow("EINVAL");
     expect(() => Bun.mmap(file, { offset: 1, size: 0 })).toThrow("EINVAL");
+  });
+
+  it("mmap throws a catchable error when the resolved path does not fit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const max = process.platform === "linux" ? 4096 : 1024;
+const rel = Buffer.alloc(max - 1, "a").toString();
+try {
+  Bun.mmap(rel);
+  console.log("no throw");
+} catch (e) {
+  console.log(e.message);
+}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("Path too long\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("mmap of more than 2^32 bytes throws a RangeError instead of aborting", async () => {
+    using dir = tempDir("mmap-4gib", {});
+    const file = join(String(dir), "big.bin");
+    // Sparse: the mappings below cost address space, not memory or disk.
+    writeFileSync(file, "");
+    truncateSync(file, 2 ** 32 + 4096);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const file = ${JSON.stringify(file)};
+const out = {};
+try {
+  out.wholeFile = Bun.mmap(file).length;
+} catch (e) {
+  out.wholeFile = e.name;
+}
+try {
+  out.sizeAboveLimit = Bun.mmap(file, { size: 2 ** 32 + 1 }).length;
+} catch (e) {
+  out.sizeAboveLimit = e.name;
+}
+out.sizeAtLimit = Bun.mmap(file, { size: 2 ** 32 }).length;
+out.smallWindow = Bun.mmap(file, { size: 4096 }).length;
+console.log(JSON.stringify(out));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      out: {
+        wholeFile: "RangeError",
+        sizeAboveLimit: "RangeError",
+        sizeAtLimit: 2 ** 32,
+        smallWindow: 4096,
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   it("mmap rejects negative offset", () => {

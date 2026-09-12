@@ -35,7 +35,7 @@ use crate::utils::DisjointSet;
 /// variable. Variables that co-mutate are assigned to the same reactive scope.
 ///
 /// Corresponds to TS `inferReactiveScopeVariables(fn: HIRFunction): void`.
-pub fn infer_reactive_scope_variables(
+pub(crate) fn infer_reactive_scope_variables(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {

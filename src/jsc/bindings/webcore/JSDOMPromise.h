@@ -46,13 +46,6 @@ public:
 
     enum class IsCallbackRegistered { No,
         Yes };
-    IsCallbackRegistered whenSettled(std::function<void()>&&);
-    JSC::JSValue result() const;
-
-    enum class Status { Pending,
-        Fulfilled,
-        Rejected };
-    Status status() const;
 
     static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
 

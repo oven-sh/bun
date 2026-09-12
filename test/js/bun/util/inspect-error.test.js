@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,21 +10,23 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
-5 |   const err2 = new Error("error 2", { cause: err });
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
+6 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe, tempDir } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:19)
 "
 `);
 });
@@ -35,15 +38,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"27 | "
-28 | \`);
-29 | });
-30 | 
-31 | test("Error", () => {
-32 |   const err = new Error("my message");
+"30 | "
+31 | \`);
+32 | });
+33 | 
+34 | test("Error", () => {
+35 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:19)
 "
 `);
 });
@@ -71,22 +74,13 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
-const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
-};
+const normalizeError = str =>
+  // remove debug-only stack trace frames of bun's own builtins, which have a
+  // position but no file, like "at require (51:24)"
+  str
+    .split("\n")
+    .filter(line => !/^\s*at \S+ \(:?\d+:\d+\)$/.test(line))
+    .join("\n");
 
 test("Error inside minified file (no color) ", () => {
   try {
@@ -111,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
     `);
   }
 });
@@ -140,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
     `);
   }
 });
@@ -154,7 +148,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:143:19)"
 `);
 });
 
@@ -187,4 +181,278 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+describe("source map remapping of the printed stack", () => {
+  // The "at ..." lines that mention one of `files`, with the temp dir removed
+  // from the paths.
+  function frames(text, dir, files) {
+    const prefix = dir.replaceAll("\\", "/") + "/";
+    return text
+      .replaceAll("\\", "/")
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at ") && files.some(file => line.includes(file)))
+      .map(line => line.replaceAll(prefix, ""));
+  }
+
+  async function run(files) {
+    using dir = tempDir("inspect-error-sourcemap", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
+  }
+
+  // A prebuilt file whose map names a source that is neither on disk nor in
+  // `sourcesContent` (the shape of a deployed `bun build --target=bun
+  // --sourcemap` artifact with the sources stripped). The original source can't
+  // be shown, but the frames still have to be remapped, exactly like
+  // error.stack is.
+  test.concurrent("external map whose original source is unavailable", async () => {
+    const main = [
+      "// @bun",
+      'function thrower() { throw new Error("HOSTILE"); }',
+      "const out = {};",
+      "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
+      "try { thrower(); } catch (e) { out.stack = e.stack; }",
+      "console.log(JSON.stringify(out));",
+      "thrower();",
+    ];
+    // One segment at column 0 of each generated line below, so every position on
+    // a line maps to the same original position: line 1 -> orig.ts:11:5, line 3
+    // -> 21:5, line 4 -> 31:5, line 6 -> 41:5. (Column 5 rather than 1 because
+    // error.stack prints no column at all for column 1.)
+    const map = {
+      version: 3,
+      sources: ["orig.ts"],
+      sourcesContent: [null],
+      names: [],
+      mappings: ";AAUI;;AAUA;AAUA;;AAUA",
+    };
+    const { dir, out, stderr, exitCode } = await run({
+      "main.js": main.join("\n") + "\n//# sourceMappingURL=main.js.map\n",
+      "main.js.map": JSON.stringify(map),
+    });
+
+    const files = ["orig.ts", "main.js"];
+    expect({
+      stack: frames(out.stack, dir, files),
+      inspect: frames(out.inspect, dir, files),
+      uncaught: frames(stderr, dir, files),
+    }).toEqual({
+      stack: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
+      inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
+      uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is
+  // removed after it was loaded, so the code frame can no longer be read back.
+  // Reading error.stack first makes the printer start from the already
+  // remapped frames of that string instead of the raw JSC frames; those must
+  // not be remapped a second time (https://github.com/oven-sh/bun/issues/15859).
+  test.concurrent("transpiled modules: source deleted, and frames already remapped by error.stack", async () => {
+    const module = message =>
+      [
+        "type Padding1 = { a: number };",
+        "type Padding2 = { b: string };",
+        "type Padding3 = { c: boolean };",
+        "export function thrower(): never {",
+        `  throw new Error(${JSON.stringify(message)});`,
+        "}",
+        "export function caller(onError: (e: Error) => string): string {",
+        "  try {",
+        "    thrower();",
+        "  } catch (e) {",
+        "    return onError(e as Error);",
+        "  }",
+        "  return 'unreachable';",
+        "}",
+        "",
+      ].join("\n");
+    const { dir, out, stderr, exitCode } = await run({
+      "present.ts": module("present"),
+      "deleted.ts": module("deleted"),
+      "main.js": [
+        'import { unlinkSync } from "node:fs";',
+        'import { join } from "node:path";',
+        'import * as present from "./present.ts";',
+        'import * as deleted from "./deleted.ts";',
+        'unlinkSync(join(import.meta.dir, "deleted.ts"));',
+        "const out = {",
+        "  presentStack: present.caller(e => e.stack),",
+        "  presentInspect: present.caller(e => Bun.inspect(e)),",
+        "  presentStackThenInspect: present.caller(e => (e.stack, Bun.inspect(e))),",
+        "  deletedStack: deleted.caller(e => e.stack),",
+        "  deletedInspect: deleted.caller(e => Bun.inspect(e)),",
+        "  deletedStackThenInspect: deleted.caller(e => (e.stack, Bun.inspect(e))),",
+        "};",
+        "console.log(JSON.stringify(out));",
+        "present.caller(e => { e.stack; throw e; });",
+        "",
+      ].join("\n"),
+    });
+
+    const files = ["present.ts", "deleted.ts"];
+    const positions = text => frames(text, dir, files);
+    // The throw is on line 5 and the call to thrower() on line 9 of the
+    // original module; after type stripping they are on lines 2 and 6.
+    const expected = file => [
+      expect.stringMatching(new RegExp(`^at thrower \\(${file}:5:\\d+\\)$`)),
+      expect.stringMatching(new RegExp(`^at caller \\(${file}:9:\\d+\\)$`)),
+    ];
+    expect(positions(out.presentStack)).toEqual(expected("present.ts"));
+    expect(positions(out.deletedStack)).toEqual(expected("deleted.ts"));
+
+    expect({
+      presentInspect: positions(out.presentInspect),
+      presentStackThenInspect: positions(out.presentStackThenInspect),
+      deletedInspect: positions(out.deletedInspect),
+      deletedStackThenInspect: positions(out.deletedStackThenInspect),
+      uncaughtAfterStack: positions(stderr),
+    }).toEqual({
+      presentInspect: positions(out.presentStack),
+      presentStackThenInspect: positions(out.presentStack),
+      deletedInspect: positions(out.deletedStack),
+      deletedStackThenInspect: positions(out.deletedStack),
+      uncaughtAfterStack: positions(out.presentStack),
+    });
+    expect(exitCode).toBe(1);
+  });
+});
+
+// The printer replaces an AggregateError with the members of its `errors`
+// property. When there is nothing to walk it has to print the AggregateError
+// itself. A deleted `errors` used to crash the process (the empty value was
+// passed to the iteration, which read it as a cell at address 0), an accessor
+// was passed to it as well, the other shapes printed nothing, and a
+// non-iterable `errors` made console.error throw.
+describe.concurrent("AggregateError whose errors cannot be walked", () => {
+  async function run(cmd, files) {
+    using dir = tempDir("inspect-aggregate-error", files ?? {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const header = "AggregateError: outer message";
+  const make = 'const e = new AggregateError([new Error("inner")], "outer message");';
+  const shapes = {
+    "errors was deleted": "delete e.errors;",
+    "errors is an empty array": "e.errors = [];",
+    "errors is not iterable": "e.errors = {};",
+    "errors is null": "e.errors = null;",
+    "errors is a primitive": "e.errors = 1;",
+    "the errors getter throws": 'Object.defineProperty(e, "errors", { get() { throw new Error("getter"); } });',
+  };
+
+  for (const [name, shape] of Object.entries(shapes)) {
+    test(`console.error: ${name}`, async () => {
+      const { stdout, stderr, exitCode } = await run([
+        "-e",
+        `${make} ${shape} console.error(e); console.log("after");`,
+      ]);
+      expect(stderr).toContain(header);
+      expect(stdout).toBe("after\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test(`uncaught: ${name}`, async () => {
+      const { stderr, exitCode } = await run(["-e", `${make} ${shape} throw e;`]);
+      expect(stderr).toContain(header);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("Bun.inspect: errors was deleted", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make} delete e.errors; console.log(JSON.stringify(Bun.inspect(e)));`,
+    ]);
+    expect(JSON.parse(stdout)).toContain(header);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("errors is an accessor: the members it returns are printed", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make}
+       Object.defineProperty(e, "errors", { get() { return [new Error("from the getter")]; } });
+       console.error(e);
+       console.log("after");`,
+    ]);
+    expect(stderr).toContain("error: from the getter");
+    expect(stderr).not.toContain(header);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("members are still printed in place of the AggregateError", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
+    ]);
+    expect(stderr).toContain("error: first member");
+    expect(stderr).toContain("TypeError: second member");
+    expect(stderr).not.toContain(header);
+    expect(exitCode).toBe(1);
+  });
+
+  // Without any user code: a module with two or more build errors rejects its
+  // first load with an AggregateError of BuildMessages. JSC settles every later
+  // load of it from the module registry with a copy made by
+  // JSModuleLoader::duplicateError, which keeps the error type and message but
+  // not the `errors` property.
+  const broken = {
+    "broken.ts": "export function f() {\n  const v = {b: {},),r,};\n}\n",
+  };
+
+  test("the error a second load of a module that failed to build rejects with", async () => {
+    const { stdout, stderr, exitCode } = await run(["main.ts"], {
+      ...broken,
+      "main.ts": `
+        const seen = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            await import("./broken.ts");
+          } catch (e) {
+            seen.push(e.constructor.name);
+            if (i === 1) console.error(e);
+          }
+        }
+        console.log(JSON.stringify(seen));
+      `,
+    });
+    expect(stdout).toBe('["AggregateError","AggregateError"]\n');
+    expect(stderr).toContain("broken.ts");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36963
+  test("bun test: two files import a module that failed to build", async () => {
+    const importer = 'import { f } from "./broken.ts";\nf();\n';
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      ...broken,
+      "a.test.ts": importer,
+      "b.test.ts": importer,
+    });
+    expect(stderr).toContain("a.test.ts:");
+    expect(stderr).toContain("b.test.ts:");
+    expect(stderr).toContain("across 2 files");
+    expect(exitCode).toBe(1);
+  });
 });

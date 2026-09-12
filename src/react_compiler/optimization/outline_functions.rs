@@ -22,7 +22,7 @@ use crate::ssa::enter_ssa::placeholder_function;
 /// Outline anonymous function expressions that have no captured context variables.
 ///
 /// Ported from TS `outlineFunctions` in `Optimization/OutlineFunctions.ts`.
-pub fn outline_functions(
+pub(crate) fn outline_functions(
     func: &mut HirFunction,
     env: &mut Environment,
     fbt_operands: &HashSet<IdentifierId>,

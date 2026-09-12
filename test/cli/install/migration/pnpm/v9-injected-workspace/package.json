@@ -1,0 +1,11 @@
+{
+  "name": "v9-injected-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "foo": "workspace:*"
+  }
+}

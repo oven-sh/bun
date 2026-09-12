@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // Evicting a custom SSL context while it still has in-flight sockets closes
 // those sockets via no-op callbacks (cleanCallbacks runs first in
@@ -14,16 +14,25 @@ import { bunEnv, bunExe } from "harness";
 // evictOldestSslContext. Aborting all requests then drains the tracker.
 //
 // In debug+ASAN builds the existing assertUnpoisoned check at
-// HTTPThread.processEvents catches the freed socket deterministically. In
-// release builds the UAF only crashes when the freed slot is reused; the
-// fixture spams same-size-class allocations to make that likely (~30% per
-// run before the fix), so loop a few times.
+// HTTPThread.processEvents catches the freed socket deterministically, so one
+// run is enough. In release builds the UAF only crashes when the freed slot is
+// reused; the fixture spams same-size-class allocations to make that likely
+// (~30% per run before the fix), so loop a few times.
 test("aborting fetches whose custom SSL context was evicted does not crash", async () => {
+  // The fixture relies on connects to TEST-NET-1 staying in-flight; strip any
+  // ambient HTTP(S) proxy so those connects aren't intercepted. Raise the
+  // per-process request cap so all 65+200 requests plus both barriers start in
+  // one FIFO drain pass (default cap is 256; 65+200+1 would defer the second
+  // barrier behind async .invalid DNS failures).
+  const env: Record<string, string | undefined> = { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "512" };
+  for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete env[k];
+
+  const runs = isASAN ? 1 : 5;
   const results = await Promise.all(
-    Array.from({ length: 5 }, async () => {
+    Array.from({ length: runs }, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
+        env,
         stderr: "pipe",
         stdout: "pipe",
       });
@@ -33,19 +42,22 @@ test("aborting fetches whose custom SSL context was evicted does not crash", asy
     }),
   );
 
-  for (const { stdout, stderr, exitCode } of results) {
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("Segmentation fault");
-    expect(stderr).not.toContain("poisoned");
-    expect(stdout.trim()).toBe("ok");
-    expect(exitCode).toBe(0);
-  }
-}, 120_000);
+  expect(results).toEqual(Array.from({ length: runs }, () => ({ stdout: "ok\n", stderr: "", exitCode: 0 })));
+});
 
+// The HTTP client thread's queued_tasks are popped FIFO and each task's
+// start_queued_task → start_() creates its custom SSL context and runs the
+// cache-size eviction check synchronously before returning. A plain HTTP
+// fetch queued after the 65 SSL fetches therefore cannot start until every
+// SSL context exists and eviction has fired for indices 60..64, so awaiting
+// that barrier fetch replaces the 5s/0.5s sleeps the original fixture used.
 const fixture = /* js */ `
 const N = 65; // > ssl_context_cache_max_size (60)
 const controllers = [];
 const promises = [];
+
+await using server = Bun.serve({ port: 0, fetch: () => new Response("sync") });
+const barrier = () => fetch(server.url).then(r => r.arrayBuffer());
 
 // Phase 1: 65 distinct TLS configs to a hung target. The 61st+ trigger
 // evictOldestSslContext, which (before the fix) closed the oldest context's
@@ -60,9 +72,7 @@ for (let i = 0; i < N; i++) {
     }).catch(() => {})
   );
 }
-
-// Creating 60+ SSL contexts is slow in debug+ASAN builds.
-await Bun.sleep(5000);
+await barrier();
 
 // Phase 2: spam non-SSL us_connecting_socket_t allocs (same mimalloc size
 // class as the evicted SSL semi-socket) so the freed slots are reused with
@@ -75,7 +85,7 @@ for (let i = 0; i < 200; i++) {
     fetch("http://does-not-resolve-" + i + ".invalid/", { signal: ac.signal }).catch(() => {})
   );
 }
-await Bun.sleep(500);
+await barrier();
 
 // Abort everything — drainQueuedShutdowns walks the tracker.
 for (const ac of controllers) ac.abort();

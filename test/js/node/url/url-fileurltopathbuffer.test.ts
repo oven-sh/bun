@@ -28,7 +28,7 @@ describe("fileURLToPathBuffer", () => {
   });
 
   test("round-trips a path node's way", () => {
-    const url = pathToFileURL("/tmp/some dir/file.txt");
+    const url = pathToFileURL("/tmp/some dir/file.txt", { windows: false });
     expect(fileURLToPathBuffer(url, { windows: false }).toString()).toBe("/tmp/some dir/file.txt");
   });
 

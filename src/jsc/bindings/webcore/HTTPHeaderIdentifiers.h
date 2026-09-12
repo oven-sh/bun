@@ -100,33 +100,70 @@ namespace WebCore {
     macro("x-sourcemap", XSourceMap)                                                       \
     macro("x-temp-tablet", XTempTablet)                                                    \
     macro("x-xss-protection", XXSSProtection)
+
+// RFC 9113 pseudo-headers; not header fields, so HTTPHeaderName has no entries for them.
+#define HTTP2_PSEUDO_HEADERS_EACH_NAME(macro) \
+    macro(":authority", Authority)            \
+    macro(":method", Method)                  \
+    macro(":path", Path)                      \
+    macro(":scheme", Scheme)                  \
+    macro(":status", Status)
 // clang-format on
 
-#define HTTP_HEADERS_ACCESSOR_DECLARATIONS(literal, name) \
-    JSC::Identifier& name##Identifier(JSC::VM& vm);       \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject);
+#define HTTP2_PSEUDO_HEADERS_ENUM_ENTRY(literal, name) name,
 
-#define HTTP_HEADERS_PROPERTY_DECLARATIONS(literal, name)                   \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_##name##String; \
-    JSC::Identifier m_##name##Identifier;
+enum class HTTP2PseudoHeaderName : uint8_t {
+    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP2_PSEUDO_HEADERS_ENUM_ENTRY)
+};
 
+#undef HTTP2_PSEUDO_HEADERS_ENUM_ENTRY
+
+bool findHTTP2PseudoHeaderName(WTF::StringView, HTTP2PseudoHeaderName&);
+
+#define HTTP_HEADERS_INDEX_ENTRY(literal, name) name,
+
+#define HTTP_HEADERS_ACCESSOR_DEFINITIONS(literal, name)                                     \
+    JSC::Identifier& name##Identifier(JSC::VM& vm) { return identifierAt(vm, Index::name); } \
+    JSC::JSString* name##String(JSC::JSGlobalObject* g) { return stringAt(g, Index::name); }
+
+// Per-VM cache: one Identifier and one JSString per header name, for the lifetime of the VM.
 class HTTPHeaderIdentifiers {
 public:
-    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DECLARATIONS)
+    // clang-format off
+    enum class Index : uint8_t {
+        HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_INDEX_ENTRY)
+        HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_INDEX_ENTRY)
+        Count
+    };
+    // clang-format on
+
+    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
+    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
 
     HTTPHeaderIdentifiers();
 
-    JSC::Identifier& identifierFor(JSC::VM&, HTTPHeaderName);
-    JSC::JSString* stringFor(JSC::JSGlobalObject*, HTTPHeaderName);
+    JSC::Identifier& identifierFor(JSC::VM& vm, HTTPHeaderName name) { return identifierAt(vm, static_cast<size_t>(name)); }
+    JSC::JSString* stringFor(JSC::JSGlobalObject* g, HTTPHeaderName name) { return stringAt(g, static_cast<size_t>(name)); }
+    JSC::Identifier& identifierFor(JSC::VM& vm, HTTP2PseudoHeaderName name) { return identifierAt(vm, PseudoOffset + static_cast<size_t>(name)); }
+    JSC::JSString* stringFor(JSC::JSGlobalObject* g, HTTP2PseudoHeaderName name) { return stringAt(g, PseudoOffset + static_cast<size_t>(name)); }
 
     template<typename Visitor>
     void visit(Visitor& visitor);
 
 private:
-    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_PROPERTY_DECLARATIONS)
+    static constexpr size_t Count = static_cast<size_t>(Index::Count);
+    static constexpr size_t PseudoOffset = numHTTPHeaderNames;
+
+    JSC::Identifier& identifierAt(JSC::VM&, size_t);
+    JSC::Identifier& identifierAt(JSC::VM& vm, Index i) { return identifierAt(vm, static_cast<size_t>(i)); }
+    JSC::JSString* stringAt(JSC::JSGlobalObject* g, size_t i) { return m_strings[i].getInitializedOnMainThread(g); }
+    JSC::JSString* stringAt(JSC::JSGlobalObject* g, Index i) { return stringAt(g, static_cast<size_t>(i)); }
+
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[Count];
+    JSC::Identifier m_identifiers[Count];
 };
 
 } // namespace WebCore
 
-#undef HTTP_HEADERS_ACCESSOR_DECLARATIONS
-#undef HTTP_HEADERS_PROPERTY_DECLARATIONS
+#undef HTTP_HEADERS_INDEX_ENTRY
+#undef HTTP_HEADERS_ACCESSOR_DEFINITIONS

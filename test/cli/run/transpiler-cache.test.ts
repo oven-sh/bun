@@ -748,11 +748,13 @@ console.log("OK");
     expect(first.exitCode).toBe(0);
     expect(storedSourceMapLength()).toBe(0);
 
-    // This run does remap stack traces, and it is served that entry.
+    // This run does remap stack traces, and it is served that entry. A run
+    // that missed the cache would have written the entry again, with a map.
     const second = run();
     expect(second.stdout.toString()).toContain("at boom");
     expect(second.stdout.toString()).toContain("OK");
     expect(second.signalCode).toBeUndefined();
+    expect(storedSourceMapLength()).toBe(0);
     expect(second.exitCode).toBe(0);
   });
 
@@ -771,10 +773,13 @@ console.log("OK");
     data.writeBigUInt64LE(0n, SOURCEMAP_BYTE_LENGTH_AT);
     writeFileSync(entry, data);
 
+    // The length is still zero afterwards, so this run was served the entry
+    // and did not write it again.
     const second = run();
     expect(second.stdout.toString()).toContain("at boom");
     expect(second.stdout.toString()).toContain("OK");
     expect(second.signalCode).toBeUndefined();
+    expect(storedSourceMapLength()).toBe(0);
     expect(second.exitCode).toBe(0);
   });
 });

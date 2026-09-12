@@ -359,22 +359,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       continue;
     }
 
-    if (protoFields[name].publicSymbol !== undefined) {
-      const publicSymbol = protoFields[name].publicSymbol;
-      const fn = protoFields[name].fn;
-      if (!fn) throw Error(`(field: ${name}) public field needs 'fn' key `);
-      const observable_name = protoFields[name].name ?? fn;
-
-      specialSymbols += `
-    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${publicSymbol}PublicName(), JSFunction::create(vm, globalObject, ${
-      protoFields[name].length || 0
-    }, String("${observable_name}"_s), ${protoSymbolName(
-      typeName,
-      fn,
-    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
-      continue;
-    }
-
     if (!name.startsWith("@@")) {
       continue;
     }

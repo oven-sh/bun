@@ -492,7 +492,6 @@ export default [
     call: false,
     refCounted: true,
     estimatedSize: true,
-    // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251, storable: false },
     JSType: "0b11101110",
     klass: {

@@ -12,7 +12,6 @@ struct BunVmHandleRef;
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
-#include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
 
@@ -99,9 +98,6 @@ public:
     void globalObjectDestroyed();
 
     bool isJSExecutionForbidden();
-    void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
-    {
-    }
     // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.

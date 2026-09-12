@@ -36,7 +36,6 @@
 // #include "DOMHighResTimeStamp.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
-// #include "ReducedResolutionSeconds.h"
 #include "ScriptExecutionContext.h"
 // #include "Timer.h"
 #include <variant>
@@ -53,16 +52,13 @@ class JSGlobalObject;
 
 namespace WebCore {
 
-using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
-class Document;
 class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
 class PerformanceMeasure;
 class PerformanceNavigation;
-class PerformanceNavigationTiming;
 class PerformanceObserver;
 class PerformanceTiming;
 class ScriptExecutionContext;

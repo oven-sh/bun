@@ -380,10 +380,10 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> Option<i32> {
     Some(zigzag_decode(result))
 }
 
-/// Reads the 8-byte mask that starts at `pos`. Bit `i` of the result is bit
-/// `i & 7` of byte `i >> 3`, the order `Builder::flush_window` sets them in.
+/// Reads the 8 bytes that start at `pos`. For a mask, bit `i` of the result is
+/// bit `i & 7` of byte `i >> 3`, the order `Builder::flush_window` sets them in.
 #[inline]
-fn read_mask(bytes: &[u8], pos: usize) -> Option<u64> {
+fn read_u64_le(bytes: &[u8], pos: usize) -> Option<u64> {
     Some(u64::from_le_bytes(*bytes.get(pos..)?.first_chunk()?))
 }
 
@@ -470,24 +470,42 @@ impl WindowReader {
     }
 
     /// Positions the reader on the window whose header starts at `start`.
-    /// Returns `None`, with the reader left empty, when the header or one of the
-    /// flagged sections does not fit inside `bytes`.
+    /// Returns `None`, with the reader left `done()`, when the header or one of
+    /// the flagged sections does not fit inside `bytes`.
     fn parse(&mut self, bytes: &[u8], start: usize) -> Option<()> {
-        *self = WindowReader::DANGLING;
+        // Empty until the whole window is accepted.
+        self.count = 0;
+        self.delta_idx = 0;
         let header: &[u8; win_hdr::GEN_COL_LANE_OFF] = bytes.get(start..)?.first_chunk()?;
-        let len_at = |off: usize| u16::from_ne_bytes([header[off], header[off + 1]]) as usize;
+        // One load covers count, flags and the three u16 LE section lengths.
+        let fixed = read_u64_le(header, 0)?;
+        let len_at = |off: usize| ((fixed >> (8 * off)) & 0xffff) as usize;
+        let flags = (fixed >> (8 * win_hdr::FLAGS_OFF)) as u8;
 
-        let flags = header[win_hdr::FLAGS_OFF];
-        let gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
-        let orig_line_exc_pos = gen_col_pos + len_at(win_hdr::GEN_COL_LEN_OFF);
-        let orig_col_exc_pos = orig_line_exc_pos + len_at(win_hdr::ORIG_LINE_LEN_OFF);
-        let mut pos = orig_col_exc_pos + len_at(win_hdr::ORIG_COL_LEN_OFF);
+        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
+        self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
+        self.orig_line_exc_pos = self.gen_col_pos + len_at(win_hdr::GEN_COL_LEN_OFF);
+        self.orig_col_exc_pos = self.orig_line_exc_pos + len_at(win_hdr::ORIG_LINE_LEN_OFF);
+        self.gen_line_mask = read_u64_le(header, win_hdr::GEN_LINE_MASK_OFF)?;
+        self.orig_line_eq_mask = read_u64_le(header, win_hdr::ORIG_LINE_EQ_MASK_OFF)?;
+        self.orig_col_eq_mask = read_u64_le(header, win_hdr::ORIG_COL_EQ_MASK_OFF)?;
+        self.flags = flags;
+        self.gen_line_exc_next_idx = 0xFF;
+        if flags != 0 {
+            let pos = self.orig_col_exc_pos + len_at(win_hdr::ORIG_COL_LEN_OFF);
+            self.parse_flagged_sections(bytes, pos)?;
+        }
+        // Well-formed windows never exceed `SYNC_INTERVAL`. The clamp keeps
+        // every delta index below 64, the width of the masks.
+        self.count = ((fixed >> (8 * win_hdr::COUNT_OFF)) as u8).min(SYNC_INTERVAL as u8);
+        Some(())
+    }
 
-        let mut gen_line_exc_pos = 0;
-        let mut gen_line_exc_next_idx = 0xFF;
-        if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
-            gen_line_exc_pos = pos;
-            gen_line_exc_next_idx = *bytes.get(pos)?;
+    #[cold]
+    fn parse_flagged_sections(&mut self, bytes: &[u8], mut pos: usize) -> Option<()> {
+        if self.flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
+            self.gen_line_exc_pos = pos;
+            self.gen_line_exc_next_idx = *bytes.get(pos)?;
             // One pair per delta at most, so a damaged window cannot turn the
             // search for the terminator into a scan of the whole stream.
             let mut pairs = 0;
@@ -501,31 +519,10 @@ impl WindowReader {
             }
             pos += 1;
         }
-        let mut src_idx_eq_mask = 0;
-        let mut src_idx_exc_pos = 0;
-        if flags & FLAG_HAS_SRC_IDX != 0 {
-            src_idx_eq_mask = read_mask(bytes, pos)?;
-            src_idx_exc_pos = pos + 8;
+        if self.flags & FLAG_HAS_SRC_IDX != 0 {
+            self.src_idx_eq_mask = read_u64_le(bytes, pos)?;
+            self.src_idx_exc_pos = pos + 8;
         }
-
-        *self = WindowReader {
-            bytes: std::ptr::from_ref::<[u8]>(bytes),
-            gen_col_pos,
-            orig_line_exc_pos,
-            orig_col_exc_pos,
-            gen_line_exc_pos,
-            src_idx_exc_pos,
-            gen_line_mask: read_mask(header, win_hdr::GEN_LINE_MASK_OFF)?,
-            orig_line_eq_mask: read_mask(header, win_hdr::ORIG_LINE_EQ_MASK_OFF)?,
-            orig_col_eq_mask: read_mask(header, win_hdr::ORIG_COL_EQ_MASK_OFF)?,
-            src_idx_eq_mask,
-            // Well-formed windows never exceed `SYNC_INTERVAL`. The clamp keeps
-            // every delta index below 64, the width of the masks.
-            count: header[win_hdr::COUNT_OFF].min(SYNC_INTERVAL as u8),
-            flags,
-            gen_line_exc_next_idx,
-            delta_idx: 0,
-        };
         Some(())
     }
 

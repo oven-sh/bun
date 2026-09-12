@@ -880,9 +880,15 @@ elide-lines = 10
 
 ### `run.noOrphans` - don't leave orphan processes behind
 
-When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away, even if the parent was force-killed and never got a chance to forward a signal. On its own exit, Bun also terminates every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
+When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away, even if the parent was force-killed and never got a chance to forward a signal. When Bun exits, rather than being killed, it also kills the descendant processes it can reach. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
 
 On Linux, Bun uses `prctl(PR_SET_PDEATHSIG)` and a `/proc` descendant walk. On macOS, it uses `EVFILT_PROC`/`NOTE_EXIT` on the event loop's kqueue and a libproc descendant walk. On Windows, it uses a thread-pool wait on the parent's process handle and a kill-on-close Job Object.
+
+On Linux and macOS, the cleanup has these limits:
+
+- `bun run <script>` gives the script its own process group and kills that group when the script finishes or when the parent of Bun goes away. A process that the script left running in the background dies with the group. Other modes, such as running a file directly, `bun test`, and `bun run --filter`, only kill what is still below Bun in the process tree when Bun exits. A process whose parent has already exited is out of reach.
+- In those other modes on Linux, the kernel kills Bun itself when the parent goes away, and Bun does not get to walk the tree. The kernel kills the children that Bun spawned from its main thread in the same way, and a child that is itself a Bun inherits the option and does the same for its own children. The children of other programs, and processes spawned from a `Worker`, keep running.
+- Bun kills a descendant only when the kernel lets Bun send it a signal. A descendant that runs as a different user than Bun keeps running unless Bun has that permission: root on macOS, the `CAP_KILL` capability on Linux, which root normally holds and which a container can drop. This rule applies to a process spawned with the `uid` option of `Bun.spawn` or `child_process`, and to a command run through a setuid program such as `sudo`.
 
 Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
 

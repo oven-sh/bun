@@ -4251,6 +4251,21 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
 }
 
+// `Object.prototype.toString.call(value) === "[object Object]"`. Jest's `equals()` compares this string first, so no object of another class equals `{}`.
+[[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toStringTagIsObject(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSString* tag = JSC::objectPrototypeToString(globalObject, JSC::JSValue::decode(JSValue0));
+    RETURN_IF_EXCEPTION(scope, false);
+
+    JSC::JSString* objectObject = vm.smallStrings.objectObjectString();
+    if (tag == objectObject)
+        return true;
+    RELEASE_AND_RETURN(scope, tag->equal(globalObject, objectObject));
+}
+
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
     JSC::forEachInIterable(

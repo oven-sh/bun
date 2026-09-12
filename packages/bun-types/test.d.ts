@@ -1544,11 +1544,16 @@ declare module "bun:test" {
     /**
      * Asserts that a value is empty.
      *
+     * The value must be a string, an object, or an iterable. With any other
+     * value, such as `undefined`, a number, or a function, both `toBeEmpty()`
+     * and `.not.toBeEmpty()` fail.
+     *
      * @example
      * expect("").toBeEmpty();
      * expect([]).toBeEmpty();
      * expect({}).toBeEmpty();
      * expect(new Set()).toBeEmpty();
+     * expect(new Date()).not.toBeEmpty();
      */
     toBeEmpty(): void;
 

@@ -281,16 +281,18 @@ server.close();`,
     });
 
     // Test with default target (current platform)
+    const outfile = join(dir + "", "app-with-resources");
     const result = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       compile: {
-        outfile: "app-with-resources",
+        outfile,
       },
     });
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    expect(result.outputs[0].path).toEndWith(isWindows ? "app-with-resources.exe" : "app-with-resources");
+    // A relative outfile would resolve against the test runner's cwd and leave the executable there.
+    expect(result.outputs[0].path).toBe(isWindows ? `${outfile}.exe` : outfile);
 
     // The test passes if compilation succeeds - the actual embedded resource
     // path handling is verified by the successful compilation

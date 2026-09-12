@@ -522,6 +522,94 @@ console.log(message);`,
     expect(html).toContain("</script>");
   });
 
+  // A browser decodes inline <script>/<style> text with the document's
+  // encoding, which falls back to windows-1252 when nothing declares one. The
+  // external module script the source page used was always UTF-8.
+  describe("charset declaration", () => {
+    const app = { "app.js": `document.title = "héllo ✓";`, "style.css": `body::after { content: "✓"; }` };
+    // Browsers stop looking for a declaration at the first body content once
+    // they are 1024 bytes in, so it has to land ahead of this.
+    const filler = `<p>${Buffer.alloc(1500, "a").toString()}</p>`;
+
+    async function buildStandalone(dir: string) {
+      const result = await Bun.build({ entrypoints: [`${dir}/index.html`], compile: true, target: "browser" });
+      expect(result.success).toBe(true);
+      expect(result.outputs.length).toBe(1);
+      return await result.outputs[0].text();
+    }
+
+    test.each([
+      [
+        "at the start of <head>",
+        `<!DOCTYPE html>\n<html>\n<head><title>x</title><link rel="stylesheet" href="./style.css"></head>\n<body>${filler}<script src="./app.js"></script></body>\n</html>`,
+        `<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"><title>x</title></head>`,
+      ],
+      [
+        "into an empty <head>",
+        `<!DOCTYPE html><html><head></head><body>${filler}<script src="./app.js"></script></body></html>`,
+        `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>`,
+      ],
+      [
+        "ahead of <body> when there is no <head>",
+        `<!DOCTYPE html><html lang="en"><body><script src="./app.js"></script>${filler}</body></html>`,
+        `<!DOCTYPE html><html lang="en"><meta charset="utf-8"><body><p>`,
+      ],
+      [
+        "ahead of the first element when the tags are implied",
+        `<!DOCTYPE html><title>x</title><link rel="stylesheet" href="./style.css">${filler}<script src="./app.js"></script>`,
+        `<!DOCTYPE html><meta charset="utf-8"><title>x</title><p>`,
+      ],
+      [
+        "at the start of a fragment",
+        `<div id="app">${filler}</div><link rel="stylesheet" href="./style.css"><script src="./app.js"></script>`,
+        `<meta charset="utf-8"><div id="app"><p>`,
+      ],
+    ])("a document that declares no encoding gets <meta charset> %s", async (_, source, expected) => {
+      using dir = tempDir("compile-browser-charset-added", { ...app, "index.html": source });
+      const html = await buildStandalone(String(dir));
+      expect(html.replace(/<style>.*?<\/style>/s, "")).toStartWith(expected);
+      expect(html.match(/<meta/g)).toEqual(["<meta"]);
+      expect(html).toContain(`"héllo ✓"`);
+      if (source.includes("style.css")) {
+        expect(html.indexOf('<meta charset="utf-8">')).toBeLessThan(html.indexOf("<style>"));
+        expect(html).toContain(`content: "✓"`);
+      }
+    });
+
+    test.each([
+      `<meta charset="UTF-8" />`,
+      `<meta charset=windows-1252>`,
+      `<meta http-equiv="Content-Type" content="text/html; charset=utf-8">`,
+    ])("keeps %s as the only declaration", async declaration => {
+      using dir = tempDir("compile-browser-charset-declared", {
+        ...app,
+        "index.html": `<!DOCTYPE html>
+<html>
+<head>${declaration}<link rel="stylesheet" href="./style.css"></head>
+<body><script src="./app.js"></script></body>
+</html>`,
+      });
+      const html = await buildStandalone(String(dir));
+      expect(html).toContain(declaration);
+      expect(html.match(/<meta/gi)).toEqual(["<meta"]);
+    });
+
+    test("a <meta http-equiv> that is not a Content-Type with a charset does not count", async () => {
+      using dir = tempDir("compile-browser-charset-other-meta", {
+        ...app,
+        "index.html": `<!DOCTYPE html>
+<html>
+<head><meta http-equiv="Content-Type" content="text/html"><meta name="viewport" content="width=device-width"></head>
+<body><script src="./app.js"></script></body>
+</html>`,
+      });
+      const html = await buildStandalone(String(dir));
+      expect(html).toContain(
+        '<head><meta charset="utf-8"><meta http-equiv="Content-Type" content="text/html"><meta name="viewport" content="width=device-width"></head>',
+      );
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/32114
   describe.concurrent("sourcemaps", () => {
     const fixture = {

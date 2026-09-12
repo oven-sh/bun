@@ -1990,15 +1990,17 @@ fn parse_data_loader<'a>(
                 // also random-access `decls[prev]`.
                 for i in 0..n {
                     let prop = &mut properties[i];
-                    // SAFETY: data-format parsers always emit
-                    // `e_string` keys.
                     let key = prop.key.as_mut().unwrap();
                     let key_loc = key.loc;
-                    let name: &[u8] = key
-                        .data
-                        .e_string_mut()
-                        .expect("infallible: variant checked")
-                        .slice(arena);
+                    let Some(key_string) = key.data.e_string_mut() else {
+                        // YAML and JSON5 keys can be booleans, null, numbers,
+                        // sequences or mappings (`true: t`, `[a, b]: seq`).
+                        // Like the bundler's lazy-export path, give them no
+                        // named export; the default object keeps them and the
+                        // printer writes them as computed keys.
+                        continue;
+                    };
+                    let name: &[u8] = key_string.slice(arena);
                     // Do not make named exports for "default" exports
                     if name == b"default" {
                         continue;

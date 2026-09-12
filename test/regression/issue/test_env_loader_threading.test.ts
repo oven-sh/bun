@@ -62,10 +62,10 @@ test("env_loader should not have allocator threading issues with BUN_INSPECT_CON
 // environment as it is: not parse it again (the define setup JSON-parses NODE_ENV and fails on a value
 // that is not valid JSON) and not load .env files of its own into the process.
 //
-// Once that VM is up, the debugger thread connects to BUN_INSPECT_NOTIFY (src/js/internal/debugger.ts)
-// through its own process.env. The fixtures wait for stdin, which is closed after that notification,
-// so what they print was observed after the debugger thread finished its setup. A debugger thread
-// that aborts takes the process down before the notification instead.
+// Once that VM is up, the debugger thread connects to BUN_INSPECT_NOTIFY (src/js/internal/debugger.ts).
+// The fixtures wait for stdin, which is closed after that notification, so what they print was
+// observed after the debugger thread finished its setup. A debugger thread that aborts takes the
+// process down before the notification instead.
 async function runUnderInspector(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   const { promise: notified, resolve: onNotified } = Promise.withResolvers<string>();
   using listener = Bun.listen({

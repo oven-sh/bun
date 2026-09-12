@@ -116,6 +116,8 @@ pub struct Debugger {
     // `'static` is genuine: borrowed from process-lifetime env-var storage;
     // default `""`.
     pub from_environment_variable: &'static [u8],
+    /// `BUN_INSPECT_NOTIFY` (`""` if unset); gone from the env map by the time it is needed.
+    pub notify: &'static [u8],
     pub script_execution_context_id: u32,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
@@ -139,6 +141,7 @@ impl Default for Debugger {
         Self {
             path_or_port: None,
             from_environment_variable: b"",
+            notify: b"",
             script_execution_context_id: 0,
             next_debugger_id: 1,
             poll_ref: KeepAlive::default(),
@@ -168,6 +171,7 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
+        notify: &BunString,
     );
 }
 
@@ -183,6 +187,7 @@ struct DebuggerThreadInit {
     is_node_inspector: bool,
     from_env: &'static [u8],
     path_or_port: Option<&'static [u8]>,
+    notify: &'static [u8],
 }
 
 impl Debugger {
@@ -406,6 +411,7 @@ impl Debugger {
                 is_node_inspector: dbg.protocol == Protocol::NodeInspector,
                 from_env: dbg.from_environment_variable,
                 path_or_port: dbg.path_or_port,
+                notify: dbg.notify,
             };
             // Rust's `std::thread` default stack (2 MiB) is too small to run
             // a full `VirtualMachine::init` + JS module load on this thread,
@@ -484,18 +490,30 @@ impl Debugger {
             is_node_inspector,
             from_env,
             path_or_port,
+            mut notify,
         } = init;
 
         if !from_env.is_empty() {
             let url = BunString::borrow_utf8(from_env);
+            // The launcher is told once, by whichever server comes up first.
+            let notify_url = BunString::borrow_utf8(core::mem::take(&mut notify));
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false, &notify_url);
         }
 
         if let Some(path_or_port) = path_or_port {
             let url = BunString::borrow_utf8(path_or_port);
+            let notify_url = BunString::borrow_utf8(core::mem::take(&mut notify));
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
+            Bun__startJSDebuggerThread(
+                global,
+                ctx_id,
+                &url,
+                0,
+                is_connect,
+                is_node_inspector,
+                &notify_url,
+            );
         }
 
         let _ = this.global().handle_rejected_promises();

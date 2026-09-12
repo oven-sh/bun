@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A top-level-awaited dynamic import whose target statically imports the
@@ -239,4 +239,273 @@ test("sibling dynamic imports sharing a TLA wrapper wait for its post-await expo
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("foo bar");
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/41029
+//
+// The import() that closes the cycle is not written in the awaiting module. A
+// helper module issues it, and the entry awaits the helper. The deadlock is the
+// same: the chunk waits for the entry (12.b.v), the entry waits for the helper,
+// the helper waits for the chunk. The skip has to follow the await chain hanging
+// off the import() promise back to the suspended entry, whatever code issued
+// the import() and however many promises sit in between.
+describe("dynamic import through a helper whose target imports the TLA awaiter back", () => {
+  async function run(files: Record<string, string>, entry = "entry.ts") {
+    using dir = tempDir("dyn-tla-helper-cycle", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const child = `
+    import { helper } from "./entry.ts";
+    export function start() { return helper(); }
+  `;
+
+  // The issue's repro: two levels of import(), the helper calls import()
+  // synchronously and awaits it.
+  test.concurrent("helper reached by import(), import() before the helper's first await", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        const { load } = await import("./loader.ts");
+        await load();
+        console.log("BOOT OK");
+      `,
+      "loader.ts": `
+        export async function load() {
+          const m = await import("./child.ts");
+          console.log("child:", m.start());
+        }
+      `,
+      "child.ts": child,
+    });
+    expect(result).toEqual({ stdout: "child: helper from entry\nBOOT OK", stderr: "", exitCode: 0 });
+  });
+
+  // A plugin loader: statically imported, scans a directory, then imports what
+  // it found. The entry's body is long gone from the stack when import() runs.
+  test.concurrent("statically imported async helper that awaits I/O before import()", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        import { load } from "./loader.ts";
+        await load();
+        console.log("BOOT OK");
+      `,
+      "loader.ts": `
+        import { readdir } from "node:fs/promises";
+        export async function load() {
+          const files = (await readdir(new URL("./plugins/", import.meta.url))).sort();
+          for (const file of files) {
+            const m = await import("./plugins/" + file);
+            console.log("plugin:", file, m.start());
+          }
+        }
+      `,
+      "plugins/a.ts": `
+        import { helper } from "../entry.ts";
+        export function start() { return "a:" + helper(); }
+      `,
+      "plugins/b.ts": `
+        import { helper } from "../entry.ts";
+        export function start() { return "b:" + helper(); }
+      `,
+    });
+    expect(result).toEqual({
+      stdout: "plugin: a.ts a:helper from entry\nplugin: b.ts b:helper from entry\nBOOT OK",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("three levels of import()", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        const { load } = await import("./loader.ts");
+        await load();
+        console.log("BOOT OK");
+      `,
+      "loader.ts": `
+        export async function load() {
+          await 0;
+          const { loadMore } = await import("./loader2.ts");
+          await loadMore();
+        }
+      `,
+      "loader2.ts": `
+        export async function loadMore() {
+          await 0;
+          const m = await import("./child.ts");
+          console.log("child:", m.start());
+        }
+      `,
+      "child.ts": child,
+    });
+    expect(result).toEqual({ stdout: "child: helper from entry\nBOOT OK", stderr: "", exitCode: 0 });
+  });
+
+  // No await in the helper: its promise is resolved with the import() promise.
+  test.concurrent("helper returns the import() promise", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        import { load } from "./loader.ts";
+        const m = await load();
+        console.log("child:", m.start());
+      `,
+      "loader.ts": `
+        export function load() {
+          return import("./child.ts");
+        }
+      `,
+      "child.ts": child,
+    });
+    expect(result).toEqual({ stdout: "child: helper from entry", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("helper chains .then() on the import() promise", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        import { load } from "./loader.ts";
+        console.log("child:", await load());
+      `,
+      "loader.ts": `
+        export function load() {
+          return import("./child.ts").then(m => m.start()).finally(() => {});
+        }
+      `,
+      "child.ts": child,
+    });
+    expect(result).toEqual({ stdout: "child: helper from entry", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("helper awaits Promise.all of several import()s", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        import { load } from "./loader.ts";
+        await load();
+        console.log("BOOT OK");
+      `,
+      "loader.ts": `
+        export async function load() {
+          await 0;
+          const [a, b] = await Promise.all([import("./a.ts"), import("./b.ts")]);
+          console.log(a.start(), b.start());
+        }
+      `,
+      "a.ts": `
+        import { helper } from "./entry.ts";
+        export function start() { return "a:" + helper(); }
+      `,
+      "b.ts": `
+        import { helper } from "./entry.ts";
+        export function start() { return "b:" + helper(); }
+      `,
+    });
+    expect(result).toEqual({ stdout: "a:helper from entry b:helper from entry\nBOOT OK", stderr: "", exitCode: 0 });
+  });
+
+  // Each import() is created when the loop asks for it, so its await is in place
+  // before the module graph evaluates. Creating them all up front is a race: a
+  // later import() can evaluate before the loop has reached and awaited it, and
+  // then nothing shows that the entry waits for it.
+  test.concurrent("helper iterates import() promises with for await", async () => {
+    const result = await run({
+      "entry.ts": `
+        export function helper() { return "helper from entry"; }
+        import { load } from "./loader.ts";
+        await load();
+        console.log("BOOT OK");
+      `,
+      "loader.ts": `
+        function* plugins() {
+          yield import("./a.ts");
+          yield import("./b.ts");
+        }
+        export async function load() {
+          await 0;
+          for await (const m of plugins()) {
+            console.log(m.start());
+          }
+        }
+      `,
+      "a.ts": `
+        import { helper } from "./entry.ts";
+        export function start() { return "a:" + helper(); }
+      `,
+      "b.ts": `
+        import { helper } from "./entry.ts";
+        export function start() { return "b:" + helper(); }
+      `,
+    });
+    expect(result).toEqual({ stdout: "a:helper from entry\nb:helper from entry\nBOOT OK", stderr: "", exitCode: 0 });
+  });
+
+  // The awaiting module is a static dependency of the entry, not the entry.
+  test.concurrent("awaiter is a non-entry module", async () => {
+    const result = await run({
+      "entry.ts": `
+        import { result } from "./mid.ts";
+        console.log("result:", result);
+      `,
+      "mid.ts": `
+        export function helper() { return "helper from mid"; }
+        import { load } from "./loader.ts";
+        export const result = await load();
+      `,
+      "loader.ts": `
+        export async function load() {
+          await 0;
+          const m = await import("./chunk.ts");
+          return m.start();
+        }
+      `,
+      "chunk.ts": `
+        import { helper } from "./mid.ts";
+        export function start() { return helper(); }
+      `,
+    });
+    expect(result).toEqual({ stdout: "result: helper from mid", stderr: "", exitCode: 0 });
+  });
+
+  // The entry does not await the helper's import(): nothing is deadlocked, so
+  // the chunk must wait for the entry (12.b.v) and see its post-await exports.
+  // The timer keeps the entry suspended while the chunk loads. A fixed delay
+  // is the only option: in the correct outcome the chunk's body does not run
+  // until the entry finishes, so nothing on the chunk side can signal the
+  // entry, and any promise from the import() back to the entry's await would
+  // make the entry wait on the chunk for real. A slow machine can only make
+  // this check pass vacuously, never fail.
+  test.concurrent("a helper's import() that the awaiter does not wait for still waits for the awaiter", async () => {
+    const result = await run({
+      "entry.ts": `
+        export const early = "early";
+        import { preload } from "./loader.ts";
+        preload();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        export const late = "late";
+        console.log("entry done");
+      `,
+      "loader.ts": `
+        export function preload() {
+          import("./chunk.ts").then(m => console.log("chunk loaded:", m.report));
+        }
+      `,
+      "chunk.ts": `
+        import { early, late } from "./entry.ts";
+        export const report = early + " " + late;
+      `,
+    });
+    expect(result).toEqual({ stdout: "entry done\nchunk loaded: early late", stderr: "", exitCode: 0 });
+  });
 });

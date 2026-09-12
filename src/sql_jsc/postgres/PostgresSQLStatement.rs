@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::signature::Signature;
@@ -16,6 +16,8 @@ bun_core::declare_scope!(Postgres, visible);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,
+    /// `result.statement` for prepared statements; dropped wherever `fields` is replaced.
+    pub(crate) cached_statement_js: StrongOptional,
     ref_count: Cell<u32>,
     pub(crate) fields: Vec<protocol::FieldDescription>,
     pub(crate) parameters: Box<[int4]>,
@@ -32,6 +34,7 @@ impl Default for PostgresSQLStatement {
         // exists only to mirror the per-field `= ...` initializers.
         Self {
             cached_structure: PostgresCachedStructure::default(),
+            cached_statement_js: StrongOptional::empty(),
             ref_count: Cell::new(1),
             fields: Vec::new(),
             parameters: Box::default(),

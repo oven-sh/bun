@@ -11,9 +11,9 @@ bun_core::declare_scope!(ColumnDefinition41, hidden);
 pub struct ColumnDefinition41 {
     pub(crate) catalog: Data,
     pub(crate) schema: Data,
-    pub(crate) table: Data,
+    pub table: Data,
     pub(crate) org_table: Data,
-    pub(crate) name: Data,
+    pub name: Data,
     pub(crate) org_name: Data,
     pub(crate) fixed_length_fields_length: u64,
     pub character_set: u16,
@@ -97,12 +97,21 @@ fn extended_metadata_is_json(mut bytes: &[u8]) -> Result<bool, AnyMySQLError> {
     Ok(is_json)
 }
 
+/// What re-decoding a column definition into an already-populated slot invalidated.
+#[derive(Clone, Copy, Default)]
+pub struct Changed {
+    /// `name_or_index` differs, so the cached row structure and duplicate check are stale.
+    pub structure: bool,
+    /// A field reported by `result.columns` differs, so the cached statement object is stale.
+    pub metadata: bool,
+}
+
 impl ColumnDefinition41 {
     pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
         extended_type_info: bool,
-    ) -> Result<bool, AnyMySQLError> {
+    ) -> Result<Changed, AnyMySQLError> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
         bun_core::scoped_log!(
@@ -118,7 +127,14 @@ impl ColumnDefinition41 {
             BStr::new(self.schema.slice())
         );
 
-        self.table = reader.encode_len_string()?;
+        let mut changed = Changed::default();
+
+        // `table`/`name` outlive the read buffer (read at OK/EOF time), so they are owned copies.
+        let table = reader.encode_len_string()?;
+        if self.table.slice() != table.slice() {
+            self.table = Data::create(table.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            changed.metadata = true;
+        }
         bun_core::scoped_log!(
             ColumnDefinition41,
             "table: {}",
@@ -132,7 +148,12 @@ impl ColumnDefinition41 {
             BStr::new(self.org_table.slice())
         );
 
-        self.name = reader.encode_len_string()?;
+        let name = reader.encode_len_string()?;
+        if self.name.slice() != name.slice() {
+            self.name = Data::create(name.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            // Byte compare: all-digit aliases like `1` and `01` collapse to the same `Index` below.
+            changed.metadata = true;
+        }
         bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));
 
         self.org_name = reader.encode_len_string()?;
@@ -153,13 +174,15 @@ impl ColumnDefinition41 {
 
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
-        self.column_length = reader.int::<u32>()?;
+        let column_length = reader.int::<u32>()?;
+        changed.metadata |= column_length != self.column_length;
+        self.column_length = column_length;
         // `FieldType` is an exhaustive `#[repr(u8)]` enum, so an unknown wire byte
         // fails the whole query with `UnsupportedColumnType` rather than being
         // carried through and served as a raw/string cell. Resolves once
         // `FieldType` becomes a non-exhaustive newtype-over-u8 (see MySQLTypes.rs).
         let type_byte = reader.int::<u8>()?;
-        self.column_type =
+        let mut column_type =
             FieldType::from_raw(type_byte).ok_or(AnyMySQLError::UnsupportedColumnType)?;
         // MariaDB has no MYSQL_TYPE_JSON: JSON columns and JSON function
         // results arrive as TEXT/BLOB marked format=json, so remap them onto
@@ -168,7 +191,7 @@ impl ColumnDefinition41 {
         // keeping the row reader aligned.
         if json_format
             && matches!(
-                self.column_type,
+                column_type,
                 FieldType::MYSQL_TYPE_BLOB
                     | FieldType::MYSQL_TYPE_TINY_BLOB
                     | FieldType::MYSQL_TYPE_MEDIUM_BLOB
@@ -178,9 +201,13 @@ impl ColumnDefinition41 {
                     | FieldType::MYSQL_TYPE_VARCHAR
             )
         {
-            self.column_type = FieldType::MYSQL_TYPE_JSON;
+            column_type = FieldType::MYSQL_TYPE_JSON;
         }
-        self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
+        changed.metadata |= column_type != self.column_type;
+        self.column_type = column_type;
+        let flags = ColumnFlags::from_int(reader.int::<u16>()?);
+        changed.metadata |= flags != self.flags;
+        self.flags = flags;
         self.decimals = reader.int::<u8>()?;
 
         // `ColumnIdentifier::init` consumes its `Data`. We can't move `self.name`
@@ -195,12 +222,11 @@ impl ColumnDefinition41 {
         // ASAN quarantine (test/regression/issue/28632).
         let unchanged = matches!(&self.name_or_index,
             ColumnIdentifier::Name(existing) if existing.slice() == self.name.slice());
-        let mut changed = false;
         if !unchanged {
             let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
             let rebuilt =
                 ColumnIdentifier::init(name_view).map_err(|_| AnyMySQLError::OutOfMemory)?;
-            changed = match (&self.name_or_index, &rebuilt) {
+            changed.structure = match (&self.name_or_index, &rebuilt) {
                 (ColumnIdentifier::Index(prev), ColumnIdentifier::Index(curr)) => prev != curr,
                 _ => true,
             };
@@ -218,7 +244,7 @@ impl ColumnDefinition41 {
         &mut self,
         reader: &mut NewReader<Context>,
         extended_type_info: bool,
-    ) -> Result<bool, AnyMySQLError> {
+    ) -> Result<Changed, AnyMySQLError> {
         self.decode_internal(reader, extended_type_info)
     }
 }

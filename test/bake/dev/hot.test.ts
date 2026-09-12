@@ -388,6 +388,44 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+devTest("import.meta.hot.dispose runs once when one update changes several imported files", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+
+      const n = (import.meta.hot.data.n = (import.meta.hot.data.n ?? 0) + 1);
+      globalThis.state = { n, a, b };
+      console.log("eval " + n);
+
+      import.meta.hot.dispose(() => {
+        console.log("dispose " + n);
+      });
+      import.meta.hot.accept();
+    `,
+    "a.ts": `export const a = "a1";`,
+    "b.ts": `export const b = "b1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("eval 1");
+
+    // Both files land in one hot update, and both reach the same boundary.
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("a.ts", `export const a = "a2";`);
+      await dev.write("b.ts", `export const b = "b2";`);
+    }
+    await c.expectMessage("dispose 1", "eval 2");
+
+    await dev.write("a.ts", `export const a = "a3";`);
+    await c.expectMessage("dispose 2", "eval 3");
+    expect(await c.js`globalThis.state`).toEqual({ n: 3, a: "a3", b: "b2" });
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

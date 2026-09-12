@@ -385,9 +385,33 @@ impl Request {
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
-    pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
-        self.throw_if_body_unusable(global_this).ok()?;
-        self.clone(global_this).ok()
+    pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> *mut Request {
+        let Some(cloned) = self
+            .throw_if_body_unusable(global_this)
+            .and_then(|()| self.clone(global_this))
+            .ok()
+        else {
+            return core::ptr::null_mut();
+        };
+        let cloned = bun_core::heap::into_raw(cloned);
+        // SAFETY: `cloned` is the clone's final heap address, fresh from `into_raw`.
+        unsafe { self.derive_request_context(cloned) };
+        cloned
+    }
+
+    /// Hands `copy` (a copy of `self`) a derived handle to `self`'s server
+    /// `RequestContext`, if any (see [`AnyRequestContext::derive`]).
+    ///
+    /// # Safety
+    /// `copy` is fresh from `heap::into_raw` and not finalized ([`WeakRef::init_ref`]).
+    pub(crate) unsafe fn derive_request_context(&self, copy: *mut Request) {
+        if self.request_context.is_null() {
+            return;
+        }
+        // SAFETY: caller contract; `copy` is not aliased by `self`.
+        unsafe {
+            (*copy).request_context = self.request_context.derive(WeakRef::init_ref(copy));
+        }
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -973,11 +997,12 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    /// Also returns the `Request` being copied, if any, for [`Self::derive_request_context`].
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
         this_value: JSValue,
-    ) -> JsResult<Request> {
+    ) -> JsResult<(Request, Option<*mut Request>)> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
         let body = body::hive_alloc(BodyValue::Null);
@@ -1077,6 +1102,11 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
+        // `from_js`, not `as_direct`: a `BunRequest` or a Request with own properties counts too.
+        let copied_from = values_to_try
+            .last()
+            .and_then(|&value| <Request as bun_jsc::JsClass>::from_js(value));
+
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
@@ -1098,7 +1128,7 @@ impl Request {
                         }
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
-                        return Ok(req);
+                        return Ok((req, copied_from));
                     }
 
                     if !fields.contains(Fields::Method) {
@@ -1428,18 +1458,23 @@ impl Request {
         success = true;
 
         cleanup(&mut req, body_seed_ptr, success);
-        Ok(req)
+        Ok((req, copied_from))
     }
 
     pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
-    ) -> JsResult<Box<Request>> {
+    ) -> JsResult<*mut Request> {
         let arguments = callframe.arguments();
 
-        let request = Self::construct_into(global_this, arguments, this_value)?;
-        Ok(Request::new(request))
+        let (request, copied_from) = Self::construct_into(global_this, arguments, this_value)?;
+        let request = bun_core::heap::into_raw(Request::new(request));
+        if let Some(copied_from) = copied_from {
+            // SAFETY: `copied_from` is a live constructor argument; `request` is fresh from `into_raw`.
+            unsafe { (*copied_from).derive_request_context(request) };
+        }
+        Ok(request)
     }
 
     pub(crate) fn do_clone(
@@ -1453,7 +1488,10 @@ impl Request {
 
         let cloned_ptr = bun_core::heap::into_raw(cloned);
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
-        let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
+        let js_wrapper = unsafe {
+            self.derive_request_context(cloned_ptr);
+            (*cloned_ptr).to_js(global_this)
+        };
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }

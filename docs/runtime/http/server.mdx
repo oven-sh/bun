@@ -384,6 +384,8 @@ Use this for development and hot reloading. You can update only `fetch`, `error`
 
 ## Per-Request Controls
 
+These methods take the `Request` that Bun passed to your handler. A copy of it (`req.clone()`, `new Request(req, init)`, `new Request(url, req)`) works too, so middleware that re-wraps the request does not lose them. The same applies to `server.upgrade()`.
+
 ### `server.timeout(Request, seconds)`
 
 Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.

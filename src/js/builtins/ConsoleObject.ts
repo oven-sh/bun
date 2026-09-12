@@ -687,10 +687,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
             length++;
           }
         } else {
-          // User code can replace the iterator, so it gets `size` steps, like formatMap() in util.inspect.
-          const size = tabularData.size;
           for (const { 0: k, 1: v } of tabularData) {
-            if (length >= size) break;
             ArrayPrototypePush.$call(keys, _inspect(k));
             ArrayPrototypePush.$call(values, _inspect(v));
             length++;
@@ -706,10 +703,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (setlike) {
         const values = [];
         let length = 0;
-        // An iterator is an array of its entries by now. A Set is bounded like the Map above.
-        const size = setIter || mapIter ? tabularData.length : tabularData.size;
-        for (const v of tabularData) {
-          if (length >= size) break;
+        for (const v of tabularData as Set<any>) {
           ArrayPrototypePush.$call(values, _inspect(v));
           length++;
         }

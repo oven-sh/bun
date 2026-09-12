@@ -168,87 +168,33 @@ test("console.Console#table does not run a replaced next() of a Map or Set itera
   expect(exitCode).toBe(0);
 });
 
-// A Map or a Set is read through its iterator, so that a subclass can keep its
-// entries anywhere. The iterator gets as many steps as the collection has entries.
-test("console.Console#table stops a replaced Symbol.iterator of a Map or Set at its size", async () => {
-  const { stdout, exitCode } = await run(
-    guard +
-      /* js */ `
-    Map.prototype[Symbol.iterator] = function* () {
-      for (;;) {
-        guard();
-        yield ["k", "v"];
-      }
-    };
-    Set.prototype[Symbol.iterator] = function* () {
-      for (;;) {
-        guard();
-        yield "v";
-      }
-    };
-    c.table(new Map([["a", 1], ["b", 2]]));
-    c.table(new Set([7, 8]));
-    c.table(new Map());
-  `,
-  );
-  expect(stdout).toMatchInlineSnapshot(`
-    "┌───────────────────┬─────┬────────┐
-    │ (iteration index) │ Key │ Values │
-    ├───────────────────┼─────┼────────┤
-    │         0         │ 'k' │  'v'   │
-    │         1         │ 'k' │  'v'   │
-    └───────────────────┴─────┴────────┘
-    ┌───────────────────┬────────┐
-    │ (iteration index) │ Values │
-    ├───────────────────┼────────┤
-    │         0         │  'v'   │
-    │         1         │  'v'   │
-    └───────────────────┴────────┘
-    ┌───────────────────┬─────┬────────┐
-    │ (iteration index) │ Key │ Values │
-    ├───────────────────┼─────┼────────┤
-    └───────────────────┴─────┴────────┘
-    "
-  `);
-  expect(exitCode).toBe(0);
-});
-
-// This is why a Map is not read from its storage: a subclass like quick-lru
-// never calls super.set(), so the inherited storage is empty. A size that is
-// not a number (here a method that shadows the getter) sets no bound.
-test("console.Console#table reads a Map subclass through its own iterator", async () => {
+// A Map or a Set itself is read through its own iterator, and every entry the
+// iterator yields is a row, as in Node.js. `size` does not bound it: quick-lru
+// caps `size` at maxSize, and its iterator also yields the older generation.
+test("console.Console#table prints every entry that a Map subclass yields, also past its size", async () => {
   const { stdout, exitCode } = await run(/* js */ `
-    class Lru extends Map {
-      #rows = [["x", 1], ["y", 2], ["z", 3]];
+    class TwoGenerations extends Map {
+      #recent = [["d", 4], ["e", 5]];
+      #old = [["a", 1], ["b", 2], ["c", 3]];
       get size() {
-        return this.#rows.length;
+        return 3;
       }
       *[Symbol.iterator]() {
-        yield* this.#rows;
+        yield* this.#recent;
+        yield* this.#old;
       }
     }
-    c.table(new Lru());
-
-    class JavaStyle extends Map {
-      size() {
-        return 1;
-      }
-    }
-    c.table(new JavaStyle([["a", 1], ["b", 2]]));
+    c.table(new TwoGenerations());
   `);
   expect(stdout).toMatchInlineSnapshot(`
     "┌───────────────────┬─────┬────────┐
     │ (iteration index) │ Key │ Values │
     ├───────────────────┼─────┼────────┤
-    │         0         │ 'x' │   1    │
-    │         1         │ 'y' │   2    │
-    │         2         │ 'z' │   3    │
-    └───────────────────┴─────┴────────┘
-    ┌───────────────────┬─────┬────────┐
-    │ (iteration index) │ Key │ Values │
-    ├───────────────────┼─────┼────────┤
-    │         0         │ 'a' │   1    │
-    │         1         │ 'b' │   2    │
+    │         0         │ 'd' │   4    │
+    │         1         │ 'e' │   5    │
+    │         2         │ 'a' │   1    │
+    │         3         │ 'b' │   2    │
+    │         4         │ 'c' │   3    │
     └───────────────────┴─────┴────────┘
     "
   `);

@@ -7,8 +7,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
-/// Cap per side of an assertion diff. Shared (non-cyclic) references are printed once per path,
-/// so a small graph can expand exponentially without it (#34178).
+/// Cap per side of an assertion diff (#34178: shared references print once per path).
 const MAX_PRETTY_PRINT_BYTES: usize = 1024 * 1024;
 
 const TRUNCATION_NOTICE: &[u8] = b"\n... [value too large, output truncated]";

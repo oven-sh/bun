@@ -104,8 +104,7 @@ pub struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
-/// Forwards at most `remaining` bytes to `inner`, then discards the rest and sets `truncated`
-/// (shared with the [`Formatter`], which sees this sink only through `core::fmt::Write`).
+/// Forwards at most `remaining` bytes to `inner`, then discards the rest and sets `truncated`.
 struct CappedWriter<'a> {
     inner: &'a mut dyn bun_io::Write,
     remaining: usize,
@@ -1114,8 +1113,7 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // Stop the walk once the sink discards output: discarded writes still cost a full
-        // traversal, which is exponential for shared references (#34178).
+        // Stop the walk once the sink discards output (#34178).
         if self.output_truncated.is_some_and(Cell::get) {
             self.failed = true;
             return Ok(());

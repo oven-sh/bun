@@ -2,14 +2,13 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
-// Spawn a cluster fixture with a hard deadline and no-orphan protection. The
-// toRun() matcher uses spawnSync, which a test timeout cannot interrupt, so a
-// hung fixture leaks the primary + workers onto a non-ephemeral CI agent and
-// every later UDP test in the shard then times out too. Bun.spawn lets the
+// Spawn a cluster fixture with a hard deadline and no-orphan protection so a
+// hung fixture doesn't leak the primary + workers onto a non-ephemeral CI agent
+// and make every later UDP test in the shard time out too. Bun.spawn lets the
 // test-level timeout actually fire, `await using` kills the primary on the way
 // out, and BUN_FEATURE_FLAG_NO_ORPHANS makes the workers follow it.
 async function runClusterFixture(fixture: string, deadlineMs: number) {
@@ -230,12 +229,12 @@ describe("createSocket()", () => {
 
 describe("unref()", () => {
   test("call before bind() does not hang", async () => {
-    expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-unref-hang-fixture.ts"))).toSpawn();
   });
 
   // The last ref()/unref() before bind wins, like Node's always-present handle.
   test("ref() after unref() before bind() keeps the socket ref'd", async () => {
-    expect([path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts"))).toSpawn();
   });
 });
 
@@ -465,6 +464,36 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
     message: "send EMSGSIZE",
     address: undefined,
     port: undefined,
+  });
+});
+
+// The default lookup is dns.lookup, which already answers such a name with
+// ENOTFOUND. A custom lookup can hand the raw string to the native connect,
+// which resolves it synchronously: the same check runs there too, and the
+// socket does not end up marked connected.
+test("connect() with a custom lookup that yields a name that cannot be a hostname reports getaddrinfo ENOTFOUND", async () => {
+  const hostname = "this is not a hostname";
+  const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
+  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+  socket.bind(0, "127.0.0.1", onBound);
+  await bound;
+
+  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve));
+  let connected = true;
+  try {
+    socket.remoteAddress();
+  } catch {
+    connected = false;
+  }
+  socket.close();
+  const { name, code, syscall, hostname: errHostname, message } = err ?? {};
+  expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
+    name: "Error",
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname,
+    message: `getaddrinfo ENOTFOUND ${hostname}`,
+    connected: false,
   });
 });
 

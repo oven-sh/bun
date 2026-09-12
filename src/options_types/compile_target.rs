@@ -18,10 +18,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
     pub os: OperatingSystem,
-    pub arch: Architecture,
-    pub baseline: bool,
-    pub version: Version,
-    pub libc: Libc,
+    pub(crate) arch: Architecture,
+    pub(crate) baseline: bool,
+    pub(crate) version: Version,
+    pub(crate) libc: Libc,
 }
 
 impl Default for CompileTarget {
@@ -29,7 +29,7 @@ impl Default for CompileTarget {
         Self {
             os: Environment::OS,
             arch: Environment::ARCH,
-            baseline: !Environment::ENABLE_SIMD,
+            baseline: false,
             version: Version {
                 major: Environment::VERSION.major as _, // @truncate
                 minor: Environment::VERSION.minor as _, // @truncate
@@ -62,7 +62,7 @@ pub enum Libc {
 
 impl Libc {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub(crate) const fn npm_name(self) -> &'static str {
+    const fn npm_name(self) -> &'static str {
         match self {
             Libc::Default => "",
             Libc::Musl => "-musl",
@@ -99,7 +99,7 @@ pub enum ParseError {
 }
 
 impl CompileTarget {
-    pub fn eql(&self, other: &CompileTarget) -> bool {
+    pub(crate) fn eql(&self, other: &CompileTarget) -> bool {
         self.os == other.os
             && self.arch == other.arch
             && self.baseline == other.baseline
@@ -109,6 +109,12 @@ impl CompileTarget {
 
     pub fn is_default(&self) -> bool {
         self.eql(&CompileTarget::default())
+    }
+
+    /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
+    pub fn is_host_platform(&self) -> bool {
+        let host = CompileTarget::default();
+        self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
@@ -123,7 +129,7 @@ impl CompileTarget {
         self.to_npm_registry_url_with_url(buf, b"https://registry.npmjs.org")
     }
 
-    pub fn to_npm_registry_url_with_url<'a>(
+    pub(crate) fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],
@@ -185,7 +191,7 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        _env: &mut bun_dotenv::Loader<'_>,
+        _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
     ) -> &'a ZStr {
         if self.is_default() {
@@ -402,55 +408,37 @@ impl CompileTarget {
         }
     }
 
-    // Exists for consistentcy with values.
-    pub fn define_keys(&self) -> &'static [&'static [u8]] {
-        &[
+    pub fn define_keys(&self) -> [&'static [u8]; 3] {
+        [
             b"process.platform",
             b"process.arch",
             b"process.versions.bun",
         ]
     }
 
-    pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // Could generate static tables via macro_rules! or
-        // const_format::concatcp! over OperatingSystem::name_string().
-        macro_rules! table {
-            ($platform:literal, $arch:literal) => {{
-                const VALUES: &[&[u8]] = &[
-                    $platform,
-                    $arch,
-                    const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"")
-                        .as_bytes(),
-                ];
-                VALUES
-            }};
-        }
-
-        // Use inline else to avoid extra allocations.
-        match self.arch {
-            Architecture::X64 => match self.libc {
-                // process.platform: Node reports "android" on Android, not "linux".
-                Libc::Android => table!(b"\"android\"", b"\"x64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"x64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"x64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"x64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"x64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"x64\""),
-                },
+    pub fn define_values(&self) -> [&'static [u8]; 3] {
+        // Each axis gets its own exhaustive match so that adding a variant to
+        // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
+        // not a runtime panic behind a wildcard arm.
+        let platform: &'static [u8] = match self.libc {
+            // process.platform: Node reports "android" on Android, not "linux".
+            Libc::Android => b"\"android\"",
+            Libc::Default | Libc::Musl => match self.os {
+                OperatingSystem::Mac => b"\"darwin\"",
+                OperatingSystem::Linux => b"\"linux\"",
+                OperatingSystem::Windows => b"\"win32\"",
+                OperatingSystem::Freebsd => b"\"freebsd\"",
+                OperatingSystem::Wasm => b"\"wasm\"",
             },
-            Architecture::Arm64 => match self.libc {
-                Libc::Android => table!(b"\"android\"", b"\"arm64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"arm64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"arm64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"arm64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"arm64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"arm64\""),
-                },
-            },
-            _ => panic!("TODO"),
-        }
+        };
+        let arch: &'static [u8] = match self.arch {
+            Architecture::X64 => b"\"x64\"",
+            Architecture::Arm64 => b"\"arm64\"",
+            Architecture::Wasm => b"\"wasm\"",
+        };
+        const VERSION: &[u8] =
+            const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
+        [platform, arch, VERSION]
     }
 }
 

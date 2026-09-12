@@ -117,7 +117,7 @@ describe("ResolveMessage", () => {
     expect(async () => {
       // @ts-ignore
       await import(":://filesystem");
-    }).toThrow("Cannot find module");
+    }).toThrow("Cannot find package '::'");
   });
 
   it("referrer is not freed before it is read", () => {
@@ -239,5 +239,91 @@ describe.concurrent("long import path overflow", () => {
     using dir = makeDir();
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
+  });
+});
+
+// matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`
+// after only checking starts_with/ends_with. When the prefix and suffix bytes
+// overlap inside the import path (e.g. key "ab*ba" vs import "aba"), the slice
+// start exceeds the end and Rust panics.
+describe.concurrent("tsconfig paths wildcard with overlapping prefix/suffix", () => {
+  async function run(key: string, specifier: string) {
+    using dir = tempDir("tsconfig-paths-overlap", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { [key]: ["./impl/*"] } },
+      }),
+      "main.ts": `try { require(${JSON.stringify(specifier)}); } catch (e) { console.log("ERR:" + e.code); }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "ERR:MODULE_NOT_FOUND",
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  it("ab*ba vs aba", async () => {
+    await run("ab*ba", "aba");
+  });
+
+  it("test*test vs testest", async () => {
+    await run("test*test", "testest");
+  });
+
+  it("xy*xy vs xy", async () => {
+    await run("xy*xy", "xy");
+  });
+});
+
+// Bun.resolve() resolves synchronously and returns an already-settled promise.
+// A rejected one has to be reported like any other unhandled rejection.
+describe.concurrent("Bun.resolve() rejections are tracked", () => {
+  async function run(body: string) {
+    using dir = tempDir("bun-resolve-unhandled", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const dir = ${JSON.stringify(String(dir))};\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("an unhandled rejection is reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`Bun.resolve("./does-not-exist", dir);`);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find module './does-not-exist'");
+    expect(exitCode).toBe(1);
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.resolve("./does-not-exist", dir);
+    `);
+    expect(stdout).toBe("ERR_MODULE_NOT_FOUND true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      Bun.resolve("./does-not-exist", dir).catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught ERR_MODULE_NOT_FOUND\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

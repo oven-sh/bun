@@ -42,21 +42,21 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
-use crate::chunk::{Content, Flags};
+use crate::chunk::Content;
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
-    pub index: u32,
-    pub graph: &'a Graph<'a>,
-    pub chunks: &'a [Chunk],
-    pub linker_graph: &'a LinkerGraph<'a>,
+    pub(crate) index: u32,
+    pub(crate) graph: &'a Graph<'a>,
+    pub(crate) chunks: &'a [Chunk],
+    pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 
 impl<'a> fmt::Display for HTMLImportManifest<'a> {
@@ -127,7 +127,7 @@ fn write_entry_item<W: Write + ?Sized>(
 }
 
 // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
-pub fn write_escaped_json<W: Write + ?Sized>(
+pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
@@ -162,12 +162,12 @@ impl<'a> fmt::Display for EscapedJson<'a> {
 }
 
 impl<'a> HTMLImportManifest<'a> {
-    pub fn format_escaped_json(self) -> EscapedJson<'a> {
+    pub(crate) fn format_escaped_json(self) -> EscapedJson<'a> {
         EscapedJson(self)
     }
 }
 
-pub fn write<W: Write + ?Sized>(
+pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
@@ -182,7 +182,10 @@ pub fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
+    // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
+    let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
+    let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
+    let mut chunks_to_visit: Vec<u32> = Vec::new();
 
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
@@ -193,15 +196,17 @@ pub fn write<W: Write + ?Sized>(
 
     writer.write_all(b"{")?;
 
-    let inject_compiler_filesystem_prefix = options.compile;
+    let inject_compiler_filesystem_prefix = options.compile_mode.is_executable();
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
+    let mut input_buffer: Vec<u8> = Vec::new();
 
-    for ch in chunks.iter() {
+    for (chunk_index, ch) in chunks.iter().enumerate() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
         {
             entry_point_bits.set(ch.entry_point.entry_point_id() as usize);
+            chunks_to_visit.push(chunk_index as u32);
 
             if matches!(ch.content, Content::Html) {
                 writer.write_all(b"\"index\":")?;
@@ -225,6 +230,27 @@ pub fn write<W: Write + ?Sized>(
         }
     }
 
+    // Every chunk the page's chunks import, transitively.
+    while let Some(chunk_index) = chunks_to_visit.pop() {
+        if chunks_to_write.is_set(chunk_index as usize) {
+            continue;
+        }
+        chunks_to_write.set(chunk_index as usize);
+
+        let ch = &chunks[chunk_index as usize];
+        for import in ch.cross_chunk_imports.iter() {
+            let imported = &chunks[import.chunk_index as usize];
+            if imported.entry_point.is_entry_point() {
+                // A dynamic import's entry point: its bit is what the assets only it reaches carry.
+                entry_point_bits.set(imported.entry_point.entry_point_id() as usize);
+            }
+            chunks_to_visit.push(import.chunk_index);
+        }
+        if let Content::Javascript(js) = &ch.content {
+            chunks_to_visit.extend_from_slice(&js.css_chunks);
+        }
+    }
+
     // Start the files array
 
     writer.write_all(b"\"files\":[")?;
@@ -235,16 +261,8 @@ pub fn write<W: Write + ?Sized>(
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
-    // Write all chunks that have files associated with this entry point.
-    // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
-    // When there's only one HTML import, all browser chunks belong to that manifest.
-    // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
-    let has_single_html_import = graph.html_imports.html_source_indices.len() == 1;
-    for ch in chunks.iter() {
-        if ch.entry_bits().has_intersection(&entry_point_bits)
-            || (has_single_html_import
-                && ch.flags.contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD))
-        {
+    for (chunk_index, ch) in chunks.iter().enumerate() {
+        if chunks_to_write.is_set(chunk_index) {
             if !first {
                 writer.write_all(b",")?;
             }
@@ -253,11 +271,11 @@ pub fn write<W: Write + ?Sized>(
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
-                );
-                strings::remove_leading_dot_slash(path_for_key)
+                )
             };
 
             let path: &[u8] = if inject_compiler_filesystem_prefix {
@@ -278,7 +296,10 @@ pub fn write<W: Write + ?Sized>(
                 // chunks, so its etag must change when those do. `isolated_hash`
                 // by design excludes those substitutions; the placeholder hash
                 // folds them in via `appendIsolatedHashesForImportedChunks`.
-                ch.template.placeholder.hash.unwrap_or(ch.isolated_hash),
+                ch.template
+                    .placeholder
+                    .hash
+                    .map_or(ch.isolated_hash, |h| h.value),
                 ch.content.loader(),
                 if ch.entry_point.is_entry_point() {
                     OutputKind::EntryPoint
@@ -308,11 +329,11 @@ pub fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );
-                let path_for_key = strings::remove_leading_dot_slash(path_for_key);
 
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
@@ -329,7 +350,7 @@ pub fn write<W: Write + ?Sized>(
                     writer,
                     path_for_key,
                     path,
-                    output_file.hash,
+                    output_file.hash.value,
                     output_file.loader,
                     output_file.output_kind,
                 )?;
@@ -363,7 +384,7 @@ pub mod html_import_manifest {
         .format_escaped_json()
     }
 
-    pub fn write_escaped_json(
+    pub(crate) fn write_escaped_json(
         index: u32,
         graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
@@ -378,4 +399,19 @@ pub mod html_import_manifest {
         *w = &mut buffer[pos..];
         Ok(())
     }
+}
+
+/// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
+fn source_path_relative_to_root<'b>(
+    buf: &'b mut Vec<u8>,
+    root_dir: &[u8],
+    path: &[u8],
+) -> &'b [u8] {
+    buf.clear();
+    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
+        platform::Auto,
+        false,
+    >(root_dir, path)));
+    platform_to_posix_in_place(&mut buf[..]);
+    buf
 }

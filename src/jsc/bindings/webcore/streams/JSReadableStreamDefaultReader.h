@@ -46,9 +46,8 @@ public:
     WTF::Deque<JSC::WriteBarrier<JSReadRequest>, 4> m_readRequests;
 
     // The reader→operation liveness back-edge, set when a pipe (JSStreamPipeToOperation) or
-    // a Bun pump (JSReadStreamIntoSinkOperation / JSResumableSinkPumpOperation) acquires
-    // this reader, cleared on release/finalize. ERASED on purpose: one operation per reader
-    // by construction. Visited.
+    // a Bun pump (JSReadStreamIntoSinkOperation) acquires this reader, cleared on
+    // release/finalize. ERASED on purpose: one operation per reader by construction. Visited.
     JSC::WriteBarrier<JSC::JSCell> m_pipeOperation;
 
 private:

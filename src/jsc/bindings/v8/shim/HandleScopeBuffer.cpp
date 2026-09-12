@@ -83,20 +83,95 @@ Handle* HandleScopeBuffer::reserveEscapeHandle()
     return &createEmptyHandle();
 }
 
-void HandleScopeBuffer::deleteGrantsBack(const uintptr_t* limit)
+void HandleScopeBuffer::deleteGrantsBack(Isolate* isolate, const uintptr_t* limit)
 {
-    WTF::Locker locker { m_gcLock };
-    // Pop grants (and every handle created after each, which V8 semantics also
-    // scope to the closing inline HandleScope) until the newest remaining grant
-    // is the one the restored limit points one past — i.e. the last grant made
-    // before the closing scope opened. A null/foreign limit pops all grants.
-    while (!m_rawGrants.isEmpty() && m_rawGrants.last().first->asRawPtrLocation() + 1 != limit) {
-        size_t position = m_rawGrants.last().second;
-        m_rawGrants.removeLast();
-        while (m_storage.size() > position) {
+    // (slot to repoint, copy of the layout it pointed at) for every condemned
+    // handle a live return-value slot references.
+    WTF::Vector<std::pair<TaggedPointer*, ObjectLayout>, 2> rescues;
+    {
+        WTF::Locker locker { m_gcLock };
+        // Pop grants (and every handle created after each, which V8 semantics also
+        // scope to the closing inline HandleScope) until the newest remaining grant
+        // is the one the restored limit points one past — i.e. the last grant made
+        // before the closing scope opened. A null/foreign limit pops all grants.
+        size_t cut = m_storage.size();
+        while (!m_rawGrants.isEmpty() && m_rawGrants.last().first->asRawPtrLocation() + 1 != limit) {
+            cut = m_rawGrants.last().second;
+            m_rawGrants.removeLast();
+        }
+        if (cut == m_storage.size()) {
+            return;
+        }
+        // V8's inline ReturnValue::Set copied a Local's Address into a callback
+        // frame, and the returned value must outlive this scope (in V8 the scope
+        // owns only the slot, never the object). Copy out any condemned handle a
+        // frame still points at so it can be re-created in the surviving region.
+        for (TaggedPointer* returnSlot : isolate->globalInternals()->activeReturnValueSlots()) {
+            if (const ObjectLayout* layout = findLayoutInRangeLocked(*returnSlot, cut)) {
+                rescues.append({ returnSlot, *layout });
+            }
+        }
+        // From here until appendRescuedLayout() re-roots it below, a rescued
+        // cell may be referenced only by the copy in `rescues`, which the GC
+        // does not visit. That is safe: nothing in this window allocates from
+        // the JSC heap or reaches a safepoint, so a collection cannot complete
+        // before the copy is re-rooted through the write-barriered Handle
+        // constructor.
+        while (m_storage.size() > cut) {
             m_storage.last() = Handle();
             m_storage.removeLast();
         }
+    }
+    for (auto& [returnSlot, layout] : rescues) {
+        *returnSlot = appendRescuedLayout(layout);
+    }
+}
+
+const ObjectLayout* HandleScopeBuffer::findLayoutInRangeLocked(TaggedPointer value, size_t begin) const
+{
+    const auto* layout = value.getPtr<const ObjectLayout>();
+    if (!layout) {
+        // empty or Smi
+        return nullptr;
+    }
+    for (size_t i = begin; i < m_storage.size(); i++) {
+        if (&m_storage[i].m_object == layout) {
+            return layout;
+        }
+    }
+    return nullptr;
+}
+
+TaggedPointer HandleScopeBuffer::appendRescuedLayout(const ObjectLayout& layout)
+{
+    auto& handle = createEmptyHandle();
+    if (layout.map() == &Map::heap_number_map()) {
+        handle = Handle(layout.asDouble());
+    } else {
+        // Besides heap numbers, scope buffers only ever own string_map/object_map
+        // cells (oddballs live in the isolate's roots and globals in their own
+        // buffer), so everything else is a cell.
+        handle = Handle(layout.map(), layout.asCell(), vm(), this);
+    }
+    return *handle.slot();
+}
+
+void HandleScopeBuffer::evacuateActiveReturnValues(Isolate* isolate, HandleScopeBuffer* target)
+{
+    ASSERT(target != this);
+    for (TaggedPointer* returnSlot : isolate->globalInternals()->activeReturnValueSlots()) {
+        ObjectLayout rescued;
+        {
+            WTF::Locker locker { m_gcLock };
+            const ObjectLayout* layout = findLayoutInRangeLocked(*returnSlot, 0);
+            if (!layout) {
+                continue;
+            }
+            rescued = *layout;
+        }
+        // The source handle is still alive (this buffer clears after the
+        // evacuation), so the cell stays visited across this append.
+        *returnSlot = target->appendRescuedLayout(rescued);
     }
 }
 

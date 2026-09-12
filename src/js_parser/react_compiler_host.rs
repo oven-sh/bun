@@ -16,7 +16,7 @@ pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
 
 impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
     #[inline]
-    pub fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
         Self { p }
     }
 }
@@ -54,6 +54,26 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.options.jsx.development
     }
 
+    fn is_jsx_classic(&self) -> bool {
+        self.p.options.jsx.runtime != crate::parser::options::JSX::Runtime::Automatic
+    }
+
+    fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr {
+        self.p
+            .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
+    }
+
+    fn jsx_import_kind(&self, ref_: js_ast::Ref) -> Option<bun_react_compiler::JsxImportKind> {
+        use bun_react_compiler::JsxImportKind as K;
+        Some(match self.p.jsx_imports.tag_of(ref_)? {
+            JSXImport::Jsx => K::Jsx,
+            JSXImport::Jsxs => K::Jsxs,
+            JSXImport::JsxDEV => K::JsxDEV,
+            JSXImport::Fragment => K::Fragment,
+            JSXImport::CreateElement => K::CreateElement,
+        })
+    }
+
     fn jsx_import(&mut self, kind: bun_react_compiler::JsxImportKind) -> js_ast::Ref {
         use bun_react_compiler::JsxImportKind as K;
         let kind = match kind {
@@ -67,9 +87,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         match p.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,
             None => {
-                let new_ref = p
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
-                    .expect("oom");
+                let new_ref =
+                    p.declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name());
                 let loc_ref = js_ast::LocRef {
                     loc: bun_ast::Loc::EMPTY,
                     ref_: new_ref,
@@ -84,9 +103,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn new_generated(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Other, name)
-            .expect("oom");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.module_scope_mut().generated, ref_);
         ref_
     }
@@ -94,9 +111,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Import, name)
-            .expect("oom");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, name);
         VecExt::append(&mut p.module_scope_mut().generated, ref_);
         p.is_import_item.insert(ref_, ());
         ref_
@@ -128,21 +143,46 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let p = &mut *self.p;
         let path = p.arena.alloc_slice_copy(path);
         let index = p.add_import_record_by_range(kind, bun_ast::Range::NONE, path);
-        let namespace_ref = p
-            .new_symbol(js_ast::symbol::Kind::Other, path)
-            .expect("oom");
+        let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
         VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
         (index, namespace_ref)
     }
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
+    pub(crate) fn enter_react_compiler_candidate(
+        &mut self,
+        name: Option<js_ast::Ref>,
+        has_react_hooks_suppression: bool,
+        body: &[js_ast::Stmt],
+    ) -> bool {
+        let prev = self.react_compiler_may_replace_body;
+        if !prev
+            && let Some(candidate) = self.react_compiler_candidate_name
+            && let Some(rc) = self.react_compiler.as_deref()
+        {
+            let name = name
+                .filter(|r| r.is_valid())
+                .or(Some(candidate))
+                .filter(|r| *r != js_ast::Ref::NONE)
+                .map(|r| self.load_name_from_ref(r));
+            self.react_compiler_may_replace_body = rc.may_compile(
+                name,
+                self.react_compiler_in_react_hoc,
+                has_react_hooks_suppression,
+                body,
+            );
+        }
+        prev
+    }
+
     /// Port of upstream `findFunctionDeclarationOrExpression` for the
     /// expression positions (decl init / `export default` / expression
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the
     /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
     /// into an unrelated nested arrow.
-    pub fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
+    pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
         use js_ast::expr::Data;
         match &expr.data {
             Data::EArrow(_) | Data::EFunction(_) => Some(false),

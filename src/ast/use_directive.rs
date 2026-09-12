@@ -11,11 +11,6 @@ pub enum UseDirective {
     Server = 2,
 }
 
-#[derive(Copy, Clone, Default, Debug)]
-pub struct Flags {
-    pub has_any_client: bool,
-}
-
 impl UseDirective {
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
         let truncated = strings::trim_left(contents, b" \t\n\r;");

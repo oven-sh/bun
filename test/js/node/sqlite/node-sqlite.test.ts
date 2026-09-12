@@ -202,6 +202,30 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("bind error messages match node's exactly (trailing period)", () => {
+    const db = new DatabaseSync(":memory:");
+    const stmt = db.prepare("SELECT ? AS v");
+    // Node's test suite asserts these messages with exact string equality, so
+    // the trailing '.' must be present for ported tests to pass unmodified.
+    for (const v of [true, false, undefined, Symbol.iterator]) {
+      expect(() => stmt.get(v as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Provided value cannot be bound to SQLite parameter 1.",
+        }),
+      );
+    }
+    for (const v of [2n ** 64n, -(2n ** 64n)]) {
+      expect(() => stmt.get(v)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "BigInt value is too large to bind.",
+        }),
+      );
+    }
+    db.close();
+  });
+
   test("statements are unbound on each call", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)");
@@ -2350,9 +2374,9 @@ test("bun:sqlite still initializes correctly when node:sqlite opens a database f
   void stderr;
 });
 
-// Worker-owned databases are closed via ~VM → lastChanceToFinalize →
-// ~JSDatabaseSync — a completely different path than the main-thread exit
-// sweep. Sibling of "unclosed file-backed database is closed on process exit".
+// Worker-owned databases are checkpointed and closed by the worker's own exit
+// (the same sweep the main thread runs, filtered to that worker's entries).
+// Sibling of "unclosed file-backed database is closed on process exit".
 test("worker-owned unclosed database is checkpointed on worker exit", async () => {
   using dir = tempDir("node-sqlite-worker-exit", {
     "worker.mjs": `import { DatabaseSync } from 'node:sqlite';
@@ -2371,7 +2395,7 @@ test("worker-owned unclosed database is checkpointed on worker exit", async () =
         w.on('error', rej);
         w.on('exit', code => (code === 0 ? res() : rej(new Error('exit ' + code))));
       });
-      // ~JSDatabaseSync on lastChanceToFinalize checkpointed: the -wal is
+      // The worker's exit sweep checkpointed and closed it: the -wal is
       // gone or empty. Checked before the reopen below touches the sidecars.
       console.log(existsSync('exit.db-wal') ? statSync('exit.db-wal').size : 0);
       const { DatabaseSync } = await import('node:sqlite');

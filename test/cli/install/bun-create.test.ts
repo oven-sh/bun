@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
+import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
@@ -172,6 +173,151 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
   }
 });
 
+it("keeps tarball entry paths within the destination when checking for conflicting files", async () => {
+  const tarEntry = (name: string, body: Buffer) => {
+    const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
+    const header = buf.subarray(0, 512);
+    header.write(name);
+    header.write("0000644", 100);
+    header.write("0000000", 108);
+    header.write("0000000", 116);
+    header.write(body.length.toString(8).padStart(11, "0"), 124);
+    header.write("00000000000", 136);
+    header.write("        ", 148);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (const b of header) sum += b;
+    header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+    body.copy(buf, 512);
+    return buf;
+  };
+  const pkg = Buffer.from(
+    JSON.stringify({
+      name: "conflict-check-template",
+      "bun-create": { start: "bun run ok" },
+    }),
+  );
+  const gz = gzipSync(
+    Buffer.concat([
+      tarEntry("pkg/../outside.txt", Buffer.from("from-tarball")),
+      tarEntry("pkg/package.json", pkg),
+      Buffer.alloc(1024),
+    ]),
+  );
+
+  mkdirSync(join(x_dir, "dest"));
+  await Bun.write(join(x_dir, "outside.txt"), "keep me");
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "github.com/owner/conflict-check-template", "dest", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("could conflict");
+  expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
+  expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
+  expect(exitCode).toBe(0);
+});
+
+it("reports an error and exits when the template's package.json entry body is truncated", async () => {
+  const header = Buffer.alloc(512);
+  header.write("pkg/package.json");
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write((4096).toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  const gz = gzipSync(header);
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "github.com/owner/truncated-template", "dest", "--force", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Unexpected");
+  expect(out).not.toContain("Success!");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+// GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,
+// issuing ~18k futex syscalls/sec while the git thread ran. POSIX-only: stub
+// `git` is a shell script and ru_nvcsw is always 0 on Windows.
+it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () => {
+  using dir = tempDir("create-git-futex", {
+    "bin/git": "#!/bin/sh\nsleep 0.5\nexit 0\n",
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      dependencies: { localdep: "file:./localdep" },
+    }),
+    "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "bin", "git"), 0o755);
+
+  const proc = spawnSync({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+    cwd: String(dir),
+    env: {
+      ...env,
+      PATH: join(String(dir), "bin") + ":" + process.env.PATH,
+      BUN_CREATE_DIR: join(String(dir), "bun-create"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const stderr = proc.stderr.toString();
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("] git");
+  expect(proc.exitCode).toBe(0);
+  // Before the fix this was ~27,000 over the ~1.5s git wait; after, a few dozen.
+  expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
+});
+
 it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
@@ -197,15 +343,53 @@ it("should create template from local folder", async () => {
 });
 
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
-// Unauthenticated GitHub API is limited to 60 req/hr per IP; CI agents running many
-// parallel builds exhaust that quickly. When we detect the rate-limit error, skip the
-// test rather than fail — we are testing `bun create`, not GitHub's availability.
-function isGithubRateLimited(stderr: string): boolean {
-  if (stderr.includes("GitHub returned 403")) {
-    console.warn("Skipping: GitHub API rate limit reached (403). Set GITHUB_TOKEN to avoid this.");
-    return true;
-  }
-  return false;
+// CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
+// during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.
+function githubUnavailableReason(stderr: string): string | null {
+  if (stderr.includes("GitHub is rate limiting"))
+    return "GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.";
+  if (stderr.includes("GitHub returned a server error")) return "GitHub API returned a 5xx server error.";
+  return null;
+}
+function isGithubUnavailable(stderr: string): boolean {
+  const reason = githubUnavailableReason(stderr);
+  if (reason) console.warn(`Skipping: ${reason}`);
+  return reason !== null;
+}
+
+for (const [status, expected] of [
+  [503, "error: GitHub returned a server error"],
+  [429, "error: GitHub returned 429. This usually means GitHub is rate limiting your requests"],
+  [403, "error: GitHub returned 403. This usually means GitHub is rate limiting your requests"],
+] as const) {
+  it(`should name GitHub in the error when the tarball request gets ${status}`, async () => {
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      fetch() {
+        return new Response("nope", { status });
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "github.com/dylan-conway/create-test"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      },
+    });
+
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(expected);
+    expect(githubUnavailableReason(err)).not.toBeNull();
+    expect(err).not.toContain("NPMIsDown");
+    expect(err).not.toContain("An internal error occurred");
+    expect(exitCode).toBe(1);
+  });
 }
 
 it("should not mention cd prompt when created in current directory", async () => {
@@ -219,7 +403,7 @@ it("should not mention cd prompt when created in current directory", async () =>
   });
 
   const [out, err] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  if (isGithubRateLimited(err)) return;
+  if (isGithubUnavailable(err)) return;
 
   expect(err).not.toContain("error:");
   expect(out).toContain("bun dev");
@@ -237,7 +421,7 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    if (isGithubRateLimited(err)) return;
+    if (isGithubUnavailable(err)) return;
     expect(err).not.toContain("error:");
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);

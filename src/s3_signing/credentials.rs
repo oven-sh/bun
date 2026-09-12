@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_ptr::{RefCount, RefPtr};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -63,7 +63,7 @@ pub struct MultiPartUploadOptions {
 }
 
 impl MultiPartUploadOptions {
-    pub const ONE_MIB: usize = 1_048_576;
+    pub(crate) const ONE_MIB: usize = 1_048_576;
     /// we limit to 5 GiB
     pub const MAX_SINGLE_UPLOAD_SIZE: usize = 5120 * Self::ONE_MIB;
     pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * Self::ONE_MIB;
@@ -93,10 +93,10 @@ use bun_collections::StringArrayHashMap;
 use bun_core::Mutex;
 
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
-/// region+service+secret)`. The lock owns the data — the mutex wraps both
-/// `cache` and `date`.
+/// sha256(region, service, secret))`. The lock owns the data — the mutex
+/// wraps both `cache` and `date`.
 #[derive(Default)]
-pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
+struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
 #[derive(Default)]
 struct AWSSignatureCacheInner {
@@ -110,7 +110,7 @@ impl AWSSignatureCache {
     ///
     /// Returns the 32-byte *value* by copy; the only consumer (`sign` below)
     /// wants the digest, and a fixed-size copy avoids handing out a guard.
-    pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+    pub(crate) fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
         let inner = self.0.lock();
         if inner.date == 0 || inner.date != numeric_day {
             return None;
@@ -118,7 +118,7 @@ impl AWSSignatureCache {
         inner.cache.get(key).copied()
     }
 
-    pub fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
+    pub(crate) fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
         let mut inner = self.0.lock();
         if inner.date == 0 {
             inner.cache = StringArrayHashMap::new();
@@ -163,12 +163,8 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
-// explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
-    // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
@@ -176,7 +172,7 @@ pub struct S3Credentials {
     pub endpoint: Box<[u8]>,
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
-    pub storage_class: Option<StorageClass>,
+    pub(crate) storage_class: Option<StorageClass>,
     /// Important for MinIO support.
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
@@ -185,18 +181,18 @@ pub struct S3Credentials {
 
 // `S3Credentials` owns its bytes via
 // `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
-// intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
+// intrusive count only applies to heap (`RefPtr`) instances; a fresh value
 // must start at 1.
 impl Clone for S3Credentials {
     fn clone(&self) -> Self {
         Self {
             ref_count: RefCount::init(),
-            access_key_id: dupe_slice(&self.access_key_id),
-            secret_access_key: dupe_slice(&self.secret_access_key),
-            region: dupe_slice(&self.region),
-            endpoint: dupe_slice(&self.endpoint),
-            bucket: dupe_slice(&self.bucket),
-            session_token: dupe_slice(&self.session_token),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            region: self.region.clone(),
+            endpoint: self.endpoint.clone(),
+            bucket: self.bucket.clone(),
+            session_token: self.session_token.clone(),
             storage_class: self.storage_class,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
@@ -259,18 +255,15 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    // `hash_const` DELETED — dead code (no callers). If
-    // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
-
-    pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
-        IntrusiveRc::new(S3Credentials {
+    pub fn dupe(&self) -> RefPtr<S3Credentials> {
+        RefPtr::new(S3Credentials {
             ref_count: RefCount::init(),
-            access_key_id: dupe_slice(&self.access_key_id),
-            secret_access_key: dupe_slice(&self.secret_access_key),
-            region: dupe_slice(&self.region),
-            endpoint: dupe_slice(&self.endpoint),
-            bucket: dupe_slice(&self.bucket),
-            session_token: dupe_slice(&self.session_token),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            region: self.region.clone(),
+            endpoint: self.endpoint.clone(),
+            bucket: self.bucket.clone(),
+            session_token: self.session_token.clone(),
             storage_class: None,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
@@ -408,7 +401,7 @@ impl S3Credentials {
                     // The bucket is interpolated into the host; a `/` (or `\`,
                     // which encode_uri_component normalizes to `/`) would let a
                     // crafted bucket redirect the signed request to another host.
-                    if bucket.contains(&b'/') {
+                    if strings::contains_char(bucket, b'/') {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
@@ -487,19 +480,19 @@ impl S3Credentials {
             let mut hmac_sig_service2 = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
 
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
-                let key = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "{}{}{}",
-                        BStr::new(region),
-                        service_name,
-                        BStr::new(&self.secret_access_key)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
+                let mut cache_key = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
+                {
+                    let mut hasher = bun_sha_hmac::sha::hashers::SHA256::init();
+                    hasher.update(region);
+                    hasher.update(b"\0");
+                    hasher.update(service_name.as_bytes());
+                    hasher.update(b"\0");
+                    hasher.update(&self.secret_access_key);
+                    hasher.r#final(&mut cache_key);
+                }
                 // was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
                 // Storage moved DOWN — `AWS_SIGNATURE_CACHE` is a process static here.
-                if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
+                if let Some(cached) = aws_cache_get(date_result.numeric_day, &cache_key) {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
@@ -541,20 +534,7 @@ impl S3Credentials {
                     [0..DIGESTED_HMAC_256_LEN]
                     .try_into()
                     .expect("infallible: size matches");
-                // The earlier `key` was a slice into `tmp_buffer`, which has since been
-                // overwritten by the `AWS4{secret}` buf_print, so recompute the correct
-                // `{region}{service}{secret}` key here before caching.
-                let key = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "{}{}{}",
-                        BStr::new(region),
-                        service_name,
-                        BStr::new(&self.secret_access_key)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
-                aws_cache_set(date_result.numeric_day, key, digest);
+                aws_cache_set(date_result.numeric_day, &cache_key, digest);
                 break 'brk_sign digest;
             };
 
@@ -814,7 +794,6 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // defer free(host); defer free(amz_date); — drop at scope exit.
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
@@ -920,8 +899,6 @@ impl S3Credentials {
     }
 }
 
-use bun_ptr::owned::alloc_dupe_slice as dupe_slice;
-
 // ──────────────────────────────────────────────────────────────────────────
 // DateResult / getAMZDate
 // ──────────────────────────────────────────────────────────────────────────
@@ -983,29 +960,29 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     (year, month, day, hours, minutes, seconds, day_seconds)
 }
 
-pub(crate) const DIGESTED_HMAC_256_LEN: usize = 32;
+const DIGESTED_HMAC_256_LEN: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignResult
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct SignResult {
-    pub amz_date: Box<[u8]>,
-    pub host: Box<[u8]>,
-    pub authorization: Box<[u8]>,
+    pub(crate) amz_date: Box<[u8]>,
+    pub(crate) host: Box<[u8]>,
+    pub(crate) authorization: Box<[u8]>,
     pub url: Box<[u8]>,
 
-    pub content_disposition: Box<[u8]>,
-    pub content_encoding: Box<[u8]>,
-    pub content_md5: Box<[u8]>,
-    pub session_token: Box<[u8]>,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub(crate) content_disposition: Box<[u8]>,
+    pub(crate) content_encoding: Box<[u8]>,
+    pub(crate) content_md5: Box<[u8]>,
+    pub(crate) session_token: Box<[u8]>,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
     // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
     // must be a raw (ptr,len) pair; see note in sign_request.
-    pub _headers: [PicoHeader; Self::MAX_HEADERS],
-    pub _headers_len: u8,
+    pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
+    pub(crate) _headers_len: u8,
 }
 
 impl SignResult {
@@ -1077,12 +1054,6 @@ fn zero_sensitive(b: &mut Box<[u8]>) {
 #[derive(Clone, Copy)]
 pub struct SignQueryOptions {
     pub expires: usize,
-}
-
-impl Default for SignQueryOptions {
-    fn default() -> Self {
-        Self { expires: 86400 }
-    }
 }
 
 // transient param-pack struct; lifetime added because every field is a caller-owned
@@ -1271,31 +1242,16 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // Self-referential views: these fields are non-owning;
-    // they borrow into the sibling `_*_slice: ZigStringSlice` fields
-    // below. `RawSlice` encodes that non-owning contract (and gives callers
-    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
-    pub content_disposition: Option<RawSlice<u8>>,
-    pub content_type: Option<RawSlice<u8>>,
-    pub content_encoding: Option<RawSlice<u8>>,
+    pub content_disposition: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_type: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_core::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_core::ZigStringSlice>,
-    pub _region_slice: Option<bun_core::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_core::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_core::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
 }
-
-// ZigStringSlice impls Drop, so no explicit Drop needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders
@@ -1363,7 +1319,7 @@ struct CanonicalRequest;
 
 impl CanonicalRequest {
     // Builds the canonical request at runtime with conditional writes; profile if hot.
-    pub(crate) fn format<'b>(
+    fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,
         method: &[u8],

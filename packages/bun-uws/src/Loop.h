@@ -23,10 +23,10 @@
 
 #include "LoopData.h"
 #include <libusockets.h>
-#include <iostream>
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
+extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 
 namespace uWS {
 struct Loop {
@@ -84,8 +84,15 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        if (!loop) {
+            /* The per-thread loop is not recoverable; every caller of get()
+             * dereferences it. Only Bun.spawnSync's isolated loop (created
+             * through the Rust uws::Loop::create) surfaces this as an error. */
+            static const char msg[] = "failed to create the event loop (out of file descriptors?)";
+            Bun__panic(msg, sizeof(msg) - 1);
+        }
+        return loop->init();
     }
 
     /* What to do with loops created with existingNativeLoop? */
@@ -127,8 +134,11 @@ public:
         return getLazyLoop().loop;
     }
 
-    static void clearLoopAtThreadExit() {
-        if (getLazyLoop().cleanMe) {
+    /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
+     * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
+     * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
+    static void freeLoopAtThreadExit() {
+        if (getLazyLoop().loop) {
             getLazyLoop().loop->free();
         }
     }
@@ -192,16 +202,6 @@ public:
         us_loop_run((us_loop_t *) this);
     }
 
-    /* Passively integrate with the underlying default loop */
-    /* Used to seamlessly integrate with third parties such as Node.js */
-    void integrate() {
-        us_loop_integrate((us_loop_t *) this);
-    }
-
-    /* Dynamically change this */
-    void setSilent(bool silent) {
-        ((LoopData *) us_loop_ext((us_loop_t *) this))->noMark = silent;
-    }
 };
 
 /* Can be called from any thread to run the thread local loop */

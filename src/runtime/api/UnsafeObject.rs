@@ -1,6 +1,6 @@
-use bun_jsc::ZigStringJsc as _;
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -13,17 +13,18 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
+            ("setJITPolicy", __jsc_host_set_jit_policy, 1),
         ],
     )
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
     let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32 as f64);
-    let value = frame.arguments_old::<1>().ptr[0];
+    let [value] = frame.arguments_as_array::<1>();
 
     if !value.is_empty_or_undefined_or_null() {
         match value.coerce::<i32>(global)? {
@@ -37,12 +38,8 @@ pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn array_buffer_to_string(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let args_buf = frame.arguments_old::<2>();
-    let args = args_buf.slice();
+fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     }
@@ -53,10 +50,9 @@ pub(crate) fn array_buffer_to_string(
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            let zig_str = ZigString::init_utf16(utf16);
-            Ok(zig_str.to_js(global))
+            Ok(EncodedSlice::utf16(utf16).to_js(global))
         }
-        _ => Ok(ZigString::init(array_buffer.slice()).to_js(global)),
+        _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }
 }
 
@@ -65,9 +61,7 @@ unsafe extern "C" {
     safe fn Bun__memoryFootprint() -> usize;
 }
 
-/// Accurate per-process memory footprint in bytes. Unlike RSS this excludes
-/// pages already returned to the OS that the kernel keeps mapped lazily
-/// (Darwin's `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+/// Accurate per-process memory footprint in bytes.
 /// Backed by `task_info(TASK_VM_INFO).phys_footprint` (Darwin), `Pss:` from
 /// `/proc/self/smaps_rollup` (Linux), `PrivateUsage` (Windows). Returns
 /// `undefined` when no platform-specific accessor is available so the caller
@@ -79,6 +73,27 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     }
     Ok(JSValue::js_number(bytes as f64))
+}
+
+#[bun_jsc::host_fn]
+fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [value] = frame.arguments_as_array::<1>();
+    if !value.is_number() {
+        return Err(global.throw_invalid_argument_type_value("scale", "number", value));
+    }
+    let scale = value.as_number();
+    if !(scale.is_finite() && scale >= 1.0) {
+        return Err(global.throw_range_error(
+            scale,
+            jsc::RangeErrorOptions {
+                field_name: b"scale",
+                msg: b"a finite number >= 1",
+                ..Default::default()
+            },
+        ));
+    }
+    global.vm().set_startup_jit_deferral_scale(scale);
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

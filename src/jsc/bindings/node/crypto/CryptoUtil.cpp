@@ -11,6 +11,7 @@
 #include "CryptoKeyRSA.h"
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/MathCommon.h>
 #include "CryptoKeyRaw.h"
 #include "JSKeyObject.h"
 
@@ -18,6 +19,68 @@ namespace Bun {
 
 using namespace JSC;
 using namespace ncrypto;
+
+int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
+{
+    static constexpr std::pair<ASCIILiteral, int> table[] = {
+        { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
+        { "ml-dsa-65"_s, EVP_PKEY_ML_DSA_65 },
+        { "ml-dsa-87"_s, EVP_PKEY_ML_DSA_87 },
+        { "ml-kem-768"_s, EVP_PKEY_ML_KEM_768 },
+        { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
+    };
+    for (const auto& [candidate, nid] : table) {
+        if (ignoreCase ? WTF::equalIgnoringASCIICase(name, candidate) : name == candidate)
+            return nid;
+    }
+    return 0;
+}
+
+ASCIILiteral pqcNidToKeyTypeName(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return "ml-dsa-44"_s;
+    case EVP_PKEY_ML_DSA_65:
+        return "ml-dsa-65"_s;
+    case EVP_PKEY_ML_DSA_87:
+        return "ml-dsa-87"_s;
+    case EVP_PKEY_ML_KEM_768:
+        return "ml-kem-768"_s;
+    case EVP_PKEY_ML_KEM_1024:
+        return "ml-kem-1024"_s;
+    default:
+        return {};
+    }
+}
+
+bool isMlDsaNid(int nid)
+{
+    return nid == EVP_PKEY_ML_DSA_44 || nid == EVP_PKEY_ML_DSA_65 || nid == EVP_PKEY_ML_DSA_87;
+}
+
+bool isMlKemNid(int nid)
+{
+    return nid == EVP_PKEY_ML_KEM_768 || nid == EVP_PKEY_ML_KEM_1024;
+}
+
+const EVP_PKEY_ALG* pqcNidToAlg(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return EVP_pkey_ml_dsa_44();
+    case EVP_PKEY_ML_DSA_65:
+        return EVP_pkey_ml_dsa_65();
+    case EVP_PKEY_ML_DSA_87:
+        return EVP_pkey_ml_dsa_87();
+    case EVP_PKEY_ML_KEM_768:
+        return EVP_pkey_ml_kem_768();
+    case EVP_PKEY_ML_KEM_1024:
+        return EVP_pkey_ml_kem_1024();
+    default:
+        return nullptr;
+    }
+}
 
 namespace ExternZigHash {
 struct Hasher;
@@ -87,7 +150,9 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
             return {};
         }
 
-        memcpy(buffer->data(), bytes.data(), bytes.size());
+        if (bytes.size()) {
+            memcpy(buffer->data(), bytes.data(), bytes.size());
+        }
 
         return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, bytes.size()));
     }
@@ -162,6 +227,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGloba
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
     if (res) {
         ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));
@@ -313,11 +380,9 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     }
 
     WTF::String errorMessage = WTF::String::fromUTF8(message);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // Create error object with the message
     JSC::JSObject* errorObject = createError(globalObject, errorMessage);
-    RETURN_IF_EXCEPTION(scope, {});
 
     PutPropertySlot messageSlot(errorObject, false);
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
@@ -359,9 +424,12 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             RETURN_IF_EXCEPTION(scope, {});
 
             // Build "ERR_OSSL_<LIB>_THIS_ERROR" like Node's error::Decorate (crypto_util.cc);
-            // the SSL library drops the OSSL_ prefix. BoringSSL reason strings are already
-            // underscore-separated macro names, so only uppercasing is needed here.
-            String upperReason = reasonString.convertToASCIIUppercase();
+            // the SSL library drops the OSSL_ prefix. Node uppercases and replaces spaces with
+            // underscores: most BoringSSL reason strings are already macro names, but compound
+            // ones like "ASN.1 encoding routines" (a library name forwarded as a PEM reason) are
+            // not, and Node's test-tls-set-default-ca-certificates-recovery pins the underscored
+            // form for the BoringSSL case.
+            String upperReason = makeStringByReplacingAll(reasonString.convertToASCIIUppercase(), ' ', '_');
 
             int errLib = ERR_GET_LIB(err);
             ASCIILiteral lib = ""_s;
@@ -420,6 +488,7 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
         for (int32_t i = 0; i < errorStack.size(); i++) {
             WTF::String error = errorStack.pop_back().value();
             arr->putDirectIndex(globalObject, i, jsString(vm, error));
+            RETURN_IF_EXCEPTION(scope, {});
         }
         errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -451,12 +520,18 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, ThrowScop
     if (value.isUndefined())
         return std::nullopt;
 
-    if (!value.isInt32()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
-        return std::nullopt;
+    // Node accepts `value === value >> 0`: any number whose value is an int32, -0 included.
+    // An integral number is not always an int32 JSValue (an element of a JSON array that also
+    // holds 1e10 is stored as a double), so decide by value, not by representation.
+    if (value.isNumber()) {
+        double number = value.asNumber();
+        int32_t integer = JSC::toInt32(number);
+        if (static_cast<double>(integer) == number)
+            return integer;
     }
 
-    return value.asInt32();
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
+    return std::nullopt;
 }
 
 int32_t getPadding(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, const ncrypto::EVPKeyPointer& pkey)
@@ -619,7 +694,6 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
 
             if (encodingView != "buffer"_s) {
                 encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
             }
         }
 
@@ -675,11 +749,6 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         }
 
         return view;
-    }
-
-    if (!value.isCell() || !JSC::isTypedArrayTypeIncludingDataView(value.asCell()->type())) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
-        return {};
     }
 
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);

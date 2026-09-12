@@ -1,8 +1,6 @@
 import { JSCallback, viewSource } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isWindows } from "harness";
-
-const isFFIUnavailable = isWindows && isArm64;
+import { bunEnv, bunExe } from "harness";
 
 // Captures what a call throws, or undefined if it returned normally. Written
 // explicitly so the assertions below distinguish a thrown Error from a
@@ -16,7 +14,7 @@ function thrown(fn: () => unknown): unknown {
   return undefined;
 }
 
-describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
+describe("FFI viewSource", () => {
   // Descriptor values must be objects like { args: [...], returns: "void" }.
   // https://github.com/oven-sh/bun/pull/28361, https://github.com/oven-sh/bun/pull/34396
   test.each([42, "not_an_object", true])("throws on non-object symbol descriptor value %p", value => {
@@ -29,6 +27,32 @@ describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
     const err = thrown(() => viewSource({ foo: { args: ["bogus_type" as any], returns: "void" } }));
     expect(err).toBeInstanceOf(TypeError);
     expect((err as TypeError).message).toContain("bogus_type");
+  });
+
+  // Reading the descriptors can run user code; what it throws is what the
+  // caller sees, and a rejected descriptor is never mistaken for source.
+  test.each(["args", "returns"])("rethrows what a %s getter throws", property => {
+    const boom = new Error(`boom from ${property}`);
+    const descriptor = { args: ["i32"], returns: "i32" } as Record<string, unknown>;
+    Object.defineProperty(descriptor, property, {
+      get() {
+        throw boom;
+      },
+    });
+    expect(thrown(() => viewSource({ foo: descriptor as any }))).toBe(boom);
+    expect(thrown(() => viewSource({ ok: { args: [], returns: "void" }, foo: descriptor as any }))).toBe(boom);
+  });
+
+  test("rethrows what a symbols getter throws", () => {
+    const boom = new Error("boom from symbols");
+    const symbols = {};
+    Object.defineProperty(symbols, "foo", {
+      enumerable: true,
+      get() {
+        throw boom;
+      },
+    });
+    expect(thrown(() => viewSource(symbols as any))).toBe(boom);
   });
 
   test.each([null, undefined, 42])("throws on non-object options argument %p", value => {
@@ -50,11 +74,11 @@ describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
 
     const cbSrc = viewSource({ args: ["i32"], returns: "i32" }, true);
     expect(typeof cbSrc).toBe("string");
-    expect(cbSrc).toContain("my_callback_function");
+    expect(cbSrc).toContain("compiled by JavaScriptCore");
   });
 });
 
-describe.skipIf(isFFIUnavailable)("FFI JSCallback", () => {
+describe("FFI JSCallback", () => {
   test.each([null, undefined, 42, "str", true])("throws on non-object options %p", value => {
     const err = thrown(() => new JSCallback(() => {}, value as any));
     expect(err).toBeInstanceOf(TypeError);
@@ -77,5 +101,25 @@ describe.skipIf(isFFIUnavailable)("FFI JSCallback", () => {
     using cb = new JSCallback(() => {}, { args: ["i32"], returns: "void" });
     expect(typeof cb.ptr).toBe("number");
     expect(cb.ptr).not.toBe(0);
+  });
+});
+
+describe("FFI read", () => {
+  test("accepts a negative byteOffset relative to the address", async () => {
+    const source = `
+      const { ptr, read } = require("bun:ffi");
+      const bytes = new Uint8Array([11, 22, 33, 44, 55, 66, 77, 88]);
+      const p = ptr(bytes);
+      console.log(JSON.stringify([read.u8(p + 3, -3), read.u8(p + 3, -1), read.u16(p + 2, -1), read.i32(p + 4, -4)]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([11, 33, 8470, 740365835]));
+    expect(exitCode).toBe(0);
   });
 });

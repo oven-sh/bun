@@ -15,14 +15,6 @@ bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
-bumpalo.workspace = true
-typed-arena.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
@@ -33,7 +25,14 @@ bun_simdutf_sys.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"
+quick-xml = "0.38"
+roxmltree = "0.20"
+xml_rs = { package = "xml-rs", version = "0.8" }
 
 [[bench]]
 name = "json_parse"
+harness = false
+
+[[bench]]
+name = "xml_parse"
 harness = false

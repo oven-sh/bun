@@ -90,9 +90,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
-                async_range: opts.async_range,
                 needs_async_loc: key.loc,
-                has_async_range: !opts.async_range.is_empty(),
                 allow_await: if opts.is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -240,7 +238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    pub fn parse_property(
+    pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
         opts: &mut PropertyOpts,
@@ -287,7 +285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let ident = p.lexer.identifier;
-                    let ref_ = p.store_name_in_ref(ident).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(ident);
                     key = p.new_expr(E::PrivateIdentifier { ref_ }, p.lexer.loc());
                     p.lexer.next()?;
                 }
@@ -577,7 +575,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                        let ref_ = p.store_name_in_ref(name);
                         let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
                         // Destructuring patterns have an optional default value

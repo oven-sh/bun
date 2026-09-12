@@ -1,0 +1,35 @@
+{
+  "_id": "catalog-peer",
+  "name": "catalog-peer",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "catalog-peer",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "no-deps": "catalog:"
+      },
+      "_id": "catalog-peer@1.0.0",
+      "dist": {
+        "integrity": "sha512-1gPpZswzblmj+VXDlUokdSHDP3v7QzWmER5XnvvwTNvVFqxMhDq0gteXFp8W7lhQDwqjhC2wEVe2XeEk4+n13A==",
+        "shasum": "5ec9419c6c83516221f55b10bf5eae34f93c74d1",
+        "tarball": "http://localhost:4873/catalog-peer/-/catalog-peer-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "catalog-peer",
+      "version": "2.0.0",
+      "peerDependencies": {
+        "no-deps": "catalog:peers"
+      },
+      "_id": "catalog-peer@2.0.0",
+      "dist": {
+        "integrity": "sha512-rniEuDlTErMOG5QGEb3XbiWTIOO9qeDuXXRvdP+pFB2JXEIyg1Sm+8LzLhZ0iJEkA47YpGGK/vLcYjXRZNunww==",
+        "shasum": "4fa86288af72cd16953c972ba3a0cd94611ba323",
+        "tarball": "http://localhost:4873/catalog-peer/-/catalog-peer-2.0.0.tgz"
+      }
+    }
+  }
+}

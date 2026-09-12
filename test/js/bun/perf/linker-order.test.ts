@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   mustGenerateOrderFile,
@@ -8,37 +9,82 @@ import {
   type OrderFileContext,
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
-import { linkDepends, linkerFlags, orderFilePath, usesOrderFile } from "../../../../scripts/build/flags.ts";
-import { generateOrderFile } from "../../../../scripts/orderfile/generate.ts";
+import {
+  linkDepends,
+  linkerFlags,
+  linkerMapOutputs,
+  linkerMapPath,
+  orderFilePath,
+  symbolMapPath,
+  usesOrderFile,
+  writesLinkerMap,
+} from "../../../../scripts/build/flags.ts";
+import { slash } from "../../../../scripts/build/shell.ts";
+import { generateOrderFile, readTextSymbols } from "../../../../scripts/orderfile/generate.ts";
+import {
+  linkerMapFor,
+  parseChunkStarts,
+  parseSymbolMap,
+  symbolMapFor,
+} from "../../../../scripts/orderfile/windows-symbols.ts";
 
 /**
- * `<buildDir>/linker.order` is the lld `--symbol-ordering-file` for the linux
- * release link: it lists the functions bun executes while starting up so they
- * land together at the front of `.text`, which is worth ~12 MB of resident
- * binary pages on a `bun -e 'console.log(1)'` (see scripts/orderfile/generate.ts).
+ * `<buildDir>/linker.order` lists the functions bun executes while starting up
+ * so they land together at the front of `.text`, which is worth ~12 MB of
+ * resident binary pages on a `bun -e 'console.log(1)'`: lld
+ * `--symbol-ordering-file` on linux, Apple ld `-order_file` on macOS, lld-link
+ * `/order` on windows (see scripts/orderfile/generate.ts).
  *
- * Nothing in the build fails if this wiring rots. lld skips names it cannot
- * resolve, and we pass --no-warn-symbol-ordering, so a dropped flag silently
- * gives the RSS back instead of breaking the link. CI's verifyOrderFileApplied()
- * catches it, but only on release builds — these checks are what notices in a PR.
+ * Nothing in the build fails if this wiring rots. All three linkers skip names
+ * they cannot resolve, so a dropped flag silently gives the RSS back instead of
+ * breaking the link. CI's verifyOrderFileApplied() catches it, but only on
+ * release builds — these checks are what notices in a PR.
  */
 const cfg = (overrides: Partial<Config> = {}) =>
   ({
     linux: true,
+    darwin: false,
     abi: "gnu",
+    arch: "x64",
+    arm64: false,
     release: true,
     asan: false,
     valgrind: false,
-    darwin: false,
     windows: false,
     freebsd: false,
     canary: true,
     mode: "link-only",
     crossTarget: undefined,
+    canRunOnHost: true,
+    host: { os: "linux" },
     buildDir: "/tmp/build",
+    cacheDir: "/tmp/build/cache",
     cwd: "/repo",
     ...overrides,
   }) as Config;
+
+const darwinArm64 = { linux: false, darwin: true, abi: undefined, arm64: true } as Partial<Config>;
+/** Both windows lanes cross-compile from linux, so neither can run what it links. */
+const windowsX64 = {
+  linux: false,
+  windows: true,
+  abi: undefined,
+  crossTarget: "x86_64-pc-windows-msvc",
+  canRunOnHost: false,
+} as Partial<Config>;
+const windowsArm64 = {
+  ...windowsX64,
+  arch: "aarch64",
+  arm64: true,
+  crossTarget: "aarch64-pc-windows-msvc",
+} as Partial<Config>;
+
+/** Everything the link command line gets from linkerFlags for this config (an entry without `when` always applies). */
+const appliedLinkerFlags = (config: Config): string[] =>
+  linkerFlags
+    .filter(flag => !flag.when || flag.when(config))
+    .flatMap(flag => (typeof flag.flag === "function" ? flag.flag(config) : flag.flag))
+    .flat();
 
 /** A canary build on Buildkite, off a pull request. */
 const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
@@ -46,7 +92,6 @@ const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
   buildUrl: "https://buildkite.com/bun/bun/builds/68425",
   branch: "main",
   buildNumber: 68425,
-  stepKey: "linux-x64-build-bun",
   commitMessage: "some ordinary commit",
   pullRequest: false,
   ...overrides,
@@ -57,15 +102,32 @@ describe("symbol ordering file", () => {
     expect(usesOrderFile(cfg())).toBe(true);
   });
 
+  it("is enabled for the macOS arm64 release link, cross-compiled or not", () => {
+    expect(usesOrderFile(cfg(darwinArm64))).toBe(true);
+    // The darwin build lane cross-compiles from linux; ld64.lld takes
+    // -order_file too, so it still links with an inherited one.
+    expect(usesOrderFile(cfg({ ...darwinArm64, crossTarget: "arm64-apple-macosx" }))).toBe(true);
+  });
+
+  it("is enabled for both windows release links", () => {
+    // Neither lane can trace what it links (see windowsX64); each inherits the
+    // file its trace-order step traced on the matching test fleet.
+    expect(usesOrderFile(cfg(windowsX64))).toBe(true);
+    expect(usesOrderFile(cfg(windowsArm64))).toBe(true);
+  });
+
   it("is disabled where it cannot work or is not wanted", () => {
-    expect(usesOrderFile(cfg({ linux: false }))).toBe(false); // ELF only
     expect(usesOrderFile(cfg({ release: false }))).toBe(false); // debug: not worth a relink
-    expect(usesOrderFile(cfg({ asan: true }))).toBe(false); // tracer mprotects .text
+    expect(usesOrderFile(cfg({ ...windowsX64, release: false }))).toBe(false);
+    expect(usesOrderFile(cfg({ asan: true }))).toBe(false); // tracer swaps .text
     expect(usesOrderFile(cfg({ valgrind: true }))).toBe(false);
     // Both of these would otherwise attempt a trace that can never succeed and
     // annotate every build about it.
     expect(usesOrderFile(cfg({ abi: "musl" }))).toBe(false); // static: no LD_PRELOAD
     expect(usesOrderFile(cfg({ abi: "android" }))).toBe(false); // cross: cannot run the binary
+    // darwin x64: the tracer is arm64-only, so nothing ever seeds the chain.
+    expect(usesOrderFile(cfg({ ...darwinArm64, arm64: false }))).toBe(false);
+    expect(usesOrderFile(cfg({ linux: false, freebsd: true, abi: undefined }))).toBe(false);
   });
 
   it("lives in the build directory, never the source tree", () => {
@@ -75,32 +137,114 @@ describe("symbol ordering file", () => {
 
   it("is passed to lld on the linux release link", () => {
     const config = cfg();
-    const applied = linkerFlags
-      .filter(flag => flag.when(config))
-      .flatMap(flag => (typeof flag.flag === "function" ? flag.flag(config) : flag.flag))
-      .flat();
+    const applied = appliedLinkerFlags(config);
 
     expect(applied).toContain(`-Wl,--symbol-ordering-file=${orderFilePath(config)}`);
     // Without this, a stale entry is a hard link error rather than a skipped symbol.
     expect(applied).toContain("-Wl,--no-warn-symbol-ordering");
+    expect(applied.join(" ")).not.toContain("-order_file");
+  });
+
+  it("is passed to Apple ld on the macOS arm64 release link", () => {
+    const config = cfg(darwinArm64);
+    const applied = appliedLinkerFlags(config);
+
+    expect(applied).toContain(`-Wl,-order_file,${orderFilePath(config)}`);
+    expect(applied.join(" ")).not.toContain("--symbol-ordering-file");
+  });
+
+  it("is passed to lld-link on both windows release links, along with the maps that name its entries", () => {
+    for (const config of [cfg(windowsX64), cfg(windowsArm64)]) {
+      const applied = appliedLinkerFlags(config);
+
+      expect(applied).toContain(`/order:@${slash(orderFilePath(config))}`);
+      // LNK4037, once per name the inherited file has that this build no longer
+      // does: the windows spelling of --no-warn-symbol-ordering above.
+      expect(applied).toContain("/ignore:4037");
+      // The PE has no symbol table, so these are what the trace-order step turns
+      // addresses back into names with (windows-symbols.ts) — the listing for the
+      // names, lld's own map for which of them start a function.
+      expect(applied).toContain(`/map:${slash(symbolMapPath(config))}`);
+      expect(applied).toContain(`/lldmap:${slash(linkerMapPath(config))}`);
+      expect(applied.join(" ")).not.toMatch(/--symbol-ordering-file|-order_file/);
+    }
   });
 
   it("is not passed on a debug or sanitizer link", () => {
-    for (const config of [cfg({ release: false }), cfg({ asan: true })]) {
-      const applied = linkerFlags
-        .filter(flag => flag.when(config))
-        .flatMap(flag => (typeof flag.flag === "function" ? flag.flag(config) : flag.flag))
-        .flat()
-        .join(" ");
-      expect(applied).not.toContain("--symbol-ordering-file");
+    for (const config of [cfg({ release: false }), cfg({ asan: true }), cfg({ ...windowsX64, release: false })]) {
+      const applied = appliedLinkerFlags(config).join(" ");
+      expect(applied).not.toMatch(/--symbol-ordering-file|-order_file|\/order:/);
     }
   });
 
   it("is a link dependency, so regenerating it relinks", () => {
     // This is what makes the release two-pass work: overwrite the file, re-run
-    // ninja, and the link is the only edge whose input changed.
-    expect(linkDepends(cfg())).toContain(orderFilePath(cfg()));
+    // ninja, and the link is the only edge whose input changed. On windows it is
+    // what makes inheriting one relink at all.
+    for (const config of [cfg(), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)]) {
+      expect(linkDepends(config)).toContain(orderFilePath(config));
+    }
     expect(linkDepends(cfg({ release: false }))).not.toContain(orderFilePath(cfg({ release: false })));
+    expect(linkDepends(cfg({ ...windowsX64, release: false }))).not.toContain(orderFilePath(cfg(windowsX64)));
+  });
+});
+
+describe("linker maps", () => {
+  it("are written exactly where linkerMapOutputs() says, which is what declares them to ninja and ships them", () => {
+    // bun.ts declares the maps as the link's outputs and ci.ts packs them from
+    // that list, while the flags that write them live in each platform's entry;
+    // the trace-order step on windows reads them out of the profile zip, so the
+    // two drifting apart there means silently unordered windows builds.
+    const configs = {
+      linux: cfg(),
+      "linux asan": cfg({ asan: true }),
+      "linux debug": cfg({ release: false }),
+      "macOS arm64": cfg(darwinArm64),
+      "windows x64": cfg(windowsX64),
+      "windows arm64": cfg(windowsArm64),
+      "windows debug": cfg({ ...windowsX64, release: false }),
+    };
+    const written = Object.fromEntries(
+      Object.entries(configs).map(([name, config]) => {
+        const flags = appliedLinkerFlags(config).join(" ");
+        const maps = linkerMapOutputs(config);
+        // Each declared map is named by some flag (as given, or slashed for
+        // lld-link), and a config that declares none has no map flag at all.
+        const everyMapWritten = maps.every(map => flags.includes(map) || flags.includes(slash(map)));
+        const anyMapFlag = /bun-profile\.(linker-)?map\b/.test(flags);
+        return [name, everyMapWritten && anyMapFlag === maps.length > 0];
+      }),
+    );
+    expect(written).toEqual(Object.fromEntries(Object.keys(configs).map(name => [name, true])));
+
+    const declared = Object.fromEntries(
+      Object.entries(configs).map(([name, config]) => [
+        name,
+        linkerMapOutputs(config).map(map => map.split(/[\\/]/).at(-1)),
+      ]),
+    );
+    expect(declared).toEqual({
+      linux: ["bun-profile.linker-map"],
+      "linux asan": [],
+      "linux debug": [],
+      "macOS arm64": ["bun-profile.linker-map"],
+      "windows x64": ["bun-profile.linker-map", "bun-profile.map"],
+      "windows arm64": ["bun-profile.linker-map", "bun-profile.map"],
+      "windows debug": [],
+    });
+    expect(Object.entries(configs).map(([, config]) => writesLinkerMap(config))).toEqual(
+      Object.entries(declared).map(([, maps]) => maps.length > 0),
+    );
+  });
+
+  it("are named after the binary they describe, on both sides", () => {
+    // The link writes them next to the binary (flags.ts); the generator, handed
+    // only the binary, looks for the same names next to it.
+    const exe = join("/tmp/build", "bun-profile.exe");
+    expect([linkerMapFor(exe), symbolMapFor(exe)]).toEqual([
+      linkerMapPath(cfg(windowsX64)),
+      symbolMapPath(cfg(windowsX64)),
+    ]);
   });
 });
 
@@ -124,8 +268,8 @@ describe("deciding whether a build generates its own order file", () => {
     expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
   });
 
-  it("a cross-compiled target never does — it cannot run the binary it linked", () => {
-    const cross = cfg({ crossTarget: "aarch64-unknown-linux-gnu" } as Partial<Config>);
+  it("a target that cannot run on the host never does", () => {
+    const cross = cfg({ canRunOnHost: false } as Partial<Config>);
     expect(shouldGenerateOrderFile(cfg({ ...cross, canary: false } as Partial<Config>), ctx())).toBe(false);
     expect(mustGenerateOrderFile(cross, ctx(), false)).toBe(false);
     expect(orderFileEligible(cross, ctx())).toBe(true); // ...but it can still inherit one
@@ -143,14 +287,193 @@ describe("deciding whether a build generates its own order file", () => {
   });
 });
 
+const orderfile = join(import.meta.dir, "../../../../scripts/orderfile");
+const darwin = process.platform === "darwin";
+const supported = process.platform === "linux" || isWindows || (darwin && process.arch === "arm64");
+// On windows specifically clang-cl, which is on the CI images: the fixtures
+// below are linked by lld-link to get the maps the generator reads, the way the
+// release link writes them. (The generator itself also accepts cl for building
+// the tracer; it gets its maps from the build.)
+const compiler = isWindows
+  ? Bun.which("clang-cl")
+  : process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+// Not musl: the real generator never runs there (bun-musl is statically linked,
+// so LD_PRELOAD cannot load the tracer — see usesOrderFile), so compiling and
+// running the tracer on a musl host exercises nothing the build uses.
+const canTrace = supported && !isMusl && !!compiler;
+/** The injected-library variable the tracer rides in on. */
+const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
+const shared = darwin ? ["-dynamiclib", "-fPIC"] : ["-shared", "-fPIC"];
+const STARTS_MAGIC = 0x4e55425354525453n;
+const TRACE_MAGIC = 0x4e55424543415254n;
+
+async function compile(args: string[]) {
+  await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+}
+
+/**
+ * clang-cl compile and lld-link of one source file into `out`, in `cwd` so the
+ * .obj lands there; lld-link explicitly, as the generator does, since `link` on
+ * PATH may well be coreutils'. `link` is extra linker options.
+ */
+async function compileMsvc(cwd: string, source: string, out: string, link: string[] = []) {
+  // /Gy as in the real build: a chunk per function, which is what the generator
+  // takes to be one (windows-symbols.ts) and what /order can move.
+  await using proc = Bun.spawn({
+    cmd: [compiler!, "/nologo", "/O1", "/Gy", "-fuse-ld=lld", source, `/Fe:${out}`, ...(link.length ? ["/link", ...link] : [])], // prettier-ignore
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(`${compiler} exited ${exitCode}:\n${stdout}${stderr}`);
+}
+
+/** The linker options that write a binary's two maps where the generator looks for them (see windows-symbols.ts). */
+const mapsFor = (exe: string): string[] => [`/map:${symbolMapFor(exe)}`, `/lldmap:${linkerMapFor(exe)}`];
+
+/** The starts file the generator writes: magic, version, count, then every function's link-time address. */
+async function writeStarts(path: string, addresses: Iterable<number | bigint>) {
+  const list = [...addresses].map(BigInt);
+  const words = new BigUint64Array(3 + list.length);
+  words.set([STARTS_MAGIC, 1n, BigInt(list.length)], 0);
+  words.set(list, 3);
+  await Bun.write(path, new Uint8Array(words.buffer));
+}
+
+/** The trace's header: magic, version, slide, start count, entry count. */
+async function readTraceHeader(path: string) {
+  const [magic, version, , , entries] = new BigUint64Array(await Bun.file(path).slice(0, 40).arrayBuffer());
+  return { magic, version, entries: Number(entries) };
+}
+
 describe("order file generator", () => {
-  it.skipIf(process.platform !== "linux")("refuses a build directory with no binary to trace", () => {
+  it.skipIf(!supported)("refuses a build directory with no binary to trace", () => {
     expect(() => generateOrderFile({ buildDir: "/tmp/definitely-not-a-build-dir" })).toThrow(/not found/);
   });
 
-  it.skipIf(process.platform === "linux")("refuses to run off linux", () => {
-    // It is an ELF linker input and the tracer reads /proc/self/maps.
-    expect(() => generateOrderFile({ buildDir: "/tmp/build" })).toThrow(/linux/);
+  it.skipIf(supported)("refuses to run on an unsupported platform", () => {
+    // The tracers are x86-64 INT3 / arm64 BRK on linux and windows, arm64 BRK on macOS.
+    expect(() => generateOrderFile({ buildDir: "/tmp/build" })).toThrow(/linux|macOS|Windows/);
+  });
+});
+
+/**
+ * On windows the generator gets its functions from the two maps the link writes
+ * (the PE has no symbol table): the names from lld-link's symbol listing, which
+ * have to be the linker's exact spellings or /order matches nothing, and which
+ * of them are functions from lld's own map of chunks. See windows-symbols.ts.
+ */
+describe("windows symbol maps", () => {
+  // Shape of a real listing: one output section can have several rows, names
+  // can overflow their column, folded functions share an address, section 0000
+  // holds absolute symbols that have addresses too, and the statics come after
+  // the publics.
+  const symbolMap = [
+    " bun-profile",
+    "",
+    " Preferred load address is 0000000140000000",
+    "",
+    " Start         Length     Name                   Class",
+    " 0001:00000000 0000019fH .text                   CODE",
+    " 0001:000001a0 0001604aH .text$mn                CODE",
+    " 0002:00000000 00005bf0H .rdata                  DATA",
+    " 0003:00000000 00000a81H .data                   DATA",
+    "",
+    "  Address         Publics by Value              Rva+Base               Lib:Object",
+    "",
+    " 0000:00000000       __guard_fids_table         0000000000000000     <absolute>",
+    " 0001:00000000       main                       0000000140001000     bun.obj",
+    " 0001:00000080       ?run@Server@bun@@QEAAXAEBV?$Vector@PEAXV?$Allocator@PEAX@bun@@@2@@Z 0000000140001080     bun.obj",
+    " 0001:00000200       memset                     0000000140001200     libvcruntime:memset.obj",
+    " 0002:00000010       ??_C@_02DKCKIIND@?$CFs?$AA@ 0000000140002010     bun.obj",
+    " 0003:00000000       sink                       0000000140003000     bun.obj",
+    "",
+    " entry point at         0001:00000000",
+    "",
+    " Static symbols",
+    "",
+    " 0000:00000000       __guard_fids__             0000000140000000     libcmt:exe_main.obj",
+    " 0001:00000074       $LN12                      0000000140001074     bun.obj",
+    " 0001:00000078       $LN13                      0000000140001078     bun.obj",
+    " 0001:000001a0       _ZN3bun4mainE              00000001400011a0     libbun_rust.lib(bun.o)",
+    " 0001:000001a0       _ZN3bun4sameE.llvm.123     00000001400011a0     libbun_rust.lib(bun.o)",
+    " 0001:00000200       .bf                        0000000140001200     libvcruntime:memset.obj",
+    " 0001:00000240       Table                      0000000140001240     libvcruntime:memset.obj",
+    " 0002:00000020       anInitializer              0000000140002020     bun.obj",
+    "",
+  ].join("\n");
+
+  // Shape of lld's map: output sections, the chunks placed in each (one per
+  // function where there are function sections; memset.obj's whole .text is
+  // one), empty chunks, and under each chunk its symbols, demangled — including
+  // one whose demangled name happens to contain the chunk marker.
+  const linkerMap = [
+    "Address  Size     Align Out     In      Symbol",
+    "00001000 00000280  4096 .text",
+    "00001000 00000000     4         bun.obj:(.text)",
+    "00001000 0000007c    16         bun.obj:(.text$mn)",
+    "00001000 00000000     0                 int __cdecl main(int, char **)",
+    "00001074 00000000     0                 $LN12",
+    "00001080 00000010    16         bun.obj:(.text$mn)",
+    "00001080 00000000     0                 public: void __cdecl bun::Server::run(class bun::Vector<void *, class bun::Allocator<void *>> const &)",
+    "000011a0 00000040    16         libbun_rust.lib(bun.o):(.text)",
+    "000011a0 00000000     0                 bun::(anonymous namespace)::main",
+    "000011c0 00000000     0                 bun::(anonymous namespace)::helper",
+    "00001200 00000080    16         libvcruntime.lib(memset.obj):(.text)",
+    "00001200 00000000     0                 memset",
+    "00001240 00000000     0                 Table",
+    "00002000 00000030  4096 .rdata",
+    "00002010 00000003     1         bun.obj:(.rdata)",
+    '00002010 00000000     0                 "%s"',
+    "",
+  ].join("\n");
+
+  it("lists every name in the code sections of the symbol listing, and the image base", () => {
+    expect(parseSymbolMap(symbolMap)).toEqual({
+      imageBase: 0x140000000,
+      symbols: [
+        [0x140001000, "main"],
+        [0x140001080, "?run@Server@bun@@QEAAXAEBV?$Vector@PEAXV?$Allocator@PEAX@bun@@@2@@Z"],
+        [0x140001200, "memset"],
+        [0x140001074, "$LN12"],
+        [0x140001078, "$LN13"],
+        [0x1400011a0, "_ZN3bun4mainE"],
+        [0x1400011a0, "_ZN3bun4sameE.llvm.123"],
+        [0x140001200, ".bf"],
+        [0x140001240, "Table"],
+      ],
+    });
+    expect(() => parseSymbolMap("not a map\n")).toThrow(/image base/);
+  });
+
+  it("takes the chunks, and only the chunks, from lld's map", () => {
+    // Not the output sections, and not the symbols, whatever their names look like.
+    expect([...parseChunkStarts(linkerMap)].sort((a, b) => a - b)).toEqual([0x1000, 0x1080, 0x11a0, 0x1200, 0x2010]);
+  });
+
+  it("keeps the names that start a chunk, which is what drops the labels on the tables inside functions", () => {
+    using dir = tempDir("windows-symbols", {
+      "traced.map": symbolMap,
+      "traced.linker-map": linkerMap,
+      "unmapped.exe": "",
+    });
+
+    // main's jump table slots ($LN12, $LN13) and memset's byte table are gone;
+    // memset's own second name at its start is as welcome as any other alias.
+    expect(readTextSymbols(join(String(dir), "traced.exe"))).toEqual(
+      new Map([
+        [0x140001000, ["main"]],
+        [0x140001080, ["?run@Server@bun@@QEAAXAEBV?$Vector@PEAXV?$Allocator@PEAX@bun@@@2@@Z"]],
+        [0x140001200, ["memset", ".bf"]],
+        [0x1400011a0, ["_ZN3bun4mainE", "_ZN3bun4sameE.llvm.123"]],
+      ]),
+    );
+    expect(() => readTextSymbols(join(String(dir), "unmapped.exe"))).toThrow(/unmapped\.map not found/);
   });
 });
 
@@ -197,27 +520,18 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
   });
 });
 
-const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
-
-async function compile(args: string[]) {
-  await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
-}
-
 /**
  * One of the traced workloads runs on a pseudo-terminal, because bun's stdio,
  * tty and readline code take a path there that a pipe never reaches, and an
  * order file that missed it would leave all of that scattered. `ptyrun.c` is
- * what provides the terminal.
+ * what provides the terminal (on windows, the tracer itself does — see below).
  */
-describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
+describe.skipIf(!canTrace || isWindows)("pty runner", () => {
   /** Reports what the process sees on its stdio, plus the one line it was typed. */
   const probe = [
     `process.stdin.once("data", data => {`,
     `  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);`,
-    `  const fields = [tty, process.stdout.columns ?? 0, process.env.LD_PRELOAD ?? "none", data.toString().trim()];`,
+    `  const fields = [tty, process.stdout.columns ?? 0, process.env.${preloadVar} ?? "none", data.toString().trim()];`,
     `  process.stdout.write(fields.join(" ") + "\\n");`,
     `  process.stdin.pause();`,
     `});`,
@@ -233,21 +547,26 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // A terminal echoes back what it was typed and turns \n into \r\n, so the
-    // probe's own line is the last one.
-    const lines = stdout.replaceAll("\r", "").trim().split("\n");
+    // probe's own line is the last one. macOS also echoes the end-of-input ^D
+    // as the two characters ^D followed by two backspaces (ECHOCTL); strip
+    // control characters so that doesn't ride on the front of the line.
+    const lines = stdout
+      .replace(/[\x00-\x1f]+/g, "\n")
+      .trim()
+      .split("\n");
     return { line: lines.at(-1), stderr, exitCode };
   }
 
   it.concurrent("runs the child on a terminal, and hands it the preload it was given", async () => {
     using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
     const ptyrun = join(String(dir), "ptyrun");
-    // Somewhere for LD_PRELOAD to point that is real but does nothing. In a
-    // trace this is the page tracer, which has to load into the traced binary
-    // and not into ptyrun.
-    const preload = join(String(dir), "empty.so");
+    // Somewhere for the preload to point that is real but does nothing. In a
+    // trace this is the function tracer, which has to load into the traced
+    // binary and not into ptyrun.
+    const preload = join(String(dir), darwin ? "empty.dylib" : "empty.so");
     await Promise.all([
-      compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]),
-      compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]),
+      compile(["-o", ptyrun, join(orderfile, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]),
+      compile([...shared, "-o", preload, join(String(dir), "empty.c")]),
     ]);
 
     const [pty, pipe] = await Promise.all([
@@ -265,43 +584,218 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
 });
 
 /**
+ * What a trace of functrace-fixture.c must say, whichever tracer wrote it: the
+ * fixture calls f0..f31 in that order, runs a child, then calls `after`, and
+ * every one of those is a first entry. A trace a child process truncated or
+ * re-armed over has a handful of entries and is missing the early ones, which
+ * in a real trace are the hottest.
+ */
+async function expectFixtureTrace(trace: string, symbols: Map<number, string[]>) {
+  const raw = await Bun.file(trace).arrayBuffer();
+  const words = new BigUint64Array(raw);
+  // Layout: u64 magic, version, slide, start count, entry count, then the entries.
+  expect({ magic: words[0], version: words[1] }).toEqual({ magic: TRACE_MAGIC, version: 1n });
+  const entries = Array.from(words.subarray(5, 5 + Number(words[4])), address => Number(address));
+
+  // Each entry resolves to the names at that address, the way generate.ts
+  // resolves them; macOS nm spells C functions with a leading underscore.
+  const names = entries.flatMap(address => symbols.get(address) ?? [`unresolved ${address.toString(16)}`]);
+  const plain = names.map(name => (darwin ? name.replace(/^_/, "") : name));
+  const touched = plain.filter(name => /^f\d+$/.test(name));
+
+  expect(touched).toEqual(Array.from({ length: 32 }, (_, i) => `f${i}`));
+  expect(plain).toContain("main");
+  expect(plain).toContain("after");
+  expect(plain.indexOf("after")).toBeGreaterThan(plain.indexOf("f31"));
+  expect(new Set(entries).size).toBe(entries.length);
+}
+
+/**
  * The tracer loads into the binary under trace and nowhere else. Every workload
  * that execs something — `bun install` runs lifecycle scripts, the cli workload
- * shells out — hands LD_PRELOAD to the child, and a child that created and
- * truncated the trace file would wipe the pages recorded so far. Those are the
- * earliest-touched ones, which is to say the hottest.
+ * shells out — hands the preload to the child, and a child that created and
+ * truncated the trace file would wipe the entries recorded so far.
  */
-describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => {
-  it.concurrent("keeps the pages it recorded before the traced process execs a child", async () => {
-    using dir = tempDir("pagetrace", { "child.c": "int main(void) { return 0; }\n" });
+describe.skipIf(!canTrace || isWindows)("function tracer", () => {
+  it.concurrent("records exact entries, and keeps them across an exec'd child", async () => {
+    using dir = tempDir("functrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
-    const tracer = join(root, "pagetrace.so");
+    const tracer = join(root, darwin ? "functrace.dylib" : "functrace.so");
     const fixture = join(root, "fixture");
     const child = join(root, "child");
+    const starts = join(root, "starts.bin");
     const trace = join(root, "trace.bin");
 
     await Promise.all([
-      compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]), // prettier-ignore
-      compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]),
+      compile([...shared, "-o", tracer, join(orderfile, "functrace.c"), ...(darwin ? [] : ["-ldl", "-lpthread"])]),
+      compile(["-o", fixture, join(import.meta.dir, "functrace-fixture.c")]),
       compile(["-o", child, join(root, "child.c")]),
     ]);
 
-    // The fixture reads 32 pages of its own .rodata, execs `child` (dynamically
-    // linked, so it inherits LD_PRELOAD), then reads one more.
+    // The starts file the generator would write, from the same symbol reader.
+    const symbols = readTextSymbols(fixture);
+    expect(symbols.size).toBeGreaterThan(33);
+    await writeStarts(starts, symbols.keys());
+
+    // The child is dynamically linked, so it inherits the preload.
     await using proc = Bun.spawn({
       cmd: [fixture, child],
-      env: { ...bunEnv, LD_PRELOAD: tracer, BUN_PAGETRACE_BIN: fixture, BUN_PAGETRACE_OUT: trace },
+      env: { ...bunEnv, [preloadVar]: tracer, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "1", stderr: "", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "497", stderr: "", exitCode: 0 });
 
-    // Layout: u64 page size, u64 count, then `count` u64 page addresses.
-    const header = new BigUint64Array(await Bun.file(trace).slice(0, 16).arrayBuffer());
-    expect(Number(header[0])).toBeGreaterThan(0);
-    // The 32 pages, the one after, and whatever the fixture's own startup
-    // touched. A child that truncated the file leaves a handful.
-    expect(Number(header[1])).toBeGreaterThanOrEqual(33);
+    await expectFixtureTrace(trace, symbols);
+  });
+});
+
+/**
+ * On windows the tracer is a debugger (functrace-windows.c), so it takes the
+ * place of both functrace.c and ptyrun.c: it starts the binary itself — on a
+ * pseudo console when asked to, since that is the only way the console paths
+ * get traced — plants the breakpoints from outside, and writes the same trace.
+ * Its addresses come from the link's maps rather than nm, so the fixtures are
+ * linked with them, as the release is.
+ */
+describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
+  it.concurrent("records exact entries out of the maps' functions, and leaves the child alone", async () => {
+    using dir = tempDir("functrace-windows", { "child.c": "int main(void) { return 0; }\n" });
+    const root = String(dir);
+    const tracer = join(root, "functrace.exe");
+    const fixture = join(root, "fixture.exe");
+    const child = join(root, "child.exe");
+    const starts = join(root, "starts.bin");
+    const trace = join(root, "trace.bin");
+
+    await Promise.all([
+      compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
+      // No folding: `after` has the same body as f1, and the trace is checked
+      // for it being entered separately, after f31.
+      compileMsvc(root, join(import.meta.dir, "functrace-fixture.c"), fixture, [...mapsFor(fixture), "/opt:noicf"]),
+      compileMsvc(root, join(root, "child.c"), child),
+    ]);
+
+    const symbols = readTextSymbols(fixture);
+    expect(symbols.size).toBeGreaterThan(33); // the fixture's own functions, plus the static CRT's
+    // The static CRT is also where the labels come from that are not functions:
+    // its assembly routines name their internal labels (and, on arm64, their
+    // tables), so the listing always has more than the functions kept here. A
+    // breakpoint on one of those tables is what this test crashes on otherwise.
+    const listed = parseSymbolMap(readFileSync(symbolMapFor(fixture), "utf8")).symbols.length;
+    expect([...symbols.values()].flat().length).toBeLessThan(listed);
+    await writeStarts(starts, symbols.keys());
+
+    await using proc = Bun.spawn({
+      cmd: [tracer, fixture, child],
+      env: { ...bunEnv, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The fixture's stdout comes through the tracer's, and so does its exit code.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "497", stderr: "", exitCode: 0 });
+
+    await expectFixtureTrace(trace, symbols);
+  });
+
+  it.concurrent("reports the debuggee's exit code, and refuses a binary the starts are not for", async () => {
+    using dir = tempDir("functrace-windows-exit", {
+      "exit.c": "int main(int argc, char **argv) { (void)argv; return argc + 40; }\n",
+    });
+    const root = String(dir);
+    const tracer = join(root, "functrace.exe");
+    const exit = join(root, "exit.exe");
+    const starts = join(root, "starts.bin");
+    await Promise.all([
+      compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
+      compileMsvc(root, join(root, "exit.c"), exit, mapsFor(exit)),
+    ]);
+    const env = { ...bunEnv, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: join(root, "trace.bin") };
+
+    await writeStarts(starts, readTextSymbols(exit).keys());
+    await using traced = Bun.spawn({ cmd: [tracer, exit, "a", "b"], env, stdout: "pipe", stderr: "pipe" });
+    // Addresses far outside any code section: a starts file for some other binary.
+    await writeStarts(join(root, "elsewhere.bin"), [0x7ff600000000, 0x7ff600000010]);
+    await using refused = Bun.spawn({
+      cmd: [tracer, exit],
+      env: { ...env, BUN_FUNCTRACE_STARTS: join(root, "elsewhere.bin") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [tracedErr, tracedExit, refusedErr, refusedExit] = await Promise.all([
+      traced.stderr.text(),
+      traced.exited,
+      refused.stderr.text(),
+      refused.exited,
+    ]);
+    expect({ tracedErr, tracedExit, refusedExit }).toEqual({ tracedErr: "", tracedExit: 43, refusedExit: 2 });
+    expect(refusedErr).toContain("none of the 2 function starts");
+  });
+
+  it.concurrent("puts the debuggee on a console when asked to, and types our stdin into it", async () => {
+    using dir = tempDir("functrace-console", {
+      // Reports whether its stdio is a console, how wide, and the line it was typed.
+      "probe.c": [
+        "#include <windows.h>",
+        "#include <stdio.h>",
+        "#include <string.h>",
+        "int main(void) {",
+        "    DWORD mode;",
+        "    CONSOLE_SCREEN_BUFFER_INFO screen;",
+        "    int console = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) &&",
+        "        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &screen);",
+        "    char line[64];",
+        '    const char *typed = fgets(line, sizeof line, stdin) ? line : "nothing";',
+        '    line[strcspn(line, "\\r\\n")] = 0;',
+        '    printf("%s %d %s\\n", console ? "true" : "false", console ? (int)screen.dwSize.X : 0, typed);',
+        "    return 0;",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    const root = String(dir);
+    const tracer = join(root, "functrace.exe");
+    const probe = join(root, "probe.exe");
+    const starts = join(root, "starts.bin");
+    await Promise.all([
+      compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
+      compileMsvc(root, join(root, "probe.c"), probe, mapsFor(probe)),
+    ]);
+    await writeStarts(starts, readTextSymbols(probe).keys());
+
+    async function type(name: string, env: Record<string, string>) {
+      const trace = join(root, `${name}.bin`);
+      await using proc = Bun.spawn({
+        cmd: [tracer, probe],
+        env: { ...bunEnv, ...env, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: trace },
+        stdin: new Blob(["hi\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A console's output is a terminal rendering — escape sequences, and the
+      // typed line echoed back — so pick the probe's own line out of it.
+      const line = stdout
+        .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+        .split(/[\x00-\x1f]+/)
+        .map(text => text.trim())
+        .find(text => /^(true|false) \d+ /.test(text));
+      return { line, stderr, exitCode, entries: (await readTraceHeader(trace)).entries };
+    }
+
+    const [terminal, pipe] = await Promise.all([type("console", { BUN_FUNCTRACE_TTY: "1" }), type("pipe", {})]);
+
+    expect({ console: terminal.line, pipe: pipe.line, stderr: terminal.stderr + pipe.stderr }).toEqual({
+      console: "true 80 hi",
+      pipe: "false 0 hi",
+      stderr: "",
+    });
+    expect({ console: terminal.exitCode, pipe: pipe.exitCode }).toEqual({ console: 0, pipe: 0 });
+    // Both runs were traced: the probe's main, and the CRT on the way there.
+    expect(Math.min(terminal.entries, pipe.entries)).toBeGreaterThan(1);
   });
 });

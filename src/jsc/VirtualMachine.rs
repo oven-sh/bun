@@ -3749,22 +3749,20 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
-            let (_, kv) = map.map.swap_remove_at(idx);
-            let fd_s = kv.value;
-            let advanced = map
-                .map
-                .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
-                .map(|i| map.map.swap_remove_at(i).1)
-                .is_some_and(|v| &v.value[..] == b"advanced");
-            // Accept only
-            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
-            // Parsing as `u32` then `as i32` would silently wrap values in
-            // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            // The channel belongs to the process (its main thread). A worker
-            // sees the same inherited variables but must not open a second
-            // endpoint over the same fd (Node: no process.send() in workers).
-            if self.is_main_thread() {
+        // Only the main thread adopts the process's IPC channel and drops the
+        // variables (as Node does). A worker keeps what its env gave it;
+        // node:worker_threads reads `process.env.NODE_CHANNEL_FD` to stub `process.send`.
+        if self.is_main_thread() {
+            if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
+                let (_, kv) = map.map.swap_remove_at(idx);
+                let fd_s = kv.value;
+                let advanced = map
+                    .map
+                    .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
+                    .map(|i| map.map.swap_remove_at(i).1)
+                    .is_some_and(|v| &v.value[..] == b"advanced");
+                // Non-negative i31 only: `u32` then `as i32` would wrap `2^31..` to a
+                // negative fd instead of warning.
                 match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)

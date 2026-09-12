@@ -285,14 +285,15 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                HashMap<String, String> env;
+                Vector<std::pair<String, String>> env;
+                env.reserveInitialCapacity(keys.size());
 
                 for (const auto& key : keys) {
                     JSValue value = envObject->get(lexicalGlobalObject, key);
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
+                    String str = value.toWTFString(lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    env.add(key.impl()->isolatedCopy(), str);
+                    env.append({ key.string(), WTF::move(str) });
                 }
 
                 options.env.emplace(WTF::move(env));

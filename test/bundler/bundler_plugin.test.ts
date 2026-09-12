@@ -189,6 +189,95 @@ describe("bundler", () => {
     });
   }
 
+  // A plugin that returns nothing hands the import back to the resolver. The
+  // bundle must keep the same side effects as a build without the plugin.
+  itBundled("plugin/ResolveReturnsUndefinedKeepsSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from "demo-pkg/used.js";
+        import { unused } from "demo-pkg/unused.js";
+        console.log(used);
+      `,
+      "/node_modules/demo-pkg/package.json": /* json */ `{ "sideEffects": false }`,
+      "/node_modules/demo-pkg/used.js": /* js */ `export const used = "used";`,
+      "/node_modules/demo-pkg/unused.js": /* js */ `
+        console.log("unused.js ran");
+        export const unused = 1;
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: "used",
+    },
+  });
+
+  itBundled("plugin/ResolveReturnsUndefinedKeepsSideEffectsArray", {
+    files: {
+      "/entry.js": /* js */ `
+        import "demo-pkg/register.js";
+        import { used } from "demo-pkg";
+        console.log(used);
+      `,
+      "/node_modules/demo-pkg/package.json": /* json */ `{ "sideEffects": ["./register.js"] }`,
+      "/node_modules/demo-pkg/index.js": /* js */ `
+        export { used } from "./used.js";
+        export { unused } from "./unused.js";
+      `,
+      "/node_modules/demo-pkg/register.js": /* js */ `console.log("register.js ran");`,
+      "/node_modules/demo-pkg/used.js": /* js */ `export const used = "used";`,
+      "/node_modules/demo-pkg/unused.js": /* js */ `
+        console.log("unused.js ran");
+        export const unused = 1;
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: "register.js ran\nused",
+    },
+  });
+
+  // The loader that onLoad returns replaces the loader from the file extension.
+  itBundled("plugin/ResolveReturnsUndefinedOnLoadToJsKeepsSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./setup.txt";
+        console.log("entry");
+      `,
+      "/setup.txt": `console.log("setup.txt ran");`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+      builder.onLoad({ filter: /\.txt$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "js",
+      }));
+    },
+    run: {
+      stdout: "setup.txt ran\nentry",
+    },
+  });
+
+  // An import of a Node.js builtin has no side effects, so an unused one is dropped.
+  itBundled("plugin/ResolveReturnsUndefinedDropsUnusedBuiltinImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import fs from "node:fs";
+        console.log("entry");
+      `,
+    },
+    target: "node",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("node:fs");
+    },
+  });
+
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
     files: resolveFixture,

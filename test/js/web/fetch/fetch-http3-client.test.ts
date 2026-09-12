@@ -1,6 +1,10 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { createPrivateKey } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { listen, QuicError } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -669,6 +673,123 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   } finally {
     void b.stop(true);
   }
+});
+
+// In HTTP/3 only a FIN completes a message. A response stream that goes away
+// after the headers without one (the server sent RESET_STREAM, or the
+// connection closed) carries a truncated body, and the body read must fail
+// the way HTTP2StreamReset does for h2 instead of resolving with the bytes
+// received so far.
+describe("response stream ends without FIN", () => {
+  const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+  const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
+  const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+
+  // A node:quic HTTP/3 server whose response is "200" and the body "partial".
+  // It runs `end(stream, session)` only once the client, which by then holds
+  // the status and that chunk, requests /release. No timing assumption orders
+  // the wire.
+  async function fetchFromServerThat(end: (stream: any, session: any) => void) {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = await listen(
+      async session => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        async onheaders(this: any, headers: Record<string, string>) {
+          this.sendHeaders({ ":status": "200" });
+          if (headers[":path"] === "/release") {
+            this.writer.endSync();
+            release();
+            return;
+          }
+          this.writer.writeSync(new TextEncoder().encode("partial"));
+          await released;
+          end(this, this.session);
+        },
+      },
+    );
+    const base = `https://127.0.0.1:${server.address.port}`;
+    const res = await fetch(`${base}/`, h3);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    // Its response can be lost to the CONNECTION_CLOSE case, so it is not
+    // awaited: the first stream's read is what reports the outcome.
+    fetch(`${base}/release`, h3)
+      .then(r => r.text())
+      .catch(() => {});
+    const rest = await reader.read().then(
+      ({ done }) => ({ resolved: done ? "done" : "chunk" }),
+      (e: Error & { code?: string }) => ({ rejected: e.code }),
+    );
+    return { status: res.status, first: new TextDecoder().decode(first.value), rest };
+  }
+
+  test("RESET_STREAM mid-body rejects the body read with HTTP3StreamReset", async () => {
+    const result = await fetchFromServerThat(stream =>
+      stream.destroy(new QuicError("body failed", { errorCode: 0x102 })),
+    );
+    expect(result).toEqual({ status: 200, first: "partial", rest: { rejected: "HTTP3StreamReset" } });
+  });
+
+  test("CONNECTION_CLOSE mid-body rejects the body read with ECONNRESET", async () => {
+    const result = await fetchFromServerThat((_stream, session) => session.close({ code: 0x100, type: "application" }));
+    expect(result).toEqual({ status: 200, first: "partial", rest: { rejected: "ECONNRESET" } });
+  });
+
+  // RESET_STREAM before the response headers. Only H3_REQUEST_REJECTED (0x10B)
+  // promises that the server did no application processing (RFC 9114 section
+  // 8.1), so only that code may re-send the request, as h2 retries only
+  // REFUSED_STREAM. Any other code fails the request without a second copy.
+  async function postToServerThatResetsWith(errorCode: number) {
+    const requests: string[] = [];
+    await using server = await listen(
+      async session => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          requests.push(`${headers[":method"]} ${headers[":path"]}`);
+          if (requests.length === 1) {
+            this.destroy(new QuicError("rejected", { errorCode }));
+            return;
+          }
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("second attempt"));
+          this.writer.endSync();
+        },
+      },
+    );
+    const result = await fetch(`https://127.0.0.1:${server.address.port}/submit`, {
+      ...h3,
+      method: "POST",
+      body: "payload",
+    }).then(
+      async res => ({ resolved: `${res.status} ${await res.text()}` }),
+      (e: Error & { code?: string }) => ({ rejected: e.code }),
+    );
+    return { result, requests };
+  }
+
+  test("RESET_STREAM(H3_REQUEST_REJECTED) before the headers re-sends the request once", async () => {
+    expect(await postToServerThatResetsWith(0x10b)).toEqual({
+      result: { resolved: "200 second attempt" },
+      requests: ["POST /submit", "POST /submit"],
+    });
+  });
+
+  test("RESET_STREAM(H3_INTERNAL_ERROR) before the headers fails without a second copy of the request", async () => {
+    expect(await postToServerThatResetsWith(0x102)).toEqual({
+      result: { rejected: "HTTP3StreamReset" },
+      requests: ["POST /submit"],
+    });
+  });
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process

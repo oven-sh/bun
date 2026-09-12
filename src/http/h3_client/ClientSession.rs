@@ -188,7 +188,7 @@ impl ClientSession {
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
             if !request_body_done {
-                qs.reset();
+                qs.reset(quic::H3ErrorCode::RequestCancelled);
             }
         }
         st.qstream = None;
@@ -288,10 +288,36 @@ impl ClientSession {
         false
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
-    /// `done` = the lsquic stream is gone; deliver whatever is buffered then
-    /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
-    /// machine sees the same call sequence regardless of transport.
+    /// The lsquic stream closed without a FIN (a delivered FIN detaches the
+    /// stream inside `deliver`). `peer_reset` is the peer's RESET_STREAM code.
+    /// Before the response headers `deliver` re-sends the request once, but
+    /// only when no reset arrived (stale session) or the code is
+    /// H3_REQUEST_REJECTED, the one code that promises the server did no
+    /// application processing (RFC 9114 section 8.1; h2 retries only
+    /// REFUSED_STREAM). Otherwise the request fails.
+    pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: Option<u64>) {
+        let st = stream_mut(stream);
+        let Some(client_ptr) = st.client else {
+            return self.detach(stream);
+        };
+        let retryable = peer_reset.is_none_or(|c| c == quic::H3ErrorCode::RequestRejected as u64);
+        if !st.headers_delivered && retryable {
+            return self.deliver(stream, true);
+        }
+        let err = if client_mut(client_ptr).signals.get(Signal::Aborted) {
+            crate::Error::Aborted
+        } else if peer_reset.is_some() {
+            crate::Error::HTTP3StreamReset
+        } else {
+            crate::Error::ConnectionClosed
+        };
+        self.fail(stream, err);
+    }
+
+    /// Runs from inside lsquic's process_conns via on_stream_{headers,data},
+    /// and via `on_stream_closed` before the response headers. `done` = the
+    /// peer's FIN arrived; deliver whatever is buffered then detach. Mirrors
+    /// H2's `ClientSession.deliverStream`.
     pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {

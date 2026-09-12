@@ -143,6 +143,48 @@ describe("https.Agent keeps client certificates apart", () => {
   });
 });
 
+// agent6-cert.pem is signed by ca3, an intermediate that ca1 signed. The client trusts ca3 only, so
+// the chain verifies with allowPartialTrustChain and fails with UNABLE_TO_GET_ISSUER_CERT without.
+describe("https.Agent keeps allowPartialTrustChain apart", () => {
+  for (const keepAlive of [true, false]) {
+    bunTest(`a strict request is verified again, keepAlive: ${keepAlive}`, async () => {
+      const server = tls.createServer(
+        { ca: read("ca3-cert.pem"), key: read("agent6-key.pem"), cert: read("agent6-cert.pem") },
+        socket => {
+          socket.on("error", () => {});
+          socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+        },
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const agent = new https.Agent({ keepAlive });
+      const outcome = async (allowPartialTrustChain: boolean) => {
+        const req = https.get({
+          host: "127.0.0.1",
+          port: (server.address() as AddressInfo).port,
+          agent,
+          ca: read("ca3-cert.pem"),
+          checkServerIdentity: () => undefined,
+          allowPartialTrustChain,
+        });
+        try {
+          const [res] = await once(req, "response");
+          res.resume();
+          await once(res, "end");
+          return res.statusCode;
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code;
+        }
+      };
+      try {
+        assert.deepStrictEqual([await outcome(true), await outcome(false)], [200, "UNABLE_TO_GET_ISSUER_CERT"]);
+      } finally {
+        agent.destroy();
+        server.close();
+      }
+    });
+  }
+});
+
 describe("https.Agent#getName", () => {
   const agent = new https.Agent();
   const name = (options: object) => agent.getName({ host: "localhost", port: 443, ...options });
@@ -228,6 +270,12 @@ describe("https.Agent#getName", () => {
     assert.notStrictEqual(name({ caFile: "a" }), name({ caFile: "b" }));
     // A path cannot spell the next part.
     assert.notStrictEqual(name({ certFile: 'a":keyFile="b' }), name({ certFile: "a", keyFile: "b" }));
+  });
+
+  bunTest("allowPartialTrustChain is a part of the name when it is set", () => {
+    const base = name({});
+    assert.strictEqual(name({ allowPartialTrustChain: true }), `${base}:allowPartialTrustChain`);
+    assert.strictEqual(name({ allowPartialTrustChain: false }), base);
   });
 });
 

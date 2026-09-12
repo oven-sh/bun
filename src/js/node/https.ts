@@ -16,6 +16,8 @@ const ArrayPrototypeMap = Array.prototype.map;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 function request(...args) {
   let options = {};
@@ -385,8 +387,8 @@ function poolKeyPart(value: unknown): unknown {
   const { pem } = value as { pem?: unknown };
   if (pem != null) return poolKeyPart(pem);
   // Any other object (a Blob, a BunFile) has no contents to read here: key it by identity.
-  let id = poolKeyObjectIds.get(value);
-  if (id === undefined) poolKeyObjectIds.set(value, (id = ++poolKeyObjectCount));
+  let id = WeakMapPrototypeGet.$call(poolKeyObjectIds, value);
+  if (id === undefined) WeakMapPrototypeSet.$call(poolKeyObjectIds, value, (id = ++poolKeyObjectCount));
   return `[object #${id}]`;
 }
 
@@ -441,6 +443,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
     certFile,
     keyFile,
     caFile,
+    allowPartialTrustChain,
   } = options;
 
   name += ":";
@@ -507,6 +510,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (certFile) name += `:certFile=${JSONStringify(certFile)}`;
   if (keyFile) name += `:keyFile=${JSONStringify(keyFile)}`;
   if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
+  // The TLS layer takes any truthy value as true. A strict request keeps Node's name.
+  if (allowPartialTrustChain) name += ":allowPartialTrustChain";
 
   return name;
 };

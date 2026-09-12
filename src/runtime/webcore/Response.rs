@@ -1227,8 +1227,7 @@ impl Init {
         })
     }
 
-    /// `FOR_RESPONSE` applies the `ResponseInit` checks that `new Request()`,
-    /// which parses its `RequestInit` through this too, must not run.
+    /// `FOR_RESPONSE` is false when `new Request()` parses its `RequestInit` through this.
     pub(crate) fn init<const FOR_RESPONSE: bool>(
         global_this: &JSGlobalObject,
         response_init: JSValue,

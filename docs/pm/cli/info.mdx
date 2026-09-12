@@ -21,6 +21,13 @@ To view information about a specific version:
 bun info react@18.0.0
 ```
 
+A version range or a dist-tag selects the same version that `bun add` would install:
+
+```bash terminal icon="terminal"
+bun info react@^18 version
+bun info react@canary version
+```
+
 ## Viewing specific properties
 
 To print specific properties from the package metadata:
@@ -31,13 +38,46 @@ bun info react dependencies
 bun info react repository.url
 ```
 
+Property paths use the same grammar as `npm view`. A dot or `[index]` steps into an object or an array. A key in brackets is taken literally, so it may contain dots. A property name after an array is read from every element:
+
+```bash terminal icon="terminal"
+bun info react maintainers[0].name     # first maintainer's name
+bun info react maintainers.name        # every maintainer's name
+bun info react dist-tags.latest
+bun info react "time[18.0.0]"          # publish time of 18.0.0
+bun info react "exports[.].default"
+```
+
+Several properties print one `name = value` line each. A property that does not exist prints nothing.
+
+```bash terminal icon="terminal"
+bun info react name version license
+```
+
+Properties are looked up on the selected version first, then on the registry document for the package (for example `dist-tags`, `time`, `readme`).
+
 ## JSON output
 
 To get the output in JSON format, use the `--json` flag:
 
 ```bash terminal icon="terminal"
 bun info react --json
+bun info react version dist.tarball --json   # {"version": "...", "dist.tarball": "..."}
 ```
+
+With `--json`, an error is printed to stdout as a JSON object and the exit code is 1:
+
+```json
+{
+  "error": {
+    "code": "E404",
+    "summary": "No version of \"react\" satisfying \"99\" found",
+    "detail": "Recent versions: ..."
+  }
+}
+```
+
+`bun info` does not need a `package.json`. Without a package name it shows the package in the current directory's `package.json`.
 
 ## Alias
 

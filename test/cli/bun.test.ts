@@ -354,7 +354,7 @@ describe("bun", () => {
       ["link", "bun link [flags] [<packages>]"],
       ["patch", "bun patch [flags or options] <package>@<version>"],
       ["patch-commit", "bun patch-commit [flags or options] <directory>"],
-      ["info", "bun info [flags] <package>[@<version>]"],
+      ["info", "bun info [flags] <package>[@<version>] [<property>...]"],
     ];
     test.concurrent.each(usage)("bun %s --help usage line", async (cmd, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });

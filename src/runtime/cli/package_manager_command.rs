@@ -204,7 +204,7 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--long<r>                    also print author, description and homepage\n\
   <d>└<r> <cyan>--filter<r> <d>\\<pattern\\><r>      list only the matching workspaces' dependencies\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
-  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
+  <b><green>bun pm<r> <blue>view<r> <d>name[@version] [property ...]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
   <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\
@@ -345,18 +345,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::println(format_args!("{}", bstr::BStr::new(&username)));
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
-            let property_path = if pm.options.positionals.len() > 2 {
-                Some(pm.options.positionals[2])
-            } else {
-                None
-            };
-            let spec = if pm.options.positionals.len() > 1 {
-                pm.options.positionals[1]
-            } else {
-                b"".as_slice()
-            };
+            let positionals: &'static [&'static [u8]] = pm.options.positionals;
+            let spec: &[u8] = positionals.get(1).copied().unwrap_or(b"");
+            let fields: &[&[u8]] = positionals.get(2..).unwrap_or(&[]);
             let json_output = pm.options.json_output;
-            PmViewCommand::view(pm, spec, property_path, json_output)?;
+            PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             // SAFETY: `FileSystem::instance()` is initialised during

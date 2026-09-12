@@ -799,11 +799,10 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCommonJSModulePrototype* create(
         JSC::VM& vm,
-        JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure)
     {
         JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCommonJSModulePrototype))) JSCommonJSModulePrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject);
+        prototype->finishCreation(vm);
         return prototype;
     }
 
@@ -833,7 +832,7 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
@@ -855,7 +854,7 @@ JSC::Structure* JSCommonJSModule::createStructure(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    auto* prototype = JSCommonJSModulePrototype::create(vm, globalObject, JSCommonJSModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    auto* prototype = JSCommonJSModulePrototype::create(vm, JSCommonJSModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
     // Do not set the number of inline properties on this structure
     // there may be an off-by-one error in the Structure which causes `require.id` to become the require

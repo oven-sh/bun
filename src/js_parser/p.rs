@@ -174,6 +174,7 @@ pub(crate) struct ParserSnapshot<'a> {
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
+    parse_pass_saw_direct_eval: bool,
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -303,6 +304,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
+
+    /// A call to the identifier `eval` is somewhere in the file. A sloppy direct eval can
+    /// declare a `var` in any function around it, so an unbound name is not always the
+    /// global. `Scope::contains_direct_eval` cannot tell the visit pass this: it is set
+    /// when the visit reaches the call, after earlier code is rewritten.
+    pub(crate) parse_pass_saw_direct_eval: bool,
 
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
@@ -8297,6 +8304,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
+            parse_pass_saw_direct_eval: self.parse_pass_saw_direct_eval,
             has_non_local_export_declare_inside_namespace: self
                 .has_non_local_export_declare_inside_namespace,
             should_fold_typescript_constant_expressions: self
@@ -8331,6 +8339,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
         self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
+        self.parse_pass_saw_direct_eval = snapshot.parse_pass_saw_direct_eval;
         self.has_non_local_export_declare_inside_namespace =
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =
@@ -9809,6 +9818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
+            parse_pass_saw_direct_eval: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,

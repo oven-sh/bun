@@ -388,6 +388,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let list_loc = p.parse_call_args()?;
         let loc = left.loc;
         let target = *left;
+        if let ExprData::EIdentifier(id) = target.data {
+            if p.load_name_from_ref(id.ref_) == b"eval" {
+                p.parse_pass_saw_direct_eval = true;
+            }
+        }
         *left = p.new_expr(
             E::Call {
                 target,

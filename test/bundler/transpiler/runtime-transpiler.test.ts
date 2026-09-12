@@ -195,6 +195,58 @@ describe("with statement", () => {
   });
 });
 
+// The runtime transpiler rewrites `new Array(1, 2)` to `[1, 2]` and `new Error(x)` to
+// `Error(x)` when the name is the global. A sloppy direct eval or a `with` object can
+// shadow the name.
+describe.concurrent("known-global constructors that can be shadowed", () => {
+  async function run(source: string) {
+    using dir = tempDir("runtime-known-global-shadow", { "index.cjs": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("direct eval", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      function f() { eval("var Array = function () { return { mine: 1 } }"); return new Array(1, 2); }
+      function g() { eval("var Object = function () { return { mine: 2 } }"); return new Object(); }
+      function k() { eval("var Error = function (m) { this.custom = m }"); return new Error("x"); }
+      function before() { var make = () => new Array(1, 2); eval("var Array = function () { return { mine: 3 } }"); return make(); }
+      eval("var RangeError = function (m) { this.custom = m }");
+      function top() { return new RangeError("y"); }
+      console.log(JSON.stringify([f(), g(), k(), before(), top()]));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('[{"mine":1},{"mine":2},{"custom":"x"},{"mine":3},{"custom":"y"}]\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("with statement", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      var calls = [];
+      function h(o) { with (o) { new Set(); return [new Array(1, 2), new Object(), new Error("x")]; } }
+      console.log(JSON.stringify([
+        h({
+          Array: function () { return { mine: 1 } },
+          Object: function () { return { mine: 2 } },
+          Error: function (m) { this.custom = m },
+          Set: function () { calls.push("Set") },
+        }),
+        calls,
+      ]));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('[[{"mine":1},{"mine":2},{"custom":"x"}],["Set"]]\n');
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("math.pow", () => {
   function foo1(foo) {
     return 10 ** (foo / 20);

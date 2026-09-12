@@ -159,14 +159,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
-    /// Call when the React Compiler replaced the parameters and the body of the
-    /// function whose FunctionBody scope is `current_scope`. The new ones declare
-    /// only symbols from `Host::new_local`, which are in this scope's `generated`.
-    /// Of the symbols that the parser declared for the old ones, the output still
-    /// prints `arguments` and `name`: a function expression declares its own name
-    /// in its FunctionArgs scope. Nothing prints the others. If they stay, the
-    /// renamer numbers each new local around the old symbol of the same name
-    /// (`count` prints as `count2`).
+    /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
         let mut body = self.current_scope;
         debug_assert!(body.kind == js_ast::scope::Kind::FunctionBody);
@@ -174,6 +167,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         body.children.clear();
         if let Some(mut args) = body.parent {
             debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
+            // Still printed: `arguments`, and `name` when a function expression declares it here.
             let mut kept = js_ast::scope::Members::EMPTY;
             for (key, member) in args.members.iter() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;

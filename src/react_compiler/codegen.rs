@@ -368,8 +368,7 @@ pub(crate) fn codegen_function(
         let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
         let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
         let mut codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
-        // The declaration is hoisted to module level. The same name gives the
-        // `Ref` that the `LoadGlobal` at the use site printed.
+        // Module level. `name_to_ref` gives the `Ref` the use site's `LoadGlobal` printed.
         codegen.id = reactive_fn_mut.id.as_ref().map(|name| LocRef {
             loc: convert_loc(reactive_fn_mut.loc),
             ref_: cx.cg.ref_for_name(store_str(name.as_bytes())),

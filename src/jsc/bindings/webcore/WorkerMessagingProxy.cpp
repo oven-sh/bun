@@ -71,8 +71,7 @@ void* WebWorker__create(
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
-// Queue `work` (a heap Bun::VMInterrupts::Work, handed over) for the worker VM and have it run at its
-// next safepoint; kept until its entry module starts if the thread is still starting. Any thread.
+// Queue `work` (a heap Bun::VMInterrupts::Work, handed over) for the worker VM. Any thread.
 void WebWorker__requestInterrupt(void*, Bun::VMInterrupts::Work*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);

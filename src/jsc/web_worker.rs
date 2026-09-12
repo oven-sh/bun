@@ -96,12 +96,9 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
-    /// `spin()` has started loading the entry module: from here on the VM
-    /// runs user code and `request_interrupt()` reaches it. Before that
-    /// (thread startup, the node bootstrap) the work waits in
-    /// `pending_interrupts` and is made here, so that a worker that never
-    /// reaches user code answers nothing, like one that has not started.
-    /// Both touched under the `vm_handle` lock.
+    /// `spin()` has started loading the entry module. Interrupts requested
+    /// before that wait in `pending_interrupts`, so a worker that never reaches
+    /// user code answers none. Both touched under the `vm_handle` lock.
     entry_started: AtomicBool,
     pending_interrupts: bun_threading::Guarded<Vec<*mut c_void>>,
 
@@ -218,8 +215,6 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
 impl Drop for WebWorker {
     fn drop(&mut self) {
         log!("[{}] destroy", self.execution_context_id);
-        // Interrupts the worker never got to (it failed to start, or the
-        // request came after its VM went away) are dropped unrun.
         for work in self.pending_interrupts.lock().drain(..) {
             // SAFETY: `work` was handed over to `request_interrupt`.
             unsafe { crate::vm_handle::Bun__VMInterrupts__drop(work) };
@@ -576,12 +571,8 @@ impl WebWorker {
         }
     }
 
-    /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over) for
-    /// the worker's VM and have it run at its next safepoint, even in the
-    /// middle of synchronous script ([`VmHandle::request_interrupt`]). Until
-    /// the entry module starts the work is kept and made then, so a request
-    /// made while the thread starts still reaches an entry module that never
-    /// returns. Any thread that holds a ref (the proxy) may call this.
+    /// [`VmHandle::request_interrupt`] for the worker's VM; kept until its
+    /// entry module starts. Any thread that holds a ref (the proxy).
     #[unsafe(export_name = "WebWorker__requestInterrupt")]
     pub(crate) extern "C" fn request_interrupt(this: *mut WebWorker, work: *mut c_void) {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
@@ -890,7 +881,7 @@ impl WebWorker {
             }
         }
 
-        // User code from here on: interrupts requested so far are made now.
+        // User code from here on.
         {
             let handle = self.vm_handle.lock();
             self.entry_started.store(true, Ordering::Relaxed);

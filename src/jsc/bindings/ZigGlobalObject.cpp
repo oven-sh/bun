@@ -381,9 +381,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 
-        // The one VM trap that calls back into the embedder: how another thread runs native work on a
-        // VM's thread in the middle of script (Bun::VMInterrupts). Set before the first VM's
-        // constructor freezes g_jscConfig; JSC asserts it is set when the trap is serviced.
+        // Before the first VM's constructor freezes g_jscConfig.
         g_jscConfig.shellTimeoutCheckCallback = Bun::VMInterrupts::serviceTrap;
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))

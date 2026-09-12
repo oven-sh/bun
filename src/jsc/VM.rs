@@ -124,10 +124,8 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// Fires the NeedShellTimeoutCheck trap. Thread safe. JSC services it by
-    /// calling the process-wide callback bun installs at startup
-    /// (`Bun::VMInterrupts::serviceTrap`) on the VM's thread at its next
-    /// safepoint, also in the middle of synchronous script.
+    /// Fires the NeedShellTimeoutCheck trap, serviced by `Bun::VMInterrupts::serviceTrap`
+    /// on the VM's thread at its next safepoint. Thread safe.
     pub(crate) fn notify_need_interrupt(&self) {
         JSC__VM__notifyNeedShellTimeoutCheck(self)
     }

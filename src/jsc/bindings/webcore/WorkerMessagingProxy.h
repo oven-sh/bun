@@ -85,10 +85,8 @@ public:
     void postMessageToWorkerGlobalScope(MessageWithMessagePorts&&);
     // Queued while Pending, posted while Running, refused (false) once Closing.
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
-    // Run native work on the worker thread as soon as it reaches a safepoint, also in the middle of
-    // synchronous script (Bun::VMInterrupts; Node's Environment::RequestInterrupt). Kept while the
-    // thread starts, refused (false) once Closing; a worker that stops first drops the work unrun
-    // (workerGlobalScopeDestroyedInternal settles the request). Parent thread.
+    // Run native work on the worker thread at its next safepoint, also in the middle of synchronous
+    // script (Bun::VMInterrupts). Kept while the thread starts, refused (false) once Closing. Parent thread.
     bool postInterruptToWorkerGlobalScope(Bun::VMInterrupts::Work&&);
     void setKeepAlive(bool);
     void workerObjectDestroyed();

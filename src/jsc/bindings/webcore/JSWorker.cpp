@@ -735,13 +735,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         }
     }
 
-    // No up-front isOnline() gate: a worker can post to its parent (e.g. from
-    // a microtask the entry module scheduled while it was still loading) while
-    // m_state is still Pending. postInterruptToWorkerGlobalScope returns false
-    // only for Closing/Closed, which the !accepted reject below handles. If the
-    // worker never reaches Running (entry threw or failed to load), the work is
-    // dropped unrun with its VM and workerGlobalScopeDestroyedInternal's
-    // rejectAllCrossVMRequests() rejects + frees the Strong<>.
+    // No up-front isOnline() gate: a request while Pending is kept. A worker that never
+    // reaches Running rejects it from workerGlobalScopeDestroyedInternal.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
 
     // The promise is registered in a parent-side map keyed by reqId; only the id
@@ -751,8 +746,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    // An interrupt, not a loop task: the snapshot is what a parent asks for when the worker does not
-    // return to its loop. The full collection it runs is safe at a trap (Bun::VMInterrupts::service).
     bool accepted = worker.contextProxy().postInterruptToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](JSC::VM& vm) mutable {
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();

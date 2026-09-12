@@ -410,13 +410,10 @@ impl VmHandle {
         }
     }
 
-    /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over; null
-    /// to only ask) for the VM's thread and ask it to run its queue at its
-    /// next safepoint, even in the middle of synchronous script (Node's
-    /// `RequestInterrupt`): a VM trap for script that does not return to the
-    /// loop, and a loop task for a VM idle in its loop. Any thread (a
-    /// parent's `worker.getHeapSnapshot()`); once closed the work is dropped
-    /// unrun.
+    /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over; null to
+    /// only ask) and have the VM's thread run its queue at its next safepoint:
+    /// a VM trap for running script, a loop task for an idle VM. Any thread;
+    /// once closed the work is dropped unrun.
     pub fn request_interrupt(&self, work: *mut c_void) {
         if let Some(_a) = self.enter() {
             // SAFETY: inside the gate before `Closed` ⇒ the VM and its
@@ -799,8 +796,7 @@ pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool 
 /// Any thread: [`VmHandle::request_interrupt`].
 ///
 /// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call;
-/// `work` is a heap `Bun::VMInterrupts::Work` handed over, or null.
+/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__requestInterrupt(r: *const Shared, work: *mut c_void) {
     // SAFETY: fn contract.

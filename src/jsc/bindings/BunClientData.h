@@ -30,8 +30,7 @@ extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::Ev
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
-// Queue `work` (a heap `Bun::VMInterrupts::Work`, handed over; may be null) on the VM's interrupts and have its
-// thread service them at its next safepoint. Dropped unrun once the VM is closed. Any thread.
+// Queue `work` (a heap `Bun::VMInterrupts::Work`, handed over, or null) and have the VM's thread service its queue. Any thread.
 extern "C" void Bun__VmHandle__requestInterrupt(const BunVmHandleRef*, void* work);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
 extern "C" const unsigned char* Bun__VmHandle__stateAddress(const BunVmHandleRef*);

@@ -388,40 +388,6 @@ export class MockDisposable implements MockDisposable {
   }
 }
 
-export interface MockTextDocument {
-  readonly uri: MockUri;
-  readonly fileName: string;
-  readonly isUntitled: boolean;
-  readonly languageId: string;
-  readonly version: number;
-  readonly isDirty: boolean;
-  readonly isClosed: boolean;
-  readonly eol: MockEndOfLine;
-  readonly lineCount: number;
-  getText(range?: MockRange): string;
-  getWordRangeAtPosition(position: MockPosition, regex?: RegExp): MockRange | undefined;
-  lineAt(line: number | MockPosition): MockTextLine;
-  offsetAt(position: MockPosition): number;
-  positionAt(offset: number): MockPosition;
-  save(): Promise<boolean>;
-  validatePosition(position: MockPosition): MockPosition;
-  validateRange(range: MockRange): MockRange;
-}
-
-export enum MockEndOfLine {
-  LF = 1,
-  CRLF = 2,
-}
-
-export interface MockTextLine {
-  readonly lineNumber: number;
-  readonly text: string;
-  readonly range: MockRange;
-  readonly rangeIncludingLineBreak: MockRange;
-  readonly firstNonWhitespaceCharacterIndex: number;
-  readonly isEmptyOrWhitespace: boolean;
-}
-
 export interface MockWorkspaceFolder {
   readonly uri: MockUri;
   readonly name: string;

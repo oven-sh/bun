@@ -616,8 +616,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // directly (`/NOLOGO`, `/OUT:`, `/NATVIS:`, `/PDBALTPATH:`, …). `clang-cl`
     // is a *compiler driver*, not a linker — it reads `/N…` args as input
     // filenames ("no such file or directory: '/NOLOGO'") and never reaches the
-    // underlying linker. Use the discovered MSVC `link.exe` (matches what
-    // `dep_cargo` sets for vendored crates — see source.ts), falling back to
+    // underlying linker. Use the discovered MSVC `link.exe`, falling back to
     // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
     [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.windows
       ? (cfg.msvcLinker ?? cfg.ld)

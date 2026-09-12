@@ -1113,6 +1113,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     }
     #[cfg(not(unix))]
     let _ = state;
+    #[cfg(windows)]
+    {
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        bun_jsc::event_loop::EventLoop::fold_addon_uv_callbacks(unsafe { &*(*vm).global });
+    }
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1235,6 +1240,11 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
     #[cfg(not(unix))]
     let _ = state;
+    #[cfg(windows)]
+    {
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        bun_jsc::event_loop::EventLoop::fold_addon_uv_callbacks(unsafe { &*(*vm).global });
+    }
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };

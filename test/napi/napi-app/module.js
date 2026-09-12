@@ -94,6 +94,41 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_promise_with_uv_queue_work = () => {
+  // The uv_work_t is the only thing keeping the loop alive. Once its after-work
+  // callback has resolved the promise, main.js's reaction ("resolved to ...")
+  // belongs to that loop turn, so it must print before the idle loop's beforeExit.
+  process.on("beforeExit", () => console.log("beforeExit"));
+  return nativeTests.create_promise_with_uv_queue_work();
+};
+
+// Bun-only: the after-work callback calls a function that throws and returns
+// without checking, so the throw is left on the engine (node keeps it in the
+// addon's env until the next module callback, which never comes here). The turn
+// that ran the callback reports it as uncaught and still runs the reaction to
+// the promise the callback resolved just before.
+nativeTests.test_promise_with_uv_queue_work_callback_throws = () => {
+  // main.js's handler exits the process; this test wants to see what follows.
+  process.removeAllListeners("uncaughtException");
+  process.on("uncaughtException", err => console.log("uncaughtException", err.message));
+  process.on("beforeExit", () => console.log("beforeExit"));
+  return nativeTests.create_promise_with_uv_queue_work(() => {
+    throw new Error("thrown from after_work_cb");
+  });
+};
+
+// A worker's loop is the other one that is polled and then asked whether it is
+// still alive. uv-queue-work-entry.mjs awaits the addon's promise at top level;
+// in "reject" mode its reaction throws instead, which has to reach the parent as
+// the worker's 'error' event.
+nativeTests.test_promise_with_uv_queue_work_in_worker = async (_, mode = "resolve") => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "uv-queue-work-entry.mjs"), { workerData: mode });
+  worker.on("error", err => console.log("worker error:", err.message));
+  console.log("worker exited with", await new Promise(resolve => worker.on("exit", resolve)));
+};
+
 nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued = 0) => {
   // create (thread_count=1), acquire (=2), optionally queue items, abort (=1, closing)
   nativeTests.test_napi_threadsafe_function_abort_then_last_release(queued);

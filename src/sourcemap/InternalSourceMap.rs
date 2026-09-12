@@ -108,9 +108,7 @@ pub(crate) const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
-/// One zero byte that `Builder::finalize` writes after the last window and
-/// `is_valid_blob` requires. It is part of the blob layout, so it stays. The
-/// reader does not rely on it: every read of the stream is bounds-checked.
+/// Trailing zero byte of the blob layout. The bounds-checked reader does not need it.
 const STREAM_TAIL_PAD: usize = 1;
 
 /// The blob is stored in the SavedSourceMap table as a tagged pointer to its
@@ -248,10 +246,7 @@ impl InternalSourceMap {
 
 /// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)
 /// against its actual length so a *truncated* embedded section in a `--compile`
-/// binary or a damaged transpiler cache entry degrades to "no sourcemap". This
-/// is O(1): it does not walk per-window `SyncEntry.byte_offset`/section
-/// lengths. `WindowReader` bounds-checks those against the stream as it reads
-/// them, and a window that does not fit yields no mapping.
+/// binary degrades to "no sourcemap". `WindowReader` bounds-checks the rest.
 pub fn is_valid_blob(blob: &[u8]) -> bool {
     if blob.len() < HEADER_SIZE {
         return false;
@@ -293,8 +288,7 @@ impl State {
         self.generated_line < line || (self.generated_line == line && self.generated_column <= col)
     }
 
-    /// `None` for a negative coordinate. `Builder` never stores one, so it
-    /// means the blob is damaged, and `Ordinal::from_zero_based` asserts on it.
+    /// `None` for a negative coordinate: only a damaged blob has one.
     fn to_mapping(self) -> Option<Mapping> {
         if self.generated_line < 0
             || self.generated_column < 0
@@ -380,8 +374,7 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> Option<i32> {
     Some(zigzag_decode(result))
 }
 
-/// Reads the 8 bytes that start at `pos`. For a mask, bit `i` of the result is
-/// bit `i & 7` of byte `i >> 3`, the order `Builder::flush_window` sets them in.
+/// Mask bit `i` of the result is bit `i & 7` of byte `pos + (i >> 3)`.
 #[inline]
 fn read_u64_le(bytes: &[u8], pos: usize) -> Option<u64> {
     Some(u64::from_le_bytes(*bytes.get(pos..)?.first_chunk()?))
@@ -413,14 +406,7 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-///
-/// The bytes can come from disk (a transpiler cache entry, a `--compile`
-/// section), where `is_valid_blob` has only checked the outer header. So every
-/// read of the stream is bounds-checked: `parse` and `next` return `None` when
-/// a window or one of its lanes runs past the end of the stream.
-// Invariant: `bytes` points into the blob and is only valid while the blob is
-// live. It is a raw pointer (not a lifetime) because readers are stored in the
-// lifetime-less `Cursor`, which follows `InternalSourceMap`'s Copy-view design.
+// `bytes` is a raw pointer into the blob because `Cursor` stores readers without a lifetime.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -469,9 +455,7 @@ impl WindowReader {
         unsafe { &*self.bytes }
     }
 
-    /// Positions the reader on the window whose header starts at `start`.
-    /// Returns `None`, with the reader left `done()`, when the header or one of
-    /// the flagged sections does not fit inside `bytes`.
+    /// `None`, with the reader left `done()`, when the window at `start` does not fit in `bytes`.
     fn parse(&mut self, bytes: &[u8], start: usize) -> Option<()> {
         // Empty until the whole window is accepted.
         self.count = 0;
@@ -495,8 +479,7 @@ impl WindowReader {
             let pos = self.orig_col_exc_pos + len_at(win_hdr::ORIG_COL_LEN_OFF);
             self.parse_flagged_sections(bytes, pos)?;
         }
-        // Well-formed windows never exceed `SYNC_INTERVAL`. The clamp keeps
-        // every delta index below 64, the width of the masks.
+        // Clamped so every delta index stays below 64, the width of the masks.
         self.count = ((fixed >> (8 * win_hdr::COUNT_OFF)) as u8).min(SYNC_INTERVAL as u8);
         Some(())
     }
@@ -506,8 +489,7 @@ impl WindowReader {
         if self.flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
             self.gen_line_exc_pos = pos;
             self.gen_line_exc_next_idx = *bytes.get(pos)?;
-            // One pair per delta at most, so a damaged window cannot turn the
-            // search for the terminator into a scan of the whole stream.
+            // A window holds at most one pair per delta.
             let mut pairs = 0;
             while *bytes.get(pos)? != 0xFF {
                 if pairs == SYNC_INTERVAL - 1 {
@@ -531,8 +513,7 @@ impl WindowReader {
         self.delta_idx + 1 >= self.count
     }
 
-    /// Applies the next delta to `state`. Returns `None` when a lane runs past
-    /// the end of the stream. The window then reads as `done()`.
+    /// `None`, with the window left `done()`, when a lane runs past the end of the stream.
     fn next(&mut self, state: &mut State) -> Option<()> {
         let applied = self.apply_next(state);
         if applied.is_none() {
@@ -563,8 +544,7 @@ impl WindowReader {
             self.next_rare(delta_idx, &mut d_gen_line, &mut d_orig_line, state)?;
         }
 
-        // Wrapping: a damaged delta must not trip the overflow check. A
-        // coordinate that ends up negative is dropped by `State::to_mapping`.
+        // Wrapping: a damaged delta must not trip the overflow check.
         if d_gen_line != 0 {
             state.generated_line = state.generated_line.wrapping_add(d_gen_line);
             state.generated_column = d_gen_col;
@@ -624,7 +604,7 @@ impl InternalSourceMap {
         Some(u32::try_from(lo - 1).expect("int cast"))
     }
 
-    /// `None` when the window does not fit inside the stream (a damaged blob).
+    /// `None` when the window does not fit inside the stream.
     fn seed_window(
         self,
         sync_idx: u32,
@@ -764,8 +744,7 @@ impl InternalSourceMap {
     }
 
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
-    /// the inspector's inline-sourcemap path needs this. Stops at the first
-    /// window that does not fit inside the stream (a damaged blob).
+    /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
         let n_sync = self.sync_count();
         // A 4-field VLQ segment averages ~5 bytes plus a separator. Cap by the

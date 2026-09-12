@@ -650,6 +650,11 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 10;
+    /* closeIdle(true) has run (graceful stop): every connection we had then
+     * has its GOAWAY. One adopted later (its TLS handshake or cleartext
+     * preface was pending) serves its first stream, as the HTTP/1 socket it
+     * was would serve one request, and sends GOAWAY with it. */
+    bool stopping = false;
 
     /* Output buffer lent to whichever connection is inside a socket event;
      * see Http2Connection::out. */
@@ -799,9 +804,11 @@ struct Http2Context {
 
     /* Close connections with nothing in flight (after a GOAWAY). With
      * `closeWhenIdle`, busy connections also get GOAWAY so no new streams
-     * start and they close once their last stream retires (graceful stop);
-     * without it they are left alone. */
+     * start and they close once their last stream retires (graceful stop;
+     * `stopping` covers connections adopted afterwards); without it they are
+     * left alone. */
     size_t closeIdle(bool closeWhenIdle) {
+        if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
             if (!conn->streams.empty() && !closeWhenIdle) return;
@@ -1650,6 +1657,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return streamError(streamId, nullptr, http2::ERR_REFUSED_STREAM);
     }
     lastProcessedStreamId = streamId;
+    /* No GOAWAY sent although a graceful stop has run: adopted after it. */
+    if (ctx->stopping) writeGoaway(http2::ERR_NO_ERROR);
     if (tooLarge) {
         Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
         stream->remoteClosed = endStream;

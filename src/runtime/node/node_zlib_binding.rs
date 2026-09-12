@@ -239,6 +239,8 @@ pub(crate) trait CompressionStreamImpl:
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
+    /// Scratch for [`CompressionStream::copy_input`]; empty while no copy is live.
+    fn input_copy(&self) -> &JsCell<Vec<u8>>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
@@ -392,12 +394,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable && !out_buf.shared {
+        // The pool thread writes into `out` after this call returns.
+        if out_buf.pin_cannot_hold() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
+                        "The \"out\" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory"
                     ),
                 )
                 .throw());
@@ -416,15 +419,27 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             };
             Some(buf)
         };
-        let in_: Option<&[u8]> = in_buf
-            .as_ref()
-            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
                 buf.unpin();
             }
             return Err(global_this.throw_out_of_memory());
         };
+        let mut in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
+        // The pool thread reads the input after this call returns, so read a
+        // copy of storage the pin does not keep mapped.
+        if let (Some(chunk), Some(buf)) = (in_, in_buf.as_ref())
+            && buf.pin_cannot_hold()
+        {
+            let Some(copied) = Self::copy_input(this, chunk) else {
+                buf.unpin();
+                out_buf.unpin();
+                return Err(global_this.throw_out_of_memory());
+            };
+            in_ = Some(copied);
+        }
         this.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );
@@ -495,7 +510,23 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         ticket.post(ConcurrentTask::create(Task::init(this)));
     }
 
-    /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
+    /// Copies an input chunk into the stream's own buffer. `None` if the copy
+    /// cannot be allocated.
+    fn copy_input<'a>(this: &'a T, chunk: &[u8]) -> Option<&'a [u8]> {
+        this.input_copy().with_mut(|copy| {
+            copy.clear();
+            if copy.try_reserve_exact(chunk.len()).is_err() {
+                return None;
+            }
+            copy.extend_from_slice(chunk);
+            // SAFETY: the bytes live in `this.input_copy`. Only `write()` and the
+            // completion touch it, and a second `write()` is refused while this
+            // one is in progress, so they outlive the job that reads them.
+            Some(unsafe { core::slice::from_raw_parts(copy.as_ptr(), copy.len()) })
+        })
+    }
+
+    /// Releases the pins `write()` took and the input copy it made; the cached slots keep rooting the values either way.
     fn unpin_pending_buffers(this: &T, this_value: JSValue) {
         let pinned = this.pinned_buffers().replace(0);
         if pinned & 1 != 0 {
@@ -508,6 +539,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 value.unpin_array_buffer();
             }
         }
+        this.input_copy().set(Vec::new());
     }
 
     /// VM teardown, JS thread, heap alive: a completion that was queued but
@@ -1016,6 +1048,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
+            #[inline] fn input_copy(&self) -> &::bun_jsc::JsCell<::std::vec::Vec<u8>> { &self.input_copy }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 

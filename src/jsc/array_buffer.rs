@@ -31,6 +31,8 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
+    /// True when the bytes belong to a `WebAssembly.Memory`. See [`pin_cannot_hold`](Self::pin_cannot_hold).
+    pub wasm_memory: bool,
     /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
 }
@@ -45,6 +47,7 @@ impl Default for ArrayBuffer {
             typed_array_type: JSType::Cell,
             shared: false,
             resizable: false,
+            wasm_memory: false,
             pinned: false,
         }
     }
@@ -157,6 +160,16 @@ impl ArrayBuffer {
         if self.pinned {
             self.value.unpin_array_buffer();
         }
+    }
+
+    /// True when a pin does not keep these bytes mapped: `resize()` unmaps a
+    /// resizable buffer's trimmed pages, and `grow()` on a bounds-checked
+    /// `WebAssembly.Memory` frees the old block, which JSC detaches whatever
+    /// the pin count ("We allow detaching wasm memory ArrayBuffers even though
+    /// they are locked", `ArrayBuffer::detach`). Only a shared one grows in
+    /// place. Copy these bytes for a borrow that outlives the call.
+    pub fn pin_cannot_hold(&self) -> bool {
+        !self.shared && (self.resizable || self.wasm_memory)
     }
 
     // require('buffer').kMaxLength.
@@ -300,6 +313,7 @@ impl ArrayBuffer {
         typed_array_type: JSType::Uint8Array,
         shared: false,
         resizable: false,
+        wasm_memory: false,
         pinned: false,
     };
 
@@ -645,13 +659,13 @@ impl ArrayBuffer {
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
-/// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
-/// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
-/// held by a `Blob` store drops wherever the store's last ref goes.
+/// GC-roots the cell. `Drop` reads the cell, so it runs on the JS thread and
+/// outside a heap sweep: a value a `Blob` store keeps is copied out first
+/// ([`PathLike::thread_isolated_copy`]).
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
-    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
+    /// The bytes `buffer.ptr` points at when [`copy_if_pin_cannot_hold`](Self::copy_if_pin_cannot_hold) took a copy.
     copy: Option<Vec<u8>>,
 }
 
@@ -683,19 +697,17 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_pin_cannot_hold`](Self::copy_if_pin_cannot_hold).
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
         let mut this = Self::root(global, value)?;
-        this.copy_if_resizable(global).then_some(this)
+        this.copy_if_pin_cannot_hold(global).then_some(this)
     }
 
-    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
-    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.resizable
-            || self.buffer.shared
-            || self.buffer.byte_len == 0
-            || self.copy.is_some()
-        {
+    /// Copies the bytes the pin does not keep mapped
+    /// ([`ArrayBuffer::pin_cannot_hold`]). `false` if the copy cannot be
+    /// allocated.
+    pub fn copy_if_pin_cannot_hold(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.pin_cannot_hold() || self.buffer.byte_len == 0 || self.copy.is_some() {
             return true;
         }
         let bytes = self.buffer.byte_slice();
@@ -742,8 +754,8 @@ impl Drop for PinnedArrayBuffer {
     }
 }
 
-// SAFETY: a pin and GC protection on a heap cell; constructed on the JS thread,
-// and a rooted value is dropped there (a pin-only one may drop with its `Blob` store).
+// SAFETY: a pin and GC protection on a heap cell; constructed and dropped on
+// the JS thread.
 unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 // ──────────────────────────────────────────────────────────────────────────

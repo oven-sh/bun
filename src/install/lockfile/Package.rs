@@ -1761,6 +1761,18 @@ impl Package<u64> {
         version: &[u8],
         key_loc: bun_ast::Loc,
     ) -> crate::Result<Option<Dependency>> {
+        if external_alias.value.is_empty() {
+            log.add_error_fmt(
+                source,
+                key_loc,
+                format_args!(
+                    "Dependency name cannot be empty (in \"{}\")",
+                    bstr::BStr::new(group.prop)
+                ),
+            );
+            return Err(crate::Error::InstallFailed);
+        }
+
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {

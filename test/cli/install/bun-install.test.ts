@@ -294,6 +294,53 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it.each([
+    ["an empty name", { "": "" }, 'Dependency name cannot be empty (in "dependencies")'],
+    ["an empty name with a dist-tag", { "": "latest" }, 'Dependency name cannot be empty (in "dependencies")'],
+    ["an empty name with a range", { "": "^1" }, 'Dependency name cannot be empty (in "dependencies")'],
+    ["an npm alias with no name", { "x": "npm:@1.0.0" }, 'invalid package name "@1.0.0" in dependency "npm:@1.0.0"'],
+    [
+      "an npm alias with no name and a dist-tag",
+      { "x": "npm:@latest" },
+      'invalid package name "@latest" in dependency "npm:@latest"',
+    ],
+    ["an npm alias with an empty version", { "x": "npm:@" }, 'invalid package name "@" in dependency "npm:@"'],
+    ["a bare npm alias", { "x": "npm:" }, 'invalid package name "" in dependency "npm:"'],
+    [
+      "an npm alias scope with no name",
+      { "x": "npm:@scope/@1" },
+      'invalid package name "@scope/" in dependency "npm:@scope/@1"',
+    ],
+    [
+      "an npm alias scope with no name and a dist-tag",
+      { "x": "npm:@scope@latest" },
+      'invalid package name "@scope" in dependency "npm:@scope@latest"',
+    ],
+  ])("rejects %s without a registry request", async (_, dependencies, message) => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      expect(err).toContain(message);
+      expect(out).toEqual(expect.stringContaining("bun install v1."));
+      expect(exitCode).toBe(1);
+      expect(urls).toEqual([]);
+      expect(ctx.requested).toBe(0);
+    });
+  });
+
   describe("chooses", () => {
     async function runTest(ctx: TestContext, latest: string, range: string, chosen = "0.0.5") {
       const exeName: string = {

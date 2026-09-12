@@ -240,7 +240,7 @@ describe("jest-extended", () => {
     expect(proxy).not.toBeArray();
     expect(proxy).not.toBeArrayOfSize(0);
     expect(new Proxy(proxy, {})).not.toBeArray();
-    expect(() => expect(proxy).toBeArray()).toThrow("Received: <Revoked Proxy>");
+    expect(() => expect(proxy).toBeArray()).toThrow("<Revoked Proxy>");
   });
 
   // test('toIncludeAllMembers()')

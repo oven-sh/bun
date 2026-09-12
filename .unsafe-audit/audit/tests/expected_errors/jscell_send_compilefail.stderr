@@ -1,0 +1,8 @@
+error[E0277]: `Rc<u32>` cannot be sent between threads safely
+  --> tests/compile_fail/jscell_send_compilefail.rs
+   |
+   | requires_send(cell);
+   |               ^^^^ `Rc<u32>` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `Rc<u32>`
+note: required because it appears within the type `JsCell<Rc<u32>>`

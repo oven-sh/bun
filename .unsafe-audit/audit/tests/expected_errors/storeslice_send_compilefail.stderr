@@ -1,0 +1,8 @@
+error[E0277]: `Cell<u32>` cannot be shared between threads safely
+  --> tests/compile_fail/storeslice_send_compilefail.rs
+   |
+   | requires_sync(s);
+   |               ^ `Cell<u32>` cannot be shared between threads safely
+   |
+   = help: the trait `Sync` is not implemented for `Cell<u32>`
+note: required because it appears within the type `StoreSlice<Cell<u32>>`

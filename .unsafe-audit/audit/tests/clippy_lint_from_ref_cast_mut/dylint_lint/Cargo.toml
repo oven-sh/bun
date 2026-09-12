@@ -1,0 +1,28 @@
+# Dylint scaffold for the dealloc-through-from-ref lint.
+#
+# Build:
+#   cargo build --release
+# Use from Bun repo root (after `cargo install cargo-dylint dylint-link`):
+#   cargo dylint --git . --pattern dylint_lint -- -p bun_http
+#
+# Bun integration (optional, after this lands):
+#   .github/workflows/dylint.yml — `cargo dylint --all -- --all-targets`
+#   workspace member glob: lints/* (then this dir becomes lints/from-ref-cast-mut)
+
+[package]
+name = "dealloc_through_from_ref"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "master" }
+dylint_linting = "3"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[workspace]

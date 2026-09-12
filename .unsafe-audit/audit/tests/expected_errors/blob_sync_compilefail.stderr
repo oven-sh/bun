@@ -1,0 +1,8 @@
+error[E0277]: `Cell<*const JSGlobalObject>` cannot be shared between threads safely
+  --> tests/compile_fail/blob_sync_compilefail.rs
+   |
+   | requires_sync(&b);
+   |               ^^ `Cell<*const JSGlobalObject>` cannot be shared between threads safely
+   |
+   = help: within `Blob`, the trait `Sync` is not implemented for `Cell<*const JSGlobalObject>`
+   = note: required because it appears within the type `Blob`

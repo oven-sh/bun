@@ -4967,6 +4967,8 @@ class ClientHttp2Session extends Http2Session {
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
   #reservedStreamsCount: number = 0;
+  // Cap on originSet entries from the peer's ORIGIN frames (node's maxOriginSetSize option).
+  #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
   // Client-side SETTINGS_MAX_CONCURRENT_STREAMS accounting: requests whose HEADERS frame has been
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
@@ -5322,19 +5324,20 @@ class ClientHttp2Session extends Http2Session {
       // node.js emits value, origin, streamId
       self.emit("altsvc", value, origin, streamId);
     },
-    origin(self: ClientHttp2Session, origin: string | Array<string> | undefined) {
+    // The native parser never dispatches an empty ORIGIN frame.
+    origin(self: ClientHttp2Session, origin: string | Array<string>) {
       if (!self) return;
       if (self.encrypted) {
         const originSet = initOriginSet(self);
-        if ($isArray(origin)) {
-          for (const item of origin) {
-            originSet.add(item);
+        const origins = $isArray(origin) ? origin : [origin];
+        for (let i = 0; i < origins.length; i++) {
+          if (originSet.size >= self.#maxOriginSetSize) {
+            self.destroy($ERR_HTTP2_TOO_MANY_ORIGINS(self.#maxOriginSetSize));
+            return;
           }
-          self.emit("origin", origin);
-        } else if (origin) {
-          originSet.add(origin);
-          self.emit("origin", [origin]);
+          originSet.add(origins[i]);
         }
+        self.emit("origin", origins);
       }
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
@@ -5605,6 +5608,11 @@ class ClientHttp2Session extends Http2Session {
 
     assertIsObject(options, "options");
     options = { ...options };
+
+    if (options.maxOriginSetSize != null) {
+      validateNumber(options.maxOriginSetSize, "options.maxOriginSetSize", 0);
+      this.#maxOriginSetSize = options.maxOriginSetSize;
+    }
 
     assertIsArray(options.remoteCustomSettings, "options.remoteCustomSettings");
     if (options.remoteCustomSettings) {

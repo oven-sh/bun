@@ -4457,9 +4457,6 @@ impl<'a> LinkerContext<'a> {
             // A named import that holds a namespace (`export * as`) prints as
             // an import identifier.
             bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
-            bun_ast::ExprData::ERequireString(require) => {
-                return require.unwrapped_id.get().is_some();
-            }
             _ => return false,
         };
         // A require() lifted into an import binds an ordinary local, so user

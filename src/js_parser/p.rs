@@ -1434,7 +1434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `try_track_dynamic_import_destructure` / `maybe_rewrite_property_access`
     /// can record aliases against it.
     pub(crate) fn require_namespace_ref(&mut self, req: E::RequireString) -> Option<Ref> {
-        if !self.options.bundle || req.unwrapped_id.get().is_some() {
+        if !self.options.bundle {
             return None;
         }
         let ns = self.new_symbol(js_ast::symbol::Kind::Other, b"require_ns");

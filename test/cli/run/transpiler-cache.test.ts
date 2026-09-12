@@ -692,12 +692,12 @@ console.log("OK");
   expect(third.exitCode).toBe(0);
 });
 
-test("remaps a stack through a cached sourcemap whose body is damaged without a crash", () => {
+describe("a cached sourcemap whose body is damaged", () => {
   // The header check in the test above is O(1) on purpose: a cache hit does
   // not walk the sourcemap. So a section with a valid outer header and a
-  // damaged body still reaches SavedSourceMap, and stack remapping reads the
-  // damaged SyncEntry array and window stream. The reader has to bounds-check
-  // what it takes from them. A window that does not fit yields no mapping.
+  // damaged body still reaches SavedSourceMap, and the reader has to
+  // bounds-check what it takes from the SyncEntry array and the window stream.
+  // A window that does not fit yields no mapping.
   //
   // InternalSourceMap section (src/sourcemap/InternalSourceMap.rs):
   //   28: stream_offset u32, 32..stream_offset: SyncEntry[sync_count],
@@ -715,13 +715,37 @@ test("remaps a stack through a cached sourcemap whose body is damaged without a 
     "window stream filled with 0x80": s => void s.fill(0x80, s.readUInt32LE(28)),
   };
 
-  // Large enough for the cache (>= 4 KiB). The throw sits behind the filler, so
-  // the frames to remap are not in the first lines of the transpiled output.
+  // Large enough for the cache (>= 4 KiB), with the code behind the filler so
+  // the positions to remap are not in the first lines of the transpiled output.
   const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
   const filler = Buffer.alloc(120 * line.length, line).toString();
-  writeFileSync(
-    join(temp_dir, "boom.ts"),
-    `${filler}
+
+  // Writes each damaged copy of the one cache entry in turn and hands it to
+  // `check`, which runs bun again. A rejected entry is unlinked and written
+  // again, so `servedFromDamagedEntry` proves the run was a cache hit.
+  function forEachDamagedEntry(check: (name: string, servedFromDamagedEntry: () => boolean) => void) {
+    const entries = readdirSync(cache_dir).filter(name => name.endsWith(".pile"));
+    expect(entries).toHaveLength(1);
+    const entry = join(cache_dir, entries[0]);
+    const pristine = readFileSync(entry);
+    const smOff = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+    const smLen = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+    expect(smLen).toBeGreaterThan(32);
+    expect(smOff + smLen).toBeLessThanOrEqual(pristine.length);
+
+    for (const [name, apply] of Object.entries(damage)) {
+      const data = Buffer.from(pristine);
+      apply(data.subarray(smOff, smOff + smLen));
+      expect(data.equals(pristine)).toBeFalse();
+      writeFileSync(entry, data);
+      check(name, () => readFileSync(entry).equals(data));
+    }
+  }
+
+  test("stack remapping does not crash", () => {
+    writeFileSync(
+      join(temp_dir, "boom.ts"),
+      `${filler}
 function boom(): number { throw new Error("boom"); }
 function mid(n: number): number { return n > 0 ? mid(n - 1) : boom(); }
 try {
@@ -731,39 +755,59 @@ try {
 }
 console.log("OK");
 `,
-  );
+    );
+    const run = () => Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env, stderr: "inherit" });
 
-  const run = () => Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env, stderr: "inherit" });
+    // The first run writes the cache entry.
+    const first = run();
+    expect(first.stdout.toString()).toBe("OK\n");
+    expect(first.exitCode).toBe(0);
 
-  // The first run writes the cache entry.
-  const first = run();
-  expect(first.stdout.toString()).toBe("OK\n");
-  expect(first.exitCode).toBe(0);
+    forEachDamagedEntry((name, servedFromDamagedEntry) => {
+      const result = run();
+      expect({
+        name,
+        stdout: result.stdout.toString(),
+        signalCode: result.signalCode,
+        exitCode: result.exitCode,
+        servedFromDamagedEntry: servedFromDamagedEntry(),
+      }).toEqual({ name, stdout: "OK\n", signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
+    });
+  });
 
-  const entries = readdirSync(cache_dir).filter(name => name.endsWith(".pile"));
-  expect(entries).toHaveLength(1);
-  const entry = join(cache_dir, entries[0]);
-  const pristine = readFileSync(entry);
-  const smOff = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
-  const smLen = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
-  expect(smLen).toBeGreaterThan(32);
-  expect(smOff + smLen).toBeLessThanOrEqual(pristine.length);
+  // The coverage report walks every mapping of the module through a Cursor,
+  // the second reader of the same windows.
+  test("bun test --coverage does not crash", () => {
+    writeFileSync(
+      join(temp_dir, "lib.ts"),
+      `${filler}
+export function add(a: number, b: number): number { return a + b; }
+export function unused(a: number): number { if (a > 1) { return a * 2; } return a; }
+`,
+    );
+    // Below the minimum cache size, so lib.ts is the only entry.
+    writeFileSync(
+      join(temp_dir, "lib.test.ts"),
+      `import { expect, test } from "bun:test";
+import { add } from "./lib.ts";
+test("add", () => { expect(add(1, 2)).toBe(3); });
+`,
+    );
+    const run = () => Bun.spawnSync({ cmd: [bunExe(), "test", "--coverage", "./lib.test.ts"], cwd: temp_dir, env });
+    const passed = (result: ReturnType<typeof run>) => /\b1 pass\b/.test(result.stderr.toString());
 
-  for (const [name, apply] of Object.entries(damage)) {
-    const data = Buffer.from(pristine);
-    apply(data.subarray(smOff, smOff + smLen));
-    expect(data.equals(pristine)).toBeFalse();
-    writeFileSync(entry, data);
+    const first = run();
+    expect({ passed: passed(first), exitCode: first.exitCode }).toEqual({ passed: true, exitCode: 0 });
 
-    const result = run();
-    expect({
-      name,
-      stdout: result.stdout.toString(),
-      signalCode: result.signalCode,
-      exitCode: result.exitCode,
-      // A rejected entry is unlinked and written again. The damaged bytes are
-      // still there, so the run was a cache hit that remapped through them.
-      servedFromDamagedEntry: readFileSync(entry).equals(data),
-    }).toEqual({ name, stdout: "OK\n", signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
-  }
+    forEachDamagedEntry((name, servedFromDamagedEntry) => {
+      const result = run();
+      expect({
+        name,
+        passed: passed(result),
+        signalCode: result.signalCode,
+        exitCode: result.exitCode,
+        servedFromDamagedEntry: servedFromDamagedEntry(),
+      }).toEqual({ name, passed: true, signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
+    });
+  });
 });

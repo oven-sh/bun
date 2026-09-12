@@ -323,7 +323,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto* release = JSC::constructEmptyObject(globalObject);
 
     release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
-    putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })));
+    putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, String::fromLatin1(Bun__githubURL)));
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});

@@ -859,7 +859,8 @@ function randomId() {
   return crypto.randomUUID();
 }
 
-const { enableANSIColors } = Bun;
+// The banner these helpers style is written to stderr only.
+const enableANSIColors = $rust("BunObject.rs", "enableANSIColorsStderr") as boolean;
 
 function dim(string: string): string {
   if (enableANSIColors) {

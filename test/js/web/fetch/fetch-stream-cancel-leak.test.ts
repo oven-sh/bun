@@ -240,7 +240,8 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         using server = Bun.serve({
           port: 0,
           fetch(req) {
-            req.signal.addEventListener("abort", () => aborted++);
+            // `/scrub` bodies are read and cancelled on purpose below; only the abandoned ones count.
+            if (new URL(req.url).pathname !== "/scrub") req.signal.addEventListener("abort", () => aborted++);
             return new Response(
               new ReadableStream({
                 async pull(controller) {
@@ -268,15 +269,23 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         }
         for (let i = 0; i < N; i++) await abandonOne();
 
+        // The JSC::runInternalMicrotask frame under this function keeps the last stream's
+        // controller in a stale slot (heap snapshot and lldb evidence in #41607), which the stack
+        // scan marks. Reading another body through the same path writes that slot again.
+        async function scrub() {
+          const reader = (await fetch(new URL("/scrub", server.url))).body!.getReader();
+          await reader.read();
+          await reader.cancel();
+        }
         // Bounds the failing case only; the fixed build is done in well under a second.
         const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
         while (aborted < N && performance.now() < deadline) {
+          await scrub();
           Bun.gc(true);
           await Bun.sleep(10);
         }
-        // A few can survive a collection through stale stack slots (conservative scanning);
-        // the rest must go. Unfixed, none of them do.
-        expect(N - aborted).toBeLessThan(N / 4);
+        // Unfixed, none of them are aborted: the fetch keeps its stream rooted until the body ends.
+        expect(aborted).toBe(N);
       },
       30_000,
     );

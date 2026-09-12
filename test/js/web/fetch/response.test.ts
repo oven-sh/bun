@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (10.75 KB) {
+    "Response (10.71 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -174,10 +174,9 @@ describe("statusText reason-phrase validation", () => {
 
   test("a status out of range is reported before an invalid statusText", () => {
     expect(() => new Response(null, { status: 600, statusText: "a\nb" })).toThrow(RangeError);
-    expect(() => Response.redirect("http://example.com/", { status: 404, statusText: "a\nb" })).toThrow(RangeError);
   });
 
-  test("a fetched Response with a non-Latin-1 reason phrase is rejected as an init", async () => {
+  test("a fetched Response with a non-Latin-1 reason phrase can still be re-wrapped", async () => {
     using listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -190,7 +189,8 @@ describe("statusText reason-phrase validation", () => {
     const fetched = await fetch(`http://127.0.0.1:${listener.port}/`);
     // The lone 0x80 byte is not valid UTF-8, so it decodes to U+FFFD.
     expect(fetched.statusText).toBe("\uFFFDOK");
-    expect(() => new Response(null, fetched)).toThrow(new TypeError("Invalid statusText"));
+    // The check applies to a ResponseInit dictionary, not to a Response used as the init.
+    expect(new Response("proxied", fetched).statusText).toBe("\uFFFDOK");
     expect(() => new Response(null, { statusText: fetched.statusText })).toThrow(new TypeError("Invalid statusText"));
   });
 

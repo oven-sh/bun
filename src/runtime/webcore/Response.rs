@@ -921,8 +921,7 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
-                    init.validate_status_text(global_this)?;
+                if let Some(init) = Init::init::<true>(global_this, arg_init)? {
                     response.init.set(init);
                 }
             }
@@ -1002,7 +1001,7 @@ impl Response {
                     let status =
                         Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                     response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
+                } else if let Some(init) = Init::init::<true>(global_this, arg_init)? {
                     // cleanup is handled by Init's drop glue on `?` below
                     response.init.set(init);
 
@@ -1012,7 +1011,6 @@ impl Response {
                             Self::validate_redirect_status_code(global_this, i32::from(status))?;
                         response.init.with_mut(|i| i.status_code = status);
                     }
-                    response.init.get().validate_status_text(global_this)?;
                 }
             }
 
@@ -1130,9 +1128,7 @@ impl Response {
                 };
             }
             if arguments[1].is_object() {
-                let init = Init::init(global_this, arguments[1])?.expect("unreachable");
-                init.validate_status_text(global_this)?;
-                break 'brk init;
+                break 'brk Init::init::<true>(global_this, arguments[1])?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1231,7 +1227,9 @@ impl Init {
         })
     }
 
-    pub(crate) fn init(
+    /// `FOR_RESPONSE` applies the `ResponseInit` checks that `new Request()`,
+    /// which parses its `RequestInit` through this too, must not run.
+    pub(crate) fn init<const FOR_RESPONSE: bool>(
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
@@ -1312,6 +1310,9 @@ impl Init {
             response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
         {
             result.status_text = status_text.to_bun_string(global_this)?;
+            if FOR_RESPONSE && !is_reason_phrase(&result.status_text) {
+                return Err(global_this.throw_type_error(format_args!("Invalid statusText")));
+            }
         }
 
         if let Some(method_value) =
@@ -1324,28 +1325,17 @@ impl Init {
 
         Ok(Some(result))
     }
+}
 
-    /// Fetch spec: `statusText` must match `reason-phrase` (HTAB, 0x20-0x7E, 0x80-0xFF).
-    pub(crate) fn validate_status_text(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        fn is_reason_phrase_unit(c: u32) -> bool {
-            c == 0x09 || (0x20..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)
-        }
-        let status_text = &self.status_text;
-        let valid = if status_text.is_utf16() {
-            status_text
-                .utf16()
-                .iter()
-                .all(|&c| is_reason_phrase_unit(u32::from(c)))
-        } else {
-            status_text
-                .byte_slice()
-                .iter()
-                .all(|&c| is_reason_phrase_unit(u32::from(c)))
-        };
-        if valid {
-            return Ok(());
-        }
-        Err(global_this.throw_type_error(format_args!("Invalid statusText")))
+/// Fetch spec `reason-phrase`: HTAB, 0x20-0x7E, 0x80-0xFF, per code unit.
+fn is_reason_phrase(status_text: &BunString) -> bool {
+    fn ok(c: u32) -> bool {
+        c == 0x09 || (0x20..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)
+    }
+    if status_text.is_utf16() {
+        status_text.utf16().iter().all(|&c| ok(u32::from(c)))
+    } else {
+        status_text.byte_slice().iter().all(|&c| ok(u32::from(c)))
     }
 }
 

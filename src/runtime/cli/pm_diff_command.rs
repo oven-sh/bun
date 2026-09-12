@@ -734,7 +734,7 @@ fn lockfile_for<'a>(
     let dir = strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
         dir,
         &mut dir_buf[..],
-        &[],
+        &[b"."],
     ));
     let mut root = dir;
     loop {

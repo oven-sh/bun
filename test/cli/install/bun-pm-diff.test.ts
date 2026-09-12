@@ -337,6 +337,13 @@ diffme@1.0.0 → diffme@2.0.0
       stderr: "",
       exitCode: 0,
     });
+    // An absolute path is used as typed, so this one reaches the lockfile lookup with its `..` still in it.
+    const roundabout = `${String(dir)}/packages/b/../a`;
+    expect(await diff([tgz, roundabout], join(String(dir), "vendor", "a"))).toEqual({
+      stdout: `${tgz} → ${roundabout}\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
 
     // A folder the nearest lockfile does not list keeps what it says: `workspace:2.x` is published as `2.x`
     // anywhere, and the others are not taken from a workspace that has the same name.

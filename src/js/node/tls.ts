@@ -740,14 +740,14 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  // The wrapped socket's allowHalfOpen wins: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
+  // A wrapped socket keeps its allowHalfOpen and drops onread: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
   if (isNetSocketOrDuplex) {
-    options = { ...options, allowHalfOpen: socket.allowHalfOpen };
+    options = { ...options, allowHalfOpen: socket.allowHalfOpen, onread: null };
   } else {
     options = options || socket || {};
     const wrapped = options.socket;
     if (wrapped instanceof Duplex) {
-      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen };
+      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen, onread: null };
     }
   }
 

@@ -1716,7 +1716,7 @@ describe("stringify memory", () => {
         "--smol",
         "-e",
         /* js */ `
-          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
           const pad = Buffer.alloc(1024 * 1024, " ").toString();
           for (let i = 0; i < 20; i++) Bun.JSON5.stringify(obj, null, pad + i);

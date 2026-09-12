@@ -79,6 +79,7 @@ using namespace JSC;
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
+    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \

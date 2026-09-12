@@ -253,13 +253,6 @@ pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self>;
 
-    fn eql(lhs: &Self, rhs: &Self) -> bool
-    where
-        Self: PartialEq,
-    {
-        lhs == rhs
-    }
-
     fn parse(input: &mut Parser) -> CssResult<Self> {
         enum_property_util::parse(input)
     }
@@ -267,20 +260,6 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let s: &'static str = (*self).into();
         dest.write_str(s.as_bytes())
-    }
-
-    #[inline]
-    fn deep_clone(&self) -> Self {
-        *self
-    }
-
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
-    where
-        Self: Into<u32>,
-    {
-        // The hash value never leaves the process, so a fixed u32 tag width is fine.
-        let tag: u32 = (*self).into();
-        hasher.update(&tag.to_ne_bytes());
     }
 }
 

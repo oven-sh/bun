@@ -5,6 +5,7 @@ const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProx
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
+const { kDestroyOnRead } = require("internal/net/symbols");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -76,6 +77,15 @@ function Agent(options): void {
       return;
     }
 
+    // Bytes a freed socket holds or receives have no request: the next request
+    // would parse them as its response (https://hackerone.com/reports/3582376).
+    // Destroy it here if they are buffered, in node:net if they arrive later.
+    if (socket.readableLength > 0) {
+      $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
+      socket.destroy();
+      return;
+    }
+
     const requests = this.requests[name];
     if (requests?.length) {
       const req = requests.shift();
@@ -121,6 +131,7 @@ function Agent(options): void {
     this.removeSocket(socket, options);
 
     socket.once("error", freeSocketErrorListener);
+    socket[kDestroyOnRead] = true;
     freeSockets.push(socket);
   });
 
@@ -485,6 +496,7 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
 Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
   $debug("have free socket");
   socket.removeListener("error", freeSocketErrorListener);
+  socket[kDestroyOnRead] = false;
   req.reusedSocket = true;
   socket.ref();
 };

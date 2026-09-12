@@ -918,7 +918,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+pub use bun_core::{Fd, FdKind, FdNative, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
 /// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
@@ -1527,15 +1527,6 @@ impl Tag {
             "uv_os_setpriority",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
-    }
-
-    /// Tags strictly above `WriteFile`
-    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above that range don't read as Windows.
-    #[inline]
-    pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
     }
 }
 impl From<Tag> for &'static str {
@@ -4814,20 +4805,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.

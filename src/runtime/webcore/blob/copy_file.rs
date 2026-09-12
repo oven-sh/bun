@@ -519,10 +519,12 @@ impl CopyFile {
         }
     }
 
+    /// Returns the number of bytes copied.
     #[cfg(target_os = "macos")]
     pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
         &mut self,
-    ) -> Result<(), crate::Error> {
+        source_size: u64,
+    ) -> Result<u64, crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -553,20 +555,19 @@ impl CopyFile {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
+                                Err(bun_errno::from_errno(err.errno as i32).into())
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => Ok(total_written),
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_errno::from_errno(errno.errno as i32).into());
+                        Err(bun_errno::from_errno(errno.errno as i32).into())
                     }
                 }
             }
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => Ok(source_size),
         }
-        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -871,10 +872,15 @@ impl CopyFile {
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
                 ) {
-                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
-                        self.do_close();
-                        return;
-                    }
+                    let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
+                        u64::try_from(stat.st_size).expect("int cast"),
+                    ) {
+                        Ok(copied) => copied,
+                        Err(_) => {
+                            self.do_close();
+                            return;
+                        }
+                    };
                     if stat.st_size != 0
                         && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                     {
@@ -882,6 +888,9 @@ impl CopyFile {
                             self.destination_fd,
                             i64::try_from(self.max_length).expect("int cast"),
                         );
+                        self.read_len = copied.min(self.max_length as u64) as SizeType;
+                    } else {
+                        self.read_len = copied as SizeType;
                     }
                 } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                     self.do_close();
@@ -1637,7 +1646,7 @@ impl<'a> CopyFileWindows<'a> {
 
     pub(crate) fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written != usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
+        if written > usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
             self.truncate();
             written = usize::try_from(self.size).expect("int cast");
         }
@@ -1860,8 +1869,22 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
-    this.on_complete(size as usize);
+    // uv_fs_copyfile leaves `statbuf` empty.
+    let size = match &this.destination_file_store.data.as_file().pathlike {
+        PathOrFileDescriptor::Path(p) => {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
+        }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map(|stat| stat.size()),
+    };
+    let size = match size {
+        Ok(size) => size,
+        Err(err) => {
+            this.throw(err);
+            return;
+        }
+    };
+    this.on_complete(usize::try_from(size).expect("int cast"));
 }
 
 #[cfg(windows)]

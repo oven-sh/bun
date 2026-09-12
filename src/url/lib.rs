@@ -57,8 +57,7 @@ pub mod whatwg {
     // Getters take `&URL` (C++ never mutates on read). String inputs are
     // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
     // as owning `String`. `URL__deinit` frees the allocation, so it stays
-    // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
-    // `bun_jsc::URLJsc`.
+    // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
     unsafe extern "C" {
         safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
@@ -160,11 +159,6 @@ pub mod whatwg {
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
             Self::from_string(&String::borrow_utf8(input))
-        }
-        /// # Safety
-        /// `url` is a heap `WTF::URL` nothing else frees.
-        pub unsafe fn from_raw(url: NonNull<URL>) -> Self {
-            Self(url)
         }
     }
 

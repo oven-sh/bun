@@ -20,7 +20,7 @@ test.skipIf(isWindows)(
         bunExe(),
         "-e",
         `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const workerBody = ${JSON.stringify(`
           const keep = [];
           for (let i = 0; i < 8000; i++) {

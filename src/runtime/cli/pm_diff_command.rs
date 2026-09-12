@@ -712,7 +712,7 @@ fn read_dir_tree(root: &[u8], as_published: bool) -> Result<Tree, crate::Error> 
     Ok(tree)
 }
 
-/// The lockfile `bun pm pack` reads in `dir`: the nearest one at or above it, if `dir` is that project's root or a workspace in it.
+/// The lockfile `bun pm pack` reads in `dir`: the first one above it when that lists `dir` as a workspace, else `dir`'s own.
 fn lockfile_for<'a>(
     lockfile: &'a mut Lockfile,
     dir: &[u8],
@@ -726,6 +726,17 @@ fn lockfile_for<'a>(
     {
         return None;
     }
+    // `Some(true)`: loaded. `Some(false)`: there is one, and it does not load. `None`: there is none.
+    fn load(lockfile: &mut Lockfile, dir: &[u8]) -> Option<bool> {
+        let fd = bun_sys::open_dir_at(Fd::cwd(), dir).ok()?;
+        let loaded = match lockfile.load_from_dir::<false>(fd, None, &mut bun_ast::Log::init()) {
+            LoadResult::Ok(_) => Some(true),
+            LoadResult::NotFound => None,
+            LoadResult::Err(_) => Some(false),
+        };
+        fd.close();
+        loaded
+    }
     let (mut dir_buf, mut buf) = (
         bun_paths::path_buffer_pool::get(),
         bun_paths::path_buffer_pool::get(),
@@ -736,39 +747,30 @@ fn lockfile_for<'a>(
         &mut dir_buf[..],
         &[b"."],
     ));
+    // A workspace is packed from its project's root, so a lockfile in the workspace's own folder does not count.
     let mut root = dir;
-    loop {
-        let fd = bun_sys::open_dir_at(Fd::cwd(), root).ok()?;
-        let found = match lockfile.load_from_dir::<false>(fd, None, &mut bun_ast::Log::init()) {
-            LoadResult::Ok(_) => Some(true),
-            LoadResult::NotFound => None,
-            LoadResult::Err(_) => Some(false),
+    let mut is_workspace = false;
+    while let Some(parent) = bun_paths::dirname(root)
+        .map(strings::without_trailing_slash)
+        .filter(|parent| parent.len() < root.len())
+    {
+        root = parent;
+        let Some(loaded) = load(lockfile, root) else {
+            continue;
         };
-        fd.close();
-        match found {
-            Some(true) => break,
-            Some(false) => return None,
-            None => {
-                let parent = strings::without_trailing_slash(bun_paths::dirname(root)?);
-                if parent.len() >= root.len() {
-                    return None;
-                }
-                root = parent;
-            }
-        }
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        is_workspace = loaded
+            && lockfile.packages.items_resolution().iter().any(|res| {
+                res.tag == resolution::Tag::Workspace
+                    && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
+                        root,
+                        &mut buf[..],
+                        &[res.workspace().slice(string_buf)],
+                    )) == dir
+            });
+        break;
     }
-    let lockfile = &*lockfile;
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let listed = root == dir
-        || lockfile.packages.items_resolution().iter().any(|res| {
-            res.tag == resolution::Tag::Workspace
-                && strings::without_trailing_slash(join_abs_string_buf::<platform::Auto>(
-                    root,
-                    &mut buf[..],
-                    &[res.workspace().slice(string_buf)],
-                )) == dir
-        });
-    listed.then_some(lockfile)
+    (is_workspace || load(lockfile, dir) == Some(true)).then_some(&*lockfile)
 }
 
 /// Whether `token`, a JSON string with its quotes, decodes to `value`. `"workspace:\u005e"` reads as `workspace:^`.

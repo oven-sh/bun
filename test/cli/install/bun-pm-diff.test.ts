@@ -294,6 +294,8 @@ diffme@1.0.0 → diffme@2.0.0
       }),
       "packages/a/package.json": a,
       "packages/a/index.js": "module.exports = 1;\n",
+      // Pack reads the lockfile of the project root, so this one must not get in the way.
+      "packages/a/bun.lock": "{ not a lockfile",
       "packages/b/package.json": manifest({ name: "ws-b", version: "1.0.1" }),
       "packages/c/package.json": manifest({ name: "ws-c", version: "2.3.4" }),
       "packages/d/package.json": manifest({ name: "ws-d", version: "3.0.0" }),

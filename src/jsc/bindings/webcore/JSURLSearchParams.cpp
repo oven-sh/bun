@@ -47,7 +47,6 @@
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include "ScriptExecutionContext.h"
@@ -222,20 +221,11 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
         return JSValue::encode(jsNontrivialString(vm, "[Object]"_s));
     }
 
-    JSObject* opts = constructEmptyObject(lexicalGlobalObject);
+    JSObject* opts = Bun::WebStreams::copyInspectOptions(lexicalGlobalObject, optionsValue);
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue childDepth = jsNull();
-    if (options) {
-        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-        options->getPropertyNames(lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
-        for (size_t i = 0; i < names.size(); ++i) {
-            JSValue v = options->get(lexicalGlobalObject, names[i]);
-            RETURN_IF_EXCEPTION(scope, {});
-            opts->putDirect(vm, names[i], v, 0);
-        }
-        if (!depthValue.isUndefinedOrNull())
-            childDepth = jsNumber(depth - 1);
-    }
+    if (options && !depthValue.isUndefinedOrNull())
+        childDepth = jsNumber(depth - 1);
     opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

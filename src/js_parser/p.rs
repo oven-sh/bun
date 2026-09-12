@@ -7674,7 +7674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
+                                        .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
                                 let items = ExprNodeList::from_arena_slice(param_array);
@@ -7766,7 +7766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // design:type
                     let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
+                        .serialize_metadata(prop.ts_metadata)
                         .expect("unreachable");
                     push_metadata!(b"design:type", v);
                 }
@@ -7785,7 +7785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7800,7 +7800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:returntype", v);
                         }
@@ -7817,7 +7817,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked");
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7852,7 +7852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7867,7 +7867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if !method_args.is_empty() {
                             let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
+                                .serialize_metadata(method_args[0].ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7914,6 +7914,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                if let Some(enum_metadata) = self.ts_enum_metadata(ref_) {
+                    return self.serialize_metadata(enum_metadata);
+                }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
                     self.new_expr(
@@ -7930,6 +7933,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
+                if let Some(enum_metadata) = self.ts_namespace_enum_metadata(&refs) {
+                    return self.serialize_metadata(enum_metadata);
+                }
                 // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
@@ -8062,6 +8068,104 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 return Ok(root);
             }
+        })
+    }
+
+    /// tsc serializes an enum type as `Number`, `String`, or `Object`, never as the enum object.
+    fn ts_enum_metadata(&mut self, ref_: Ref) -> Option<bun_ast::ts::Metadata> {
+        let ref_ = self.resolve_metadata_ref(ref_)?;
+        if self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::TsEnum {
+            return None;
+        }
+        let js_ast::ts::Data::Namespace(members) = self.ref_to_ts_namespace_member.get(&ref_)?
+        else {
+            return None;
+        };
+        Self::enum_members_metadata(members)
+    }
+
+    /// `ts_enum_metadata` for `Ns.Inner.Enum` and for a member type `Enum.Member`.
+    fn ts_namespace_enum_metadata(&mut self, refs: &[Ref]) -> Option<bun_ast::ts::Metadata> {
+        let root = self.resolve_metadata_ref(refs[0])?;
+        let js_ast::ts::Data::Namespace(mut members) =
+            *self.ref_to_ts_namespace_member.get(&root)?
+        else {
+            return None;
+        };
+        for (i, &part) in refs[1..].iter().enumerate() {
+            let is_last = i + 2 == refs.len();
+            let name = self.load_name_from_ref(part);
+            let map: &js_ast::TSNamespaceMemberMap = &members;
+            match map.get(name)?.data {
+                js_ast::ts::Data::Namespace(next) => members = next,
+                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumProperty if is_last => {
+                    return Some(bun_ast::ts::Metadata::MNumber);
+                }
+                js_ast::ts::Data::EnumString(_) if is_last => {
+                    return Some(bun_ast::ts::Metadata::MString);
+                }
+                _ => return None,
+            }
+        }
+        // An empty map is an empty enum or an empty namespace. Only the enum is `Number`.
+        let map: &js_ast::TSNamespaceMemberMap = &members;
+        if map.count() == 0 {
+            let is_enum = self.ts_namespace_scopes.iter().any(|scope| {
+                scope.is_enum_scope
+                    && core::ptr::eq::<js_ast::TSNamespaceMemberMap>(
+                        scope.exported_members.get(),
+                        map,
+                    )
+            });
+            return is_enum.then_some(bun_ast::ts::Metadata::MNumber);
+        }
+        Self::enum_members_metadata(map)
+    }
+
+    /// Re-resolve the name from the class scope like `visit_expr`, then follow symbol links.
+    fn resolve_metadata_ref(&mut self, ref_: Ref) -> Option<Ref> {
+        if ref_.tag() != js_ast::base::RefTag::Symbol {
+            return None;
+        }
+        let name = self.load_name_from_ref(ref_);
+        let found = self
+            .find_symbol_with_record_usage::<false>(bun_ast::Loc::EMPTY, name)
+            .ok()?
+            .r#ref;
+        let mut ref_ = if found.is_empty() { ref_ } else { found };
+        let mut symbol = &self.symbols[ref_.inner_index() as usize];
+        while symbol.has_link() {
+            ref_ = symbol.link.get();
+            symbol = &self.symbols[ref_.inner_index() as usize];
+        }
+        Some(ref_)
+    }
+
+    /// Computed members count as numbers (tsc allows no other), merged namespace entries do not.
+    fn enum_members_metadata(
+        members: &js_ast::TSNamespaceMemberMap,
+    ) -> Option<bun_ast::ts::Metadata> {
+        let mut has_number = false;
+        let mut has_string = false;
+        let mut has_other = false;
+        for member in members.values() {
+            match member.data {
+                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumProperty => {
+                    has_number = true
+                }
+                js_ast::ts::Data::EnumString(_) => has_string = true,
+                js_ast::ts::Data::Property | js_ast::ts::Data::Namespace(_) => has_other = true,
+            }
+        }
+        if has_other && !has_number && !has_string {
+            return None;
+        }
+        Some(if has_string && has_number {
+            bun_ast::ts::Metadata::MObject
+        } else if has_string {
+            bun_ast::ts::Metadata::MString
+        } else {
+            bun_ast::ts::Metadata::MNumber
         })
     }
 

@@ -78,13 +78,7 @@ fn prop_copy(p: &Property) -> Property {
         ts_decorators: bun_alloc::AstAlloc::vec(),
         key: p.key,
         value: p.value,
-        // SAFETY: this duplicates ownership of any heap allocation inside
-        // `Metadata` (`MDot` owns a global-heap `Vec<Ref>`), but the source
-        // `Property` is an arena-resident AST node whose `Drop` never runs
-        // (AST stores are bulk-freed without dropping — see the
-        // `bun_alloc::ast_alloc` module docs), so at most one of the two
-        // copies ever reaches drop glue; no double free.
-        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
+        ts_metadata: p.ts_metadata,
     }
 }
 
@@ -103,8 +97,7 @@ fn prop_full_copy(p: &Property) -> Property {
         ts_decorators,
         key: p.key,
         value: p.value,
-        // SAFETY: see `prop_copy`.
-        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
+        ts_metadata: p.ts_metadata,
     }
 }
 

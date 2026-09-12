@@ -251,6 +251,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
 
+        // Refs of a qualified name ("a.b.c"); `ManuallyDrop` keeps the buffer `MDot` points at.
+        let mut dot_path: Option<core::mem::ManuallyDrop<bun_alloc::ArenaVec<'a, Ref>>> = None;
+
         loop {
             match self.lexer.token {
                 T::TNumericLiteral => {
@@ -797,10 +800,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -842,10 +844,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -904,23 +905,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
-                        match r {
+                        // `Metadata` is `Copy`; `head` borrows the arena, not `r`.
+                        let (head, extends_path): (Option<&[Ref]>, bool) = match *r {
                             Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
+                                (Some(self.arena.alloc_slice_copy(&[id_ref])), false)
                             }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
+                            Metadata::MDot(dot) if self.lexer.is_identifier_or_keyword() => {
+                                (Some(dot.slice()), true)
+                            }
+                            _ => (None, false),
+                        };
+                        if let Some(head) = head {
+                            let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                            // A path that came from a nested type (`(a.b).c`) starts a new vec.
+                            let path = match &mut dot_path {
+                                Some(path) if extends_path => path,
+                                slot => {
+                                    let mut path = bun_alloc::ArenaVec::<Ref>::with_capacity_in(
+                                        (head.len() + 1).max(4),
+                                        self.arena,
+                                    );
+                                    path.extend_from_slice(head);
+                                    slot.insert(core::mem::ManuallyDrop::new(path))
                                 }
-                            }
-                            _ => {}
+                            };
+                            path.push(find_result.r#ref);
+                            *r = Metadata::MDot(bun_ast::StoreSlice::new_mut(path.as_mut_slice()));
                         }
                     }
 

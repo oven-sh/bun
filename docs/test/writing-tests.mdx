@@ -74,7 +74,7 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
-In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
+In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes the test (or its `beforeEach`/`afterEach` hooks) spawned that are still running, so they don't linger as zombie processes. Processes started in `beforeAll` or by earlier tests are left alone.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 
@@ -117,7 +117,9 @@ test(
 
 ### 🧟 Zombie Process Killer
 
-When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
+When a test times out, Bun kills any still-running processes that the test (or its `beforeEach`/`afterEach` hooks) spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests. Processes spawned in `beforeAll` or by earlier tests are not affected; a `beforeAll` or `afterAll` hook that times out only has its own processes killed.
+
+When a `test.concurrent` test times out, Bun cannot tell its processes apart from those of the concurrent tests running alongside it. Bun waits until those tests have finished, then kills the processes that any of them spawned and that are still running.
 
 ## Test Modifiers
 

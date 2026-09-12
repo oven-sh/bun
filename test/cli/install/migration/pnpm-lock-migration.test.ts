@@ -261,6 +261,73 @@ snapshots:
     expect(packageJson).toMatchSnapshot("workspace-pnpm-migration-package-json");
   });
 
+  test("file: dependency of a workspace member is stored relative to the root", async () => {
+    // pnpm writes `link:../utils` relative to the importer; bun.lock stores it
+    // relative to the root, otherwise the install below looks for <root>/../utils.
+    await using tmpDir = tempDir("pnpm-migrate-importer-link", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/app"] }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { utils: "file:../utils" } }),
+      "packages/utils/package.json": JSON.stringify({ name: "utils", version: "1.0.0", main: "index.js" }),
+      "packages/utils/index.js": `module.exports = "utils";`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/app:
+    dependencies:
+      utils:
+        specifier: file:../utils
+        version: link:../utils
+`,
+    });
+
+    await using migrate = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, migrateStderr, migrateExit] = await Promise.all([
+      migrate.stdout.text(),
+      migrate.stderr.text(),
+      migrate.exited,
+    ]);
+    expect(migrateStderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(migrateExit).toBe(0);
+
+    expect(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")).toContain('"utils@link:./packages/utils"');
+
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, installStderr, installExit] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(installStderr).not.toContain("error:");
+    expect(installExit).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("utils"))`],
+      cwd: join(tmpDir, "packages", "app"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runErr).toBe("");
+    expect(runOut.trim()).toBe("utils");
+    expect(runExit).toBe(0);
+  });
+
   test("pnpm with npm protocol aliases", async () => {
     await using tmpDir = tempDir("pnpm-migrate-npm-aliases", {
       "package.json": JSON.stringify(

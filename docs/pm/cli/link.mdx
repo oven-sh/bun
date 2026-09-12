@@ -43,6 +43,23 @@ The `--save` flag also adds `cool-pkg` to the `dependencies` field of your app's
 }
 ```
 
+## Linking a directory by path
+
+`link:` also accepts a filesystem path, as written by Yarn and pnpm. Any value that is not a package name — `link:./vendor/design-tokens`, `link:../shared`, `link:vendor/design-tokens`, or an absolute path — is not looked up among the packages registered with `bun link`; it is resolved relative to the `package.json` that declares it and installed as a symlink to that directory:
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "design-tokens": "link:./vendor/design-tokens",
+    "shared": "link:../shared"
+  }
+}
+```
+
+The directory does not need to be a workspace or to have been linked beforehand, and — like Yarn — it does not even need a `package.json` (it is then treated as a package with no dependencies of its own). The directory itself must exist. Use `file:` instead when you want the directory's contents copied into `node_modules` rather than symlinked.
+
+As with `file:`, a path that leaves the project (`../` or an absolute path) is only allowed when the root `package.json` or a workspace declares it, or a root `overrides`/`resolutions` entry (plain or scoped to that dependency) supplies it; a `link:` path declared by some other local dependency must stay inside the project.
+
 ## Unlinking
 
 Use `bun unlink` in the root directory to unregister a local package.

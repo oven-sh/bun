@@ -1028,15 +1028,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 );
                             }
 
-                            let mut pkg = lockfile::Package {
-                                name: dep.name,
-                                name_hash: dep.name_hash,
-                                resolution: Resolution::init_symlink(
-                                    sbuf!(lockfile).append(link_path)?,
-                                ),
-                                ..Default::default()
-                            };
-
                             let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
                             let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
 
@@ -1046,11 +1037,38 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 continue;
                             }
 
+                            // pnpm's value is importer-relative; the stored one is root-relative.
+                            let mut joined_buf = bun_paths::PathBuffer::uninit();
+                            let root_relative: &[u8] = if bun_paths::is_absolute(link_path) {
+                                link_path
+                            } else {
+                                bun_paths::resolve_path::join_string_buf::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                >(
+                                    &mut joined_buf.0, &[workspace_path, link_path]
+                                )
+                            };
+                            let mut stored_buf = bun_paths::PathBuffer::uninit();
+                            let Some(stored) =
+                                dependency::link_path_for_lockfile(root_relative, &mut stored_buf)
+                            else {
+                                return Err(invalid_pnpm_lockfile());
+                            };
+
+                            let mut pkg = lockfile::Package {
+                                name: dep.name,
+                                name_hash: dep.name_hash,
+                                resolution: Resolution::init_symlink(
+                                    sbuf!(lockfile).append(stored)?,
+                                ),
+                                ..Default::default()
+                            };
+
                             *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
                         }
                     }
                     dependency::VersionTag::Symlink => {
-                        if !strings::is_npm_package_name(
+                        if dependency::is_link_path(
                             dep.version.symlink().slice(string_bytes!(lockfile)),
                         ) {
                             log.add_warning_fmt(

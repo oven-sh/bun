@@ -2086,18 +2086,37 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // `append_store_path` runs on worker threads via `&Installer` and
-        // can't take `&mut PackageManager` there, so ensure the
-        // global link dir once on the main thread before any `.symlink`
-        // resolution can be reached by a task. Guarded so installs without
-        // `link:` deps don't touch the global dir.
-        if pkg_resolutions
-            .iter()
-            .any(|r| r.tag == ResolutionTag::Symlink)
+        // Must precede the first `start_task`: workers symlink `link:` packages
+        // into dependents (`append_store_path`) and cannot create the global dir.
         {
-            let _ = crate::package_manager_real::directories::global_link_dir_path(
-                installer.manager_mut(),
-            );
+            let mut needs_global_link_dir = false;
+            for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+                if res.tag != ResolutionTag::Symlink {
+                    continue;
+                }
+                let target = res.symlink().slice(string_buf);
+                if !crate::dependency::is_link_path(target) {
+                    needs_global_link_dir = true;
+                    continue;
+                }
+                let pkg_id = PackageID::try_from(pkg_id).expect("int cast");
+                if !lockfile_ro.link_target_allowed_for_package(pkg_id, target) {
+                    Output::err_generic(
+                        "refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                        (
+                            BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                            BStr::new(target),
+                        ),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
+            if needs_global_link_dir {
+                let _ = crate::package_manager_real::directories::global_link_dir_path(
+                    installer.manager_mut(),
+                );
+            }
         }
 
         // add the pending task count upfront

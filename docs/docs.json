@@ -223,6 +223,7 @@
               "/pm/lifecycle",
               "/pm/scopes-registries",
               "/pm/overrides",
+              "/pm/package-extensions",
               "/pm/security-scanner-api",
               "/pm/npmrc"
             ]

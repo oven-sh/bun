@@ -48,6 +48,17 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
+
+    JSC::JSValue newTarget = callFrame->newTarget();
+    if (zigGlobalObject->m_JSECDHClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+        auto* functionGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(globalObject, newTarget.getObject()));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSECDHClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     JSValue curveValue = callFrame->argument(0);
 
     Bun::V::validateString(scope, globalObject, curveValue, "curve"_s);
@@ -67,9 +78,6 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     if (!key) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create key using named curve"_s);
     }
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
 
     const EC_GROUP* group = key.getGroup();
     return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTF::move(key), group));

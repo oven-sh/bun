@@ -383,7 +383,7 @@ function validateResolverOptions(options) {
   return { timeout, tries };
 }
 
-var InternalResolver = class Resolver {
+class Resolver {
   #resolver;
 
   constructor(options) {
@@ -689,12 +689,7 @@ var InternalResolver = class Resolver {
   setServers(servers) {
     return setServersOn(servers, Resolver.#getResolver(this));
   }
-};
-
-function Resolver(options) {
-  return new InternalResolver(options);
 }
-$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,
@@ -711,7 +706,7 @@ var {
   resolveSrv,
   reverse,
   resolveTxt,
-} = InternalResolver.prototype;
+} = Resolver.prototype;
 
 const mapLookupAll = res => {
   const { address, family } = res;

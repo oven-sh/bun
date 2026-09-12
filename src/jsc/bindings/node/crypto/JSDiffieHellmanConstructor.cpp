@@ -34,6 +34,17 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
+
+    JSC::JSValue newTarget = callFrame->newTarget();
+    if (zigGlobalObject->m_JSDiffieHellmanClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+        auto* functionGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(globalObject, newTarget.getObject()));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDiffieHellmanClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     JSValue sizeOrKey = callFrame->argument(0);
 
     if (!sizeOrKey.isNumber() && !sizeOrKey.isString() && !isArrayBufferOrView(sizeOrKey)) {
@@ -185,10 +196,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
     }
-
-    // Get the appropriate structure and create the DiffieHellman object
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
 
     return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
 }

@@ -1042,22 +1042,22 @@ impl Builtin {
         e: &ParseError,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(_) => Self::fmt_error_arena(
+        let buf: Vec<u8> = match *e {
+            ParseError::IllegalOption(ch) => Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
+                format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
             )
             .to_vec(),
             ParseError::ShowUsage => kind.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Self::fmt_error_arena(
+            ParseError::Unsupported(name) => Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
                 format_args!(
                     "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
+                    bstr::BStr::new(name)
                 ),
             )
             .to_vec(),

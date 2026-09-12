@@ -24,8 +24,8 @@ const deps = ["lsquic", "lsqpack", "lshpack", "boringssl", "hdrhistogram", "zlib
 // A C compile and an archive of ~550 objects, not a wait on a condition.
 const buildTimeout = 60_000;
 
-// crypto/mem.cc is where BoringSSL calls the allocator hooks. One build compiles
-// every object the same way, so this one tells how all of them were compiled.
+// crypto/mem.cc is where BoringSSL calls the allocator hooks. A build that ran
+// to the end compiled every object the same way, so this one tells how.
 const probeObject = (profile: string) =>
   join(repoRoot, "build", profile, "obj", "vendor", "boringssl", "crypto", "mem.cc.o");
 
@@ -39,12 +39,15 @@ const probeObject = (profile: string) =>
 //     in the middle of struct lsquic_engine_settings.
 //   - An LTO build (CI, or --lto=on) leaves LLVM bitcode in the .o files. ld
 //     rejects the archive: "error adding symbols: file format not recognized".
+//   - A rebuild with other flags (build:debug, then build:debug:noasan) that
+//     stops midway leaves objects of both kinds.
 // All are the state of the machine, not a broken h3blast, so they skip.
 function unusable(profile: string): string | null {
   const buildDir = join(repoRoot, "build", profile);
-  // ninja links this last, after every object is up to date. Its age stands for
-  // theirs: obj/ also keeps objects of sources a dep has dropped, which never
-  // get rebuilt and would look stale forever.
+  // ninja links this last, after every object is up to date. So the last build
+  // ran to the end if no object is newer, and it saw the current sources if no
+  // .ref is newer. An object can be much older: obj/ keeps the objects of
+  // sources a dep has dropped, and those never get rebuilt.
   const exeName = profile === "debug" ? "bun-debug" : "bun-profile";
   const exe = statSync(join(buildDir, exeName), { throwIfNoEntry: false });
   if (!exe) return `no build/${profile}/${exeName}`;
@@ -53,8 +56,10 @@ function unusable(profile: string): string | null {
     if (!ref) return `no vendor/${dep}/.ref`;
     if (exe.mtimeMs < ref.mtimeMs) return `build/${profile}/${exeName} is older than vendor/${dep}/.ref`;
     const objDir = join(buildDir, "obj", "vendor", dep);
-    if (!existsSync(objDir) || new Glob("**/*.o").scanSync({ cwd: objDir }).next().done) {
-      return `no ${dep} objects in build/${profile}`;
+    const objects = existsSync(objDir) ? [...new Glob("**/*.o").scanSync({ cwd: objDir, absolute: true })] : [];
+    if (objects.length === 0) return `no ${dep} objects in build/${profile}`;
+    if (objects.some(o => statSync(o).mtimeMs > exe.mtimeMs)) {
+      return `build/${profile} has ${dep} objects newer than ${exeName}: the last build did not finish`;
     }
   }
   if (!existsSync(probeObject(profile))) return `no boringssl/crypto/mem.cc.o in build/${profile}`;

@@ -436,6 +436,8 @@ impl Cmd {
                 }
             }
         };
+        // A command name resolved; the stashed substitution status would otherwise be kept by `on_exit`.
+        interp.as_cmd_mut(this).exit_code = None;
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
             log!("Cmd {} exec builtin={:?}", this, kind);
@@ -973,7 +975,7 @@ impl Cmd {
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) -> Yield {
         log!("cmd exit code={}", exit_code);
-        // Keep the errno a stdio error already recorded.
+        // Keep the status a stdio error already recorded.
         if self.exit_code.is_none() {
             self.exit_code = Some(exit_code);
         }
@@ -1002,8 +1004,9 @@ impl Cmd {
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        // The relayed output was lost: the command failed whatever the child reports.
+        if err.is_some() {
+            self.exit_code = Some(1);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1038,8 +1041,9 @@ impl Cmd {
     fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        // The relayed output was lost: the command failed whatever the child reports.
+        if err.is_some() {
+            self.exit_code = Some(1);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

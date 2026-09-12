@@ -961,6 +961,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
+            // `Order` is `#[repr(u8)]`, so `as u8` is exact.
+            dns_result_order: bun_dns::Order::from_string_or_die(
+                &ctx.runtime_options.dns_result_order,
+            ) as u8,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
             ..Default::default()
@@ -974,10 +978,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
-        // `vm.dns_result_order` is a `u8` until the b2-cycle widens
-        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
-        vm.dns_result_order =
-            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
@@ -1157,9 +1157,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
-            // `Options::dns_result_order` is `u8` until the
-            // b2-cycle widens it to `bun_dns::Order`; the enum is
-            // `#[repr(u8)]` so `as u8` is exact.
+            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            // `Order` is `#[repr(u8)]`, so `as u8` is exact.
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
             ) as u8,

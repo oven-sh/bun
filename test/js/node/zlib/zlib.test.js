@@ -817,3 +817,48 @@ describe("crc32", () => {
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
   });
 });
+
+describe("flat constant aliases", () => {
+  // Node defines every non-BROTLI key of zlib.constants as a non-enumerable,
+  // read-only property on the module itself. Non-enumerable keys are not part
+  // of the ESM namespace, in node either, so this uses require().
+  const zlib = require("node:zlib");
+
+  it("exposes the ZSTD_* constants on the module", () => {
+    expect([
+      zlib.ZSTD_e_end,
+      zlib.ZSTD_c_compressionLevel,
+      zlib.ZSTD_CLEVEL_DEFAULT,
+      zlib.ZSTD_COMPRESS,
+      zlib.ZSTD_btultra2,
+      zlib.ZSTD_d_windowLogMax,
+    ]).toEqual([
+      zlib.constants.ZSTD_e_end,
+      zlib.constants.ZSTD_c_compressionLevel,
+      zlib.constants.ZSTD_CLEVEL_DEFAULT,
+      zlib.constants.ZSTD_COMPRESS,
+      zlib.constants.ZSTD_btultra2,
+      zlib.constants.ZSTD_d_windowLogMax,
+    ]);
+    expect(zlib.ZSTD_e_end).toBe(2);
+    expect(zlib.ZSTD_c_compressionLevel).toBe(100);
+    expect(zlib.ZSTD_CLEVEL_DEFAULT).toBe(3);
+  });
+
+  it("mirrors every non-BROTLI key of zlib.constants, non-enumerable and read-only", () => {
+    const missing = [];
+    for (const key of Object.keys(zlib.constants)) {
+      const desc = Object.getOwnPropertyDescriptor(zlib, key);
+      if (key.startsWith("BROTLI")) {
+        expect(desc).toBeUndefined();
+        continue;
+      }
+      if (!desc) {
+        missing.push(key);
+        continue;
+      }
+      expect(desc).toEqual({ value: zlib.constants[key], writable: false, enumerable: false, configurable: false });
+    }
+    expect(missing).toEqual([]);
+  });
+});

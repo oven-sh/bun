@@ -13,10 +13,17 @@ pub enum Authentication {
     GSS,
     GSSContinue { data: Data },
     SSPI,
-    SASL,
+    SASL(SASLMechanisms),
     SASLContinue(SASLContinue),
     SASLFinal { data: Data },
     Unknown,
+}
+
+/// Mechanisms from the AuthenticationSASL list that this client implements.
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
+pub struct SASLMechanisms {
+    pub scram_sha_256: bool,
+    pub scram_sha_256_plus: bool,
 }
 
 pub struct SASLContinue {
@@ -40,7 +47,7 @@ impl Drop for Authentication {
     fn drop(&mut self) {
         match self {
             Authentication::MD5Password { .. } => {}
-            Authentication::SASL => {}
+            Authentication::SASL(_) => {}
             Authentication::SASLContinue(v) => {
                 v.data.zdeinit();
             }
@@ -111,8 +118,17 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(AnyPostgresError::InvalidMessageLength);
                 }
-                reader.skip((message_length - 8) as usize)?;
-                Ok(Authentication::SASL)
+                // Body: a NUL-terminated name per mechanism, then a final NUL.
+                let bytes = reader.bytes((message_length - 8) as usize)?;
+                let mut mechanisms = SASLMechanisms::default();
+                for name in bun_core::split(bytes.slice(), b"\0") {
+                    match name {
+                        b"SCRAM-SHA-256" => mechanisms.scram_sha_256 = true,
+                        b"SCRAM-SHA-256-PLUS" => mechanisms.scram_sha_256_plus = true,
+                        _ => {}
+                    }
+                }
+                Ok(Authentication::SASL(mechanisms))
             }
 
             11 => {
@@ -131,6 +147,14 @@ impl Authentication {
                     // remain valid because `bytes` is moved into the result below).
                     let mut iter = bun_core::split(bytes.slice(), b",");
                     while let Some(item) = iter.next() {
+                        // RFC 5802 §5.1: unsupported mandatory extension.
+                        if item.starts_with(b"m=") {
+                            bun_core::scoped_log!(
+                                Postgres,
+                                "SCRAM mandatory extension m= is not supported"
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
                         if item.len() > 2 {
                             let key = item[0];
                             let after_equals = RawSlice::new(&item[2..]);

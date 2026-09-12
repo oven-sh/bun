@@ -10,6 +10,8 @@ bitflags! {
         const HAS_BACKPRESSURE                = 1 << 4;
         /// `ref()` was called; `on_data` must not unref the idle connection.
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
+        /// Postgres: SCRAM completed with channel binding (`SCRAM-SHA-256-PLUS`).
+        const CHANNEL_BOUND                   = 1 << 6;
     }
 }
 

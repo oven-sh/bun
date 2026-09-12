@@ -104,6 +104,28 @@ export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): 
   return pgRaw("R", body);
 }
 
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLContinue: Byte1('R') Int32(len) Int32(11) Byte_n(server-first-message)
+export function pgAuthenticationSASLContinue(data: string | Buffer): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(11), Buffer.from(data)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLFinal: Byte1('R') Int32(len) Int32(12) Byte_n(server-final-message)
+export function pgAuthenticationSASLFinal(data: string | Buffer): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(12), Buffer.from(data)]));
+}
+
+/**
+ * Parse a frontend SASLInitialResponse body ('p' right after AuthenticationSASL):
+ * String(mechanism) Int32(len) Byte_n(client-first-message).
+ */
+export function pgParseSASLInitialResponse(body: Buffer): { mechanism: string; data: string } {
+  const nul = body.indexOf(0);
+  const mechanism = body.subarray(0, nul).toString("latin1");
+  const len = body.readInt32BE(nul + 1);
+  const data = len < 0 ? "" : body.subarray(nul + 5, nul + 5 + len).toString("latin1");
+  return { mechanism, data };
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
 export function pgParameterStatus(name: string, value: string): Buffer {
   return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));

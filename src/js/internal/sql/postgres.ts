@@ -1,6 +1,14 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
+import type {
+  ArrayType,
+  ChannelBinding,
+  DatabaseAdapter,
+  SQLArrayParameter,
+  SQLCommand,
+  SQLResultArray,
+  SSLMode,
+} from "./shared";
 const {
   SQLResultArray,
   SQLArrayParameter,
@@ -336,6 +344,8 @@ export interface PostgresDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    allowPublicKeyRetrieval: boolean,
+    channelBinding: ChannelBinding,
   ) => $ZigGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,
@@ -370,6 +380,8 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
       case "ERR_POSTGRES_INVALID_SERVER_SIGNATURE":
       case "ERR_POSTGRES_INVALID_SERVER_KEY":
       case "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2":
+      case "ERR_POSTGRES_CHANNEL_BINDING_REQUIRED":
+      case "ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM":
         // we can't retry these are authentication errors
         return true;
       default:

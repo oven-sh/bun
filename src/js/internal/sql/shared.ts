@@ -120,6 +120,26 @@ const enum SSLMode {
 }
 export type { SSLMode };
 
+/** libpq `channel_binding`: whether SCRAM must bind to the TLS server certificate. */
+const enum ChannelBinding {
+  disable = 0,
+  prefer = 1,
+  require = 2,
+}
+export type { ChannelBinding };
+
+function normalizeChannelBinding(value: string): ChannelBinding {
+  switch (`${value}`.toLowerCase()) {
+    case "disable":
+      return ChannelBinding.disable;
+    case "prefer":
+      return ChannelBinding.prefer;
+    case "require":
+      return ChannelBinding.require;
+  }
+  throw $ERR_INVALID_ARG_VALUE("channel_binding", value, "must be one of: disable, prefer, require");
+}
+
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {
     return SSLMode.disable;
@@ -875,6 +895,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     prepare = true,
     path,
     allowPublicKeyRetrieval = false,
+    channelBinding = ChannelBinding.prefer,
   } = options;
 
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -909,6 +930,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       maxLifetime,
       !prepare,
       !!allowPublicKeyRetrieval,
+      channelBinding,
     );
   } catch (e) {
     // defer so the callback never runs while the adapter is still filling
@@ -1832,6 +1854,12 @@ function parseOptions(
     if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
   }
 
+  let channelBinding: ChannelBinding = ChannelBinding.prefer;
+  if (adapter === "postgres") {
+    const envChannelBinding = env.PGCHANNELBINDING;
+    if (envChannelBinding) channelBinding = normalizeChannelBinding(envChannelBinding);
+  }
+
   let url = _url;
 
   let hostname: string | undefined;
@@ -1882,6 +1910,8 @@ function parseOptions(
         }
       } else if (lowerKey === "path") {
         path = queryObject[key];
+      } else if (lowerKey === "channel_binding" || lowerKey === "channelbinding" || lowerKey === "channel-binding") {
+        channelBinding = normalizeChannelBinding(queryObject[key]);
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -2153,6 +2183,7 @@ function parseOptions(
     allowPublicKeyRetrieval: options.allowPublicKeyRetrieval === true,
     bigint,
     sslMode,
+    channelBinding,
     query,
     max: max || 10,
   };

@@ -26,6 +26,7 @@ declare module "bun" {
      */
     type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
       sslMode: import("internal/sql/shared").SSLMode;
+      channelBinding: import("internal/sql/shared").ChannelBinding;
       query: string;
     };
 

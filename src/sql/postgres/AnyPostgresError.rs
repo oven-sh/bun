@@ -8,6 +8,7 @@
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 pub enum AnyPostgresError {
+    ChannelBindingRequired,
     ConnectionClosed,
     ConnectionFailed,
     ConnectionRefused,
@@ -28,6 +29,7 @@ pub enum AnyPostgresError {
     OutOfMemory,
     Overflow,
     PBKDFD2,
+    SASL_NO_KNOWN_MECHANISM,
     SASL_SIGNATURE_MISMATCH,
     SASL_SIGNATURE_INVALID_BASE64,
     ShortRead,

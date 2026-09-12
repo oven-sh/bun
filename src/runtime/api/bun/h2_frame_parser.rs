@@ -4281,7 +4281,8 @@ impl H2FrameParser {
                 if let Some(v) = options.get(global_object, $key)? {
                     if v.is_number() {
                         let value = v.as_number();
-                        if value < ($min as f64) || value > $max {
+                        // `contains`, not `<`/`>`: NaN compares false with both bounds.
+                        if !(($min as f64)..=$max).contains(&value) {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error($err)
                                 .throw();
@@ -4324,7 +4325,7 @@ impl H2FrameParser {
         if let Some(v) = options.get(global_object, "initialWindowSize")? {
             if v.is_number() {
                 let value = v.as_number();
-                if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
+                if !(0.0..=MAX_WINDOW_SIZE_F64).contains(&value) {
                     return global_object
                         .err_http2_invalid_setting_value_range_error(
                             "Expected initialWindowSize to be a number between 0 and 2^32-1",
@@ -4446,7 +4447,7 @@ impl H2FrameParser {
                     // Validate setting value is in range [0, 2^32-1]
                     if setting_value.is_number() {
                         let value = setting_value.as_number();
-                        if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
+                        if !(0.0..=MAX_HEADER_TABLE_SIZE_F64).contains(&value) {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error(
                                     "Invalid custom setting value",
@@ -4465,32 +4466,6 @@ impl H2FrameParser {
             }
         }
 
-        // remoteCustomSettings (session option, not a SETTINGS parameter): non-standard setting
-        // ids whose received values should be exposed on remoteSettings.customSettings. Staged
-        // before any state is committed so a throwing getter / iterator (Proxy/getter on the
-        // user array) does not leave the four cells above already installed.
-        let mut staged_remote_filter: Vec<u16> = Vec::new();
-        if let Some(remote_custom) = options.get(global_object, "remoteCustomSettings")? {
-            if remote_custom.is_array() {
-                let mut value_iter = remote_custom.array_iterator(global_object)?;
-                while let Some(item) = value_iter.next()? {
-                    if !item.is_number() {
-                        continue;
-                    }
-                    let id = item.as_number();
-                    if !(0.0..=65535.0).contains(&id) {
-                        continue;
-                    }
-                    let id = id as u16;
-                    if !staged_remote_filter.contains(&id)
-                        && staged_remote_filter.len() < MAX_CUSTOM_SETTINGS
-                    {
-                        staged_remote_filter.push(id);
-                    }
-                }
-            }
-        }
-
         self.local_settings.set(local_settings);
         self.explicit_settings.set(explicit_settings);
         self.custom_settings.with_mut(|cs| {
@@ -4503,13 +4478,6 @@ impl H2FrameParser {
             }
         });
         self.wire_custom_settings.with_mut(|cs| *cs = staged_custom);
-        self.remote_custom_settings_filter.with_mut(|f| {
-            for id in staged_remote_filter {
-                if !f.contains(&id) && f.len() < MAX_CUSTOM_SETTINGS {
-                    f.push(id);
-                }
-            }
-        });
         Ok(())
     }
 
@@ -7689,25 +7657,48 @@ impl H2FrameParser {
                 let _ = this_ref.flush();
             }
         }
-        if let Some(settings_js) = options.get(global_object, "settings")? {
-            if !settings_js.is_empty_or_undefined_or_null() {
-                bun_output::scoped_log!(H2FrameParser, "settings received in the constructor");
-                this_ref.load_settings_from_js_value(global_object, settings_js)?;
-                // The constructor settings ride on the connection preface, so received header
-                // blocks are checked against them right away; later settings() submissions only
-                // take effect for enforcement once the peer ACKs them.
-                this_ref
-                    .enforced_max_header_list_size
-                    .set(this_ref.local_settings.get().max_header_list_size);
+        let mut is_server = false;
+        if let Some(type_js) = options.get(global_object, "type")? {
+            is_server = type_js.is_number() && type_js.to_u32() == 0;
+        }
 
-                if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
+        // Node reads SETTINGS from `options.settings` and the session limits from the top level.
+        if let Some(session_options) = options.get(global_object, "options")? {
+            if session_options.is_object() {
+                if let Some(settings_js) = session_options.get(global_object, "settings")? {
+                    if !settings_js.is_empty_or_undefined_or_null() {
+                        bun_output::scoped_log!(
+                            H2FrameParser,
+                            "settings received in the constructor"
+                        );
+                        this_ref.load_settings_from_js_value(global_object, settings_js)?;
+                        // RFC 9113 §6.5.2: a server MUST NOT advertise ENABLE_PUSH other than 0.
+                        if is_server
+                            && this_ref.explicit_settings.get() & SETTING_BIT_ENABLE_PUSH != 0
+                        {
+                            let mut local_settings = this_ref.local_settings.get();
+                            local_settings.enable_push = 0;
+                            this_ref.local_settings.set(local_settings);
+                        }
+                        // The constructor settings ride on the connection preface, so received
+                        // header blocks are checked against them right away; later settings()
+                        // submissions only take effect for enforcement once the peer ACKs them.
+                        this_ref
+                            .enforced_max_header_list_size
+                            .set(this_ref.local_settings.get().max_header_list_size);
+                    }
+                }
+
+                if let Some(max_pings) =
+                    session_options.get(global_object, "maxOutstandingPings")?
+                {
                     if max_pings.is_number() {
                         this_ref
                             .max_outstanding_pings
                             .set(max_pings.to_uint64_no_truncate());
                     }
                 }
-                if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {
+                if let Some(max_memory) = session_options.get(global_object, "maxSessionMemory")? {
                     if max_memory.is_number() {
                         this_ref
                             .max_session_memory
@@ -7715,7 +7706,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(max_header_list_pairs) =
-                    settings_js.get(global_object, "maxHeaderListPairs")?
+                    session_options.get(global_object, "maxHeaderListPairs")?
                 {
                     if max_header_list_pairs.is_number() {
                         this_ref
@@ -7723,7 +7714,7 @@ impl H2FrameParser {
                             .set(Self::session_option_u32(max_header_list_pairs).max(4));
                     }
                 }
-                if let Some(max_settings) = settings_js.get(global_object, "maxSettings")? {
+                if let Some(max_settings) = session_options.get(global_object, "maxSettings")? {
                     if max_settings.is_number() {
                         this_ref
                             .max_settings
@@ -7731,7 +7722,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(max_rejected_streams) =
-                    settings_js.get(global_object, "maxSessionRejectedStreams")?
+                    session_options.get(global_object, "maxSessionRejectedStreams")?
                 {
                     if max_rejected_streams.is_number() {
                         this_ref
@@ -7740,7 +7731,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(max_session_invalid_frames) =
-                    settings_js.get(global_object, "maxSessionInvalidFrames")?
+                    session_options.get(global_object, "maxSessionInvalidFrames")?
                 {
                     if max_session_invalid_frames.is_number() {
                         this_ref
@@ -7749,7 +7740,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(max_outstanding_settings) =
-                    settings_js.get(global_object, "maxOutstandingSettings")?
+                    session_options.get(global_object, "maxOutstandingSettings")?
                 {
                     if max_outstanding_settings.is_number() {
                         this_ref
@@ -7758,7 +7749,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(max_send_header_block_length) =
-                    settings_js.get(global_object, "maxSendHeaderBlockLength")?
+                    session_options.get(global_object, "maxSendHeaderBlockLength")?
                 {
                     if max_send_header_block_length.is_number() {
                         this_ref
@@ -7767,7 +7758,7 @@ impl H2FrameParser {
                     }
                 }
                 if let Some(strict_single_value) =
-                    settings_js.get(global_object, "strictSingleValueFields")?
+                    session_options.get(global_object, "strictSingleValueFields")?
                 {
                     if strict_single_value.is_boolean() {
                         this_ref
@@ -7775,7 +7766,9 @@ impl H2FrameParser {
                             .set(strict_single_value.to_boolean());
                     }
                 }
-                if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {
+                if let Some(padding_strategy) =
+                    session_options.get(global_object, "paddingStrategy")?
+                {
                     if padding_strategy.is_number() {
                         this_ref
                             .padding_strategy
@@ -7786,11 +7779,29 @@ impl H2FrameParser {
                             });
                     }
                 }
+                if let Some(remote_custom) =
+                    session_options.get(global_object, "remoteCustomSettings")?
+                {
+                    if remote_custom.is_array() {
+                        let mut filter: Vec<u16> = Vec::new();
+                        let mut value_iter = remote_custom.array_iterator(global_object)?;
+                        while let Some(item) = value_iter.next()? {
+                            if !item.is_number() {
+                                continue;
+                            }
+                            let id = item.as_number();
+                            if !(0.0..=65535.0).contains(&id) {
+                                continue;
+                            }
+                            let id = id as u16;
+                            if !filter.contains(&id) && filter.len() < MAX_CUSTOM_SETTINGS {
+                                filter.push(id);
+                            }
+                        }
+                        this_ref.remote_custom_settings_filter.set(filter);
+                    }
+                }
             }
-        }
-        let mut is_server = false;
-        if let Some(type_js) = options.get(global_object, "type")? {
-            is_server = type_js.is_number() && type_js.to_u32() == 0;
         }
 
         this_ref.is_server.set(is_server);

@@ -320,10 +320,8 @@ pub struct PackageManager {
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
-    /// The environment this process started with. `env` above also holds the
-    /// project's `.env*` files, which a cloned repository controls. The git
-    /// children the install spawns and its own proxy / TLS settings read this
-    /// one, so a `.env` cannot set `GIT_SSH_COMMAND` or `HTTPS_PROXY` for them.
+    /// `env` without the project's `.env*` files, which a cloned repository
+    /// controls. Git children and the proxy / TLS settings read this one.
     pub(crate) process_env: dot_env::Loader,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
@@ -898,9 +896,7 @@ impl PackageManager {
 
     pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
         // SAFETY: the manager is a leaked process-lifetime singleton and
-        // `process_env` is never written after `init()`, so the returned
-        // `URL<'_>`, which borrows the proxy value out of it, is valid for
-        // `'static`.
+        // `process_env` is never written after `init()`.
         let process_env: &'static dot_env::Loader =
             unsafe { bun_ptr::detach_lifetime_ref(&self.process_env) };
         process_env.get_http_proxy_for(url)
@@ -1341,8 +1337,6 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `PackageManager::process_env`: the process environment with no `.env*` file
-/// merged in.
 fn load_process_env() -> Result<dot_env::Loader, bun_alloc::AllocError> {
     let mut env = dot_env::Loader::init();
     env.load_process()?;

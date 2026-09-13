@@ -149,7 +149,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     JSC::JSObject* jscThis = JSC::asObject(callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
 
     JSC::ArgList args(callFrame);
-    return JSValue::encode(invokeCallback(globalObject, callee, jscThis, args, false));
+    return JSValue::encode(invokeCallback(globalObject, callee, jscThis, args, nullptr));
 }
 
 JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -159,25 +159,32 @@ JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* glo
 
     auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
+    JSC::JSObject* newTarget = JSC::asObject(callFrame->newTarget());
+
+    // Same choice as V8's JSFunction::GetDerivedMap: for an API function the
+    // fallback is Object.prototype of new.target's realm, not callee.prototype.
+    JSC::JSValue prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!prototype.isObject()) {
+        // The realm can be a node:vm context, so use it only as a JSC::JSGlobalObject.
+        JSC::JSGlobalObject* realm = JSC::getFunctionRealm(globalObject, newTarget);
+        RETURN_IF_EXCEPTION(scope, {});
+        prototype = realm->objectPrototype();
+    }
 
     auto* instanceTemplate = functionTemplate->ensureInstanceTemplate(globalObject);
     JSC::JSObject* receiver = instanceTemplate->newInstance();
     RETURN_IF_EXCEPTION(scope, {});
-
-    JSC::JSValue prototype = callee->get(globalObject, vm.propertyNames->prototype);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (prototype.isObject()) {
-        receiver->setPrototypeDirect(vm, prototype);
-    }
+    receiver->setPrototypeDirect(vm, prototype);
 
     JSC::ArgList args(callFrame);
-    JSC::JSValue result = invokeCallback(globalObject, callee, receiver, args, true);
+    JSC::JSValue result = invokeCallback(globalObject, callee, receiver, args, newTarget);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(result.isObject() ? result : JSValue(receiver));
 }
 
-JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject, Function* callee, JSC::JSObject* jscThis, const JSC::ArgList& args, bool isConstruct)
+JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject, Function* callee, JSC::JSObject* jscThis, const JSC::ArgList& args, JSC::JSObject* newTarget)
 {
     auto* functionTemplate = callee->functionTemplate();
     // FunctionTemplate::New(isolate) with no callback is valid in V8; invoking such a
@@ -215,13 +222,13 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
 
     // For construct calls V8 reads this slot via NewTarget(); for plain calls
     // IsConstructCall() short-circuits on kFrameTypeIndex and never reads it.
-    slot(Info::kNewTargetIndex) = isConstruct ? target.tagged() : TaggedPointer();
+    slot(Info::kNewTargetIndex) = newTarget ? hs.createLocal<Value>(vm, newTarget).tagged() : TaggedPointer();
     // Length() reads this as a raw integer, not a Smi
     slot(Info::kArgcIndex) = TaggedPointer::fromRaw(argc);
     // SP/FP/PC are only used by V8's stack walker, which never sees this frame
     slot(Info::kFrameSPIndex) = TaggedPointer::fromRaw(0);
     // IsConstructCall() compares this Smi against kFrameTypeApiConstructExit
-    slot(Info::kFrameTypeIndex) = TaggedPointer(isConstruct ? Info::kFrameTypeApiConstructExit : Info::kFrameTypeApiCallExit);
+    slot(Info::kFrameTypeIndex) = TaggedPointer(newTarget ? Info::kFrameTypeApiConstructExit : Info::kFrameTypeApiCallExit);
     slot(Info::kFrameFPIndex) = TaggedPointer::fromRaw(0);
     slot(Info::kFramePCIndex) = TaggedPointer::fromRaw(0);
     // GetIsolate() reads this slot as a raw, untagged pointer

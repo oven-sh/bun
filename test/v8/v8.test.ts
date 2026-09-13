@@ -290,6 +290,28 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const out = await checkSameOutput("test_v8_function_template_set_class_name");
       expect(out).toContain("MyNamedClass");
     });
+    it("constructs instances with the prototype of new.target and reports it from NewTarget()", async () => {
+      // NativeThing comes from FunctionTemplate::GetFunction, the way nan and node::ObjectWrap
+      // addons export a class. Wrapped is a JS class that extends it.
+      const out = await checkSameOutput("test_v8_function_template_new_target");
+      expect(out).toBe(
+        [
+          "new NativeThing(): prototype = NativeThing.prototype, NewTarget() = NativeThing, IsConstructCall() = true, InternalFieldCount() = 1",
+          "new Wrapped(): prototype = Wrapped.prototype, NewTarget() = Wrapped, IsConstructCall() = true, InternalFieldCount() = 1",
+          "wrapped instanceof Wrapped: true",
+          "wrapped instanceof NativeThing: true",
+          "wrapped.extra(): extra-called",
+          "wrapped.protoMethod(): proto-method-called",
+          "Reflect.construct(NativeThing, [], Other): prototype = Other.prototype, NewTarget() = Other, IsConstructCall() = true, InternalFieldCount() = 1",
+          "Reflect.construct(NativeThing, [], OtherProxy): prototype = Other.prototype, NewTarget() = OtherProxy, IsConstructCall() = true, InternalFieldCount() = 1",
+          "Reflect.construct(NativeThing, [], NonObjectPrototype): prototype = Object.prototype, NewTarget() = NonObjectPrototype, IsConstructCall() = true, InternalFieldCount() = 1",
+          "Reflect.construct(NativeThing, [], Bound): prototype = Object.prototype, NewTarget() = Bound, IsConstructCall() = true, InternalFieldCount() = 1",
+          "Reflect.construct(NativeThing, [], Foreign): prototype = Object.prototype of the realm of Foreign, NewTarget() = Foreign, IsConstructCall() = true, InternalFieldCount() = 1",
+          "Reflect.construct(NativeThing, [], ThrowingPrototype): threw the prototype getter threw",
+          "NativeThing.call(receiver): prototype = Object.prototype, NewTarget() = undefined, IsConstructCall() = false, InternalFieldCount() = 0",
+        ].join("\n"),
+      );
+    });
   });
 
   describe("Function", () => {

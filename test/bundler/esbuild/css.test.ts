@@ -1322,6 +1322,7 @@ b {
         // Every url() in the output has to name a file that was written next to it.
         const again = await Bun.build({ entrypoints: [api.join("out/entry.css")], outdir: api.join("out2") });
         const assets = again.outputs.map(o => basename(o.path)).filter(name => name.endsWith(".png"));
+        // The second build copies `<name>-<hash>.png` to `<name>-<hash>-<hash2>.png`. Drop `-<hash2>.png`.
         expect(assets.map(name => name.replace(/-[a-z0-9]+\.png$/, "")).sort()).toEqual(
           ["a\nb-nkpagkva", `${injection}-w49ecq2a`].sort(),
         );

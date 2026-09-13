@@ -40,6 +40,12 @@ pub enum CtxTag {
     HttpsMux,
     DebugHttpMux,
     DebugHttpsMux,
+    /// The pointee is the H3 CONNECT stream (`bun_uws_sys::h3::Response`), not
+    /// a `RequestContext`: a WebTransport `upgrade` runs before any context
+    /// exists, and `requestIP` is the one thing it needs answered. Set and
+    /// nulled around the `upgrade` call in `WebTransportSession::decide`, so
+    /// the pointer is never held past the frame that owns the stream.
+    WebTransportConnect,
 }
 
 #[derive(Copy, Clone)]
@@ -90,6 +96,14 @@ impl AnyRequestContext {
             ptr: request_ctx as *mut (),
         }
     }
+
+    /// See [`CtxTag::WebTransportConnect`]. The caller owns the detach.
+    pub(crate) fn webtransport_connect(res: *mut bun_uws_sys::h3::Response) -> Self {
+        Self {
+            tag: CtxTag::WebTransportConnect,
+            ptr: res.cast::<()>(),
+        }
+    }
 }
 
 /// Dispatch `$body` to the concrete RequestContext type behind the tagged
@@ -114,7 +128,7 @@ macro_rules! dispatch {
             }};
         }
         match this.tag {
-            CtxTag::None => $default,
+            CtxTag::None | CtxTag::WebTransportConnect => $default,
             CtxTag::Http => arm!(HttpCtx),
             CtxTag::Https => arm!(HttpsCtx),
             CtxTag::DebugHttp => arm!(DebugHttpCtx),
@@ -138,7 +152,7 @@ macro_rules! dispatch {
             }};
         }
         match this.tag {
-            CtxTag::None => $default,
+            CtxTag::None | CtxTag::WebTransportConnect => $default,
             CtxTag::Http => arm!(HttpCtx),
             CtxTag::Https => arm!(HttpsCtx),
             CtxTag::DebugHttp => arm!(DebugHttpCtx),
@@ -182,6 +196,17 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn get_remote_socket_info(self) -> Option<uws::SocketAddress> {
+        if self.tag == CtxTag::WebTransportConnect {
+            // Live for exactly the `upgrade` call: `decide` nulls this context
+            // before its frame returns, so the handle is never read stale.
+            let resp = bun_uws_sys::AnyResponse::H3(self.ptr.cast::<bun_uws_sys::h3::Response>());
+            let info = resp.get_remote_socket_info()?;
+            return Some(uws::SocketAddress {
+                ip: info.ip().to_vec().into_boxed_slice(),
+                port: info.port,
+                is_ipv6: info.is_ipv6,
+            });
+        }
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 

@@ -46,9 +46,13 @@ struct us_quic_header_t {
  * via a thread-safe static local so quic.c stays free of pthread/call_once. */
 void us_quic_global_init(void);
 
+/* `webtransport` decides the SETTINGS this server advertises, so it has to be
+ * known here rather than when a route is registered: lsquic reads the engine
+ * settings once, in lsquic_engine_new. Off means the connection is ordinary
+ * HTTP/3 and pays nothing for the extension. */
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
-    unsigned int ext_size, unsigned int idle_timeout_s);
+    unsigned int ext_size, unsigned int idle_timeout_s, int webtransport);
 
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
  * timer keep running so in-flight streams drain. */
@@ -161,10 +165,55 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);
 const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsigned int i);
 
+/* ───── WebTransport over HTTP/3 (draft-ietf-webtrans-http3) ─────
+ *
+ * A session *is* the extended-CONNECT stream it was negotiated on, so there is
+ * no separate handle: datagrams name their session by that stream's quarter
+ * stream id (stream id / 4) as a varint prefix, per RFC 9297 §2.1.
+ *
+ * Datagrams only. Streams would need the peer's 0x41 stream-type parsing,
+ * which lsquic can do but nothing above this layer asks for.
+ */
+
+/* Largest payload this layer queues, prefix excluded. Sized to fit the
+ * 1280-byte IPv6 minimum MTU with room for QUIC and DATAGRAM framing, so a
+ * forwarded payload never provokes fragmentation or a silent drop. */
+#define US_QUIC_WT_MAX_DATAGRAM 1200
+
+/* Sessions one connection may open, advertised as WT_MAX_SESSIONS. A browser
+ * opens one per `new WebTransport(...)`; this bounds the per-connection array
+ * rather than being a quota anyone should meet. */
+#define US_QUIC_WT_MAX_SESSIONS 16
+
+/* Promote a CONNECT stream to a session. Call it before the 2xx headers:
+ * lsquic decides how to frame the stream from this. Returns 0, or -1 if the
+ * peer did not negotiate the extension or the table could not grow. */
+int us_quic_stream_accept_webtransport(us_quic_stream_t *s);
+int us_quic_stream_is_webtransport(us_quic_stream_t *s);
+void us_quic_wt_detach(us_quic_stream_t *s);
+
+/* Queue one datagram. Returns the bytes queued, prefix included so an empty
+ * payload does not report 0; 0 when the queue is full (drop it, this path has
+ * no retransmission); -1 when `s` is not a session or `len` exceeds
+ * us_quic_wt_max_datagram_size. */
+int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len);
+unsigned int us_quic_wt_max_datagram_size(us_quic_stream_t *s);
+
+/* Datagrams the peer sent on a session. Not called for datagrams naming a
+ * session this connection does not have. */
+void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
+    void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int));
+void us_quic_socket_context_on_wt_drain(us_quic_socket_context_t *ctx,
+    void (*on_drain)(us_quic_stream_t *));
+
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
+/* Smoothed RTT in microseconds, from lsquic's per-connection estimator.
+ * 0 when there is no estimate, which after the handshake means the
+ * connection is gone. */
+unsigned int us_quic_socket_rtt(us_quic_socket_t *s);
 void us_quic_socket_close(us_quic_socket_t *s);
 
 #ifdef __cplusplus

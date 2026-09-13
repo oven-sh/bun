@@ -1534,3 +1534,922 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
     });
   });
 });
+
+// ─── WebTransport ───────────────────────────────────────────────────────────
+
+/** RFC 9000 §16 varint, for the quarter stream id a datagram is prefixed with. */
+function quicVarint(v: number): Uint8Array {
+  if (v < 64) return new Uint8Array([v]);
+  if (v < 16384) return new Uint8Array([0x40 | (v >> 8), v & 0xff]);
+  return new Uint8Array([0x80 | (v >> 24), (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff]);
+}
+
+/**
+ * A WebTransport client on node:quic. The session is an extended CONNECT, and
+ * datagrams on it are prefixed with the CONNECT stream's quarter stream id —
+ * the first client bidi stream is id 0, so the prefix is a single zero byte.
+ */
+async function webTransportSession(
+  port: number,
+  path = "/echo",
+  extraHeaders: Record<string, string> = {},
+  transportParams: Record<string, number> = {},
+) {
+  const endpoint = new QuicEndpoint();
+  const datagrams: Uint8Array[] = [];
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5, maxDatagramFrameSize: 1500, ...transportParams },
+    onerror() {},
+    ondatagram(bytes: Uint8Array) {
+      datagrams.push(bytes.subarray(1));
+    },
+  });
+  await client.opened;
+
+  let status = "";
+  // Sent separately rather than through the `headers` option, which FINs the
+  // stream when there is no body. A FIN on the CONNECT stream ends the
+  // session.
+  const stream = await client.createBidirectionalStream({
+    onheaders(headers: Record<string, string>) {
+      status = headers[":status"];
+    },
+  });
+  let streamError = "";
+  stream.closed.catch((e: Error) => (streamError = String(e?.message ?? e)));
+  stream.sendHeaders(
+    {
+      ":method": "CONNECT",
+      ":protocol": "webtransport",
+      ":scheme": "https",
+      ":authority": "localhost",
+      ":path": path,
+      ...extraHeaders,
+    },
+    { terminal: false },
+  );
+
+  // Capsules the server writes on the CONNECT stream. Read rather than
+  // ignored so a test can assert their bytes: the close handler firing says
+  // the server believes the session ended, not that the peer can read why.
+  const inbound: number[] = [];
+  const pump = (async () => {
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) inbound.push(...chunk);
+    }
+  })().catch(() => {});
+
+  const until = async (predicate: () => boolean, ms = 5000) => {
+    const deadline = Date.now() + ms;
+    while (!predicate() && Date.now() < deadline) await Bun.sleep(5);
+    return predicate();
+  };
+  // A datagram naming a session the server has not opened is dropped, so
+  // nothing may be sent before the 200 lands.
+  await until(() => status !== "");
+
+  const qsid = quicVarint(0);
+  return {
+    stream,
+    get status() {
+      return status;
+    },
+    get streamError() {
+      return streamError;
+    },
+    inbound,
+    datagrams,
+    send(payload: string) {
+      const body = Buffer.from(payload);
+      const dg = new Uint8Array(qsid.length + body.length);
+      dg.set(qsid, 0);
+      dg.set(body, qsid.length);
+      client.sendDatagram(dg);
+    },
+    until,
+    text: () => datagrams.map(d => Buffer.from(d).toString()),
+    async close() {
+      // destroy(), not close(): a graceful close waits out the CONNECT
+      // stream, which is open on purpose — eleven seconds, not one.
+      if (!client.destroyed) client.destroy();
+      await pump;
+      await endpoint[Symbol.asyncDispose]?.();
+    },
+  };
+}
+
+describe("Bun.serve WebTransport", () => {
+  test("opens a session and carries datagrams both ways", async () => {
+    const opened: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open(session) {
+          session.data = { id: opened.length };
+          opened.push(session.maxDatagramSize);
+        },
+        datagram(session, bytes) {
+          const { id } = session.data as { id: number };
+          session.sendDatagram(Buffer.from(`echo:${id}:${Buffer.from(bytes).toString()}`));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(wt.status).toBe("200");
+      for (const message of ["one", "two", "three"]) wt.send(message);
+      expect(await wt.until(() => wt.datagrams.length >= 3)).toBe(true);
+      // The `0:` is `session.data` read back through its cached slot.
+      expect(wt.text()).toEqual(["echo:0:one", "echo:0:two", "echo:0:three"]);
+      expect(opened.length).toBe(1);
+      expect(opened[0]).toBeGreaterThan(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("ordinary HTTP/3 requests still work on a server that accepts sessions", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: { datagram() {} },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(await h3Exchange(server.port, requestHeaders("/"))).toBe("200 plain http/3");
+  });
+
+  test("a CONNECT without :protocol goes to fetch rather than being upgraded", async () => {
+    let sessions = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open() {
+          sessions++;
+        },
+      },
+      fetch: req => new Response("fetch saw " + req.method),
+    });
+
+    const result = await h3Exchange(server.port, {
+      ":method": "CONNECT",
+      ":path": "/echo",
+      ":scheme": "https",
+      ":authority": "localhost",
+    });
+    // The session route yields when :protocol is not ours, so a webtransport
+    // handler does not take plain CONNECT from the application.
+    expect(result).toBe("200 fetch saw CONNECT");
+    expect(sessions).toBe(0);
+  });
+
+  test("reload() cannot add webtransport to a server that started without it", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(() => server.reload({ fetch: () => new Response("x"), webtransport: { datagram() {} } })).toThrow(
+      /webtransport/,
+    );
+  });
+
+  test("reload() can replace the handlers on a server that started with them", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    server.reload({
+      fetch: () => new Response("plain http/3"),
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(Buffer.from("reloaded:" + Buffer.from(bytes).toString()));
+        },
+      },
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("hi");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["reloaded:hi"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("close() ends the session and runs the close handler", async () => {
+    const closes: Array<{ code: number; reason: string; closedFlag: boolean; sendAfter: number }> = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          if (Buffer.from(bytes).toString() === "bye") {
+            session.close(7, "done here");
+            return;
+          }
+          session.sendDatagram(bytes);
+        },
+        close(session, code, reason) {
+          closes.push({
+            code,
+            reason,
+            closedFlag: session.closed,
+            // Must get the closed answer, not a dying stream.
+            sendAfter: session.sendDatagram("late"),
+          });
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("bye");
+      expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
+      // The server's own code and reason, without waiting for the peer's
+      // answering FIN — a peer need never send one.
+      expect(closes).toEqual([{ code: 7, reason: "done here", closedFlag: true, sendAfter: 0 }]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("sendDatagram reports queued, refused and dropped apart", async () => {
+    const results: number[] = [];
+    let max = 0;
+    let dropped = -1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          max = session.maxDatagramSize;
+          // Reports the frame prefix, so success is not the 0 that means
+          // dropped.
+          results.push(session.sendDatagram(new Uint8Array(0)));
+          // Larger than this server will queue.
+          results.push(session.sendDatagram(new Uint8Array(max + 1)));
+          // The largest it will.
+          results.push(session.sendDatagram(new Uint8Array(max)));
+          // Past what the queue holds. Nothing drains it until the next turn
+          // of the loop, so a handler that keeps sending reaches the drop.
+          for (let i = 0; i < 200; i++) {
+            if (session.sendDatagram(new Uint8Array(max)) === 0) {
+              dropped = i;
+              break;
+            }
+          }
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      expect(await wt.until(() => results.length >= 3, 3000)).toBe(true);
+      expect(max).toBeGreaterThan(0);
+      expect(results).toEqual([1, -1, max + 1]);
+      // 64 KB of [uint16 length][payload] records, so largest-sized datagrams
+      // run out in the fifties — no round number worth pinning.
+      expect(dropped).toBeGreaterThan(0);
+      expect(dropped).toBeLessThan(200);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("the drain handler fires once the refused queue empties", async () => {
+    let refusals = 0;
+    let drains = 0;
+    let sentAfterDrain = -1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          // Fill the connection's queue to its first refusal. Nothing drains
+          // it until this handler returns, so the 0 always arrives.
+          const payload = new Uint8Array(session.maxDatagramSize);
+          for (let i = 0; i < 200; i++) {
+            if (session.sendDatagram(payload) === 0) {
+              refusals++;
+              break;
+            }
+          }
+        },
+        drain(session) {
+          drains++;
+          sentAfterDrain = session.sendDatagram(new TextEncoder().encode("drained"));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      // The burst datagrams flush to loopback, the queue empties, drain runs,
+      // and its own send is the observable proof it ran after the refusal.
+      expect(await wt.until(() => wt.text().includes("drained"), 5000)).toBe(true);
+      expect(refusals).toBe(1);
+      expect(drains).toBe(1);
+      expect(sentAfterDrain).toBeGreaterThan(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("upgrade() returning false accepts a session whose data is false", async () => {
+    // The Response is the one refusal; every other return value is stored as
+    // session.data verbatim, false included, with no { data } unwrapping.
+    let opened: unknown = "never ran";
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade() {
+          return false;
+        },
+        open(session) {
+          opened = session.data;
+          session.sendDatagram(new TextEncoder().encode("in"));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(await wt.until(() => wt.datagrams.length >= 1, 3000)).toBe(true);
+      expect(opened).toBe(false);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("close() writes a CLOSE_WEBTRANSPORT_SESSION capsule and nothing else", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          session.close(4242, "bye");
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("close me");
+      expect(await wt.until(() => wt.inbound.length >= 10, 3000)).toBe(true);
+      // varint(0x2843), varint(4 + 3), the code big-endian, then the reason.
+      // Asserted as bytes because the handler firing only says the server
+      // believes the session ended; these two came apart once already.
+      expect(wt.inbound).toEqual([0x68, 0x43, 0x07, 0x00, 0x00, 0x10, 0x92, 0x62, 0x79, 0x65]);
+      // An orderly close is the capsule and a FIN. A STOP_SENDING or reset
+      // reads as abrupt termination, and the peer reports the connection lost
+      // instead of the code just written.
+      expect(wt.streamError).toBe("");
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("close() cuts an over-long reason at a UTF-8 boundary", async () => {
+    // A three-byte character straddling the 1024-byte cap at bytes 1023..1025,
+    // so the cut has to fall back to 1023. Cutting flat at 1024 would put half
+    // a character on the wire, and a peer that fails the session over a
+    // malformed reason never reports the code it was closed with.
+    const kept = "a".repeat(1023);
+    const reason = kept + "\u20ac" + "b".repeat(64);
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          session.close(7, reason);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("close me");
+      // 2 type + 2 length + 4 code, then the reason.
+      const header = 8;
+      expect(await wt.until(() => wt.inbound.length >= header + kept.length, 3000)).toBe(true);
+      const bytes = Uint8Array.from(wt.inbound);
+      // varint(0x2843), then 4 + 1023 as a two-byte varint, then the code.
+      // Hand-computed rather than derived: a wire test that builds its own
+      // expectation from the same arithmetic the code uses proves nothing.
+      expect(Array.from(bytes.subarray(0, header))).toEqual([0x68, 0x43, 0x44, 0x03, 0x00, 0x00, 0x00, 0x07]);
+      const got = bytes.subarray(header, header + kept.length);
+      // The whole character is dropped rather than half-written, so the
+      // reason is the ASCII run alone and still decodes.
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(got)).toBe(kept);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("upgrade() sees the request and its return value becomes session.data", async () => {
+    const seen: Array<{ url: string; method: string; auth: string | null }> = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade(req) {
+          seen.push({ url: req.url, method: req.method, auth: req.headers.get("x-token") });
+          return { token: req.headers.get("x-token") };
+        },
+        datagram(session, bytes) {
+          const { token } = session.data as { token: string };
+          session.sendDatagram(Buffer.from(`${token}:${Buffer.from(bytes).toString()}`));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port, "/game?level=3", { "x-token": "tok-1" });
+    try {
+      wt.send("hi");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["tok-1:hi"]);
+      // :authority reaches the handler as `host` and the path keeps its
+      // query, so this is the URL the peer asked for.
+      expect(seen).toEqual([{ url: "https://localhost/game?level=3", method: "CONNECT", auth: "tok-1" }]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("upgrade() returning a Response refuses the session and sends it", async () => {
+    let opened = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade(req) {
+          if (new URL(req.url).pathname !== "/game") {
+            return new Response("wrong door", { status: 404 });
+          }
+        },
+        open() {
+          opened++;
+        },
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const refused = await webTransportSession(server.port, "/nope");
+    try {
+      expect(refused.status).toBe("404");
+      expect(opened).toBe(0);
+    } finally {
+      await refused.close();
+    }
+
+    // The same server still accepts /game, so the refusal is a decision and
+    // not the route being taken away.
+    const accepted = await webTransportSession(server.port, "/game");
+    try {
+      expect(accepted.status).toBe("200");
+      accepted.send("through");
+      expect(await accepted.until(() => accepted.datagrams.length >= 1)).toBe(true);
+      expect(accepted.text()).toEqual(["through"]);
+      expect(opened).toBe(1);
+    } finally {
+      await accepted.close();
+    }
+  });
+
+  test("requestIP answers inside upgrade, and refusing on it refuses", async () => {
+    const addresses: Array<{ address: string; family: string; port: number } | null> = [];
+    let heldRequest: Request | null = null;
+    let seenServer: unknown = null;
+    let afterUpgrade: unknown = "unset";
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade(req, srv) {
+          seenServer = srv;
+          const ip = srv.requestIP(req);
+          addresses.push(ip);
+          heldRequest = req;
+          // The documented per-address cap, at its smallest: the first
+          // session from an address is let in, the second refused.
+          if (addresses.length > 1) return new Response(null, { status: 429 });
+          return { ip };
+        },
+        open(session) {
+          const { ip } = session.data as { ip: { address: string } };
+          session.sendDatagram(Buffer.from(ip.address));
+        },
+        datagram() {},
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const first = await webTransportSession(server.port);
+    try {
+      expect(first.status).toBe("200");
+      expect(await first.until(() => first.datagrams.length >= 1)).toBe(true);
+      // The loopback client's own address, in requestIP's ordinary shape —
+      // through `session.data`, which is where an address needed after
+      // `upgrade` belongs.
+      expect(first.text()).toEqual(["127.0.0.1"]);
+      expect(addresses).toEqual([{ address: "127.0.0.1", family: "IPv4", port: expect.any(Number) }]);
+      expect(addresses[0]!.port).toBeGreaterThan(0);
+      expect(seenServer).toBe(server);
+    } finally {
+      await first.close();
+    }
+
+    const second = await webTransportSession(server.port);
+    try {
+      expect(second.status).toBe("429");
+      // Answered after `upgrade` returned, on a Request the handler kept:
+      // null, exactly as a fetch request answers once its response is done.
+      afterUpgrade = server.requestIP(heldRequest!);
+      expect(afterUpgrade).toBeNull();
+    } finally {
+      await second.close();
+    }
+  });
+
+  test("session.rtt reports the connection's estimate, then 0 once closed", async () => {
+    const live: number[] = [];
+    let atClose = -1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open(session) {
+          live.push(session.rtt);
+        },
+        datagram(session) {
+          session.close(0, "done");
+        },
+        close(session) {
+          atClose = session.rtt;
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      expect(await wt.until(() => atClose !== -1)).toBe(true);
+      // The handshake took at least one round trip, so a session never opens
+      // without an estimate. No upper bound: CI decides how slow loopback is.
+      expect(live).toHaveLength(1);
+      expect(live[0]).toBeGreaterThan(0);
+      expect(Number.isFinite(live[0])).toBe(true);
+      expect(atClose).toBe(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("a throwing upgrade() answers 500 rather than opening a session", async () => {
+    let opened = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade() {
+          throw new Error("nope");
+        },
+        open() {
+          opened++;
+        },
+        datagram() {},
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      // Reported and refused; with no `Response` returned, 500 is the whole
+      // answer.
+      expect(wt.status).toBe("500");
+      expect(opened).toBe(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("startDraining() signals the peer without ending the session", async () => {
+    const closes: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          if (Buffer.from(bytes).toString() === "wind up") {
+            session.startDraining();
+            return;
+          }
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(1);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("wind up");
+      // varint(0x78ae) then a zero length. Bytes again: the draft calls drain
+      // advisory, so there is no local effect to observe.
+      expect(await wt.until(() => wt.inbound.length >= 5, 3000)).toBe(true);
+      expect(wt.inbound).toEqual([0x80, 0x00, 0x78, 0xae, 0x00]);
+      // Advisory: the session keeps working and no close handler runs.
+      wt.send("still here");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["still here"]);
+      expect(closes).toEqual([]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("maxDatagramSize is capped by what the peer advertised", async () => {
+    let max = -1;
+    let refused = 1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          max = session.maxDatagramSize;
+          // One past the cap is refused, so this is the real limit.
+          refused = session.sendDatagram(new Uint8Array(max + 1));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    // Far below this server's 1200-byte limit, so the peer's figure shows
+    // through.
+    const wt = await webTransportSession(server.port, "/echo", {}, { maxDatagramFrameSize: 300 });
+    try {
+      wt.send("go");
+      expect(await wt.until(() => max >= 0, 3000)).toBe(true);
+      // 300 less the one-byte quarter-stream-id prefix.
+      expect(max).toBe(299);
+      expect(refused).toBe(-1);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("a user '/*' route does not take CONNECT away from webtransport", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+      },
+      // A "/*" route covering only some methods makes Bun register the rest
+      // per-method, CONNECT included. That fallback shares (connect, "/*")
+      // with the session route, and HttpRouter::add removes any handler at the
+      // same method, pattern and priority before inserting.
+      routes: { "/*": { GET: () => new Response("routed") } },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(await h3Exchange(server.port, requestHeaders("/"))).toBe("200 routed");
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(wt.status).toBe("200");
+      wt.send("still mine");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["still mine"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("a session keeps dispatching after the server is stopped and collected", async () => {
+    const seen: string[] = [];
+    let server: Bun.Server | null = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          seen.push(Buffer.from(bytes).toString());
+          session.sendDatagram(bytes);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("before");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+
+      // A stopped server with no JS references left still owns the `wtOn*`
+      // slots this session dispatches off, and the native server the session
+      // holds an `AnyServer` to. `is_drained` counts live sessions so neither
+      // is released here.
+      server.stop();
+      server = null;
+      Bun.gc(true);
+      Bun.gc(true);
+
+      wt.send("after");
+      expect(await wt.until(() => wt.datagrams.length >= 2)).toBe(true);
+      expect(seen).toEqual(["before", "after"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("stop(true) with a live session on an http3-only server", async () => {
+    const closes: number[] = [];
+    // `await using` as well as the explicit stop below: the stop is the thing
+    // under test, and disposal is what stops the server when an assertion
+    // before it throws. Stopping twice is a no-op.
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      // No TCP listener, so taking the HTTP/3 one leaves `has_listener()`
+      // false while the abrupt close is still draining. The session's close
+      // then reports the server drained from inside that drain, and the idle
+      // pass it triggers would run under the frame's own `&mut self`.
+      http1: false,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(1);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("alive");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      await server.stop(true);
+      expect(closes).toEqual([1]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("an unknown capsule larger than the buffer is ignored, not fatal", async () => {
+    const closes: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(Date.now());
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      // An unregistered capsule type with a 64 KB body. The draft requires it
+      // be ignored, and it is far larger than the parser will buffer, so the
+      // body has to be skipped against the arriving bytes. This asserts that
+      // requirement, not any past failure — reads here arrive packet-shaped.
+      const bodyLen = 65536;
+      // Type 0x1234 as a two-byte varint, then 65536 as a four-byte one.
+      const header = Buffer.from([0x52, 0x34, 0x80, 0x01, 0x00, 0x00]);
+      const capsule = Buffer.concat([header, Buffer.alloc(bodyLen, 0x5a)]);
+      // Enqueues and never closes: a FIN would end the session, which is the
+      // next test.
+      wt.stream.setBody(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(capsule));
+          },
+        }),
+      );
+
+      // The session must still be carrying datagrams afterwards.
+      wt.send("after the capsule");
+      expect(await wt.until(() => wt.datagrams.length >= 1, 3000)).toBe(true);
+      expect(wt.text()).toEqual(["after the capsule"]);
+      // The capsule being ignored rather than fatal is the whole claim, so the
+      // session must not have closed behind the datagram round-trip.
+      expect(closes).toEqual([]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("a peer that ends the CONNECT stream ends the session", async () => {
+    const closes: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(Date.now());
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("still here");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      // An empty body is a FIN and nothing else — the draft lets a peer end a
+      // session that way, and it is all node:quic can say.
+      wt.stream.setBody(new Response("").body);
+      expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("rejects a webtransport handler on a server without http3", () => {
+    expect(() => Bun.serve({ port: 0, tls, webtransport: { datagram() {} }, fetch: () => new Response() })).toThrow(
+      /webtransport/,
+    );
+  });
+
+  test("rejects a webtransport option that is not a handler object", () => {
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        webtransport: { datagram: "nope" } as never,
+        fetch: () => new Response(),
+      }),
+    ).toThrow();
+    expect(() =>
+      Bun.serve({ port: 0, tls, http3: true, webtransport: {} as never, fetch: () => new Response() }),
+    ).toThrow();
+  });
+});

@@ -1,0 +1,53 @@
+--- a/src/liblsquic/lsquic_hcso_writer.c
++++ b/src/liblsquic/lsquic_hcso_writer.c
+@@ -191,18 +191,27 @@
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+     if (is_server && webtransport_server && max_webtransport_server_streams)
+     {
+-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
++        /* Write out both WebTransport session settings.
++         *
++         * bun: draft-02's SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742) is what
++         * lsquic shipped, and draft-07 replaced it with
++         * SETTINGS_WEBTRANSPORT_MAX_SESSIONS (0xc671706a). A client picks the
++         * newest it recognises, so sending both is what lets one server serve
++         * either. lsquic's own 0x2b603743 is not a setting any draft defines
++         * and is not sent.
++         *
++         * SETTINGS_H3_DATAGRAM is written above, from the h3_datagram
++         * parameter; the copy that used to sit here made it a repeated
++         * setting identifier, which is H3_SETTINGS_ERROR. */
+ #define SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742)
+-#define SETTINGS_ENABLE_WEBTRANSPORT_VALUE (1)
+         bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_WEBTRANSPORT);
+         vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT, bits, 1 << bits);
+         p += 1 << bits;
+-        bits = vint_val2bits(SETTINGS_ENABLE_WEBTRANSPORT_VALUE);
+-        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT_VALUE, bits, 1 << bits);
++        bits = vint_val2bits(1);
++        vint_write(p, 1, bits, 1 << bits);
+         p += 1 << bits;
+ 
+-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
+-#define WEBTRANSPORT_MAX_SESSIONS (0x2b603743)
++#define WEBTRANSPORT_MAX_SESSIONS (0xc671706a)
+         bits = hcso_setting_type2bits(writer, WEBTRANSPORT_MAX_SESSIONS);
+         vint_write(p, WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
+         p += 1 << bits;
+@@ -210,16 +219,6 @@
+         vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
+         p += 1 << bits;
+ 
+-        /* Write out H3_DATAGRAM_ENABLED */
+-#define H3_DATAGRAM_ENABLED (0x33)
+-#define H3_DATAGRAM_ENABLED_VALUE (1)
+-        bits = hcso_setting_type2bits(writer, H3_DATAGRAM_ENABLED);
+-        vint_write(p, H3_DATAGRAM_ENABLED, bits, 1 << bits);
+-        p += 1 << bits;
+-        bits = vint_val2bits(H3_DATAGRAM_ENABLED_VALUE);
+-        vint_write(p, H3_DATAGRAM_ENABLED_VALUE, bits, 1 << bits);
+-        p += 1 << bits;
+-
+         /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
+ #define SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8)
+ #define SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE (1)

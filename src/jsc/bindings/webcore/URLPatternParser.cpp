@@ -378,16 +378,7 @@ static size_t lastPartWithBackreference(const Vector<Part>& partList)
     return notFound;
 }
 
-// In "/:a-:b" the spec regexp for :a is the lazy `[^/]+?`. It stops at the first "-" that lets the rest match, and each
-// time the rest fails it moves on to the next "-". With k such groups in one segment a non-matching input costs O(n^k).
-// :b accepts every character that :a and "-" can match, so if the rest matches after a later "-" it also matches after
-// the first "-" that leaves :a non-empty. The regexp returned here stops only there. The match and its groups are the
-// same as with the spec regexp, and a non-matching input costs O(n).
-//
-// The text between the two groups is the suffix of :a, one fixed text part and the prefix of :b, so "/:a{-:b}" and
-// "/{:a-}:b" are the same case. With no text in between, as in "/:a:b", :a is always one character. Text of more than
-// one character keeps the spec regexp: a regexp that stops at its first match needs a group inside a loop, and YARR
-// gives up on such a loop after about a million iterations where `[^/]+?` has no limit.
+// The spec's lazy `[^/]+?` for :a in "/:a-:b" retries at every later "-", O(n^k) for k groups. :b accepts whatever a later "-" would give :a, so stopping at the first "-" finds the same match and groups.
 static String generateSegmentWildcardRegexpForPart(const Vector<Part>& partList, size_t index, size_t lastBackreferenceIndex, const URLPatternStringOptions& options)
 {
     auto wildcard = generateSegmentWildcardRegexp(options);
@@ -407,6 +398,7 @@ static String generateSegmentWildcardRegexpForPart(const Vector<Part>& partList,
     if (nextPart.type != PartType::SegmentWildcard || nextPart.modifier != Modifier::None)
         return wildcard;
 
+    // To stop at the first match of a longer separator takes a group inside a loop, and YARR gives up on such a loop after about a million iterations.
     if (part.suffix.length() + fixedText.length() + nextPart.prefix.length() > 1)
         return wildcard;
     auto separator = makeString(part.suffix, fixedText, nextPart.prefix);

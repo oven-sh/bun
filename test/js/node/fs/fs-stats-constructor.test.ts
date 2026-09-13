@@ -68,14 +68,16 @@ describe("Stats date getters convert *Ms like Node.js", () => {
 
     const stats = statSync(file);
     const bigint = statSync(file, { bigint: true });
+    // The stored fraction depends on the filesystem's timestamp resolution
+    // (789.5999 with nanoseconds on Linux, 789.6 with 100 ns on Windows).
+    expect(stats.mtimeMs).toBeGreaterThanOrEqual(1700000000789.5);
+    expect(stats.mtimeMs).toBeLessThan(1700000000790);
     expect({
-      mtimeMs: stats.mtimeMs,
       mtime: stats.mtime.getTime(),
       atime: stats.atime.getTime(),
       bigintMtimeMs: bigint.mtimeMs,
       bigintMtime: bigint.mtime.getTime(),
     }).toEqual({
-      mtimeMs: 1700000000789.5999,
       mtime: 1700000000790,
       atime: 1700000000790,
       bigintMtimeMs: 1700000000789n,

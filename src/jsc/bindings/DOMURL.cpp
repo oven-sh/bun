@@ -215,26 +215,25 @@ static size_t maximumURLLength()
 // "(" in the query of the URL is "%28=" when the params serialize it.
 static constexpr uint64_t maximumGrowthOfSerializedQuery = 4;
 
-bool DOMURL::canDeferSearchParamsUpdate(uint64_t addedLength) const
+bool DOMURL::deferSearchParamsUpdate(uint64_t addedLength)
 {
     uint64_t lengthBound = maximumGrowthOfSerializedQuery * m_url.string().length() + m_pendingSearchParamsLength + addedLength;
     // Half of the limit leaves WTF::URLParser the room it reserves. Past it the URL takes the pairs at once, which is exact.
-    return lengthBound <= maximumURLLength() / 2;
+    if (lengthBound > maximumURLLength() / 2) [[unlikely]]
+        return false;
+    m_pendingSearchParamsLength += static_cast<uint32_t>(addedLength);
+    m_searchParamsDirty = true;
+    return true;
 }
 
-ExceptionOr<void> DOMURL::searchParamsDidChange(uint64_t addedLength)
+bool DOMURL::updateFromSearchParams()
 {
     bool wasDirty = std::exchange(m_searchParamsDirty, true);
-    if (canDeferSearchParamsUpdate(addedLength)) [[likely]] {
-        m_pendingSearchParamsLength += addedLength;
-        return {};
-    }
-    if (!flushPendingSearchParamsUpdate()) [[unlikely]] {
-        // URLSearchParams puts its pairs back, so the URL is as much behind them as it was.
-        m_searchParamsDirty = wasDirty;
-        return Exception { OutOfMemoryError };
-    }
-    return {};
+    if (flushPendingSearchParamsUpdate())
+        return true;
+    // URLSearchParams puts its pairs back, so the URL is as much behind them as it was.
+    m_searchParamsDirty = wasDirty;
+    return false;
 }
 
 // The update steps invoked on URLSearchParams::{append,set,delete,sort} set

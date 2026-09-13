@@ -57,9 +57,10 @@ public:
     ExceptionOr<void> setHref(const String&);
 
     URLSearchParams& searchParams();
-    // URLSearchParams calls this after a change that adds at most addedLength characters. Fails if the URL does not fit in a String.
-    ExceptionOr<void> searchParamsDidChange(uint64_t addedLength);
-    bool canDeferSearchParamsUpdate(uint64_t addedLength) const;
+    // For a change of the searchParams that adds at most addedLength characters. True: the URL takes the pairs at its next read.
+    bool deferSearchParamsUpdate(uint64_t addedLength);
+    // Takes the pairs now. False if the URL does not fit in a String with them. It is then as it was.
+    bool updateFromSearchParams();
 
     size_t memoryCost() const
     {
@@ -84,8 +85,8 @@ private:
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
-    // At least what the changes since the last flush add to the query.
-    mutable uint64_t m_pendingSearchParamsLength { 0 };
+    // At least what the changes since the last flush add to the query. canDeferSearchParamsUpdate() keeps it under 2^30.
+    mutable uint32_t m_pendingSearchParamsLength { 0 };
     uint16_t m_initialURLCostForGC { 0 };
     mutable bool m_searchParamsDirty { false };
 };

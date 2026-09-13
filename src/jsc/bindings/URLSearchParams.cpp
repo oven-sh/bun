@@ -103,20 +103,25 @@ bool URLSearchParams::has(const StringView name, const String& value) const
 
 // Applies the change and tells the URL. If the URL cannot take it, which needs gigabytes, the pairs go back to what they were.
 template<typename Change>
-ExceptionOr<void> URLSearchParams::changePairs(uint64_t addedLength, const Change& change)
+ALWAYS_INLINE ExceptionOr<void> URLSearchParams::changePairs(uint64_t addedLength, const Change& change)
 {
-    std::optional<Vector<KeyValuePair<String, String>>> pairsBefore;
-    if (m_associatedURL && !m_associatedURL->canDeferSearchParamsUpdate(addedLength)) [[unlikely]]
-        pairsBefore = m_pairs;
+    auto* url = m_associatedURL.get();
+    if (url && !url->deferSearchParamsUpdate(addedLength)) [[unlikely]]
+        return changePairsAndUpdateURL(*url, change);
     change();
-    if (!m_associatedURL)
-        return {};
-    auto result = m_associatedURL->searchParamsDidChange(addedLength);
-    if (result.hasException()) [[unlikely]] {
-        ASSERT(pairsBefore);
-        m_pairs = WTF::move(*pairsBefore);
+    return {};
+}
+
+template<typename Change>
+NEVER_INLINE ExceptionOr<void> URLSearchParams::changePairsAndUpdateURL(DOMURL& url, const Change& change)
+{
+    auto pairsBefore = m_pairs;
+    change();
+    if (!url.updateFromSearchParams()) {
+        m_pairs = WTF::move(pairsBefore);
+        return Exception { OutOfMemoryError };
     }
-    return result;
+    return {};
 }
 
 ExceptionOr<void> URLSearchParams::sort()

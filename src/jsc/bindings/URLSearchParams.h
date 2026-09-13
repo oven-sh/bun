@@ -77,6 +77,7 @@ private:
     URLSearchParams(const String&, DOMURL*);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
     template<typename Change> ExceptionOr<void> changePairs(uint64_t addedLength, const Change&);
+    template<typename Change> ExceptionOr<void> changePairsAndUpdateURL(DOMURL&, const Change&);
 
     WeakPtr<DOMURL> m_associatedURL;
     Vector<KeyValuePair<String, String>> m_pairs;

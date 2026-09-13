@@ -506,36 +506,31 @@ pub mod vec {
         unsafe { v.set_len(v.len() + n) };
     }
 
-    /// One-shot "reserve → hand spare bytes to producer → commit" combinator.
+    /// One-shot "reserve → hand spare capacity to producer → commit" combinator.
     ///
     /// If `min_spare > 0`, reserves at least that many spare bytes first.
-    /// Calls `f` with the spare-capacity slice; `f` must return
+    /// Calls `f` with `v.spare_capacity_mut()`; `f` must return
     /// `(bytes_written, payload)` — `bytes_written` is committed via
     /// [`commit_spare`] and `payload` is returned to the caller. Return
     /// `(0, payload)` to commit nothing (e.g. on a producer error).
     ///
     /// # Safety
-    /// Same as [`spare_bytes_mut`]: `f` receives a slice over uninitialized
-    /// bytes and must treat it as write-only. The `bytes_written` it reports
-    /// must not exceed the slice length and must cover only bytes `f`
-    /// actually initialized.
+    /// The `bytes_written` `f` reports must not exceed the slice length and
+    /// must cover only leading slots `f` actually initialized.
     #[inline]
     pub unsafe fn fill_spare<R>(
         v: &mut Vec<u8>,
         min_spare: usize,
-        f: impl FnOnce(&mut [u8]) -> (usize, R),
+        f: impl FnOnce(&mut [core::mem::MaybeUninit<u8>]) -> (usize, R),
     ) -> R {
         if min_spare > 0 {
             v.reserve(min_spare);
         }
-        // SAFETY: caller upholds the `spare_bytes_mut` write-only contract via
-        // `f`; `n` is `f`'s reported written-byte count, which by contract is
+        let (n, r) = f(v.spare_capacity_mut());
+        // SAFETY: `n` is `f`'s reported written-byte count, which by contract is
         // ≤ the spare slice length and covers only initialized bytes.
-        unsafe {
-            let (n, r) = f(spare_bytes_mut(v));
-            commit_spare(v, n);
-            r
-        }
+        unsafe { commit_spare(v, n) };
+        r
     }
 
     /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
@@ -1191,11 +1186,11 @@ pub use crate::string::immutable::{
     CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
     concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
-    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    decode_hex_to_bytes_truncate, decode_hex_to_uninit, encode_bytes_to_hex, ends_with_any,
+    ends_with_char, ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime,
+    eql_comptime_utf16, format_escapes, has_prefix, has_prefix_case_insensitive,
+    has_prefix_comptime, has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
     is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
@@ -1660,7 +1655,7 @@ pub(crate) mod strings_impl {
                 let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
                     utf16.len(),
-                    spare.as_mut_ptr(),
+                    spare.as_mut_ptr().cast::<u8>(),
                 );
                 (
                     if r.status == simdutf::Status::SURROGATE {
@@ -2421,6 +2416,11 @@ pub mod ffi {
     /// borrow's lifetime, so an import taking `FfiSlice<'_, T>` can be declared
     /// `safe fn`: the callee may read `len` elements at `ptr` for the duration
     /// of the call and nothing else.
+    ///
+    /// One made with [`from_raw`](Self::from_raw) may cover memory something
+    /// else writes meanwhile (a pinned JS `ArrayBuffer`), so an `FfiSlice` is
+    /// never turned back into a `&[T]`: C code reads it, or
+    /// [`copy_to`](Self::copy_to)/[`to_vec`](Self::to_vec) take a raw copy.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct FfiSlice<'a, T = u8> {
@@ -2437,6 +2437,79 @@ pub mod ffi {
                 len: s.len(),
                 _borrow: core::marker::PhantomData,
             }
+        }
+
+        /// # Safety
+        /// `ptr[..len]` stays allocated and readable for all of `'a` (its
+        /// contents may change, but it may not be freed, moved or shrunk).
+        #[inline]
+        pub const unsafe fn from_raw(ptr: *const T, len: usize) -> Self {
+            Self {
+                ptr,
+                len,
+                _borrow: core::marker::PhantomData,
+            }
+        }
+
+        #[inline]
+        pub const fn as_ptr(self) -> *const T {
+            self.ptr
+        }
+        #[inline]
+        pub const fn len(self) -> usize {
+            self.len
+        }
+        #[inline]
+        pub const fn is_empty(self) -> bool {
+            self.len == 0
+        }
+
+        /// `self[start..]`; panics if `start > len`.
+        #[inline]
+        #[track_caller]
+        pub fn skip(self, start: usize) -> Self {
+            assert!(start <= self.len, "FfiSlice::skip out of bounds");
+            // SAFETY: `start <= len`, so the result stays inside the same readable range.
+            unsafe { Self::from_raw(self.ptr.add(start), self.len - start) }
+        }
+
+        /// `self[..len.min(n)]`.
+        #[inline]
+        pub fn take(self, n: usize) -> Self {
+            Self {
+                len: self.len.min(n),
+                ..self
+            }
+        }
+    }
+
+    impl<'a, T: Copy> FfiSlice<'a, T> {
+        /// Copy `min(self.len, dst.len)` leading elements into `dst`; returns how many.
+        #[inline]
+        pub fn copy_to(self, dst: &mut [T]) -> usize {
+            let n = self.len.min(dst.len());
+            // SAFETY: `ptr[..n]` is readable (type invariant) and `dst` is valid for
+            // `n` writes; `from_raw` does not rule out `dst` overlapping it, so memmove.
+            unsafe { core::ptr::copy(self.ptr, dst.as_mut_ptr(), n) };
+            n
+        }
+
+        /// A copy of the elements as they are now.
+        pub fn to_vec(self) -> Vec<T> {
+            self.to_vec_with_prefix(&[])
+        }
+
+        /// `prefix` followed by a copy of the elements as they are now.
+        pub fn to_vec_with_prefix(self, prefix: &[T]) -> Vec<T> {
+            let mut out = Vec::<T>::with_capacity(prefix.len() + self.len);
+            out.extend_from_slice(prefix);
+            // SAFETY: `ptr[..len]` is readable (type invariant); `out` has room
+            // for `len` more elements after `prefix`, which the copy initializes.
+            unsafe {
+                core::ptr::copy_nonoverlapping(self.ptr, out.as_mut_ptr().add(out.len()), self.len);
+                out.set_len(out.len() + self.len);
+            }
+            out
         }
     }
 

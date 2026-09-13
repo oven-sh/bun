@@ -229,28 +229,23 @@ impl TextDecoder {
         decoded
             .try_reserve_exact(cap)
             .map_err(|_| strings::ToUTF16Error::OutOfMemory)?;
-        // SAFETY: `decoded` has `cap` spare units. encoding_rs only writes to
-        // its output slice (Gecko has it fill uninitialized string storage the
-        // same way), so the units need no zero-fill; `set_len` below exposes
-        // only the prefix it reports as written.
-        let dst = unsafe { core::slice::from_raw_parts_mut(decoded.as_mut_ptr(), cap) };
+        decoded.resize(cap, 0);
 
         let written = if self.fatal {
             let (result, _, written) =
-                decoder.decode_to_utf16_without_replacement(bytes, dst, FLUSH);
+                decoder.decode_to_utf16_without_replacement(bytes, &mut decoded, FLUSH);
             if let encoding_rs::DecoderResult::Malformed(..) = result {
                 return Err(strings::ToUTF16Error::InvalidByteSequence);
             }
             debug_assert!(matches!(result, encoding_rs::DecoderResult::InputEmpty));
             written
         } else {
-            let (result, _, written, _) = decoder.decode_to_utf16(bytes, dst, FLUSH);
+            let (result, _, written, _) = decoder.decode_to_utf16(bytes, &mut decoded, FLUSH);
             debug_assert!(matches!(result, encoding_rs::CoderResult::InputEmpty));
             written
         };
         debug_assert!(written <= cap);
-        // SAFETY: encoding_rs initialized `dst[..written]`, and `written <= cap`.
-        unsafe { decoded.set_len(written) };
+        decoded.truncate(written);
         // `cap` is about one code unit per input byte; two-byte CJK text fills
         // half of it, and this buffer lives as long as the JS string does.
         decoded.shrink_to_fit();
@@ -350,15 +345,10 @@ impl TextDecoder {
                 // However, this is also what WebKit seems to do.
                 //
                 // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
-                let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
-                let mut units: Vec<u16> = Vec::with_capacity(out_length);
-                // SAFETY: `units` has `out_length` spare units; `buf` is only ever written.
-                let buf =
-                    unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
-                let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
-                // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
-                unsafe { units.set_len(out.written as usize) };
-                bun_string_jsc::owned_utf16_into_js(global_this, units)
+                bun_string_jsc::owned_utf16_into_js(
+                    global_this,
+                    strings::cp1252_to_utf16_alloc(buffer_slice),
+                )
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -648,24 +638,22 @@ impl TextDecoder {
 /// the inline `StreamingUTF8DecodeState` instead of this decoder, so no
 /// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
 /// returned with no exception.
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__createForStream(
+// HOST_EXPORT(TextDecoder__createForStream, c)
+pub fn create_for_stream(
     global: &JSGlobalObject,
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
-    out_utf8_fast_path: *mut bool,
-    out_encoding: *mut EncodingLabel,
-) -> *mut TextDecoder {
-    // SAFETY: both out-params are stack locals on the caller's frame.
-    unsafe { *out_utf8_fast_path = false };
+    out_utf8_fast_path: &mut bool,
+    out_encoding: &mut crate::webcore::EncodingLabel,
+) -> Option<Box<crate::webcore::TextDecoder>> {
+    *out_utf8_fast_path = false;
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
         let converted = match bun_core::String::from_js(label, global) {
             Ok(s) => s,
-            Err(_) => return core::ptr::null_mut(),
+            Err(_) => return None,
         };
         let str = converted.to_utf8();
         match EncodingLabel::which(str.slice()) {
@@ -680,18 +668,16 @@ pub extern "C" fn TextDecoder__createForStream(
                         ),
                     )
                     .throw();
-                return core::ptr::null_mut();
+                return None;
             }
         }
     };
-    // SAFETY: as above.
-    unsafe { out_encoding.write(encoding) };
+    *out_encoding = encoding;
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
-        // SAFETY: as above.
-        unsafe { *out_utf8_fast_path = true };
-        return core::ptr::null_mut();
+        *out_utf8_fast_path = true;
+        return None;
     }
-    bun_core::heap::into_raw(TextDecoder::new(TextDecoder {
+    Some(TextDecoder::new(TextDecoder {
         fatal,
         ignore_bom,
         encoding,
@@ -700,52 +686,32 @@ pub extern "C" fn TextDecoder__createForStream(
 }
 
 /// `TextDecoderStream.prototype.encoding`.
-#[unsafe(no_mangle)]
-pub extern "C" fn TextDecoder__encodingToJS(
-    global: &JSGlobalObject,
-    encoding: EncodingLabel,
-) -> JSValue {
+// HOST_EXPORT(TextDecoder__encodingToJS, c)
+pub fn encoding_to_js(global: &JSGlobalObject, encoding: crate::webcore::EncodingLabel) -> JSValue {
     encoding.to_js(global)
 }
 
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
-        // freed (the C++ cell clears its pointer before calling).
-        unsafe { bun_core::heap::destroy(this) };
-    }
+/// The C++ cell cleared its pointer before calling; dropping the box frees the decoder.
+// HOST_EXPORT(TextDecoder__destroyForStream, c)
+pub fn destroy_for_stream(this: Option<Box<crate::webcore::TextDecoder>>) {
+    drop(this);
 }
 
 /// The TextDecoderStream transform/flush step. `stream = true` for a mid-
-/// stream chunk, `false` for the final flush. `input` may be null iff
-/// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
-/// the exception pending on `global`.
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__decodeForStream(
-    this: *mut TextDecoder,
+/// stream chunk, `false` for the final flush. Returns a JSString on success,
+/// or `JSValue::zero` with the exception pending on `global`.
+// HOST_EXPORT(TextDecoder__decodeForStream, c)
+pub fn decode_for_stream(
+    this: &crate::webcore::TextDecoder,
     global: &JSGlobalObject,
-    input: *const u8,
-    input_len: usize,
+    input: &[u8],
     stream: bool,
 ) -> JSValue {
-    // SAFETY: `this` is the live decoder owned by the calling JS cell; driven
-    // only from the JS thread, so `&*this` has no mutable alias.
-    let this = unsafe { &*this };
-    let slice = if input.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: the caller passes a BufferSource's bytes; `slice` does not
-        // escape this call.
-        unsafe { core::slice::from_raw_parts(input, input_len) }
-    };
     this.begin_decode(stream);
     let result = if stream {
-        this.decode_slice::<false>(global, slice)
+        this.decode_slice::<false>(global, input)
     } else {
-        this.decode_slice::<true>(global, slice)
+        this.decode_slice::<true>(global, input)
     };
     result.or_pending_exception()
 }

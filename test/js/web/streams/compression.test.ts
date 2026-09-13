@@ -397,27 +397,32 @@ describe("CompressionStream and DecompressionStream", () => {
       return out;
     }
 
-    test("2MB chunk round-trips through CompressionStream('gzip') -> DecompressionStream('gzip')", async () => {
-      const big = randomBytes(2 * 1024 * 1024);
+    // Incompressible, so the compressed output outgrows the input-sized output
+    // cap mid-chunk and the final flush still has encoder output pending.
+    test.each(["gzip", "deflate-raw", "brotli", "zstd"] as const)(
+      "2MB chunk round-trips through CompressionStream(%s) -> DecompressionStream",
+      async format => {
+        const big = randomBytes(2 * 1024 * 1024);
 
-      const cs = new CompressionStream("gzip");
-      const cw = cs.writable.getWriter();
-      const compressedP = new Response(cs.readable).arrayBuffer();
-      await cw.write(big);
-      await cw.close();
-      const compressed = new Uint8Array(await compressedP);
-      expect(compressed.byteLength).toBeGreaterThan(0);
+        const cs = new CompressionStream(format);
+        const cw = cs.writable.getWriter();
+        const compressedP = new Response(cs.readable).arrayBuffer();
+        await cw.write(big);
+        await cw.close();
+        const compressed = new Uint8Array(await compressedP);
+        expect(compressed.byteLength).toBeGreaterThan(big.byteLength);
 
-      const ds = new DecompressionStream("gzip");
-      const dw = ds.writable.getWriter();
-      const decompressedP = new Response(ds.readable).arrayBuffer();
-      await dw.write(compressed);
-      await dw.close();
-      const decompressed = Buffer.from(await decompressedP);
+        const ds = new DecompressionStream(format);
+        const dw = ds.writable.getWriter();
+        const decompressedP = new Response(ds.readable).arrayBuffer();
+        await dw.write(compressed);
+        await dw.close();
+        const decompressed = Buffer.from(await decompressedP);
 
-      expect(decompressed.byteLength).toBe(big.byteLength);
-      expect(Buffer.compare(decompressed, Buffer.from(big.buffer))).toBe(0);
-    });
+        expect(decompressed.byteLength).toBe(big.byteLength);
+        expect(Buffer.compare(decompressed, Buffer.from(big.buffer))).toBe(0);
+      },
+    );
 
     test("DecompressionStream('gzip') handles a single >128KB compressed chunk", async () => {
       const big = randomBytes(2 * 1024 * 1024);

@@ -146,11 +146,7 @@ it("cpus", () => {
 // kern.cp_times is in kernel ticks. Node (libuv) scales it by 1000 / CLK_TCK to milliseconds.
 it.skipIf(process.platform !== "freebsd")("cpus times are in milliseconds on FreeBSD", () => {
   const readCpTimes = () =>
-    Bun.spawnSync(["sysctl", "-n", "kern.cp_times"])
-      .stdout.toString()
-      .trim()
-      .split(/\s+/)
-      .map(Number);
+    Bun.spawnSync(["sysctl", "-n", "kern.cp_times"]).stdout.toString().trim().split(/\s+/).map(Number);
   const clkTck = Number(Bun.spawnSync(["getconf", "CLK_TCK"]).stdout.toString().trim());
   expect(clkTck).toBeGreaterThan(0);
   const mult = Math.floor(1000 / clkTck);

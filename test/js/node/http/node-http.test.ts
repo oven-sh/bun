@@ -4434,6 +4434,118 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  it("completes the stopped listener generation when the final socket close listener relistens", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const responseReceived = Promise.withResolvers<void>();
+    const relistened = Promise.withResolvers<void>();
+    const firstClose = Promise.withResolvers<Error | undefined>();
+    const events: string[] = [];
+    let firstSocket = true;
+    const server = createServer(async (req, res) => {
+      if (req.url === "/first") {
+        entered.resolve();
+        await release.promise;
+      }
+      res.end("done");
+    });
+    server.on("close", () => events.push("server close"));
+    server.on("connection", socket => {
+      if (!firstSocket) return;
+      firstSocket = false;
+      socket.once("close", () => {
+        events.push("socket close");
+        server.listen(0, "127.0.0.1", () => {
+          events.push("relisten");
+          relistened.resolve();
+        });
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const firstPort = (server.address() as AddressInfo).port;
+    const client = connect(firstPort, "127.0.0.1");
+    let responseWire = "";
+    client.on("error", () => {});
+    client.on("data", chunk => {
+      responseWire += chunk.toString("latin1");
+      if (responseWire.endsWith("done")) responseReceived.resolve();
+    });
+
+    try {
+      await once(client, "connect");
+      client.write("GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      await entered.promise;
+      server.close(error => {
+        events.push("first close callback");
+        firstClose.resolve(error);
+      });
+      release.resolve();
+      await responseReceived.promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(events).not.toContain("first close callback");
+
+      client.destroy();
+      const [firstCloseError] = await Promise.all([firstClose.promise, relistened.promise]);
+      expect(firstCloseError).toBeUndefined();
+      expect(server.listening).toBe(true);
+
+      const secondPort = (server.address() as AddressInfo).port;
+      expect(
+        await new Promise<string>((resolve, reject) => {
+          get({ host: "127.0.0.1", port: secondPort, headers: { connection: "close" } }, res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (body += chunk));
+            res.on("end", () => resolve(body));
+          }).on("error", reject);
+        }),
+      ).toBe("done");
+      expect(await new Promise<Error | undefined>(resolve => server.close(resolve))).toBeUndefined();
+      expect(events.filter(event => event === "server close")).toHaveLength(2);
+      expect(events.filter(event => event === "first close callback")).toHaveLength(1);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it("waits for a socket first wrapped by the parser-error path", async () => {
+    const clientError = Promise.withResolvers<import("node:net").Socket>();
+    const closed = Promise.withResolvers<Error | undefined>();
+    const server = createServer();
+    server.on("clientError", (_error, socket) => clientError.resolve(socket));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+
+    try {
+      await once(client, "connect");
+      client.write("NOT-HTTP\r\n\r\n");
+      const serverSocket = await clientError.promise;
+      let closeCalled = false;
+      server.close(error => {
+        closeCalled = true;
+        closed.resolve(error);
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(closeCalled).toBe(false);
+
+      serverSocket.destroy();
+      expect(await closed.promise).toBeUndefined();
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
   it.each([
     ["destroy", "end", false],
     ["resetAndDestroy", "ECONNRESET", true],
@@ -4449,6 +4561,14 @@ describe("HTTP server transport shutdown", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
+    let addressCalls = 0;
+    Object.defineProperty(server, "address", {
+      configurable: true,
+      value() {
+        addressCalls++;
+        return { address: "127.0.0.1", family: "IPv4", port };
+      },
+    });
     const client = connect(port, "127.0.0.1");
     const clientEvents: string[] = [];
     const clientClosed = Promise.withResolvers<boolean>();
@@ -4463,6 +4583,7 @@ describe("HTTP server transport shutdown", () => {
       expect(await clientClosed.promise).toBe(hadError);
       await serverSocketClosed.promise;
       expect(clientEvents).toEqual([peerEvent]);
+      expect(addressCalls).toBe(0);
     } finally {
       client.destroy();
       server.closeAllConnections();

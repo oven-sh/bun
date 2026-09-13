@@ -89,6 +89,9 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
+    if (specifier.startsWith("file://"_s))
+        return create(globalObject, specifier);
+
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {

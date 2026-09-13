@@ -598,6 +598,148 @@ test.concurrent("a %23 in the path of a file:// URL is not a fragment", async ()
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("a %3F in the path of a file:// URL is not a query", async () => {
+  const targetSource = `
+    import { value } from "./dep.mjs";
+    (globalThis.literalQuestionHits ??= []).push(import.meta.url);
+    export { value };
+    export const url = import.meta.url;
+  `;
+  using dir = tempDir("import-query-file-url-literal-question", {
+    "dep.mjs": `export const value = 42;`,
+    "target?copy.mjs": targetSource,
+  });
+  const target = Bun.pathToFileURL(path.join(String(dir), "target?copy.mjs")).href;
+  await Bun.write(
+    path.join(String(dir), "entry.mjs"),
+    [
+      `import * as plain from ${JSON.stringify(target)};`,
+      `import * as queried from ${JSON.stringify(target + "?v=1")};`,
+      `import * as fragmented from ${JSON.stringify(target + "#a")};`,
+      `const dynamicPlain = await import(${JSON.stringify(target)});`,
+      `console.log(JSON.stringify({`,
+      `  urls: [plain.url, queried.url, fragmented.url],`,
+      `  values: [plain.value, queried.value, fragmented.value],`,
+      `  distinct: plain !== queried && plain !== fragmented && queried !== fragmented,`,
+      `  dynamicIsStatic: dynamicPlain === plain,`,
+      `  hits: globalThis.literalQuestionHits,`,
+      `}));`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    urls: [target, target + "?v=1", target + "#a"],
+    values: [42, 42, 42],
+    distinct: true,
+    dynamicIsStatic: true,
+    hits: [target, target + "?v=1", target + "#a"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("file URL resolution preserves encoded path delimiters and raw suffixes", async () => {
+  using dir = tempDir("resolve-file-url-encoded-delimiters", {
+    "target?copy.mjs": ``,
+    "entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      const targetPath = import.meta.dir + "/target?copy.mjs";
+      const target = pathToFileURL(targetPath).href;
+      console.log(JSON.stringify({
+        sync: Bun.resolveSync(target, import.meta.dir),
+        query: Bun.resolveSync(target + "?v=1", import.meta.dir),
+        fragment: Bun.resolveSync(target + "#a", import.meta.dir),
+        async: await Bun.resolve(target + "?v=2#a", import.meta.dir),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const targetPath = path.join(String(dir), "target?copy.mjs");
+  expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    sync: targetPath,
+    query: targetPath + "?v=1",
+    fragment: targetPath + "?#a",
+    async: targetPath + "?v=2#a",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("mock.module canonicalizes escapes in a file URL containing %3F", async () => {
+  using dir = tempDir("mock-file-url-literal-question", {
+    "target?copy.mjs": `export const value = "real";`,
+    "entry.test.mjs": `
+      import { expect, mock, test } from "bun:test";
+      const target = new URL("./target%3fcopy.mjs?v=1", import.meta.url).href;
+      mock.module(target, () => ({ value: "mocked" }));
+      test("mocked encoded path", async () => {
+        expect(target).toContain("%3f");
+        expect((await import(target)).value).toBe("mocked");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "entry.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--isolate caches a file URL containing %3F under its module key", async () => {
+  using dir = tempDir("isolate-file-url-literal-question", {
+    "target?copy.mjs": `export const value = "v1";`,
+    "a.test.mjs": `
+      import { expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      const target = new URL("./target%3Fcopy.mjs", import.meta.url).href;
+      test("populate cache", async () => {
+        expect((await import(target)).value).toBe("v1");
+        writeFileSync(new URL("./target%3Fcopy.mjs", import.meta.url), 'export const value = "v2";');
+      });
+    `,
+    "b.test.mjs": `
+      import { expect, test } from "bun:test";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+      const target = new URL("./target%3Fcopy.mjs", import.meta.url).href;
+      test("reuse cache", async () => {
+        expect((await import(target)).value).toBe("v1");
+        expect(isolatedModuleCacheSourceType(target)).toBe("BunTranspiledModule");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "a.test.mjs", "b.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 // The key of a module imported as fileUrl + "?path=/x/y" carries that suffix, and the key is
 // the referrer for the module's own imports. A "/" inside the suffix is not a path separator.
 test.concurrent("a / in the suffix of a file:// URL does not move the directory of the module", async () => {

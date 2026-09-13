@@ -617,14 +617,17 @@ extern "C" BunString URL__getHref(const BunString* input)
 }
 
 namespace Bun {
-WTF::String fileSystemPathWithSuffix(const WTF::URL& url)
+WTF::String moduleKeyFromFileURL(const WTF::URL& url)
 {
+    auto path = url.fileSystemPath();
     auto query = url.queryWithLeadingQuestionMark();
     auto fragment = url.fragmentIdentifierWithLeadingNumberSign();
+    if (path.find('?') != WTF::notFound)
+        return makeString(WTF::URL::fileURLWithFileSystemPath(path).string(), query, fragment);
     if (query.isEmpty() && fragment.isEmpty())
-        return url.fileSystemPath();
+        return path;
     // A module key is cut at its first '?' only, so a fragment always rides behind a '?'.
-    return makeString(url.fileSystemPath(), query.isEmpty() ? "?"_s : ""_s, query, fragment);
+    return makeString(path, query.isEmpty() ? "?"_s : ""_s, query, fragment);
 }
 }
 
@@ -636,16 +639,6 @@ extern "C" BunString URL__pathFromFileURL(const BunString* input)
         return { BunStringTag::Dead };
 
     return Bun::toStringRef(url.fileSystemPath());
-}
-
-extern "C" BunString URL__pathWithSuffixFromFileURL(const BunString* input)
-{
-    auto&& str = input->toWTFString();
-    auto url = WTF::URL(str);
-    if (!url.isValid() || url.isEmpty())
-        return { BunStringTag::Dead };
-
-    return Bun::toStringRef(Bun::fileSystemPathWithSuffix(url));
 }
 
 extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr)

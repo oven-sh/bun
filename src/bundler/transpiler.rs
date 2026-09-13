@@ -1466,7 +1466,9 @@ impl<'a> Transpiler<'a> {
                 // threaded once `bun_ast::Source.contents` becomes `Cow`.
                 let contents: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-                break 'brk bun_ast::Source::init_path_string(path.text, contents);
+                let mut source = bun_ast::Source::init_path_string(path.text, contents);
+                source.path.namespace = path.namespace;
+                break 'brk source;
             }
 
             // Thread

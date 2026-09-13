@@ -326,7 +326,14 @@ impl RuntimeTranspilerStore {
         // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
-        let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
+        let owned_path = if path.is_data_url() {
+            bun_paths::fs::Path::init_with_namespace(
+                unsafe { &*owned_text.cast_const() },
+                b"dataurl",
+            )
+        } else {
+            bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() })
+        };
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens

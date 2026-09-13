@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Node has no JS-visible setter for process.ppid: it is a native data property, and an assignment
-// through an object that inherits from process defines an own data property on that object. Here
-// ppid is an accessor, and its setter shadows the accessor with an own data property on `this`. The
-// setter used to write that property directly, which skipped the receiver's own
-// [[DefineOwnProperty]]: a frozen object gained a property, a Proxy saw no trap, and a WebAssembly
-// GC reference aborted the process.
-describe("process.ppid setter", () => {
-  const { set } = Object.getOwnPropertyDescriptor(process, "ppid")!;
+// In Node, process.ppid is a writable data property whose value comes from the OS on each read. An
+// assignment through another receiver is an ordinary [[Set]]: it defines the value on the receiver.
+// Here ppid was an accessor whose setter wrote the value onto any receiver directly: a frozen
+// object that inherits from process gained the property, a Proxy receiver saw no trap, and a
+// WebAssembly GC reference as the receiver aborted the process.
+describe("process.ppid is a data property", () => {
   const dataProperty = (value: unknown) => ({ value, writable: true, enumerable: true, configurable: true });
 
   test("an object that inherits from process gets an own data property", () => {
@@ -21,7 +19,7 @@ describe("process.ppid setter", () => {
   test("a receiver that is not extensible rejects the property", () => {
     for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
       const receiver = lock({});
-      expect(() => set!.call(receiver, 7)).toThrow(TypeError);
+      expect(Reflect.set(process, "ppid", 7, receiver)).toBe(false);
       expect(Reflect.ownKeys(receiver)).toEqual([]);
 
       const child = lock(Object.create(process));
@@ -42,16 +40,16 @@ describe("process.ppid setter", () => {
         return Reflect.defineProperty(target, key, descriptor);
       },
     });
-    set!.call(proxy, 7);
+    expect(Reflect.set(process, "ppid", 7, proxy)).toBe(true);
     expect(calls).toEqual([["ppid", dataProperty(7)]]);
     expect(target).toEqual({ ppid: 7 });
 
     const refusing = new Proxy({}, { defineProperty: () => false });
-    expect(() => set!.call(refusing, 7)).toThrow(TypeError);
+    expect(Reflect.set(process, "ppid", 7, refusing)).toBe(false);
   });
 
   // In a subprocess because the first part aborted the process and the second part replaces process.ppid.
-  test("a WebAssembly GC reference throws a TypeError, and process itself keeps an assigned value", async () => {
+  test("a WebAssembly GC reference as the receiver is left alone, and process keeps an assigned value", async () => {
     const src = `
       // (module (type $s (struct (field (mut i32))))
       //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
@@ -63,13 +61,7 @@ describe("process.ppid setter", () => {
         0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
       ]);
       const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
-      const { set } = Object.getOwnPropertyDescriptor(process, "ppid");
-      try {
-        set.call(ref, 7);
-        console.log("no error");
-      } catch (e) {
-        console.log(e.constructor.name);
-      }
+      console.log(Reflect.set(process, "ppid", 7, ref));
 
       process.ppid = "assigned";
       console.log(JSON.stringify(Object.getOwnPropertyDescriptor(process, "ppid")));
@@ -82,7 +74,7 @@ describe("process.ppid setter", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.split("\n")).toEqual(["TypeError", JSON.stringify(dataProperty("assigned")), ""]);
+    expect(stdout.split("\n")).toEqual(["false", JSON.stringify(dataProperty("assigned")), ""]);
     expect(exitCode).toBe(0);
   });
 });

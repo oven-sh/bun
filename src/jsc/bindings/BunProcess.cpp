@@ -356,17 +356,6 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     emitter.emit(event, arguments);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (value)
-        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
-
-    return true;
-}
-
 extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
@@ -3144,21 +3133,6 @@ JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::
 #endif
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
-{
-    // Match Node.js: writing to process.ppid replaces the live
-    // accessor with the written value on this object, so
-    // subsequent reads return what was written.
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) {
-        return false;
-    }
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // `this` can be any object, so it gets to reject the property (frozen, Proxy, WebAssembly GC reference).
-    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
-}
-
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -5066,7 +5040,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
-  ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
@@ -5140,6 +5113,8 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+    // Not in the table above: a row there needs a setter. CustomValue with no setter is Node's shape, a writable data property whose value is live.
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "ppid"_s), CustomGetterSetter::create(vm, processPpid, nullptr), PropertyAttribute::CustomValue | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {

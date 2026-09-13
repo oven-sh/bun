@@ -652,7 +652,8 @@ describe("pathological bracket inputs", () => {
     expect(overflowIntoTitle).not.toContain("<a href=");
     expect(overflowIntoTitle).toContain("[a](");
     // Reference definitions use the same scanner, so the same cap (cmark too).
-    const refNest = (n: number) => "[a]: " + "(".repeat(n) + "b" + ")".repeat(n) + "\n\n[a]\n";
+    const refNest = (n: number) =>
+      "[a]: " + Buffer.alloc(n, "(").toString() + "b" + Buffer.alloc(n, ")").toString() + "\n\n[a]\n";
     expect(Markdown.html(refNest(32))).toContain("<a href=");
     expect(Markdown.html(refNest(33))).not.toContain("<a href=");
   });
@@ -662,8 +663,9 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html("[a](<b\\<c>)\n")).toContain('<a href="b%3Cc"');
   });
 
-  // CommonMark §6.3 link destinations. Every expected string below is the
-  // output of commonmark.js 0.31.2, keyed by its input.
+  // CommonMark §6.3 link destinations. Each table is keyed by its input. The
+  // expected strings are the output of commonmark.js 0.31.2, except in the
+  // control-character test, which says why.
   const renderAll = (cases: Record<string, string>) =>
     Object.fromEntries(Object.keys(cases).map(md => [md, Markdown.html(md)]));
 
@@ -709,6 +711,21 @@ describe("pathological bracket inputs", () => {
       "[a](foo(bar))\n": '<p><a href="foo(bar)">a</a></p>\n',
       "[a](foo\\(bar )\n": '<p><a href="foo(bar">a</a></p>\n',
       "[a]: foo(bar)\n\n[a]\n": '<p><a href="foo(bar)">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  // The spec says a bare destination "does not include ASCII control
+  // characters", and md4c stops at one. cmark, cmark-gfm and commonmark.js do
+  // not check this, so the expected strings here come from the spec text.
+  test("bare link destination may not contain an ASCII control character", () => {
+    const cases = {
+      "[a](b\x01c)\n": "<p>[a](b\x01c)</p>\n",
+      "[a](b\x7fc)\n": "<p>[a](b\x7fc)</p>\n",
+      "[a]: b\x1bc\n\n[a]\n": "<p>[a]: b\x1bc</p>\n<p>[a]</p>\n",
+      "[a]: /url\n\n[a](b\x01c)\n": '<p><a href="/url">a</a>(b\x01c)</p>\n',
+      // Control: the <...> form has no such rule.
+      "[a](<b\x01c>)\n": '<p><a href="b%01c">a</a></p>\n',
     };
     expect(renderAll(cases)).toEqual(cases);
   });

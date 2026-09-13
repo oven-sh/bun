@@ -70,8 +70,9 @@ pub(crate) struct ParsedDest<'a> {
 ///
 /// `<...>` form: no line ending and no unescaped `<` before the closing `>`.
 /// Bare form: may be empty, ends at whitespace or at a `)` that closes nothing,
-/// and its unescaped parentheses must balance. A backslash escapes ASCII
-/// punctuation only, so `\` before a space or a line ending hides nothing.
+/// holds no ASCII control character, and its unescaped parentheses must
+/// balance. A backslash escapes ASCII punctuation only, so `\` before a space
+/// or a line ending hides nothing.
 pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
     let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
     let mut p = start;
@@ -114,6 +115,7 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
                 }
                 paren_depth -= 1;
             }
+            c if c.is_ascii_control() => return None,
             _ => {}
         }
         p += 1;

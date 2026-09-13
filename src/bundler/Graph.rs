@@ -91,6 +91,9 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// Do any input_files have a key_loader? Helps skip a loop.
+    pub(crate) has_any_key_loaders: bool,
 }
 
 #[derive(Default)]
@@ -112,6 +115,8 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+    /// The loader part of this module's `PathToSourceIndexMap` key. See `ModuleMap`.
+    pub key_loader: Option<options::Loader>,
 }
 
 impl Default for InputFile {
@@ -125,6 +130,7 @@ impl Default for InputFile {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
+            key_loader: None,
         }
     }
 }
@@ -142,6 +148,7 @@ bun_collections::multi_array_columns! {
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
+        key_loader: Option<options::Loader>,
     }
 }
 
@@ -177,6 +184,7 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            has_any_key_loaders: false,
         }
     }
 }
@@ -217,6 +225,17 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    pub(crate) fn set_key_loader(
+        &mut self,
+        source_index: IndexInt,
+        key_loader: Option<options::Loader>,
+    ) {
+        if key_loader.is_some() {
+            self.input_files.items_key_loader_mut()[source_index as usize] = key_loader;
+            self.has_any_key_loaders = true;
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

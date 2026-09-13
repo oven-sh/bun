@@ -106,6 +106,9 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// The bundler keyed this record's module by (path, loader), not by path alone.
+        const KEYED_BY_LOADER = 1 << 19;
     }
 }
 

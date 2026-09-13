@@ -11,6 +11,14 @@ use bun_sys::{self as sys, Fd, FdExt, O};
 use super::run_command::RunCommand;
 use crate::Command;
 
+/// Nothing listens here, so an auto-install that a fuzz program starts fails at `connect()`.
+#[cfg(unix)]
+const DEAD_REGISTRY: &core::ffi::CStr = c"http://127.0.0.1:1/";
+
+/// In place of the user's cache. The path is fixed because a killed REPRL child cannot clean up.
+#[cfg(unix)]
+const SCRATCH_CACHE_DIR: &core::ffi::CStr = c"/tmp/bun-fuzzilli-install-cache";
+
 pub(crate) struct FuzzilliCommand;
 
 impl FuzzilliCommand {
@@ -88,6 +96,15 @@ impl FuzzilliCommand {
 
             bun_core::pretty_errorln!("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>");
 
+            // Auto-install stays reachable for the fuzzer, but no program may download a package.
+            if !Self::set_install_defaults() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Could not set BUN_CONFIG_REGISTRY and BUN_INSTALL_CACHE_DIR in the environment: {}",
+                    sys::last_error()
+                );
+                Global::exit(1);
+            }
+
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
@@ -99,6 +116,28 @@ impl FuzzilliCommand {
             temp_dir_fd.close();
 
             result
+        }
+    }
+
+    /// Child processes inherit both variables. A campaign with a fixture registry sets its own.
+    #[cfg(unix)]
+    fn set_install_defaults() -> bool {
+        // The package manager skips a registry that is not http(s), so that value is not a choice.
+        let has_registry = bun_core::getenv_z(zstr!("BUN_CONFIG_REGISTRY"))
+            .is_some_and(|url| url.starts_with(b"http://") || url.starts_with(b"https://"));
+        let has_cache_dir =
+            bun_core::getenv_z(zstr!("BUN_INSTALL_CACHE_DIR")).is_some_and(|dir| !dir.is_empty());
+        // SAFETY: main thread during startup, before any concurrent reader of the environment
+        // exists. setenv copies the NUL-terminated strings.
+        unsafe {
+            (has_registry
+                || libc::setenv(c"BUN_CONFIG_REGISTRY".as_ptr(), DEAD_REGISTRY.as_ptr(), 1) == 0)
+                && (has_cache_dir
+                    || libc::setenv(
+                        c"BUN_INSTALL_CACHE_DIR".as_ptr(),
+                        SCRATCH_CACHE_DIR.as_ptr(),
+                        1,
+                    ) == 0)
         }
     }
 

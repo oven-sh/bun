@@ -5457,13 +5457,13 @@ declare module "bun" {
        * `unhandledRejection` handling. Without it, or for an error `onError`
        * itself lets escape, they take that normal path.
        *
-       * An error belongs to the graph whose module code threw it or rejected
-       * with it: the innermost module code on the stack at that moment
-       * (functions passed in through `globals`, and CommonJS modules, are the
-       * host's code); a promise the runtime rejects on that code's behalf (an
-       * async function, a reaction whose handler threw) counts as rejected by
-       * it. Anything else — including a promise derived through `.then()`
-       * without a rejection handler — takes the normal path. `kind` is
+       * An error belongs to the graph whose module or CommonJS code threw it or
+       * rejected with it: the innermost such code on the stack at that moment
+       * (functions passed in through `globals` are the host's code); a promise
+       * the runtime rejects on that code's behalf (an async function, a
+       * reaction whose handler threw) counts as rejected by it. Anything else
+       * — including a promise derived through `.then()` without a rejection
+       * handler — takes the normal path. `kind` is
        * `"uncaughtException"` or `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
@@ -5492,16 +5492,17 @@ declare module "bun" {
     /**
      * A further instantiation of ES module graphs in **this** global object.
      *
-     * Every graph that imports an ES module shares that module's parsed code,
-     * bytecode and JIT-compiled code with every other graph and with the host;
-     * each graph gets its own module-level state (top-level bindings, classes,
-     * closures), its own module registry for `import` / `import()` and for
-     * `import.meta.require()` of an ES module (what a bare `require()` in an
-     * ES module is), its own `import.meta`, and its own values for the names in
-     * `globals`. Everything else — `globalThis`, `process`, intrinsics, builtin
-     * modules, CommonJS modules (one instance, in the one `require.cache`;
-     * `createRequire()` and `require()` inside CommonJS code are the host's),
-     * native addons, the event loop — is the global object's, shared: this runs
+     * Every graph that loads a file — an ES module or a CommonJS module —
+     * shares that file's parsed code, bytecode and JIT-compiled code with every
+     * other graph and with the host; each graph gets its own module-level state
+     * (top-level bindings, classes, closures), its own module registry for
+     * `import` / `import()`, its own `require.cache` (`require()`,
+     * `import.meta.require()` and `createRequire()` called from the graph's
+     * code load into it), its own `import.meta`, and its own values for the
+     * names in `globals`. Everything else — `globalThis`, `process`,
+     * intrinsics, builtin modules (so `require("node:module")._cache` is the
+     * host's cache, and `mock.module()` replaces the host's modules), native
+     * addons, the event loop — is the global object's, shared: this runs
      * cooperating instances of a program side by side, it is not a sandbox.
      *
      * @experimental
@@ -5542,9 +5543,10 @@ declare module "bun" {
        */
       run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
       /**
-       * Drops the graph's module registry: pending and later `graph.import()`s
-       * reject, `import()` from the graph's own module code rejects, and
-       * modules of the graph that had not run yet never will. Code from the
+       * Drops the graph's module registry and require cache: pending and later
+       * `graph.import()`s reject, `import()` from the graph's own code rejects
+       * and its `require()` of anything throws, and modules of the graph that
+       * had not run yet never will. Code from the
        * graph that is still referenced keeps working, and its errors still go
        * to `onError`. With `isolateIO`, everything the graph's code opened
        * is closed, and whatever it opens afterwards is closed at once.

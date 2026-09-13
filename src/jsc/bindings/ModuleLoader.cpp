@@ -494,7 +494,13 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value);
+        // fetchESMSourceCode left the graph whose loader is fetching on the pending promise.
+        JSValue graphValue = promise->getDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName());
+        auto* graph = graphValue ? dynamicDowncast<Bun::JSModuleGraph>(graphValue) : nullptr;
+        // Disposed while the file was being transpiled: nothing of it is loaded.
+        if (graph && graph->disposed())
+            RELEASE_AND_RETURN(scope, promise->reject(vm, Bun::createModuleGraphDisposedError(globalObject)));
+        auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
@@ -935,6 +941,7 @@ extern "C" bool isBunTest;
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
+    Bun::JSModuleGraph* graph,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -991,7 +998,7 @@ static JSValue fetchESMSourceCode(
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
-            auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
+            auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1012,7 +1019,7 @@ static JSValue fetchESMSourceCode(
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,
         // so check the isolation cache before re-creating one.
-        const bool useIsolationCacheForBuiltin = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+        const bool useIsolationCacheForBuiltin = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
         if (useIsolationCacheForBuiltin) {
             if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, moduleKey)) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
@@ -1083,7 +1090,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+    const bool useIsolationCache = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
@@ -1093,7 +1100,7 @@ static JSValue fetchESMSourceCode(
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {
-                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
+                auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1113,6 +1120,9 @@ static JSValue fetchESMSourceCode(
     if constexpr (allowPromise) {
         auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
         if (pendingCtx) {
+            // Bun__onFulfillAsyncModule needs the graph for a CommonJS result.
+            if (graph)
+                pendingCtx->putDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName(), graph);
             return pendingCtx;
         }
     } else {
@@ -1120,7 +1130,7 @@ static JSValue fetchESMSourceCode(
     }
 
     if (res->success && res->result.value.isCommonJSModule) {
-        auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
+        auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1215,24 +1225,26 @@ static JSValue fetchESMSourceCode(
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<false>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
 }
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<true>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
 }
 }
 

@@ -68,6 +68,7 @@ declare interface Error {
 
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
+  $requireMap: Map<string, JSCommonJSModule>;
   $requireNativeModule(id: string): any;
   /** require() resolved this cache entry to an ES module (of the global object's loader). */
   $esModule: boolean;

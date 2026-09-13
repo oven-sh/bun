@@ -572,6 +572,32 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     expect(appB.tick()).toBe(stoppedB);
   });
 
+  test("CommonJS modules of the graph run in its context, as its entry and when required", async () => {
+    const dir = fixture({
+      "entry.cjs": `
+        let ticks = 0;
+        setInterval(() => { ticks++; }, 1);
+        const required = require("./required.cjs");
+        module.exports = { counts: () => [ticks, required.ticks()], who: WHO };
+      `,
+      "required.cjs": `
+        let ticks = 0;
+        setInterval(() => { ticks++; }, 1);
+        exports.ticks = () => ticks;
+      `,
+    });
+    using graph = new Bun.unsafe.ModuleGraph({ isolateIO: true, globals: { WHO: "graph" } });
+    const app = (await graph.import(join(dir, "entry.cjs"))).default;
+    expect(app.who).toBe("graph");
+    await until(() => app.counts().every((n: number) => n > 0));
+
+    graph.dispose();
+
+    const stopped = app.counts();
+    await hostTimerTurns();
+    expect(app.counts()).toEqual(stopped);
+  });
+
   test("code after a top-level await is still in the graph's context", async () => {
     const dir = fixture({
       "tla.mjs": `

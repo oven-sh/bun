@@ -3,6 +3,7 @@
 #include "BunProcess.h"
 #include "ModuleLoader.h"
 #include "JSCommonJSModule.h"
+#include "ModuleGraph.h"
 
 namespace Bun {
 using namespace JSC;
@@ -232,11 +233,13 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
 
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequire(global, scope, mod->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),
         vm,
         global,
-        global->moduleLoader(),
+        loader,
         &specifierBunString,
         specifier,
         &empty,

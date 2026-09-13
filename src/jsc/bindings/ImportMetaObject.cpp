@@ -220,6 +220,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue parentModule = callFrame->argument(5);
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
+    // require() / require.resolve() of a disposed Bun.unsafe.ModuleGraph's module: its cache is gone and it loads nothing new.
+    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule); requirer && requirer->moduleGraph()) [[unlikely]] {
+        Bun::moduleLoaderForRequire(lexicalGlobalObject, scope, requirer->moduleGraph());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);

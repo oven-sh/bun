@@ -52,7 +52,6 @@ type Target = {
   who: (w: string | undefined) => unknown;
   mutable: boolean;
   missing?: boolean;
-  shared?: boolean;
 };
 const targets: Record<string, Target> = {
   esmFresh: { file: "t-fresh.mjs", source: TARGET_BODY("fresh"), tag: "fresh", who: w => w, mutable: true },
@@ -71,15 +70,12 @@ const targets: Record<string, Target> = {
     who: w => w,
     mutable: true,
   },
-  // CommonJS modules are the global's: one module object for everyone (each graph's namespace for it wraps
-  // the same exports), evaluated with the global's `process`
   cjs: {
     file: "t.cjs",
-    source: `let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`,
-    tag: null,
-    who: () => process.env.WHO,
+    source: `(typeof __log !== "undefined" ? __log : undefined)?.push("cjs@" + process.env.WHO); let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`,
+    tag: "cjs",
+    who: w => w,
     mutable: true,
-    shared: true,
   },
   json: { file: "t.json", source: `{ "who": "json", "n": 0 }`, tag: null, who: () => "json", mutable: false },
   ts: {
@@ -112,8 +108,8 @@ const sites: Record<string, Site> = {
   timerCallback: { expr: t => `new Promise((res, rej) => setTimeout(() => import(${t}).then(res, rej), 0))` },
   microtask: { expr: t => `Promise.resolve().then(() => import(${t}))` },
   asyncGenerator: { expr: t => `(async function* () { yield await import(${t}) })().next().then(r => r.value)` },
-  // require() and CommonJS code are the global's: import() inside a CommonJS helper loads through the global loader
-  fromCjs: { expr: t => `require("./dyn-helper.cjs").load(${t})`, hostScope: true },
+  // a disposed graph's require() throws (its cache is gone and it loads nothing new); the site reports that as a rejection
+  fromCjs: { expr: t => `Promise.resolve().then(() => require("./dyn-helper.cjs").load(${t}))` },
   // import() issued during the importer's own evaluation (top-level await)
   topLevelAwait: { expr: t => `import(${t})`, eager: true },
   // indirect eval and Function() code are global code: the host's scope, so they load through the host, not the graph
@@ -299,7 +295,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
             isolation:
               !target.mutable || rejection
                 ? "n/a"
-                : site.hostScope || target.shared
+                : site.hostScope
                   ? liveWhos.map(() => 2)
                   : liveWhos.map((_, i) => (i === 0 ? 2 : 0)),
             // every graph instance evaluates the target exactly once: at the importer's static import (all
@@ -572,7 +568,7 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
     "amb/good.mjs": `import { onlyP, onlyQ } from "./hub.mjs"; __log.push("good@" + process.env.WHO); export const out = [onlyP, onlyQ];`,
     // mixed leaves: json, cjs, ts under one root
     "mixed/data.json": `{ "k": "json" }`,
-    "mixed/c.cjs": `module.exports = { c: "cjs:" + process.env.WHO };`,
+    "mixed/c.cjs": `__log.push("cjs@" + process.env.WHO); module.exports = { c: "cjs:" + process.env.WHO };`,
     "mixed/t.ts": `__log.push("ts@" + process.env.WHO); export const t: string = "ts:" + process.env.WHO;`,
     "mixed/root.mjs": `import data from "./data.json"; import c from "./c.cjs"; import { t } from "./t.ts"; __log.push("root@" + process.env.WHO); export const out = [data.k, c.c, t];`,
   });
@@ -618,8 +614,8 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
     mixed: {
       entry: "mixed/root.mjs",
       out: (_w, m) => m.out,
-      expectOut: w => ["json", `cjs:${process.env.WHO}`, `ts:${w}`], // the CommonJS leaf is the global's
-      evaluations: ["ts", "root"],
+      expectOut: w => ["json", `cjs:${w}`, `ts:${w}`],
+      evaluations: ["cjs", "ts", "root"],
     },
   };
   for (const [shapeName, shape] of Object.entries(shapes)) {

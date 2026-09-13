@@ -359,7 +359,8 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
 
-WTF::String fileSystemPathWithSuffix(const WTF::URL&);
+WTF::String moduleKeyFromFileURL(const WTF::URL&);
+WTF::String resolvedModuleKeyFromFileURL(const WTF::URL&, const WTF::String&);
 }
 
 typedef struct {
@@ -398,7 +399,8 @@ extern "C" JSC::JSPromise* Bun__transpileFile(
     ErrorableResolvedSource* result,
     bool allowPromise,
     bool isCommonJSRequire,
-    BunLoaderType forceLoaderType);
+    BunLoaderType forceLoaderType,
+    bool preservePathDelimiters);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,

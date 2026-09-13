@@ -1427,6 +1427,7 @@ extern "C" fn Zig__GlobalObject__resolve(
     specifier: &BunString,
     source: &BunString,
     query: &mut BunString,
+    split_query: bool,
 ) {
     crate::mark_binding();
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -1435,6 +1436,7 @@ extern "C" fn Zig__GlobalObject__resolve(
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
+        split_query,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
         Ok(Err(value)) => *res = ErrorableString::err(value),

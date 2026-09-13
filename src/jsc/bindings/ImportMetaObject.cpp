@@ -89,6 +89,9 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
+    if (specifier.startsWith("file://"_s))
+        return create(globalObject, specifier);
+
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {
@@ -202,6 +205,20 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
+static JSValue resolvedCommonJSFileURLKey(Zig::GlobalObject* globalObject, JSValue originalValue, JSValue resolvedValue, JSC::ThrowScope& scope)
+{
+    auto original = originalValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!original.startsWith("file://"_s))
+        return resolvedValue;
+    auto url = WTF::URL(original);
+    if (!url.isValid() || url.isEmpty() || url.fileSystemPath().find('?') == WTF::notFound)
+        return resolvedValue;
+    auto resolved = resolvedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return jsString(globalObject->vm(), Bun::resolvedModuleKeyFromFileURL(url, resolved));
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -307,6 +324,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     goto cleanup;
                 }
 
+                {
+                    auto resolvedKey = resolvedCommonJSFileURLKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
+                    result = JSC::JSValue::encode(resolvedKey);
+                }
+
             cleanup:
                 for (auto& path : paths) {
                     path.deref();
@@ -332,6 +356,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
         return {};
+    }
+
+    if (!isESM) {
+        auto resolvedKey = resolvedCommonJSFileURLKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        result = JSC::JSValue::encode(resolvedKey);
     }
 
     scope.release();

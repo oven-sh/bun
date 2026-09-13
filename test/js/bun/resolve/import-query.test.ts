@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path, { basename } from "node:path";
 globalThis.importQueryFixtureOrder = [];
@@ -598,6 +598,243 @@ test.concurrent("a %23 in the path of a file:// URL is not a fragment", async ()
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.skipIf(isWindows)("a %3F in the path of a file:// URL is not a query", async () => {
+  const targetSource = `
+    import { value } from "./dep.mjs";
+    (globalThis.literalQuestionHits ??= []).push(import.meta.url);
+    export { value };
+    export const url = import.meta.url;
+  `;
+  using dir = tempDir("import-query-file-url-literal-question", {
+    "dep.mjs": `export const value = 42;`,
+    "target?copy.mjs": targetSource,
+  });
+  const target = Bun.pathToFileURL(path.join(String(dir), "target?copy.mjs")).href;
+  await Bun.write(
+    path.join(String(dir), "entry.mjs"),
+    [
+      `import * as plain from ${JSON.stringify(target)};`,
+      `import * as queried from ${JSON.stringify(target + "?v=1")};`,
+      `import * as fragmented from ${JSON.stringify(target + "#a")};`,
+      `const dynamicPlain = await import(${JSON.stringify(target)});`,
+      `console.log(JSON.stringify({`,
+      `  urls: [plain.url, queried.url, fragmented.url],`,
+      `  values: [plain.value, queried.value, fragmented.value],`,
+      `  distinct: plain !== queried && plain !== fragmented && queried !== fragmented,`,
+      `  dynamicIsStatic: dynamicPlain === plain,`,
+      `  hits: globalThis.literalQuestionHits,`,
+      `}));`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    urls: [target, target + "?v=1", target + "#a"],
+    values: [42, 42, 42],
+    distinct: true,
+    dynamicIsStatic: true,
+    hits: [target, target + "?v=1", target + "#a"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.skipIf(isWindows)(
+  "file URL resolution preserves encoded path delimiters and raw suffixes",
+  async () => {
+    using dir = tempDir("resolve-file-url-encoded-delimiters", {
+      "target?copy.mjs": ``,
+      "entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      const targetPath = import.meta.dir + "/target?copy.mjs";
+      const target = pathToFileURL(targetPath).href;
+      console.log(JSON.stringify({
+        sync: Bun.resolveSync(target, import.meta.dir),
+        query: Bun.resolveSync(target + "?v=1", import.meta.dir),
+        fragment: Bun.resolveSync(target + "#a", import.meta.dir),
+        async: await Bun.resolve(target + "?v=2#a", import.meta.dir),
+      }));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const targetPath = path.join(String(dir), "target?copy.mjs");
+    expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      sync: targetPath,
+      query: targetPath + "?v=1",
+      fragment: targetPath + "?#a",
+      async: targetPath + "?v=2#a",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.skipIf(isWindows)("mock.module canonicalizes escapes in a file URL containing %3F", async () => {
+  using dir = tempDir("mock-file-url-literal-question", {
+    "target?copy.mjs": `export const value = "real";`,
+    "entry.test.mjs": `
+      import { expect, mock, test } from "bun:test";
+      const target = new URL("./target%3fcopy.mjs?v=1", import.meta.url).href;
+      mock.module(target, () => ({ value: "mocked" }));
+      test("mocked encoded path", async () => {
+        expect(target).toContain("%3f");
+        expect((await import(target)).value).toBe("mocked");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "entry.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows)("--isolate caches a file URL containing %3F under its module key", async () => {
+  using dir = tempDir("isolate-file-url-literal-question", {
+    "target?copy.mjs": `export const value = "v1";`,
+    "a.test.mjs": `
+      import { expect, test } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      const target = new URL("./target%3Fcopy.mjs", import.meta.url).href;
+      test("populate cache", async () => {
+        expect((await import(target)).value).toBe("v1");
+        writeFileSync(new URL("./target%3Fcopy.mjs", import.meta.url), 'export const value = "v2";');
+      });
+    `,
+    "b.test.mjs": `
+      import { expect, test } from "bun:test";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+      const target = new URL("./target%3Fcopy.mjs", import.meta.url).href;
+      test("reuse cache", async () => {
+        expect((await import(target)).value).toBe("v1");
+        expect(isolatedModuleCacheSourceType(target)).toBe("BunTranspiledModule");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "a.test.mjs", "b.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows)(
+  "CommonJS file URLs preserve %3F path bytes without changing query handling",
+  async () => {
+    using dir = tempDir("require-file-url-literal-question", {
+      "dep.cjs": `module.exports = 42;`,
+      "target?copy.cjs": `module.exports = {
+        dep: require("./dep.cjs"),
+        filename: require("node:path").basename(__filename),
+        dirname: require("node:path").basename(__dirname),
+      };`,
+      "extensionless?target.js": `module.exports = "extension-resolved";`,
+      "collision.cjs": `module.exports = "query";`,
+      "collision.cjs?copy.cjs": `module.exports = "literal";`,
+      "ordinary.cjs": `module.exports = {};`,
+      "entry.cjs": `
+      const path = require("node:path");
+      const { pathToFileURL } = require("node:url");
+      const literal = pathToFileURL(path.join(__dirname, "target?copy.cjs")).href;
+      const extensionless = pathToFileURL(path.join(__dirname, "extensionless?target")).href;
+      const collision = pathToFileURL(path.join(__dirname, "collision.cjs?copy.cjs")).href;
+      const ordinary = pathToFileURL(path.join(__dirname, "ordinary.cjs")).href;
+      const literalPlain = require(literal);
+      const literalQuery = require(literal + "?v=1");
+      const literalSpaceQuery = require(literal + "?q=a b");
+      const ordinaryFileURLQuery = require(ordinary + "?v=1");
+      const ordinaryRelativeQuery = require("./ordinary.cjs?v=2");
+      const first = process.argv[2];
+      const collisionModules = {
+        literal: () => require(collision),
+        query: () => require("./collision.cjs?copy.cjs"),
+      };
+      collisionModules[first]();
+      console.log(JSON.stringify({
+        literalPlain,
+        literalQuery,
+        literalSpaceQuery,
+        literalInstancesAreDistinct:
+          literalPlain !== literalQuery && literalPlain !== literalSpaceQuery && literalQuery !== literalSpaceQuery,
+        literalResolveMatches: require.resolve(literal) === literal,
+        literalQueryResolveMatches: require.resolve(literal + "?v=1") === literal + "?v=1",
+        literalSpaceQueryResolveMatches: require.resolve(literal + "?q=a b") === literal + "?q=a%20b",
+        literalCacheKeysAreDistinct:
+          require.cache[require.resolve(literal)] !== require.cache[require.resolve(literal + "?v=1")],
+        ordinaryInstancesAreDistinct: ordinaryFileURLQuery !== ordinaryRelativeQuery,
+        extensionless: require(extensionless),
+        extensionlessResolveMatches:
+          require.resolve(extensionless) ===
+          pathToFileURL(path.join(__dirname, "extensionless?target.js")).href,
+        collisionLiteral: collisionModules.literal(),
+        collisionQuery: collisionModules.query(),
+        collisionKeysAreDistinct:
+          require.resolve(collision) !== require.resolve("./collision.cjs?copy.cjs"),
+      }));
+    `,
+    });
+    const results = await Promise.all(
+      ["literal", "query"].map(async first => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "entry.cjs", first],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { first, result: stdout ? JSON.parse(stdout.trim()) : null, stderr, exitCode };
+      }),
+    );
+    const literalResult = { dep: 42, filename: "target?copy.cjs", dirname: path.basename(String(dir)) };
+    const expected = {
+      literalPlain: literalResult,
+      literalQuery: literalResult,
+      literalSpaceQuery: literalResult,
+      literalInstancesAreDistinct: true,
+      literalResolveMatches: true,
+      literalQueryResolveMatches: true,
+      literalSpaceQueryResolveMatches: true,
+      literalCacheKeysAreDistinct: true,
+      ordinaryInstancesAreDistinct: true,
+      extensionless: "extension-resolved",
+      extensionlessResolveMatches: true,
+      collisionLiteral: "literal",
+      collisionQuery: "query",
+      collisionKeysAreDistinct: true,
+    };
+    expect(results).toEqual([
+      { first: "literal", result: expected, stderr: "", exitCode: 0 },
+      { first: "query", result: expected, stderr: "", exitCode: 0 },
+    ]);
+  },
+);
+
 // The key of a module imported as fileUrl + "?path=/x/y" carries that suffix, and the key is
 // the referrer for the module's own imports. A "/" inside the suffix is not a path separator.
 test.concurrent("a / in the suffix of a file:// URL does not move the directory of the module", async () => {
@@ -796,13 +1033,11 @@ test.concurrent("static imports inside a module imported with a ?query containin
 
 // Same for a CommonJS module: its key is the referrer for `require()`, and
 // `__dirname`, `module.paths` and `require.resolve.paths()` derive from it.
-for (const entry of ["entry.mjs", "entry.cjs"]) {
-  test.concurrent(
-    `require() inside a CommonJS module loaded with a ?query containing / resolves (${entry})`,
-    async () => {
-      using dir = tempDir("import-query-slash-referrer-cjs", {
-        "sub/b.cjs": `module.exports = { b: 42 };`,
-        "a.cjs": `
+describe.each(["entry.mjs", "entry.cjs"])("entry: %s", entry => {
+  test.concurrent("require() inside a CommonJS module loaded with a ?query containing / resolves", async () => {
+    using dir = tempDir("import-query-slash-referrer-cjs", {
+      "sub/b.cjs": `module.exports = { b: 42 };`,
+      "a.cjs": `
         const path = require("node:path");
         module.exports = {
           b: require("./sub/b.cjs").b,
@@ -813,28 +1048,27 @@ for (const entry of ["entry.mjs", "entry.cjs"]) {
           lookupBare: path.basename(path.dirname(require.resolve.paths("pkg")[0])) + "/" + path.basename(require.resolve.paths("pkg")[0]),
         };
       `,
-        "entry.mjs": `console.log(JSON.stringify((await import("./a.cjs?path=/x/y")).default));`,
-        "entry.cjs": `console.log(JSON.stringify(require("./a.cjs?path=/x/y")));`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), entry],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      const dirName = basename(String(dir));
-      expect(JSON.parse(stdout.trim())).toEqual({
-        b: 42,
-        resolved: "sub/b.cjs",
-        dirname: dirName,
-        paths0: dirName + "/node_modules",
-        lookupRelative: dirName,
-        lookupBare: dirName + "/node_modules",
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
-}
+      "entry.mjs": `console.log(JSON.stringify((await import("./a.cjs?path=/x/y")).default));`,
+      "entry.cjs": `console.log(JSON.stringify(require("./a.cjs?path=/x/y")));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const dirName = basename(String(dir));
+    expect(JSON.parse(stdout.trim())).toEqual({
+      b: 42,
+      resolved: "sub/b.cjs",
+      dirname: dirName,
+      paths0: dirName + "/node_modules",
+      lookupRelative: dirName,
+      lookupBare: dirName + "/node_modules",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

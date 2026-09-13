@@ -3474,13 +3474,14 @@ static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
+    split_query: bool,
 ) -> &'a [u8] {
     // In a `data:` URL everything after the comma is the payload; a `?` is
     // part of the data, not a query string.
     if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
         return specifier_;
     }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
+    if split_query && let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -4517,6 +4518,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        split_query: bool,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -4581,7 +4583,8 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string, split_query);
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -4708,6 +4711,7 @@ impl VirtualMachine {
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        split_query: bool,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -4865,6 +4869,7 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            split_query,
         );
         if let Err(err_) = resolve_result {
             let err = err_;

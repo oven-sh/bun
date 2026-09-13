@@ -59,9 +59,10 @@ fn reserved_names(
 
 /// An entry chunk prints its entry point's own export names and the bindings
 /// it exports to other chunks in one `export {}` clause, where a repeated name
-/// is a SyntaxError. An export name is not a binding, so only a chunk that has
-/// both reserves them; anywhere else a cross-chunk binding keeps a name that
-/// an entry point also exports.
+/// is a SyntaxError. An export name is not a binding, so the names of an entry
+/// point whose chunk exports nothing to other chunks stay free. The names of
+/// one whose chunk does are reserved like the rest of `reserved_names`: for
+/// every cross-chunk binding, not only that chunk's.
 fn reserve_entry_export_names(
     c: &LinkerContext,
     chunks: &[Chunk],

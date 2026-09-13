@@ -82,14 +82,7 @@ pub(crate) fn to_have_returned_with(
     if calls_count == 1 && successful_returns_count == 1 {
         let received = successful_returns[0];
         if expected.is_string() && received.is_string() {
-            let diff_format = DiffFormatter {
-                expected: Some(expected),
-                received: Some(received),
-                expected_string: None,
-                received_string: None,
-                global_this: Some(global),
-                not: false,
-            };
+            let diff_format = DiffFormatter::new(global, received, expected, false)?;
             return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }
 

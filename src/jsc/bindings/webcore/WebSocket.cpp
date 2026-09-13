@@ -1173,21 +1173,6 @@ String WebSocket::extensions() const
     return m_extensions;
 }
 
-String WebSocket::binaryType() const
-{
-    switch (m_binaryType) {
-    case BinaryType::NodeBuffer:
-        return "nodebuffer"_s;
-    case BinaryType::ArrayBuffer:
-        return "arraybuffer"_s;
-    case BinaryType::Blob:
-        return "blob"_s;
-    }
-
-    ASSERT_NOT_REACHED();
-    return String();
-}
-
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
     if (binaryType == "blob"_s) {
@@ -1293,10 +1278,6 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     if (m_state != OPEN)
         return;
 
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector())
-    //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
-    // }
     switch (m_binaryType) {
     case BinaryType::Blob:
         if (this->hasEventListeners(eventName)) {

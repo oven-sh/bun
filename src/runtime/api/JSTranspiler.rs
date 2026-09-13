@@ -148,6 +148,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     own_properties_only: true,
     observable: true,
     only_non_index_properties: false,
+    include_symbols: false,
 };
 
 impl Config {
@@ -1055,10 +1056,6 @@ impl JSTranspiler {
         transpiler.options.repl_mode = config.repl_mode;
 
         Ok(bun_core::heap::into_raw(this))
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
     }
 }
 

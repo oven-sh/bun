@@ -148,9 +148,7 @@ impl<'a> Writable<'a> {
                         // FileSink's writer (the sink takes over the heap
                         // pointer).
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ptr = FileSink::create_with_pipe(evtloop, uv_pipe);
-                        // SAFETY: freshly created with one ref, which `Pipe` owns.
-                        let pipe_ref = unsafe { RefPtr::from_raw(pipe_ptr) };
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
                         let pipe = Self::pipe_sink_mut(&pipe_ref);
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
@@ -162,7 +160,7 @@ impl<'a> Writable<'a> {
                                 return Err(crate::Error::UnexpectedCreatingStdin);
                             }
                         }
-                        pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
+                        pipe.writer.with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
                         subprocess
                             .weak_file_sink_stdin_ptr
                             .set(Some(pipe_ref.as_non_null()));
@@ -239,14 +237,15 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                // SAFETY: freshly created with one ref, which `Pipe` owns.
-                let pipe_ref =
-                    unsafe { RefPtr::from_raw(FileSink::create(evtloop, result.unwrap())) };
+                let fd = result.unwrap();
+                let pipe_ref = FileSink::create(evtloop, fd);
                 let pipe = Self::pipe_sink_mut(&pipe_ref);
 
-                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
+                match pipe.writer.with_mut(|w| w.start(fd, true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
+                        // The writer did not take `fd`; nothing else closes it.
+                        fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }

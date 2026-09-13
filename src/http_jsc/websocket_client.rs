@@ -344,29 +344,31 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
-        let mut deflate_slot = self.deflate.borrow_mut();
-        let Some(deflate) = deflate_slot.as_mut() else {
-            drop(deflate_slot);
-            self.terminate(ErrorCode::CompressionUnsupported);
-            return;
+        let rare = self.global_this.bun_vm().as_mut().rare_data();
+        let mut decompressed = rare.take_websocket_inflate_scratch();
+        let result = match self.deflate.borrow_mut().as_mut() {
+            None => Err(ErrorCode::CompressionUnsupported),
+            Some(deflate) => deflate
+                .decompress(rare.libdeflate_decompressor(), data, &mut decompressed)
+                .map_err(|err| match err {
+                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
+                    websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
+                }),
         };
 
-        let mut decompressed = deflate.rare_data.array_list();
-        if let Err(err) = deflate.decompress(data, &mut decompressed) {
-            let error_code = match err {
-                websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
-                websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
-                websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
-            };
-            drop(deflate_slot);
-            self.terminate(error_code);
-            return;
+        // The deflate borrow is released: both arms can re-enter `clear_data`.
+        match result {
+            Ok(()) => self.dispatch_data(&decompressed, kind),
+            Err(code) => self.terminate(code),
         }
 
-        // Drop the deflate borrow: `dispatch_data` can re-enter `clear_data`.
-        drop(deflate_slot);
-        let items = decompressed.as_slice();
-        self.dispatch_data(items, kind);
+        // Both arms run JS, so reach for `RareData` again instead of holding `rare` across them.
+        self.global_this
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_websocket_inflate_scratch(decompressed);
     }
 
     /// Data will be cloned in C++.
@@ -837,14 +839,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Assemble the (optional) close payload, echo a close frame back, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
-            return self.recv_failed(ErrorCode::InvalidControlFrame);
-        }
+        if !self.control_frame_started.get() {
+            if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
+                return self.recv_failed(ErrorCode::InvalidControlFrame);
+            }
 
-        if cursor.body_remain == 0 {
-            self.close_received.set(true);
-            self.send_close();
-            return Step::Terminated;
+            if cursor.body_remain == 0 {
+                self.close_received.set(true);
+                self.send_close();
+                return Step::Terminated;
+            }
         }
 
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {

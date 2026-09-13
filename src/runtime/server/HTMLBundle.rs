@@ -111,11 +111,6 @@ impl HTMLBundle {
         })
     }
 
-    /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
-
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
@@ -579,7 +574,7 @@ impl Route {
                     let is_html = output_files[i].loader == Loader::Html;
                     // Source maps don't carry a precomputed chunk hash; hash
                     // their bytes so every served file gets a unique ETag.
-                    let hash = match output_files[i].hash {
+                    let hash = match output_files[i].hash.value {
                         0 => bun_core::hash::xxhash64(0, blob.slice()),
                         h => h,
                     };

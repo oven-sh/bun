@@ -352,6 +352,11 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
+    /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
+    #[inline]
+    pub fn is_from_retired_test_isolation_realm(self) -> bool {
+        self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
+    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -414,9 +419,9 @@ impl JSValue {
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     ///
-    /// Source-inlined body of `JSC__JSValue__jsType` (bindings.cpp:2755) so the
-    /// 2-insn fast path survives no-LTO targets (e.g. aarch64-musl, where
-    /// cross-language LTO is disabled — config.ts:631). With the FFI shim the
+    /// Implemented in Rust rather than through a C++ FFI shim so the 2-insn
+    /// fast path survives no-LTO targets (e.g. aarch64-musl, where
+    /// cross-language LTO is disabled — config.ts:631). Through an FFI shim the
     /// call cannot inline into Rust callers and shows up as a separate symbol;
     /// the real body is just `movzbl 0x5(%rdi),%eax` after the cell check.
     #[inline]
@@ -1528,7 +1533,8 @@ impl JSValue {
 
     /// `JSValue.getOptional` — loose, coercing property fetch.
     /// Absent / `undefined` / `null` → `None`; anything else is run through
-    /// [`coerce`](Self::coerce) (ToNumber for integer `T`). Distinct from
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`, the value itself
+    /// for `JSValue`). Distinct from
     /// [`get_optional_int`], which validates the property is already an
     /// in-range integer and throws otherwise.
     pub fn get_optional<T: CoerceTo>(
@@ -1922,6 +1928,12 @@ impl CoerceTo for i64 {
         Ok(if num.is_nan() { 0 } else { num as i64 })
     }
 }
+/// No coercion: `get_optional::<JSValue>` is `get` with `null` filtered out.
+impl CoerceTo for JSValue {
+    fn coerce_from(v: JSValue, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(v)
+    }
+}
 
 /// Dispatch trait for `JSValue::to_enum::<E>()`; the string map is supplied
 /// per-enum via this trait.
@@ -2129,6 +2141,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
+    safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

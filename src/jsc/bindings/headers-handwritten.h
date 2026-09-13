@@ -46,6 +46,9 @@ enum class BunStringTag : uint8_t {
     EncodedSlice = 2,
     StaticEncodedSlice = 3,
     Empty = 4,
+    // A constructor could not allocate the string. Holds no string like Dead,
+    // but reaches JS as ERR_MEMORY_ALLOCATION_FAILED, not ERR_STRING_TOO_LONG.
+    OutOfMemory = 5,
 };
 
 /// Mirrors `ErrorKind` in src/jsc/bun_string_jsc.rs.
@@ -60,7 +63,8 @@ enum class BunErrorKind : uint8_t {
 enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,
-    H3 = 2,
+    H2 = 2,
+    H3 = 3,
 };
 #endif
 
@@ -99,6 +103,9 @@ typedef struct BunString {
 
     bool isEmpty() const;
 
+    // Dead or OutOfMemory: no string at all. Empty is a string.
+    bool isDead() const { return tag == BunStringTag::Dead || tag == BunStringTag::OutOfMemory; }
+
     void appendToBuilder(WTF::StringBuilder& builder) const;
 
 } BunString;
@@ -126,6 +133,9 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool already_bundled;
+    // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
+    // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
+    bool is_prelinked_module;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -136,11 +146,11 @@ typedef struct ResolvedSource {
     bool bytecode_cache_persistent;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
-    // File path used as source origin for bytecode cache validation.
-    // Converted to file:// URL. If empty, origin is derived from source_url.
-    BunString bytecode_origin_path;
+    // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
+    // validated against). If empty, origin is derived from source_url.
+    BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -162,7 +172,7 @@ public:
             return;
         result.value.source_code.deref();
         result.value.source_url.deref();
-        result.value.bytecode_origin_path.deref();
+        result.value.origin_path.deref();
         if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)

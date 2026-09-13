@@ -119,12 +119,11 @@ impl FSWatcher {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.
-    /// Runs on the mutator thread during lazy sweep.
+    /// Codegen `finalize: true` entry point. Runs on the mutator thread during lazy sweep.
+    #[allow(clippy::boxed_local)] // codegen's signature
     pub fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();
-        drop(self);
     }
 }
 
@@ -1152,13 +1151,7 @@ impl FSWatcher {
                 ..Default::default()
             }),
             mutex: Mutex::default(),
-            // SAFETY: `args.signal` is a live borrow of the JS AbortSignal (kept
-            // reachable by the caller's frame); `ref_()` bumps the C++ intrusive
-            // refcount and `adopt` takes ownership of that +1.
-            signal: JsCell::new(
-                args.signal
-                    .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
-            ),
+            signal: JsCell::new(args.signal.map(|s| s.ref_())),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),

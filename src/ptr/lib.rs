@@ -42,7 +42,7 @@ pub use tagged_pointer::TaggedPtr;
 pub mod ref_count;
 pub use ref_count::{
     AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
+    ThreadSafeRefCounted,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export

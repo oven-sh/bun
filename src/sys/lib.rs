@@ -7264,8 +7264,7 @@ pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
     lseek(fd, offset as i64, libc::SEEK_SET).map(|_| ())
 }
 
-/// `ftruncate` that cuts the old tail after a rewrite from offset 0. Fails only
-/// for a regular file left at the wrong size (devices and FIFOs reject it).
+/// `ftruncate` after a rewrite from offset 0. Fails only for a regular file at the wrong size.
 pub fn ftruncate_after_write(fd: Fd, len: i64) -> Maybe<()> {
     let Err(err) = ftruncate(fd, len) else {
         return Ok(());

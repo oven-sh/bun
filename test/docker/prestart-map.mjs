@@ -17,6 +17,7 @@ export const prestartMap = {
   "js/sql/sql.test": ["postgres_plain"],
   "js/sql/sql-postgres-datetime": ["postgres_plain"],
   "js/sql/postgres-binary-numeric": ["postgres_plain"],
+  "js/sql/postgres-bytea-bind": ["postgres_plain"],
   "js/sql/postgres-multi-statement-fields": ["postgres_plain"],
   "js/sql/postgres-simple-query-pipeline": ["postgres_plain"],
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain"],

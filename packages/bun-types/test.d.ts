@@ -1227,6 +1227,7 @@ declare module "bun:test" {
      * Asserts that an `object` contains all the provided keys.
      *
      * A primitive is converted to an object first, so a string has its indices and `length`.
+     * A falsy value, such as `null`, `0` or `""`, has no keys.
      *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);

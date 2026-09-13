@@ -547,6 +547,8 @@ describe("jest-extended", () => {
     expect("abc").toContainKeys([0, 1, 2]);
     expect("abc").not.toContainKeys(["3"]);
     expect("abc").not.toContainKeys(["0", "toString"]);
+    // jest-extended 4.0.0 tests `actual && ...`, so a falsy value has no keys. 7.0.0 tests `actual != null`.
+    expect("").not.toContainKeys(["length"]);
     expect(42).not.toContainKeys(["toFixed"]);
     expect(Symbol.iterator).not.toContainKeys(["description"]);
     expect(() => expect("abc").not.toContainKeys(["0", "length"])).toThrow("toContainKeys");

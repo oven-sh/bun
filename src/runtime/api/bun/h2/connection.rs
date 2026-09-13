@@ -248,8 +248,6 @@ pub struct Connection {
 
     pub local_settings: Settings,
     pub remote_settings: Settings,
-    /// Whether our initial SETTINGS has been ACKed (affects §6.9.2 window grace).
-    pub local_settings_acked: bool,
     /// Maximum decoded header fields per block (node's maxHeaderListPairs session option; not a
     /// SETTINGS parameter). Blocks exceeding it are refused like an oversized header list.
     pub max_header_list_pairs: u32,
@@ -320,7 +318,6 @@ impl Connection {
             is_server,
             local_settings: local,
             remote_settings: Settings::default(),
-            local_settings_acked: false,
             max_header_list_pairs: 128,
             frames_received: 0,
             frames_sent: 0,
@@ -674,23 +671,13 @@ impl Connection {
                 );
                 return true;
             }
-            // An ACK with no outstanding SETTINGS submission is unsolicited; nghttp2 silently
-            // ignores it (it never reaches node's HandleSettingsFrame defensive branch). The
-            // queue can also be empty during the legacy-parser bridge handoff (its
-            // pending_settings_window_submissions is drained into this queue between batches),
-            // so the first ACK falls back to local_settings rather than being dropped.
-            if self.local_settings_acked && self.pending_local_settings_acks.is_empty() {
-                return false;
-            }
-            self.local_settings_acked = true;
             // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose values may
             // differ from the latest submission when several SETTINGS are in flight.
-            let acked =
-                self.pending_local_settings_acks
-                    .pop_front()
-                    .unwrap_or(PendingLocalSettings {
-                        settings: self.local_settings,
-                    });
+            let Some(acked) = self.pending_local_settings_acks.pop_front() else {
+                // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4361-L4366
+                self.send_go_away(sink, ErrorCode::ProtocolError, b"SETTINGS: unexpected ACK");
+                return true;
+            };
             self.acked_local_initial_window = acked.settings.initial_window_size;
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.

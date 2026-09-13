@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, constants as fsConstants, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -988,14 +988,15 @@ it("chrome: sequential navigates work", async () => {
   expect(await view.evaluate("document.body.textContent")).toBe("C");
 });
 
-it("chrome: close() during attach chain doesn't leak the tab", async () => {
+it("chrome: close() during attach chain doesn't continue the navigation", async () => {
   // close() settles all slots and prunes m_pending entries for the view.
   // If the attach chain (createTarget → attach → Page.enable → navigate)
-  // is in-flight, the next chain reply drops on m_pending.find()==end().
-  // Without the prune, the chain would continue: m_sessions.add would
-  // re-register a closed view, PageEnable would send Page.navigate, the
-  // tab would navigate and fire Page.frameNavigated → onNavigated on a
-  // disposed view.
+  // is in-flight, the next chain reply is consumed only to close the tab
+  // (createTarget, see the tests below) or dropped on
+  // m_pending.find()==end(). Without the prune, the chain would continue:
+  // m_sessions.add would re-register a closed view, PageEnable would send
+  // Page.navigate, the tab would navigate and fire Page.frameNavigated →
+  // onNavigated on a disposed view.
   const navigated: string[] = [];
   await using view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   view.onNavigated = (u: string) => navigated.push(u);
@@ -1008,6 +1009,206 @@ it("chrome: close() during attach chain doesn't leak the tab", async () => {
   // Give Chrome a moment — if the tab leaked, we'd see onNavigated fire.
   await new Promise(r => setTimeout(r, 200));
   expect(navigated).toEqual([]);
+});
+
+// Browser-level Target.* events carry no sessionId and the transport routes
+// those nowhere, so tabs coming and going are observed through a second
+// view's page session: Target.setDiscoverTargets there makes Chrome deliver
+// targetCreated/targetDestroyed on that session, which reach the view's
+// EventTarget. Chrome replays the pre-existing targets before it replies to
+// setDiscoverTargets, so listeners attached after the await only see tabs
+// created from then on.
+async function watchPageTargets(probe: Bun.WebView) {
+  await probe.cdp("Target.setDiscoverTargets", { discover: true });
+  const firstPage = Promise.withResolvers<string>();
+  const destroyed = new Map<string, PromiseWithResolvers<void>>();
+  const destroyedEntry = (targetId: string) => {
+    let entry = destroyed.get(targetId);
+    if (!entry) destroyed.set(targetId, (entry = Promise.withResolvers<void>()));
+    return entry;
+  };
+  probe.addEventListener<{ targetInfo: { targetId: string; type: string } }>("Target.targetCreated", e => {
+    const { targetId, type } = e.data.targetInfo;
+    if (type === "page") firstPage.resolve(targetId);
+  });
+  probe.addEventListener<{ targetId: string }>("Target.targetDestroyed", e =>
+    destroyedEntry(e.data.targetId).resolve(),
+  );
+  return {
+    /** targetId of the first page target created after watching started. */
+    page: firstPage.promise,
+    destroyed: (targetId: string) => destroyedEntry(targetId).promise,
+  };
+}
+
+async function pageTargetIds(view: Bun.WebView): Promise<string[]> {
+  const { targetInfos } = await view.cdp<{ targetInfos: { targetId: string; type: string }[] }>("Target.getTargets");
+  return targetInfos.filter(t => t.type === "page").map(t => t.targetId);
+}
+
+// Serial on purpose: "the first page created after watching started" only
+// identifies this test's tab if no other test is creating tabs meanwhile.
+it("chrome: close() while Target.createTarget is in flight closes the tab it creates", async () => {
+  await using probe = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await probe.navigate(html("<body>probe</body>"));
+  const targets = await watchPageTargets(probe);
+  const pagesBefore = await pageTargetIds(probe);
+
+  const view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  const navP = view.navigate(html("<body>orphan</body>"));
+  // Target.createTarget has been written to Chrome; its reply, the only
+  // message that ever carries the new tab's targetId, has not come back.
+  view.close();
+  await expect(navP).rejects.toThrow("WebView closed");
+
+  // Chrome creates the tab either way. close() has to feed the late
+  // reply's targetId into Target.closeTarget; when it dropped the reply
+  // instead, the tab outlived every view in the process and this second
+  // await never settled.
+  const tab = await targets.page;
+  await targets.destroyed(tab);
+  const pagesAfter = await pageTargetIds(probe);
+  expect(pagesAfter.filter(id => !pagesBefore.includes(id))).toEqual([]);
+});
+
+it("chrome: close() after the attach chain completed closes the tab", async () => {
+  // The other side of the same branch in close(): the createTarget reply
+  // already arrived, so m_targetId is known and Target.closeTarget goes
+  // out from close() itself.
+  await using probe = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await probe.navigate(html("<body>probe</body>"));
+  const targets = await watchPageTargets(probe);
+
+  const view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await view.navigate(html("<body>tab</body>"));
+  const tab = await targets.page;
+  view.close();
+  await targets.destroyed(tab);
+  expect(await pageTargetIds(probe)).not.toContain(tab);
+});
+
+it("chrome: process exits on its own after close() with Target.createTarget in flight", async () => {
+  // The entry close() leaves behind for the in-flight createTarget holds
+  // the event loop open until Chrome replies (Target.closeTarget has to go
+  // out), and has to let go once it has. Subprocess-isolated so "the loop
+  // drains" is observable as the process exiting. The view is unreachable
+  // by the time the reply arrives (Bun.gc lets it be collected first); the
+  // cleanup must not depend on it.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        function closeDuringCreateTarget() {
+          const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 100, height: 100 });
+          view.navigate("data:text/html,<body>orphan</body>").catch(e => console.log(e.message));
+          view.close();
+        }
+        closeDuringCreateTarget();
+        Bun.gc(true);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "WebView closed\n", exitCode: 0 });
+});
+
+it("chrome: close() over the WebSocket transport cancels a queued createTarget and closes an in-flight one", async () => {
+  // Connect mode differs from pipe mode in one way that matters to close():
+  // until the handshake completes, commands sit in a queue inside the
+  // transport, so a createTarget close()d at that point can still be
+  // cancelled outright, while one close()d after the handshake is on the
+  // wire like in pipe mode. Spawn a Chrome with a DevTools port for the
+  // fixture to connect to (this process's transport is locked to pipe
+  // mode) and count tab creations on a separate connection: exactly two
+  // pages, the fixture's probe and the in-flight one, and the latter gets
+  // destroyed again.
+  using profile = tempDir("webview-ws-close", {});
+  await using chromeProc = Bun.spawn({
+    cmd: [
+      chromePath!,
+      `--user-data-dir=${profile}`,
+      "--remote-debugging-port=0",
+      "--headless",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-gpu",
+      "--no-startup-window",
+    ],
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    killSignal: "SIGKILL",
+  });
+  // Chrome writes "<port>\n<browser endpoint path>" once the server is up.
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    if (chromeProc.exitCode !== null || chromeProc.signalCode !== null)
+      throw new Error(`Chrome exited (${chromeProc.exitCode ?? chromeProc.signalCode}) before listening`);
+    try {
+      const [port, path] = readFileSync(join(String(profile), "DevToolsActivePort"), "utf8")
+        .trim()
+        .split("\n");
+      if (port && path) wsUrl = `ws://127.0.0.1:${port}${path}`;
+    } catch {
+      await Bun.sleep(10);
+    }
+  }
+
+  const ws = new WebSocket(wsUrl);
+  try {
+    const opened = Promise.withResolvers<void>();
+    const lost = Promise.withResolvers<never>();
+    ws.onopen = () => opened.resolve();
+    ws.onerror = () => lost.reject(new Error("connection to Chrome failed"));
+    ws.onclose = () => lost.reject(new Error("connection to Chrome closed"));
+    await Promise.race([opened.promise, lost.promise]);
+
+    const createdPages: string[] = [];
+    const destroyed: string[] = [];
+    const replies = new Map<number, () => void>();
+    let watching = false;
+    ws.onmessage = ({ data }) => {
+      const { id, method, params } = JSON.parse(String(data));
+      if (id) replies.get(id)?.();
+      // Events before setDiscoverTargets replies describe what already existed.
+      if (!watching) return;
+      if (method === "Target.targetCreated" && params.targetInfo.type === "page")
+        createdPages.push(params.targetInfo.targetId);
+      if (method === "Target.targetDestroyed") destroyed.push(params.targetId);
+    };
+    const roundTrip = (id: number, method: string, params = {}) => {
+      const reply = Promise.withResolvers<void>();
+      replies.set(id, reply.resolve);
+      ws.send(JSON.stringify({ id, method, params }));
+      return Promise.race([reply.promise, lost.promise]);
+    };
+    await roundTrip(1, "Target.setDiscoverTargets", { discover: true });
+    watching = true;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "webview-chrome-ws-close-fixture.ts"), wsUrl],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: ["early: WebView closed", "late: WebView closed", "late: tab created", "late: tab closed", ""].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    // The fixture saw its tab destroyed before exiting, so Chrome has
+    // notified this connection too; one round trip drains anything still
+    // in flight before reading the counters.
+    await roundTrip(2, "Target.getTargets");
+    expect(createdPages).toHaveLength(2);
+    expect(destroyed).toContain(createdPages[1]);
+  } finally {
+    ws.onerror = ws.onclose = null;
+    ws.close();
+  }
 });
 
 it("chrome: url/title getters populated after navigate", async () => {

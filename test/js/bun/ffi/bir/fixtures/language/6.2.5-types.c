@@ -23,7 +23,7 @@ int main(void) {
   // Each signed type has an unsigned counterpart of the same size and alignment; unsigned arithmetic wraps.
   printf("%d %d %d\n", sizeof(int) == sizeof(unsigned), _Alignof(long) == _Alignof(unsigned long), UINT_MAX + 1u == 0);
   unsigned char wraps = 0; wraps--;
-  printf("%d %u\n", wraps, 0u - 1u == UINT_MAX);
+  printf("%d %d\n", wraps, 0u - 1u == UINT_MAX);
   // The value bits of a non-negative signed value are those of the unsigned one; negative numbers are two's complement.
   int minus_one = -1; unsigned all_ones;
   memcpy(&all_ones, &minus_one, sizeof all_ones);

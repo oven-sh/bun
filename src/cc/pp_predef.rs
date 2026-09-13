@@ -35,7 +35,10 @@ pub(crate) fn predefined_macros(target: Target) -> String {
     def("__STDC_HOSTED__", "1");
     def("__STDC_UTF_16__", "1");
     def("__STDC_UTF_32__", "1");
-    def("__STDC_NO_THREADS__", "1");
+    // glibc has <threads.h>; Apple's C library and (as far as C11 mode goes) Microsoft's have not.
+    if target.os != Os::Linux {
+        def("__STDC_NO_THREADS__", "1");
+    }
     def("__BUN_CC__", "1");
     if let Some((major, minor, patch)) = gnu_version {
         def("__GNUC__", &major.to_string());

@@ -484,8 +484,8 @@ impl ExprParser<'_> {
                 Ok(v)
             }
             PpKind::Ident => {
-                // Identifiers that survive expansion are 0 (`true` is 1 as in C23).
-                let value = i64::from(tok.text == b"true");
+                // Identifiers that survive expansion are 0: `true` and `false` too, which before
+                // C23 are macros of <stdbool.h> and nothing else.
                 // In a dead arm, tolerate `UNDEFINED_MACRO(args)`.
                 if !live && self.peek_punct() == Some(Punct::LParen) {
                     let mut depth = 0;
@@ -503,7 +503,7 @@ impl ExprParser<'_> {
                         }
                     }
                 }
-                Ok(Value::signed(value))
+                Ok(Value::signed(0))
             }
             PpKind::Number | PpKind::CharLit => match classify(tok, self.dialect)?.tok {
                 Tok::Int { value, suffix, .. } => {

@@ -1475,5 +1475,26 @@
   "line": 1,
   "column": 25,
   "message": "_Generic selector of type 'long double' is not compatible with any association"
+ },
+ {
+  "about": "6.5.1.1p2: no two associations of a generic selection name compatible types",
+  "source": "typedef unsigned short first, second;\nint main(void) { return _Generic((first)0, first: 1, second: 2, default: 0); }",
+  "line": 2,
+  "column": 54,
+  "message": "_Generic names type 'unsigned short', which is compatible with 'unsigned short' named before it"
+ },
+ {
+  "about": "6.5.1.1p2: no two associations of a generic selection name compatible types",
+  "source": "int main(void) { return _Generic(1, int: 1, signed: 2); }",
+  "line": 1,
+  "column": 45,
+  "message": "_Generic names type 'int', which is compatible with 'int' named before it"
+ },
+ {
+  "about": "6.5.1.1p2: a generic selection has at most one default",
+  "source": "int main(void) { return _Generic(1, default: 1, int: 2, default: 3); }",
+  "line": 1,
+  "column": 25,
+  "message": "duplicate default in _Generic"
  }
 ]

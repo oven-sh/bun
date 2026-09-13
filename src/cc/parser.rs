@@ -4443,8 +4443,10 @@ impl<S: TokenSource> Parser<S> {
         let control_ty = self.sema.rvalue_type(&controlling.ty);
         let mut chosen: Option<Expr> = None;
         let mut fallback: Option<Expr> = None;
+        let mut named: Vec<Type> = Vec::new();
         while self.eat(Punct::Comma)? {
             let is_default = self.eat_kw(Kw::Default)?;
+            let at = self.loc();
             let ty = if is_default {
                 None
             } else {
@@ -4455,10 +4457,24 @@ impl<S: TokenSource> Parser<S> {
             match ty {
                 None if fallback.is_some() => return err(loc, "duplicate default in _Generic"),
                 None => fallback = Some(value),
-                Some(ty) if chosen.is_none() && Sema::compatible(&ty, &control_ty) => {
-                    chosen = Some(value);
+                Some(ty) => {
+                    if let Some(earlier) =
+                        named.iter().find(|earlier| Sema::compatible(earlier, &ty))
+                    {
+                        return err(
+                            at,
+                            format!(
+                                "_Generic names type '{}', which is compatible with '{}' named before it",
+                                self.sema.tcx.display(&ty),
+                                self.sema.tcx.display(earlier)
+                            ),
+                        );
+                    }
+                    if chosen.is_none() && Sema::compatible(&ty, &control_ty) {
+                        chosen = Some(value);
+                    }
+                    named.push(ty);
                 }
-                Some(_) => {}
             }
         }
         self.expect(Punct::RParen)?;

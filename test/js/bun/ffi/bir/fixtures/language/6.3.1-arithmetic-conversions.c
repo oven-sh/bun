@@ -34,11 +34,11 @@ int main(void) {
   printf("%d\n", b);
   // To an unsigned type: modulo one more than its maximum. To a signed type that cannot hold the value: as GCC and
   // Clang define it, the same bits.
-  printf("%u %u %u %llu\n", (unsigned)-1 == UINT_MAX, (unsigned char)0x1ff, (unsigned short)-2, (unsigned long long)-1LL == ULLONG_MAX);
+  printf("%d %u %u %d\n", (unsigned)-1 == UINT_MAX, (unsigned)(unsigned char)0x1ff, (unsigned)(unsigned short)-2, (unsigned long long)-1LL == ULLONG_MAX);
   printf("%d %d %d\n", (signed char)0x180, (short)0x18000, (int)0x180000000LL);
   printf("%d %d\n", (signed char)255, (int)4294967295u);
   // Real floating to integer: toward zero. Integer to floating: exact when it fits, else rounded to nearest.
-  printf("%d %d %d %d %lld\n", (int)2.9, (int)-2.9, (int)0.999, (unsigned)3.99f, (long long)-1e18);
+  printf("%d %d %d %d %lld\n", (int)2.9, (int)-2.9, (int)0.999, (int)(unsigned)3.99f, (long long)-1e18);
   printf("%.1f %.1f %.1f %.1f\n", (float)16777217, (double)16777217, (float)0xffffff80u, (double)9007199254740993LL);
   printf("%.1f %.1f\n", (double)ULLONG_MAX, (float)LLONG_MIN);
   // Between floating types: exact when widening, rounded when narrowing.

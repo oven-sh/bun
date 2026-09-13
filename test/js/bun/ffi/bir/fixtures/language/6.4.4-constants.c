@@ -1,8 +1,11 @@
 // C11 6.4.4: every form of integer, floating, enumeration and character constant, and the type each has.
 #include <limits.h>
 #include <stdio.h>
-#include <uchar.h>
 #include <wchar.h>
+
+// (<uchar.h> has these, where there is one: Apple's C library has not.)
+typedef __CHAR16_TYPE__ char16_t;
+typedef __CHAR32_TYPE__ char32_t;
 
 #define KIND(x) _Generic((x), int: "int", unsigned: "uint", long: "long", unsigned long: "ulong", long long: "llong", \
   unsigned long long: "ullong", float: "float", double: "double", long double: "ldouble", char: "char", default: "other")

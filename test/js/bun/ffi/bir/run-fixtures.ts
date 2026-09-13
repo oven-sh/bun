@@ -20,8 +20,8 @@ function microsoftHeaders() {
  * `x87` (80-bit `long double`: x86-64 outside Windows), `x64-sysv` (the System V calling convention for x86-64), `glibc` (its symbols or headers), `posix` (headers and
  * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
  * and choice of enumeration types, which Windows does not share), `c99-inline` (C99's and GNU C's rules for which
- * `inline` definitions other files see: Microsoft C has its own), or `windows` (where `supported` means Visual
- * Studio's and the Windows SDK's headers are installed).
+ * `inline` definitions other files see: Microsoft C has its own), `windows` (where `supported` means Visual
+ * Studio's and the Windows SDK's headers are installed), or `uchar` (a C library with `<uchar.h>`: not Apple's).
  */
 export function meets(requirement: string | undefined) {
   switch (requirement?.trim()) {
@@ -43,6 +43,8 @@ export function meets(requirement: string | undefined) {
       return !isWindows;
     case "windows":
       return isWindows;
+    case "uchar":
+      return !isMacOS;
     default:
       throw new Error(`unknown requirement ${JSON.stringify(requirement)}`);
   }

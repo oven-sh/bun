@@ -1,15 +1,20 @@
 // C11 6.4.5: string literals, their prefixes, their types and what adjacent ones make together.
 #include <stdio.h>
 #include <string.h>
-#include <uchar.h>
 #include <wchar.h>
 
-#define ELEMENT(x) _Generic((x), char *: "char", wchar_t *: "wchar_t", char16_t *: "char16_t", char32_t *: "char32_t", default: "other")
+// (<uchar.h> has these, where there is one: Apple's C library has not.)
+typedef __CHAR16_TYPE__ char16_t;
+typedef __CHAR32_TYPE__ char32_t;
+
+// (One selection cannot name them all: wchar_t is the same type as char16_t on Windows and as nothing else elsewhere.)
+#define IS(x, T) _Generic((x), T *: 1, default: 0)
 
 int main(void) {
   // A string literal is an array of its characters plus a terminating zero, with static storage duration.
   printf("%d %d %d\n", (int)sizeof "abc", (int)sizeof "", (int)sizeof "a\0b");
-  printf("%s %s %s %s %s\n", ELEMENT("a"), ELEMENT(u8"a"), ELEMENT(L"a"), ELEMENT(u"a"), ELEMENT(U"a"));
+  printf("%d %d %d %d %d\n", IS("a", char), IS(u8"a", char), IS(L"a", wchar_t), IS(u"a", char16_t), IS(U"a", char32_t));
+  printf("%d %d %d %d\n", IS("a", wchar_t), IS(L"a", char), IS(u"a", char32_t), IS(U"a", char16_t));
   printf("%d %d %d\n", (int)(sizeof L"ab" / sizeof(wchar_t)), (int)(sizeof u"ab" / sizeof(char16_t)), (int)(sizeof U"ab" / sizeof(char32_t)));
   // Adjacent literals are one; a prefix on any of them is the prefix of the whole.
   printf("%s %d %d\n", "one " "two" " three", (int)sizeof("ab" "cd"), (int)(sizeof(L"ab" "cd") / sizeof(wchar_t)));

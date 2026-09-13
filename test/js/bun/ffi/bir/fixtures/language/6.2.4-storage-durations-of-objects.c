@@ -7,14 +7,16 @@ static int initialized_before_startup = 40 + 2;
 static int zero_initialized[4];
 static _Thread_local int per_thread = 5;
 
-static int *address_of_automatic(int depth, int **outermost) {
-  int local = depth;                 // a new instance for every (recursive) entry into the block
-  if (depth == 0) *outermost = &local;
-  if (depth < 3) {
-    int *inner = address_of_automatic(depth + 1, outermost);
-    return inner != &local && *outermost != inner ? &local : 0;
-  }
-  return &local;
+// Each call of a function gets its own instance of its automatic objects, recursion included: while they are all
+// alive, every one of them is somewhere else.
+static int distinct_instances(int depth, int **seen) {
+  int local = depth;
+  seen[depth] = &local;
+  if (depth < 3) return distinct_instances(depth + 1, seen);
+  int distinct = 1;
+  for (int i = 0; i <= depth; i++)
+    for (int j = 0; j < i; j++) distinct &= seen[i] != seen[j] && *seen[i] == i;
+  return distinct;
 }
 
 static int static_in_block(void) {
@@ -29,8 +31,8 @@ static struct holder make(void) { struct holder h = {{1, 2, 3}}; return h; }
 
 int main(void) {
   printf("%d %d %d\n", initialized_before_startup, zero_initialized[3], per_thread);
-  int *outermost = 0;
-  printf("%d\n", address_of_automatic(0, &outermost) != 0);
+  int *seen[4];
+  printf("%d\n", distinct_instances(0, seen));
   static_in_block();
   printf("%d\n", static_in_block());
   // A jump back above a declaration makes a new object (with a VLA, of another size); its old value is gone,

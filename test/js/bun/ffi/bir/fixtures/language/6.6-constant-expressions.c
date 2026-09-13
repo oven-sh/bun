@@ -60,7 +60,7 @@ int main(void) {
   printf("%d %d %d\n", (int)(sizeof sized / sizeof sized[0]), (int)sizeof(struct bits) >= 3, (int)((uintptr_t)&aligned % 32));
   printf("%.6f %.1f %.6f %.4f %.1f\n", real, from_int, mixed, (double)narrowed, (double)negated);
   printf("%lld %lld %lld %u %u %d %d %d\n", wide, from_unsigned, from_double, wraps, all, logical, from_bool, truncated);
-  printf("%d %d %d %d %d\n", to_object == &objects[3], to_array == objects, to_end - to_array, to_middle == &objects[4], to_member == one_record.values + 2);
+  printf("%d %d %d %d %d\n", to_object == &objects[3], to_array == objects, (int)(to_end - to_array), to_middle == &objects[4], to_member == one_record.values + 2);
   printf("%d %d %d %d\n", to_inner == &one_record.inner.b, into_bytes == (char *)one_record.values, to_function(1), to_function_too == function);
   printf("%d %d %d %s %s\n", null == 0, also_null == 0, from_integer == (void *)0x1000, to_string, to_compound);
   printf("%d %d %d\n", (int)difference, address_as_integer == (uintptr_t)objects, address_is_true);
@@ -69,6 +69,6 @@ int main(void) {
   // In a block, an initializer for a static object obeys the same rules; one for an automatic object need not be constant.
   static int *static_in_block = &objects[7];
   int n = 3, runtime = n * FROM_SHIFT;
-  printf("%d %d\n", static_in_block - objects, runtime);
+  printf("%d %d\n", (int)(static_in_block - objects), runtime);
   return 0;
 }

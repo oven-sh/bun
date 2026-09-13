@@ -76,8 +76,7 @@ class Response extends WebResponse {
 
   clone() {
     const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
-    // The body moved to a new web stream, and the old one stays locked. As in node-fetch,
-    // `body` is a new node stream after clone().
+    // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
     this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
     return cloned;

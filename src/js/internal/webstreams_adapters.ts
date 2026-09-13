@@ -45,7 +45,7 @@ class ReadableFromWeb extends Readable {
   #reader;
   #closed;
   #stream;
-  // node-fetch, undici: `stream` is the body of a Response, whose text(), json(), ... read it too.
+  // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
   #responseBody;
 
   constructor(options, stream) {
@@ -62,9 +62,7 @@ class ReadableFromWeb extends Readable {
     this.#responseBody = responseBody;
   }
 
-  // A lock on a Response body that this wrapper has not opened belongs to a body method, or to
-  // another consumer of the Response. It is never released: getReader() and cancel() throw, and
-  // nothing is left to read.
+  // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
   #takenByResponse(stream) {
     return this.#responseBody && stream.locked;
   }

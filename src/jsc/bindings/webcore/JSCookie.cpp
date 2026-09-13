@@ -18,6 +18,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -384,7 +385,7 @@ template<> const ClassInfo JSCookieDOMConstructor::s_info = { "Cookie"_s, &Base:
 
 template<> JSValue JSCookieDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
 {
-    return globalObject.objectPrototype();
+    return globalObject.functionPrototype();
 }
 
 template<> void JSCookieDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)

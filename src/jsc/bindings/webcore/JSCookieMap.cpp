@@ -22,6 +22,7 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -207,7 +208,7 @@ template<> const ClassInfo JSCookieMapDOMConstructor::s_info = { "CookieMap"_s, 
 
 template<> JSValue JSCookieMapDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
 {
-    return globalObject.objectPrototype();
+    return globalObject.functionPrototype();
 }
 
 template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)

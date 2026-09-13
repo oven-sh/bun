@@ -236,6 +236,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         global->bunVM(),
         vm,
         global,
+        global->moduleLoader(),
         &specifierBunString,
         specifier,
         &empty,

@@ -408,6 +408,20 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
+    /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.unsafe.ModuleGraph`'s
+    /// module code (the Exception's throw site decides), or an unhandled rejection whose
+    /// owner promiseRejectionTracker decided, to that graph's `onError`. true: delivered
+    /// (no test failure, exit code or `--unhandled-rejections` policy); false: not a
+    /// graph's, continue with the normal thread-wide handling.
+    safe fn Bun__ModuleGraph__handleUncaughtException(
+        global: &JSGlobalObject,
+        exception: JSValue,
+    ) -> bool;
+    safe fn Bun__ModuleGraph__handleUnhandledRejection(
+        global: &JSGlobalObject,
+        reason: JSValue,
+        owner: JSValue,
+    ) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
@@ -1751,6 +1765,13 @@ impl VirtualMachine {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
+            return true;
+        }
+
+        // An exception thrown by a Bun.unsafe.ModuleGraph's module code is that graph's to
+        // handle, ahead of the test runner and the thread-wide path. (A rejection
+        // re-entering here under --unhandled-rejections=strict/throw was already judged.)
+        if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
             return true;
         }
 
@@ -3880,10 +3901,29 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
     ) {
+        self.unhandled_rejection_owned(global_object, reason, promise, JSValue::NULL);
+    }
+
+    /// `owner`: for a rejection from the tracker queue, the `Bun.unsafe.ModuleGraph` whose
+    /// code rejected the promise (its `onError` takes it), or null.
+    pub fn unhandled_rejection_owned(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+        owner: JSValue,
+    ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
+            return;
+        }
+
+        if owner.is_cell()
+            && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
+        {
+            let _ = self.event_loop_mut().drain_microtasks();
             return;
         }
 

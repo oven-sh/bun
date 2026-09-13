@@ -69,6 +69,10 @@ declare interface Error {
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
   $requireNativeModule(id: string): any;
+  /** require() resolved this cache entry to an ES module (of the global object's loader). */
+  $esModule: boolean;
+  /** The Bun.unsafe.ModuleGraph this module's require() binds ES modules to, if any. */
+  readonly $moduleGraph: object | undefined;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

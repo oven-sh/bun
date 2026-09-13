@@ -1312,6 +1312,10 @@ pub struct FnOnlyDataVisit {
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// True inside a class field initializer or a class static block. Both run
+    /// as a method call, so "new.target" is always undefined there.
+    pub(crate) is_new_target_undefined: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

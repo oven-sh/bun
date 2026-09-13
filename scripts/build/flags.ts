@@ -298,11 +298,11 @@ export const globalFlags: Flag[] = [
     desc: "Tune debug info for LLDB (before the level flags; the last -g flag wins)",
   },
   {
-    // Nix LLVM doesn't support zstd — but we target standard distros.
-    // Nix users can override via profile if needed.
-    flag: ["-g3", "-gz=zstd"],
+    // An LLVM built without zstd (nix's) warns and emits uncompressed debug
+    // info. Fine — but -Werror would make that fatal on the PCH.
+    flag: ["-g3", "-gz=zstd", "-Wno-debug-compression-unavailable"],
     when: c => c.unix && c.debug,
-    desc: "Full debug info, zstd-compressed",
+    desc: "Full debug info, zstd-compressed where the toolchain supports it",
   },
   {
     flag: ["-g", "-gz=zstd"],
@@ -1085,14 +1085,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--icf=safe",
     when: c => c.darwin && c.crossTarget !== undefined && c.release,
     desc: "macOS cross-link: fold identical address-insignificant functions",
-  },
-  {
-    // -ld_new selects Apple's new linker — only meaningful (and only
-    // understood) when Apple's ld driver does the link. ld64.lld (the
-    // cross-link path) parses it as `-l d_new` and fails.
-    flag: "-Wl,-ld_new",
-    when: c => c.darwin && c.crossTarget === undefined,
-    desc: "Use new Apple linker (native darwin links only)",
   },
   {
     // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —

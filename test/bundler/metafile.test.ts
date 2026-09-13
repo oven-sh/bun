@@ -1015,11 +1015,16 @@ describe("Bun.build metafile paths", () => {
     expect(result.success).toBe(false);
   });
 
-  test.concurrent("a metafile path longer than the path buffer fails the build", async () => {
+  test.concurrent.each([
+    ["without outdir", false],
+    // The unchecked join used to panic here: "range end index 100005 out of range for slice of length 4095".
+    ["with outdir", true],
+  ])("a metafile path longer than the path buffer fails the build, %s", async (_name, withOutdir) => {
     using dir = tempDir("metafile-path-too-long", files);
 
     const result = await Bun.build({
       entrypoints: [`${dir}/entry.js`],
+      outdir: withOutdir ? `${dir}/dist` : undefined,
       metafile: { markdown: Buffer.alloc(100_000, "a").toString() },
       throw: false,
     });

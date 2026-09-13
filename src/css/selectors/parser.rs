@@ -949,6 +949,12 @@ pub enum PseudoClass {
     Target,
     /// The [:target-within](https://drafts.csswg.org/selectors-4/#the-target-within-pseudo) pseudo class.
     TargetWithin,
+    /// The [:target-current](https://drafts.csswg.org/css-overflow-5/#selectordef-target-current) pseudo class.
+    TargetCurrent,
+    /// The [:target-before](https://drafts.csswg.org/css-overflow-5/#selectordef-target-before) pseudo class.
+    TargetBefore,
+    /// The [:target-after](https://drafts.csswg.org/css-overflow-5/#selectordef-target-after) pseudo class.
+    TargetAfter,
     /// The [:visited](https://drafts.csswg.org/selectors-4/#visited-pseudo) pseudo class.
     Visited,
 
@@ -1482,6 +1488,10 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
         b"local-link" => P::LocalLink,
         b"target" => P::Target,
         b"target-within" => P::TargetWithin,
+        // https://drafts.csswg.org/css-overflow-5/#active-before-after-scroll-markers
+        b"target-current" => P::TargetCurrent,
+        b"target-before" => P::TargetBefore,
+        b"target-after" => P::TargetAfter,
         b"visited" => P::Visited,
         // https://drafts.csswg.org/selectors-4/#input-pseudos
         b"enabled" => P::Enabled,

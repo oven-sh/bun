@@ -44,7 +44,16 @@ pub struct WindowsNamedPipeContext {
     global_this: GlobalRef,
     task_event: EventState,
     is_open: bool,
+    /// A socket over a Windows named pipe is in no uSockets group: the context
+    /// that opened it closes it through this owner when it stops.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
+    // which may free `this`.
+    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() }
+});
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
@@ -241,16 +250,6 @@ impl WindowsNamedPipeContext {
         ));
     }
 
-    /// VM stop phase: close the pipe now (its socket's close/error handlers run
-    /// while script is still allowed) instead of during the final collection.
-    ///
-    /// # Safety
-    /// `this` is a registered live context (see `create`).
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `close` re-enters `on_close`, which may free `this`.
-        unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() };
-    }
-
     fn on_error(this: *mut Self, err: &SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy field reads.
         let (is_open, socket) = unsafe { ((*this).is_open, (*this).socket) };
@@ -324,11 +323,6 @@ impl WindowsNamedPipeContext {
         // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
-                // SAFETY: `this` is the live allocation registered in create().
-                crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-                    core::ptr::NonNull::new_unchecked(this)
-                })
-                .unregister();
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
                 drop(unsafe { bun_core::heap::take(this) });
@@ -418,6 +412,7 @@ impl WindowsNamedPipeContext {
                         global_this,
                         task_event: EventState::None,
                         is_open: false,
+                        abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipeContext>(),
                     },
                 );
                 (*ptr::addr_of_mut!((*this).named_pipe))
@@ -432,13 +427,8 @@ impl WindowsNamedPipeContext {
                 Ok(())
             });
 
-            // A socket over a Windows named pipe is in no uSockets group: the VM's
-            // stop phase closes it through this owner (unregistered when freed).
-            // SAFETY: non-null, fully initialised above.
-            crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-                core::ptr::NonNull::new_unchecked(this)
-            })
-            .register();
+            // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
+            unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
 
             this
         }

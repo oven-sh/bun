@@ -1228,9 +1228,12 @@ impl All {
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias, and the `AbortSignal`s that own the `AbortSignalTimeout` boxes.
+    ///
+    /// `only`: just the timers script of that context set (the context stopped).
     pub(crate) unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        only: Option<bun_jsc::ContextId>,
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
@@ -1261,19 +1264,31 @@ impl All {
                     let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
                     // SAFETY: `parent` points at the live `TimeoutObject` recovered
                     // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                    let internals = unsafe { core::ptr::addr_of!((*parent).internals) };
+                    // SAFETY: as above.
+                    if only.is_none_or(|context| unsafe { (*internals).context } == context) {
+                        to_cancel.push(internals);
+                    }
                 }
                 EventLoopTimerTag::ImmediateObject => {
                     // SAFETY: tag invariant — see above.
                     let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
                     // SAFETY: `parent` points at the live `ImmediateObject` recovered
                     // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                    let internals = unsafe { core::ptr::addr_of!((*parent).internals) };
+                    // SAFETY: as above.
+                    if only.is_none_or(|context| unsafe { (*internals).context } == context) {
+                        to_cancel.push(internals);
+                    }
                 }
                 EventLoopTimerTag::AbortSignalTimeout => {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live boxed `abort_signal::Timeout`.
-                    signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
+                    let timeout = unsafe { AbortSignalTimeout::from_timer_ptr(node) };
+                    // SAFETY: as above.
+                    if only.is_none_or(|context| unsafe { (*timeout).context() } == context) {
+                        signal_timeouts.push(timeout);
+                    }
                 }
                 _ => {}
             }

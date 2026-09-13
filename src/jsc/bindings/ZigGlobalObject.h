@@ -38,6 +38,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+struct ModuleGraphState;
 class GCProfilerObserver;
 } // namespace Bun
 
@@ -180,6 +181,9 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
+    // The context that owns what the running script opens: that of the Bun.unsafe.ModuleGraph whose
+    // context it runs in, else this global's own.
+    WebCore::ScriptExecutionContext* currentScriptExecutionContext();
 
     WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
@@ -243,6 +247,9 @@ public:
 
     JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSModuleGraphStructure() const { return m_JSModuleGraphClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSModuleGraphConstructor() const { return m_JSModuleGraphClassStructure.constructorInitializedOnMainThread(this); }
+
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -296,6 +303,10 @@ public:
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
+    // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
+    bool hasModuleGraphs() const { return m_moduleGraphRegistry.isInitialized(); }
+    JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); } // overlay -> graph
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
@@ -525,6 +536,7 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -568,6 +580,7 @@ public:
     V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyClassStructure, m_JSModuleGraphClassStructure)                                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
     V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
     V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
@@ -799,6 +812,10 @@ public:
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
+    std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+    // Some Bun.unsafe.ModuleGraph of this global has (had) a context of its own (`isolateIO`).
+    bool m_hasModuleGraphContexts { false };
+
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile
     // does not leave the observer registered.
@@ -813,7 +830,30 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+public:
+    // Promises rejected while they had no handler, awaiting handleRejectedPromises()
+    // after the microtask drain, each with whose rejection it is as decided when it
+    // happened: a Bun.unsafe.ModuleGraph, or null for the global object's own code.
+    // Guarded by cellLock() like WriteBarrierList (visited on the GC thread).
+    class RejectedPromiseQueue {
+    public:
+        void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
+        bool remove(JSC::JSCell* owner, JSC::JSPromise*);
+        // Move every entry out (index-aligned; jsNull() owner for the global object's) and clear.
+        void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
+        template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
+        bool isEmpty() const { return m_entries.isEmpty(); }
+
+    private:
+        struct Entry {
+            JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
+            JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        };
+        WTF::Vector<Entry> m_entries;
+    };
+
+private:
+    RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

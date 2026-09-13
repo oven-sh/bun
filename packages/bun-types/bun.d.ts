@@ -5444,6 +5444,115 @@ declare module "bun" {
      */
     function mimallocDump(): void;
 
+    interface ModuleGraphOptions {
+      /**
+       * Values for free identifiers in all of the graph's module code
+       * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
+       * with the same set of names share compiled code with each other.
+       */
+      globals?: Record<string, unknown> | undefined;
+      /**
+       * Called with uncaught exceptions and unhandled rejections raised by this
+       * graph's module code, instead of the process-wide `uncaughtException` /
+       * `unhandledRejection` handling. Without it, or for an error `onError`
+       * itself lets escape, they take that normal path.
+       *
+       * An error belongs to the graph whose module code threw it or rejected
+       * with it: the innermost module code on the stack at that moment
+       * (functions passed in through `globals`, and CommonJS modules, are the
+       * host's code); a promise the runtime rejects on that code's behalf (an
+       * async function, a reaction whose handler threw) counts as rejected by
+       * it. Anything else — including a promise derived through `.then()`
+       * without a rejection handler — takes the normal path. `kind` is
+       * `"uncaughtException"` or `"unhandledRejection"`.
+       */
+      onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+      /**
+       * Give the graph a context of its own for timers and I/O. Everything
+       * its code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+       * `fetch()` requests, watchers, child processes — belongs to the graph,
+       * and {@link ModuleGraph.dispose} closes all of it.
+       *
+       * The context follows the graph's code through `await`, timers, socket
+       * handlers and the listeners of what it made, the way
+       * `AsyncLocalStorage` stores do (creating the first such graph turns
+       * that tracking on for the process). Code of the graph that the host
+       * calls directly runs in the host's context; use
+       * {@link ModuleGraph.run} to call it in the graph's.
+       *
+       * Work of the graph that is in flight when it is disposed is dropped:
+       * promises for its timers and background jobs never settle.
+       *
+       * @default false
+       */
+      isolateIO?: boolean | undefined;
+    }
+
+    /**
+     * A further instantiation of ES module graphs in **this** global object.
+     *
+     * Every graph that imports an ES module shares that module's parsed code,
+     * bytecode and JIT-compiled code with every other graph and with the host;
+     * each graph gets its own module-level state (top-level bindings, classes,
+     * closures), its own module registry for `import` / `import()` and for
+     * `import.meta.require()` of an ES module (what a bare `require()` in an
+     * ES module is), its own `import.meta`, and its own values for the names in
+     * `globals`. Everything else — `globalThis`, `process`, intrinsics, builtin
+     * modules, CommonJS modules (one instance, in the one `require.cache`;
+     * `createRequire()` and `require()` inside CommonJS code are the host's),
+     * native addons, the event loop — is the global object's, shared: this runs
+     * cooperating instances of a program side by side, it is not a sandbox.
+     *
+     * @experimental
+     * @example
+     * ```ts
+     * const graph = new Bun.unsafe.ModuleGraph({
+     *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
+     *   onError: (err, kind) => console.error(kind, err),
+     * });
+     * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
+     * app.start();
+     * graph.dispose();
+     * ```
+     */
+    class ModuleGraph {
+      constructor(options?: ModuleGraphOptions);
+      /**
+       * Load `specifier` (resolved against `process.cwd()` when relative) and
+       * instantiate it and its dependencies into this graph, evaluating what
+       * has not been evaluated in this graph yet.
+       *
+       * @param specifier module specifier, as for `import()`
+       * @returns the module's namespace object for this graph
+       */
+      import<T = any>(specifier: string): Promise<T>;
+      /**
+       * Resolved path of the first module successfully `import()`ed into this
+       * graph — the module for which `import.meta.main` is true inside the
+       * graph — or `undefined` before that.
+       */
+      readonly mainModule: string | undefined;
+      /**
+       * Call `fn` inside the graph's context (see
+       * {@link ModuleGraphOptions.isolateIO}): what `fn` and everything it
+       * starts open belongs to the graph.
+       *
+       * @returns what `fn` returns
+       */
+      run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+      /**
+       * Drops the graph's module registry: pending and later `graph.import()`s
+       * reject, `import()` from the graph's own module code rejects, and
+       * modules of the graph that had not run yet never will. Code from the
+       * graph that is still referenced keeps working, and its errors still go
+       * to `onError`. With `isolateIO`, everything the graph's code opened
+       * is closed, and whatever it opens afterwards is closed at once.
+       * Idempotent.
+       */
+      dispose(): void;
+      [Symbol.dispose](): void;
+    }
+
     /**
      * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *

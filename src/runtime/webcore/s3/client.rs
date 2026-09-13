@@ -303,6 +303,7 @@ pub(crate) fn list_objects(
         body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
         signal_store: Default::default(),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -365,11 +366,11 @@ pub(crate) fn list_objects(
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
+    // Out on the HTTP thread until its final callback: its context aborts it
+    // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
+    // SAFETY: the task is heap-allocated and drops its handle with itself.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context()) };
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -1218,6 +1219,7 @@ fn download_stream(
             ),
             concurrent_task: Default::default(),
             async_http_id: 0,
+            abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1279,11 +1281,11 @@ fn download_stream(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
+    // Out on the HTTP thread until its final callback: its context aborts it
+    // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
-    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
+    // SAFETY: the task is heap-allocated and drops its handle with itself.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context()) };
     bun_http::HTTPThread::schedule(batch);
     task_ptr
 }

@@ -51,18 +51,27 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
+#include "ModuleGraph.h"
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
+ImportMetaObject::ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* moduleGraph)
+    : Base(vm, structure)
+    , url(url)
+    , m_moduleGraph(moduleGraph, JSC::WriteBarrierEarlyInit)
 {
-    ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
+}
+
+ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* moduleGraph)
+{
+    ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url, moduleGraph);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, const WTF::String& url)
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, const WTF::String& url, Bun::JSModuleGraph* moduleGraph)
 {
     VM& vm = globalObject->vm();
     Zig::GlobalObject* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
@@ -73,21 +82,21 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
         ? zigGlobalObject->ImportMetaBakeObjectStructure()
         : zigGlobalObject->ImportMetaObjectStructure();
 
-    return create(vm, globalObject, structure, url);
+    return create(vm, globalObject, structure, url, moduleGraph);
 }
 
-ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL)
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, Bun::JSModuleGraph* moduleGraph)
 {
     if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(specifierOrURL))) {
-        return create(globalObject, url->href().string());
+        return create(globalObject, url->href().string(), moduleGraph);
     }
 
     WTF::String specifier = specifierOrURL.toWTFString(globalObject);
     ASSERT(specifier);
-    return ImportMetaObject::createFromSpecifier(globalObject, specifier);
+    return ImportMetaObject::createFromSpecifier(globalObject, specifier, moduleGraph);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, Bun::JSModuleGraph* moduleGraph)
 {
     auto index = specifier.find('?');
     URL url;
@@ -98,7 +107,7 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }
-    return create(globalObject, url.string());
+    return create(globalObject, url.string(), moduleGraph);
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -519,15 +528,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main and thread
     // are the ones that matter, no matter which realm reads the property.
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
-    if (!globalObject->scriptExecutionContext()->isMainThread())
-        return JSValue::encode(jsBoolean(false));
-
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue bunMain;
+    if (Bun::JSModuleGraph* graph = thisObject->moduleGraph()) {
+        // A Bun.unsafe.ModuleGraph's module: main is the first module import()ed into the graph.
+        bunMain = graph->mainPath();
+    } else {
+        if (!globalObject->scriptExecutionContext()->isMainThread())
+            return JSValue::encode(jsBoolean(false));
+        bunMain = JSValue::decode(BunObject_getter_main(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
-    JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -643,7 +657,8 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        // A graph module's require() returns that graph's instances of ES modules.
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
         RETURN_IF_EXCEPTION(scope, );
         ASSERT(object);
         init.set(uncheckedDowncast<JSFunction>(object));
@@ -717,6 +732,7 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     fn->dirProperty.visit(visitor);
     fn->fileProperty.visit(visitor);
     fn->pathProperty.visit(visitor);
+    visitor.append(fn->m_moduleGraph);
 }
 
 DEFINE_VISIT_CHILDREN(ImportMetaObject);

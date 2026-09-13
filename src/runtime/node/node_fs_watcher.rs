@@ -75,7 +75,15 @@ pub struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
+
+    /// Armed until `detach()`: the watcher closes with the context that started it.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
+    unsafe { &*this }.close_without_event()
+});
 
 /// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
 /// node.classes.ts). The C++ side is emitted by `generate-classes.ts`.
@@ -1044,14 +1052,13 @@ impl FSWatcher {
         // path unlocks exactly once. `ref_task`/`unref_task` use the RAII guard.
     }
 
-    /// `bun test --isolate` teardown: `close()` minus the `'close'` event (no
-    /// user JS mid-swap; parity with `StatWatcher::close`). Dropping the
+    /// The watcher's context is stopping: `close()` minus the `'close'` event
+    /// (no user JS then; parity with `StatWatcher::close`). Dropping the
     /// initial pending-activity ref is the load-bearing part — `detach()`
     /// alone leaves `pending_activity_count` at 1, so `has_pending_activity()`
     /// stays true forever and the GC can never collect the wrapper, pinning
-    /// the cached listener (and the outgoing file's entire global) for the
-    /// rest of the run.
-    pub(crate) fn close_for_isolation(&self) {
+    /// the cached listener (and with it the stopped context's entire realm).
+    fn close_without_event(&self) {
         self.mutex.lock();
         if !self.closed.get() {
             self.closed.set(true);
@@ -1066,11 +1073,7 @@ impl FSWatcher {
     // this can be called multiple times
     pub(crate) fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::FsWatcher(
-                core::ptr::NonNull::from(self),
-            ));
-        }
+        self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
             // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
@@ -1161,6 +1164,7 @@ impl FSWatcher {
             verbose: args.verbose,
             poll_ref: JsCell::new(KeepAlive::default()),
             pending_activity_count: AtomicU32::new(1),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
@@ -1211,14 +1215,8 @@ impl FSWatcher {
                 args.listener.with_async_context_if_needed(args.global_this),
             )
         };
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
-                crate::jsc_hooks::ActiveHandle::FsWatcher(
-                    core::ptr::NonNull::new(ctx).expect("init: watcher"),
-                ),
-                (),
-            ));
-        }
+        // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
+        unsafe { bun_jsc::AbortHandle::arm_owner(ctx, vm_ref.current_context()) };
         Ok(ctx)
     }
 }

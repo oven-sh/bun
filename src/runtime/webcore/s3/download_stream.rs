@@ -44,7 +44,16 @@ pub struct S3HttpDownloadStreamingTask {
     /// path can call `schedule_shutdown_by_id` without dereferencing `http` (which
     /// `update_state` overwrites on the HTTP thread under `mutex`).
     pub(crate) async_http_id: u32,
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(S3HttpDownloadStreamingTask, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
+    unsafe {
+        (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+        bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
+    }
+});
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
@@ -168,7 +177,6 @@ impl S3HttpDownloadStreamingTask {
             unsafe {
                 (*this_ptr).mutex.unlock();
                 if !has_more {
-                    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(this_ptr).expect("task")).unregister();
                     drop(bun_core::heap::take(this_ptr));
                 }
             }
@@ -361,19 +369,6 @@ impl S3HttpDownloadStreamingTask {
                 ticket.post(task);
             }
             drop(ticket);
-        }
-    }
-
-    /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
-    /// thread fails the request promptly and hands it back.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ not yet freed by `on_response`); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `http` is initialised before the task is registered.
-        unsafe {
-            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
         }
     }
 

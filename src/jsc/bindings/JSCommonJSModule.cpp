@@ -63,6 +63,7 @@
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 #include "ModuleLoader.h"
+#include "ModuleGraph.h"
 #include <JavaScriptCore/JSMap.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
@@ -632,6 +633,29 @@ JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC:
     return JSValue::encode(jsBoolean(thisObject->hasEvaluated));
 }
 
+// @esModule / @moduleGraph, for CommonJS.ts's require().
+JSC_DEFINE_CUSTOM_GETTER(getterEsModulePrivate, (JSC::JSGlobalObject*, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
+    return JSValue::encode(jsBoolean(thisObject && thisObject->esModule));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterEsModulePrivate, (JSC::JSGlobalObject*, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return false;
+    thisObject->esModule = JSValue::decode(value).isTrue();
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterModuleGraphPrivate, (JSC::JSGlobalObject*, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
+    JSModuleGraph* graph = thisObject ? thisObject->moduleGraph() : nullptr;
+    return JSValue::encode(graph ? JSValue(graph) : jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -854,6 +878,12 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+        this->putDirectCustomAccessor(vm, clientData(vm)->builtinNames().esModulePrivateName(),
+            JSC::CustomGetterSetter::create(vm, getterEsModulePrivate, setterEsModulePrivate),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+        this->putDirectCustomAccessor(vm, clientData(vm)->builtinNames().moduleGraphPrivateName(),
+            JSC::CustomGetterSetter::create(vm, getterModuleGraphPrivate, nullptr),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
     }
 };
 
@@ -884,9 +914,10 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::JSString* id,
     JSValue filename,
     JSC::JSString* dirname,
-    const JSC::SourceCode& sourceCode)
+    const JSC::SourceCode& sourceCode,
+    JSModuleGraph* moduleGraph)
 {
-    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure, id, filename, dirname);
+    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure, id, filename, dirname, moduleGraph);
     cell->finishCreation(vm, sourceCode);
     return cell;
 }
@@ -1205,6 +1236,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
+    visitor.appendHidden(thisObject->m_moduleGraph);
     {
         WTF::Locker locker { thisObject->cellLock() };
         visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
@@ -1348,9 +1380,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         }
     }
 
+    // An ES module it finds is handed to the loader the referrer's require() binds to.
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequire(globalObject, throwScope, referrerModule->moduleGraph());
+    REQUIRE_CJS_RETURN_IF_EXCEPTION;
+
     // Load the module
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
+        loader,
         child,
         specifierValue,
         specifier,
@@ -1657,7 +1694,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }
 
-JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* moduleGraph)
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
@@ -1677,7 +1714,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     auto moduleObject = Bun::JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
-        filename, filename, dirname, SourceCode());
+        filename, filename, dirname, SourceCode(), moduleGraph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

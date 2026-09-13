@@ -92,8 +92,10 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
+// `loader`: where an ES module found instead is fetched into (-1 is returned then).
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     String specifier,
@@ -105,6 +107,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,

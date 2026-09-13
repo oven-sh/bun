@@ -1314,7 +1314,7 @@ fn spawn_maybe_sync(
         closed: Default::default(),
         this_value: Default::default(),
         weak_file_sink_stdin_ptr: Cell::new(None),
-        abort_signal: JsCell::new(None),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         event_loop_timer_refd: Cell::new(false),
         event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
@@ -1686,7 +1686,7 @@ fn spawn_maybe_sync(
 
     // Note: reshaped for borrowck — copy `subprocess_ptr` so the
     // non-`move` `defer!` closure captures a disjoint place from the
-    // `(*subprocess_ptr).abort_signal = …` writes that follow.
+    // `AbortHandle::follow_owner(subprocess_ptr, …)` calls that follow.
     let subprocess_ptr_exit = subprocess_ptr;
     scopeguard::defer! {
         if send_exit_notification {
@@ -1771,26 +1771,24 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // Ownership of the ref transfers to `subprocess.abort_signal`.
-        // `add_listener` may synchronously fire `on_abort_signal` (already
-        // aborted), which re-enters via `subprocess_ptr` and may take the
-        // field, so store it first and hold no `&mut Subprocess` across the call.
-        let sig: *mut WebCore::AbortSignal = signal.get();
-        // SAFETY: `subprocess_ptr` is live; `sig` is kept alive by the ref just stored.
-        unsafe {
-            (*subprocess_ptr).abort_signal.set(Some(signal));
-            (*sig).pending_activity_ref();
-            let _ = (*sig).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-        }
+        // An already-aborted signal runs the abort callback before this
+        // returns, which re-enters via `subprocess_ptr`: hold no
+        // `&mut Subprocess` across the call.
+        // SAFETY: `subprocess_ptr` is live and heap-pinned.
+        unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
 
     if !is_sync {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
             // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            // `subprocess_ptr` is live and heap-pinned.
             unsafe {
                 (*jsc_vm_ptr)
-                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()));
+                if let Some(context) = (*jsc_vm_ptr).current_graph_context() {
+                    bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
+                }
             };
         }
         return Ok(out);
@@ -1816,13 +1814,8 @@ fn spawn_maybe_sync(
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
-                let sig: *mut WebCore::AbortSignal = signal.get();
                 // SAFETY: see the matching block above.
-                unsafe {
-                    (*subprocess_ptr).abort_signal.set(Some(signal));
-                    (*sig).pending_activity_ref();
-                    let _ = (*sig).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-                }
+                unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
             }
         }
         sys::Result::Err(_) => {

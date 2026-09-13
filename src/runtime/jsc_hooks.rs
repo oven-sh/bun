@@ -1468,7 +1468,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
-    cancel_all_timers,
+    cancel_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
@@ -1557,39 +1557,42 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
-/// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
+/// `RuntimeHooks::cancel_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
-/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
+/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`; or, for
+/// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
 /// Must run on the JS thread before JSC teardown.
-unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
+unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId>) {
     let state = runtime_state();
     if state.is_null() {
         return;
     }
-    // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
-    // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
-    // the scheduler and the scheduler holds a queue ref on the watcher, so any
-    // watcher still queued at exit forms a cycle and leaks. Runs before
-    // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
-    // linked when `set_timer(0)` removes it.
-    // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
-    unsafe {
-        crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+    if only.is_none() {
+        // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
+        // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
+        // the scheduler and the scheduler holds a queue ref on the watcher, so any
+        // watcher still queued at exit forms a cycle and leaks. Runs before
+        // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
+        // linked when `set_timer(0)` removes it.
+        // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
+        unsafe {
+            crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+        }
     }
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
-        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm, only);
     }
 }
 
 /// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
-/// `cancel_all_timers` (which the `--isolate` swap also uses on a live VM).
+/// `cancel_timers` (which the `--isolate` swap also uses on a live VM).
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.

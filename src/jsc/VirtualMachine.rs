@@ -369,6 +369,10 @@ pub struct VirtualMachine {
     /// stopped only by teardown.
     pub vm_context: crate::ScriptExecutionContext,
     pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
+    /// The contexts made for `Bun.unsafe.ModuleGraph`s, by id, stopped or not. Empty:
+    /// every context question has the root context for an answer.
+    pub(crate) graph_contexts:
+        bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
     pub test_isolation_enabled: bool,
     pub test_isolation_state: TestIsolationState,
 }
@@ -408,6 +412,13 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
+    /// ModuleGraph.cpp: the context of the innermost `Bun.unsafe.ModuleGraph` the
+    /// current async context is inside of, or null.
+    // Round-tripped opaquely through C++ (from `Bun__ScriptExecutionContext__create`).
+    #[allow(improper_ctypes)]
+    safe fn Bun__currentGraphContext(
+        global: &JSGlobalObject,
+    ) -> *const crate::ScriptExecutionContext;
     /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.unsafe.ModuleGraph`'s
     /// module code (the Exception's throw site decides), or an unhandled rejection whose
     /// owner promiseRejectionTracker decided, to that graph's `onError`. true: delivered
@@ -1051,21 +1062,204 @@ impl VirtualMachine {
     /// stopped with that context.
     #[inline]
     pub fn current_context(&self) -> &crate::ScriptExecutionContext {
+        self.current_graph_context().unwrap_or(&self.root_context)
+    }
+
+    /// The context of the realm's own script: what belongs to the realm rather
+    /// than to whichever `Bun.unsafe.ModuleGraph` first needed it.
+    #[inline]
+    pub fn root_context(&self) -> &crate::ScriptExecutionContext {
         &self.root_context
+    }
+
+    /// [`current_context`](Self::current_context) when it is a
+    /// `Bun.unsafe.ModuleGraph`'s (stopped or not).
+    #[inline]
+    pub fn current_graph_context(&self) -> Option<&crate::ScriptExecutionContext> {
+        if self.graph_contexts.count() == 0 {
+            return None;
+        }
+        // SAFETY: a graph's context outlives every async context frame that names it.
+        unsafe { Bun__currentGraphContext(self.global()).as_ref() }
+    }
+
+    fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
+        if self.graph_contexts.count() == 0 {
+            return None;
+        }
+        // SAFETY: registered ⇒ not freed.
+        self.graph_contexts
+            .get(&id)
+            .map(|context| unsafe { context.as_ref() })
     }
 
     /// Whether the context `id` names has not stopped.
     #[inline]
     pub fn is_context_live(&self, id: crate::ContextId) -> bool {
-        id == self.root_context.id() || id == self.vm_context.id()
+        id == self.root_context.id()
+            || id == self.vm_context.id()
+            || self
+                .graph_context(id)
+                .is_some_and(|context| !context.is_stopped())
+    }
+
+    /// The groups a client socket the running script opens joins.
+    pub fn client_socket_groups(&mut self) -> &mut crate::rare_data::SocketGroups {
+        let id = self.current_context().id();
+        self.client_socket_groups_of(id)
+            .expect("the current context is registered")
+    }
+
+    /// The groups a client socket of context `id` joins (a client that redials
+    /// on its own stays with the context that created it), or `None` once that
+    /// context is gone.
+    pub fn client_socket_groups_of(
+        &mut self,
+        id: crate::ContextId,
+    ) -> Option<&mut crate::rare_data::SocketGroups> {
+        if id == self.root_context.id() || id == self.vm_context.id() {
+            return Some(&mut self.rare_data().socket_groups);
+        }
+        let context = core::ptr::from_ref(self.graph_context(id)?);
+        // SAFETY: registered ⇒ not freed; the context boxes its groups; JS thread.
+        let context = unsafe { &*context };
+        if context.is_stopped() {
+            self.stop_graph_context_again(id);
+        }
+        // SAFETY: as above.
+        Some(unsafe { &mut *context.socket_groups() })
+    }
+
+    /// Script of a disposed graph is still opening things in the graph's
+    /// stopped context `id`: they go on the next turn of the loop, before the
+    /// context can be freed.
+    pub(crate) fn stop_graph_context_again(&mut self, id: crate::ContextId) {
+        fn stop_again(id: *mut crate::ContextId) -> crate::JsResult<()> {
+            // SAFETY: boxed below for this task.
+            let id = *unsafe { Box::from_raw(id) };
+            let vm = VirtualMachine::get().as_mut();
+            if let Some(context) = vm.graph_context(id).map(NonNull::from) {
+                // SAFETY: registered ⇒ not freed.
+                let reason = unsafe { context.as_ref() }
+                    .stopped_for()
+                    .unwrap_or(crate::StopReason::Disposed);
+                // SAFETY: as above.
+                let _ = unsafe { vm.stop_graph_context(context, reason) };
+            }
+            Ok(())
+        }
+        if self
+            .graph_context(id)
+            .is_some_and(|context| !context.stop_again_is_queued())
+        {
+            self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+                Box::into_raw(Box::new(id)),
+                stop_again,
+            ));
+        }
     }
 
     /// One stop-phase sweep over the armed handles of this VM's contexts.
-    pub fn stop_context_handles(&self, reason: crate::StopReason) -> SweepResult {
-        let result = self.root_context.stop_handles(reason);
-        match reason {
-            crate::StopReason::TestIsolation => result,
-            crate::StopReason::VmTeardown => result.and(self.vm_context.stop_handles(reason)),
+    /// Every `Bun.unsafe.ModuleGraph` context of the realm goes with it.
+    pub fn stop_context_handles(&mut self, reason: crate::StopReason) -> SweepResult {
+        let mut result = self.root_context.stop_handles(reason);
+        if reason == crate::StopReason::VmTeardown {
+            result = result.and(self.vm_context.stop_handles(reason));
+        }
+        // By index: an owner's callback may create or free a context.
+        let mut i = 0;
+        while let Some(&context) = self.graph_contexts.values().get(i) {
+            // SAFETY: registered ⇒ not freed.
+            result = result.and(unsafe { self.stop_graph_context(context, reason) });
+            i += 1;
+        }
+        result
+    }
+
+    /// `WebCore::ScriptExecutionContext` for a `Bun.unsafe.ModuleGraph`: the
+    /// context that owns what the graph's script opens.
+    pub fn create_graph_context(&mut self) -> NonNull<crate::ScriptExecutionContext> {
+        let id = loop {
+            let id = self.context_ids.next();
+            if id != self.root_context.id()
+                && id != self.vm_context.id()
+                && !self.graph_contexts.contains(&id)
+            {
+                break id;
+            }
+        };
+        let context = NonNull::from(Box::leak(Box::new(crate::ScriptExecutionContext::with_id(
+            id,
+        ))));
+        bun_core::handle_oom(self.graph_contexts.put(id, context));
+        context
+    }
+
+    /// Everything the graph's script opened goes (the graph was disposed, or
+    /// its realm or VM is going). From here its timers, jobs and late
+    /// completions are stale. One stop-phase sweep: may be repeated.
+    ///
+    /// # Safety
+    /// `context` came from [`create_graph_context`](Self::create_graph_context)
+    /// on this VM and was not freed; JS thread.
+    pub unsafe fn stop_graph_context(
+        &mut self,
+        context: NonNull<crate::ScriptExecutionContext>,
+        reason: crate::StopReason,
+    ) -> SweepResult {
+        // SAFETY: fn contract.
+        let context = unsafe { context.as_ref() };
+        let first = !context.is_stopped();
+        let result = context.stop(reason);
+        if first {
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: live per-thread VM on the JS thread.
+                unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), Some(context.id())) };
+            }
+        }
+        result
+    }
+
+    /// The `WebCore::ScriptExecutionContext` that owned `context` is gone
+    /// (possibly from a GC finalizer, where nothing may be closed): free it,
+    /// after stopping what it still owns from the event loop.
+    ///
+    /// # Safety
+    /// As [`stop_graph_context`](Self::stop_graph_context); the caller does
+    /// not use `context` again.
+    pub unsafe fn release_graph_context(
+        &mut self,
+        context: NonNull<crate::ScriptExecutionContext>,
+    ) {
+        // SAFETY: fn contract.
+        if unsafe { context.as_ref() }.owns_nothing() {
+            // SAFETY: fn contract.
+            unsafe { self.free_graph_context(context) };
+            return;
+        }
+        fn stop_and_free(context: *mut crate::ScriptExecutionContext) -> crate::JsResult<()> {
+            let vm = VirtualMachine::get().as_mut();
+            // SAFETY: still registered (`destroy` frees what teardown left), so not freed.
+            unsafe {
+                let context = NonNull::new_unchecked(context);
+                let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
+                vm.free_graph_context(context);
+            }
+            Ok(())
+        }
+        self.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+            context.as_ptr(),
+            stop_and_free,
+        ));
+    }
+
+    /// # Safety
+    /// `context` is registered and owns nothing.
+    unsafe fn free_graph_context(&mut self, context: NonNull<crate::ScriptExecutionContext>) {
+        // SAFETY: fn contract.
+        unsafe {
+            self.graph_contexts.swap_remove(&context.as_ref().id());
+            drop(Box::from_raw(context.as_ptr()));
         }
     }
 
@@ -2100,7 +2294,7 @@ impl VirtualMachine {
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
             // SAFETY: fn contract.
-            unsafe { (hooks.cancel_all_timers)(this) };
+            unsafe { (hooks.cancel_timers)(this, None) };
             // And unlink every other kind of EventLoopTimer (socket timeouts,
             // reconnect/lifetime timers, schedulers): their owners stay valid
             // and find them CANCELLED, but nothing fires again even where the
@@ -2186,7 +2380,9 @@ impl VirtualMachine {
 
         // ---- E. free owners --------------------------------------------------
         debug_assert!(
-            vm.stop_context_handles(crate::StopReason::VmTeardown) == SweepResult::Idle,
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            unsafe { (*this).stop_context_handles(crate::StopReason::VmTeardown) }
+                == SweepResult::Idle,
             "a handle was armed after the last stop-phase sweep"
         );
         // SAFETY: fn contract; last use of `this`.
@@ -2472,7 +2668,10 @@ pub struct RuntimeHooks {
     /// # Safety
     /// `vm` is the live per-thread VM; `runtime_state` must still be installed
     /// and the JSC heap must not have been swept yet.
-    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
+    ///
+    /// `only`: just the timers script of that context set (the context
+    /// stopped; the VM keeps running).
+    pub cancel_timers: unsafe fn(vm: *mut VirtualMachine, only: Option<crate::ContextId>),
     /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
     /// the event loop, `RareData.file_polls`, and `runtime_state` are all
     /// live. `ares_destroy()` re-enters the resolver's socket-state and query
@@ -2794,6 +2993,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).root_context).write(Default::default());
             addr_of_mut!((*vm).vm_context).write(Default::default());
             addr_of_mut!((*vm).context_ids).write(Default::default());
+            addr_of_mut!((*vm).graph_contexts).write(Default::default());
             (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
@@ -5000,6 +5200,12 @@ impl VirtualMachine {
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
 
+        // A graph context whose release was still queued: teardown stopped what it owned.
+        for (_, context) in core::mem::take(&mut self.graph_contexts).iter() {
+            // SAFETY: registered ⇒ live and owned here.
+            drop(unsafe { Box::from_raw(context.as_ptr()) });
+        }
+
         drop_source_code_printer();
 
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
@@ -5329,9 +5535,7 @@ impl VirtualMachine {
         Zig__GlobalObject__retireForTestIsolation(self.global());
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
-        let _ = self
-            .root_context
-            .stop_handles(crate::StopReason::TestIsolation);
+        let _ = self.stop_context_handles(crate::StopReason::TestIsolation);
         let next_context = self.context_ids.next();
         self.root_context.renew(next_context);
 
@@ -5354,7 +5558,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread; `runtime_state`
             // stays installed for the whole test run.
-            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), None) };
         }
 
         self.overridden_main.deinit();

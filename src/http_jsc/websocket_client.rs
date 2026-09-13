@@ -1483,9 +1483,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = ws.this_ptr();
 
         // `adopt_group` takes a closure to write the new socket.
-        let vm = global_this.bun_vm().as_mut();
-        let loop_ = vm.uws_loop();
-        let group = vm.rare_data().ws_client_group::<SSL>(loop_);
+        let loop_ = global_this.bun_vm().uws_loop();
+        // SAFETY: `input_socket` is the live upgraded socket, still in its
+        // context's upgrade group.
+        let group = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*input_socket).group())
+                .ws_client_group::<SSL>(loop_)
+        };
         if !Socket::<SSL>::adopt_group(
             input_socket,
             group,

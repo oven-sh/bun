@@ -3,8 +3,10 @@
 //! A native resource that outlives the call that opened it (a server, a socket
 //! listener, an in-flight `fetch`, a watcher) embeds an [`AbortHandle`] armed
 //! in the context that was current when script opened it, and is stopped when
-//! that context stops: VM teardown or the `bun test --isolate` file swap.
-//! `WebCore::ScriptExecutionContext` does the same for `ActiveDOMObject`s.
+//! that context stops: VM teardown, the `bun test --isolate` file swap, or the
+//! disposal of the `Bun.unsafe.ModuleGraph` the context was made for.
+//! `WebCore::ScriptExecutionContext` does the same for `ActiveDOMObject`s, and
+//! owns the Rust context of a graph.
 
 use core::ptr;
 
@@ -14,7 +16,7 @@ use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
 /// Identifies a context within its VM. What outlived its context (a pool job,
 /// a timer that was not swept) holds an id no live context has.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
 pub struct ContextId(u32);
 
 /// Why a context is stopping what it owns.
@@ -24,6 +26,9 @@ pub enum StopReason {
     VmTeardown,
     /// `bun test --isolate` retired this file's realm; the VM keeps running.
     TestIsolation,
+    /// The `Bun.unsafe.ModuleGraph` the context was made for was disposed; the VM and
+    /// the realm keep running.
+    Disposed,
 }
 
 /// Why an [`AbortHandle`]'s owner is being told to stop.
@@ -31,9 +36,9 @@ pub enum StopReason {
 pub enum AbortCause {
     /// Its `AbortSignal` fired; the value is `signal.reason`.
     Signal(JSValue),
-    /// The context it belongs to is stopping. Script is forbidden for
-    /// [`StopReason::VmTeardown`]; for [`StopReason::TestIsolation`] a close
-    /// handler the owner dispatches still runs.
+    /// The context it belongs to is stopping, or had stopped when the handle
+    /// was armed. Script is forbidden for [`StopReason::VmTeardown`]; otherwise
+    /// a close handler the owner dispatches still runs.
     ContextStopped(StopReason),
 }
 
@@ -47,6 +52,13 @@ pub struct ScriptExecutionContext {
     /// Armed handles, oldest first.
     head: JsCell<*mut AbortHandle>,
     tail: JsCell<*mut AbortHandle>,
+    /// A graph's context after [`stop`](Self::stop): what is armed from then
+    /// on (script of the disposed graph still running) is stopped at once.
+    stopped: JsCell<Option<StopReason>>,
+    /// The client sockets script of a graph's context opened (`Bun.connect`,
+    /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
+    socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
+    stop_again_queued: JsCell<bool>,
 }
 
 impl Default for ScriptExecutionContext {
@@ -55,6 +67,9 @@ impl Default for ScriptExecutionContext {
             id: JsCell::new(ContextId(0)),
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
+            stopped: JsCell::new(None),
+            socket_groups: JsCell::new(None),
+            stop_again_queued: JsCell::new(false),
         }
     }
 }
@@ -70,6 +85,64 @@ impl ScriptExecutionContext {
     pub(crate) fn renew(&self, id: ContextId) {
         debug_assert!(self.tail.get().is_null());
         self.id.set(id);
+    }
+
+    pub(crate) fn with_id(id: ContextId) -> Self {
+        let context = Self::default();
+        context.id.set(id);
+        context
+    }
+
+    #[inline]
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.get().is_some()
+    }
+
+    /// A graph's context stops for good (JS thread): one stop-phase sweep over
+    /// its handles and its client sockets.
+    pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
+        if !self.is_stopped() {
+            self.stopped.set(Some(reason));
+        }
+        self.stop_again_queued.set(false);
+        let result = self.stop_handles(reason);
+        self.close_sockets();
+        result
+    }
+
+    /// Close every client socket of a graph's context (their close handlers run).
+    fn close_sockets(&self) {
+        if let Some(groups) = self
+            .socket_groups
+            .with_mut(|groups| groups.as_deref_mut().map(ptr::from_mut))
+        {
+            // SAFETY: the box is dropped only with `self`; closing dispatches
+            // close handlers, so no borrow of the cell is held across it.
+            unsafe { crate::rare_data::SocketGroups::close_all(groups) };
+        }
+    }
+
+    /// Whether another [`stop`](Self::stop) was already going to run; it is now.
+    pub(crate) fn stop_again_is_queued(&self) -> bool {
+        self.stop_again_queued.replace(true)
+    }
+
+    pub(crate) fn stopped_for(&self) -> Option<StopReason> {
+        *self.stopped.get()
+    }
+
+    /// Nothing is armed and no client socket is open: freeing it strands nothing.
+    pub(crate) fn owns_nothing(&self) -> bool {
+        self.tail.get().is_null()
+            && self
+                .socket_groups
+                .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
+    }
+
+    /// The groups client sockets opened by a graph context's script join.
+    pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
+        self.socket_groups
+            .with_mut(|groups| ptr::from_mut(&mut **groups.get_or_insert_with(Default::default)))
     }
 
     /// # Safety
@@ -181,8 +254,16 @@ impl AbortHandle {
     unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext) {
         // SAFETY: fn contract.
         unsafe {
-            if !(*this).is_armed() {
-                context.push(this);
+            if (*this).is_armed() {
+                return;
+            }
+            context.push(this);
+            if context.is_stopped() {
+                // Script of a disposed graph is still opening things: they go on
+                // the next turn of the loop, not under the caller that is arming.
+                crate::VirtualMachineRef::get()
+                    .as_mut()
+                    .stop_graph_context_again(context.id());
             }
         }
     }
@@ -330,4 +411,40 @@ impl ContextIdAllocator {
         self.last = self.last.wrapping_add(1);
         ContextId(self.last)
     }
+}
+
+// `WebCore::ScriptExecutionContext` owns the context of a `Bun.unsafe.ModuleGraph`.
+
+/// # Safety
+/// `vm` is this thread's live VM.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__ScriptExecutionContext__create(
+    vm: *mut crate::VirtualMachineRef,
+) -> *mut ScriptExecutionContext {
+    // SAFETY: fn contract.
+    unsafe { (*vm).create_graph_context() }.as_ptr()
+}
+
+/// # Safety
+/// `vm` is this thread's live VM and `context` one it created and has not destroyed.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__ScriptExecutionContext__stop(
+    vm: *mut crate::VirtualMachineRef,
+    context: *mut ScriptExecutionContext,
+) {
+    // SAFETY: fn contract.
+    let _ = unsafe {
+        (*vm).stop_graph_context(ptr::NonNull::new_unchecked(context), StopReason::Disposed)
+    };
+}
+
+/// # Safety
+/// As [`Bun__ScriptExecutionContext__stop`]; `context` is not used again.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__ScriptExecutionContext__release(
+    vm: *mut crate::VirtualMachineRef,
+    context: *mut ScriptExecutionContext,
+) {
+    // SAFETY: fn contract.
+    unsafe { (*vm).release_graph_context(ptr::NonNull::new_unchecked(context)) }
 }

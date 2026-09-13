@@ -6,6 +6,8 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
+#include "ScriptExecutionContext.h"
 
 namespace Zig {
 class GlobalObject;
@@ -38,10 +40,35 @@ JSC::JSModuleLoader* moduleLoaderForRequire(JSC::JSGlobalObject*, JSC::ThrowScop
 // or null (the global object's code, or no graph exists).
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
+// The innermost graph with a context of its own (`isolateIO`) that the current async context
+// is inside of: what script opens now belongs to that graph's context. Null: the global's.
+JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 
-class JSModuleGraph final : public JSC::JSNonFinalObject {
+// What runs while this is alive runs inside a graph's context: an async context frame naming
+// the graph is current, and every continuation captured meanwhile (promise reactions, timers,
+// socket handlers) carries it. Nothing for a null graph, a graph without a context of its
+// own, or when already inside it.
+class ModuleGraphContextScope {
+    WTF_MAKE_NONCOPYABLE(ModuleGraphContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
 public:
-    using Base = JSC::JSNonFinalObject;
+    ModuleGraphContextScope(Zig::GlobalObject*, JSModuleGraph*);
+    // The graph `context` was made for, when it is a graph's and the graph is alive: an event
+    // dispatched to something the graph's script made runs its listeners in the graph's context.
+    ModuleGraphContextScope(WebCore::ScriptExecutionContext& context);
+    ~ModuleGraphContextScope();
+
+private:
+    Zig::GlobalObject* m_globalObject { nullptr };
+    JSC::JSValue m_previous;
+};
+
+class JSModuleGraph final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static void destroy(JSC::JSCell*);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static JSModuleGraph* create(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment* overlay, JSC::JSObject* onError);
@@ -56,6 +83,9 @@ public:
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); } // key of the first module import()ed (import.meta.main)
     JSC::JSSet* pendingImports() const { return m_pendingImports.get(); } // promises import() returned that have not settled; dispose() rejects them
     JSC::JSFunction* importSettledHandler(bool rejected) const { return rejected ? m_importRejected.get() : m_importFulfilled.get(); }
+    // The context that owns what the graph's script opens; null unless `isolateIO`.
+    WebCore::ScriptExecutionContext* context() const { return m_context.get(); }
+    void setContext(Ref<WebCore::ScriptExecutionContext>&& context) { m_context = WTF::move(context); }
 
     void setMainPath(JSC::VM& vm, JSC::JSString* path) { m_mainPath.set(vm, this, path); }
     void clearMainPath() { m_mainPath.clear(); }
@@ -75,6 +105,7 @@ private:
     JSC::WriteBarrier<JSC::JSSet> m_pendingImports;
     JSC::WriteBarrier<JSC::JSFunction> m_importFulfilled;
     JSC::WriteBarrier<JSC::JSFunction> m_importRejected;
+    RefPtr<WebCore::ScriptExecutionContext> m_context;
 };
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).

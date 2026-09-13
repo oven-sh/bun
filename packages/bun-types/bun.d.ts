@@ -5467,6 +5467,25 @@ declare module "bun" {
        * `"uncaughtException"` or `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+      /**
+       * Give the graph a context of its own for timers and I/O. Everything
+       * its code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+       * `fetch()` requests, watchers, child processes — belongs to the graph,
+       * and {@link ModuleGraph.dispose} closes all of it.
+       *
+       * The context follows the graph's code through `await`, timers, socket
+       * handlers and the listeners of what it made, the way
+       * `AsyncLocalStorage` stores do (creating the first such graph turns
+       * that tracking on for the process). Code of the graph that the host
+       * calls directly runs in the host's context; use
+       * {@link ModuleGraph.run} to call it in the graph's.
+       *
+       * Work of the graph that is in flight when it is disposed is dropped:
+       * promises for its timers and background jobs never settle.
+       *
+       * @default false
+       */
+      isolateIO?: boolean | undefined;
     }
 
     /**
@@ -5514,11 +5533,21 @@ declare module "bun" {
        */
       readonly mainModule: string | undefined;
       /**
+       * Call `fn` inside the graph's context (see
+       * {@link ModuleGraphOptions.isolateIO}): what `fn` and everything it
+       * starts open belongs to the graph.
+       *
+       * @returns what `fn` returns
+       */
+      run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+      /**
        * Drops the graph's module registry: pending and later `graph.import()`s
        * reject, `import()` from the graph's own module code rejects, and
        * modules of the graph that had not run yet never will. Code from the
        * graph that is still referenced keeps working, and its errors still go
-       * to `onError`. Idempotent.
+       * to `onError`. With `isolateIO`, everything the graph's code opened
+       * is closed, and whatever it opens afterwards is closed at once.
+       * Idempotent.
        */
       dispose(): void;
       [Symbol.dispose](): void;

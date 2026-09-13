@@ -181,6 +181,9 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
+    // The context that owns what the running script opens: that of the Bun.unsafe.ModuleGraph whose
+    // context it runs in, else this global's own.
+    WebCore::ScriptExecutionContext* currentScriptExecutionContext();
 
     WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
@@ -810,6 +813,8 @@ public:
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+    // Some Bun.unsafe.ModuleGraph of this global has (had) a context of its own (`isolateIO`).
+    bool m_hasModuleGraphContexts { false };
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

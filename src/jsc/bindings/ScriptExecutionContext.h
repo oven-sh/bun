@@ -54,6 +54,10 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, pu
 public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    // A further context in `parent`'s global, for a Bun.unsafe.ModuleGraph: what the graph's
+    // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
+    // belongs to it and goes when it stops.
+    static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent, JSC::JSCell* moduleGraph);
 
     ~ScriptExecutionContext();
 
@@ -71,7 +75,17 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return m_identifier == 1; }
+    bool isMainThread() const { return m_identifier == 1 || m_isInMainThreadRealm; }
+    // The Rust `bun_jsc::ScriptExecutionContext` of a graph's context (null for a global's own,
+    // whose Rust half is the VM's root context).
+    void* bunContext() const { return m_bunContext; }
+    // The JSModuleGraph a graph's context was made for, until it is collected.
+    JSC::JSCell* moduleGraph() const { return m_moduleGraph; }
+    // A graph's context stops everything it owns, for good. The global keeps running.
+    void stop();
+    // The graph was collected (a GC finalizer: nothing can be stopped here): stop() from the
+    // event loop, which is what then lets go of this context.
+    void moduleGraphDestroyed();
     bool isContextThread();
 
     // Active objects are not garbage collected even if inaccessible, e.g. because their activity may result in callbacks being invoked.
@@ -167,6 +181,12 @@ private:
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.
     uint32_t m_contextThreadUID;
+    // A graph's context in the main thread's realm.
+    bool m_isInMainThreadRealm { false };
+    void* m_bunContext { nullptr };
+    JSC::JSCell* m_moduleGraph { nullptr };
+    // A global's own context: the contexts of the graphs made in it.
+    WeakHashSet<ScriptExecutionContext> m_moduleGraphContexts;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
     // Registered in the observer's constructor, removed in its destructor, both

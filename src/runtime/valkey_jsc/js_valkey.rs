@@ -314,6 +314,9 @@ pub struct JSValkeyClient {
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
     pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
+    /// The context whose script created the client: every dial, the retries
+    /// its own timer starts included, joins that context's sockets.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 /// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
@@ -740,6 +743,7 @@ impl JSValkeyClient {
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            context: VirtualMachine::get().current_context().id(),
         }))
     }
 
@@ -852,6 +856,7 @@ impl JSValkeyClient {
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            context: VirtualMachine::get().current_context().id(),
         }))
     }
 
@@ -1150,7 +1155,7 @@ impl JSValkeyClient {
 
         // No reconnecting on a VM that is exiting: its stop phase would only
         // have to close the new socket again.
-        if self.vm().is_shutting_down() {
+        if self.vm().is_shutting_down() || !self.vm().is_context_live(self.context) {
             bun_core::hint::cold();
             return Ok(());
         }
@@ -1437,10 +1442,20 @@ impl JSValkeyClient {
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
         let loop_ = vm.uws_loop();
+        let Some(groups) = vm.client_socket_groups_of(self.context) else {
+            // The context that created the client is gone.
+            self.client_mut().flags.enable_auto_reconnect = false;
+            self.client_fail(
+                b"The ModuleGraph that created this client was disposed",
+                protocol::RedisError::ConnectionClosed,
+            )?;
+            self.close_without_socket_next_tick();
+            return Ok(());
+        };
         let group: *mut uws::SocketGroup = if is_tls {
-            vm.rare_data().valkey_group::<true>(loop_)
+            groups.valkey_group::<true>(loop_)
         } else {
-            vm.rare_data().valkey_group::<false>(loop_)
+            groups.valkey_group::<false>(loop_)
         };
 
         // Populate `_secure` first, then handle the failure branch outside the

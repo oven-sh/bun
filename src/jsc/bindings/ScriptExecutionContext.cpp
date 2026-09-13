@@ -61,6 +61,40 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     addToContextsMap();
 }
 
+extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM);
+extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
+extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
+
+Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent, JSC::JSCell* moduleGraph)
+{
+    ASSERT(parent.isContextThread());
+    ASSERT(!parent.m_bunContext);
+    auto context = adoptRef(*new ScriptExecutionContext(parent.m_vm, parent.m_globalObject, std::numeric_limits<int32_t>::max()));
+    context->m_moduleGraph = moduleGraph;
+    context->m_isInMainThreadRealm = parent.isMainThread();
+    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM);
+    parent.m_moduleGraphContexts.add(context.get());
+    return context;
+}
+
+void ScriptExecutionContext::stop()
+{
+    ASSERT(m_bunContext);
+    ASSERT(isContextThread());
+    stopActiveDOMObjects();
+    Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+}
+
+void ScriptExecutionContext::moduleGraphDestroyed()
+{
+    m_moduleGraph = nullptr;
+    // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
+    // context until they are stopped. At VM teardown they already were (prepareForDestruction).
+    if (!activeDOMObjectsAreStopped())
+        Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stop(); }));
+}
+
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
@@ -88,7 +122,6 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
     return m_globalObject;
 }
 
-extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
@@ -106,6 +139,12 @@ void ScriptExecutionContext::unrefEventLoop()
 ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
+
+    if (m_bunContext) {
+        // Possibly a GC finalizer: the Rust half closes what it still owns from the event loop.
+        removeFromContextsMap();
+        Bun__ScriptExecutionContext__release(m_bunVM, m_bunContext);
+    }
 
 #if ASSERT_ENABLED
     {
@@ -220,6 +259,8 @@ void ScriptExecutionContext::prepareForDestruction()
     ASSERT(m_globalObject);
 
     stopActiveDOMObjects();
+    for (Ref moduleGraphContext : copyToVectorOf<Ref<ScriptExecutionContext>>(m_moduleGraphContexts))
+        moduleGraphContext->stopActiveDOMObjects();
 
     // Event listeners would keep DOMWrapperWorld objects alive for too long. Also, they have references to JS objects,
     // which become dangling once Heap is destroyed.
@@ -245,6 +286,10 @@ void ScriptExecutionContext::globalObjectDestroyed()
     removeFromContextsMap();
     m_globalObject = nullptr;
     m_vm = nullptr;
+    for (auto& moduleGraphContext : m_moduleGraphContexts) {
+        moduleGraphContext.m_globalObject = nullptr;
+        moduleGraphContext.m_vm = nullptr;
+    }
 }
 
 bool ScriptExecutionContext::isContextThread()

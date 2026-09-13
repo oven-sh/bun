@@ -140,7 +140,9 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// Follows the `signal` option until `clear_abort_signal`.
+    /// Follows the `signal` option until `clear_abort_signal`; armed only in a
+    /// `Bun.unsafe.ModuleGraph` context, which kills it when disposed (children
+    /// of the realm's own script are the process auto-killer's).
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
@@ -305,10 +307,17 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live.
     let this = unsafe { &*this };
     this.clear_abort_signal();
+    // A child outlives the VM that spawned it, as one the host spawned does.
+    if matches!(
+        cause,
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+    ) {
+        return;
+    }
     if !this.has_exited() {
         this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
@@ -1267,7 +1276,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        self.abort_handle.unfollow();
+        self.abort_handle.disarm();
     }
 
     pub fn finalize(&self) {

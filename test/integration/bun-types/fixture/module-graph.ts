@@ -18,6 +18,16 @@ import { expectType } from "./utilities";
   new Bun.unsafe.ModuleGraph({ globals: "x" });
   // @ts-expect-error specifier must be a string
   graph.import(1);
+  const isolated = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+  expectType(isolated.run((a: number, b: string) => a + b.length, 1, "x")).is<number>();
+  expectType(isolated.run(async () => "done")).is<Promise<string>>();
+  // @ts-expect-error arguments must match fn's parameters
+  isolated.run((a: number) => a, "x");
+  // @ts-expect-error fn must be a function
+  isolated.run(1);
+  // @ts-expect-error isolateIO must be a boolean
+  new Bun.unsafe.ModuleGraph({ isolateIO: "yes" });
+  isolated.dispose();
   graph.dispose();
   new Bun.unsafe.ModuleGraph().dispose();
   {

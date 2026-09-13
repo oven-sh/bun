@@ -6389,9 +6389,28 @@ const after = name => ({ size: fs.statSync(name).size, json: (() => { try { JSON
   out.control = await outcome(async () => fs.writeFileSync("ok.json", shorter));
   out.controlAfter = after("ok.json");
 
+  // copyFile and cp open the destination the same way and cut its old tail after the copy.
+  fs.writeFileSync("shorter.json", shorter);
+  fs.writeFileSync("enospc-copy-sync.json", longer);
+  out.copySync = await outcome(async () => fs.copyFileSync("shorter.json", "enospc-copy-sync.json"));
+  out.copySyncAfter = after("enospc-copy-sync.json");
+  fs.writeFileSync("enospc-copy-promise.json", longer);
+  out.copyPromise = await outcome(() => fs.promises.copyFile("shorter.json", "enospc-copy-promise.json"));
+  out.copyPromiseAfter = after("enospc-copy-promise.json");
+  fs.writeFileSync("enospc-cp-sync.json", longer);
+  out.cpSync = await outcome(async () => fs.cpSync("shorter.json", "enospc-cp-sync.json"));
+  out.cpSyncAfter = after("enospc-cp-sync.json");
+  fs.writeFileSync("enospc-cp-promise.json", longer);
+  out.cpPromise = await outcome(() => fs.promises.cp("shorter.json", "enospc-cp-promise.json"));
+  out.cpPromiseAfter = after("enospc-cp-promise.json");
+  fs.writeFileSync("ok-copy.json", longer);
+  out.copyControl = await outcome(async () => fs.copyFileSync("shorter.json", "ok-copy.json"));
+  out.copyControlAfter = after("ok-copy.json");
+
   // A target with no length to cut must keep working.
   out.devnull = await outcome(async () => fs.writeFileSync("/dev/null", shorter));
   out.devnullPromise = await outcome(() => fs.promises.writeFile("/dev/null", shorter));
+  out.devnullCopy = await outcome(async () => fs.copyFileSync("shorter.json", "/dev/null"));
   console.log(JSON.stringify(out));
 })();
 `,
@@ -6429,8 +6448,19 @@ const after = name => ({ size: fs.statSync(name).size, json: (() => { try { JSON
     callbackAfter: stale,
     control: "resolved",
     controlAfter: { size: 533, json: "valid" },
+    copySync: { code: "ENOSPC", syscall: "copyfile", path: "shorter.json" },
+    copySyncAfter: stale,
+    copyPromise: { code: "ENOSPC", syscall: "copyfile", path: "shorter.json" },
+    copyPromiseAfter: stale,
+    cpSync: failed("enospc-cp-sync.json"),
+    cpSyncAfter: stale,
+    cpPromise: failed("enospc-cp-promise.json"),
+    cpPromiseAfter: stale,
+    copyControl: "resolved",
+    copyControlAfter: { size: 533, json: "valid" },
     devnull: "resolved",
     devnullPromise: "resolved",
+    devnullCopy: "resolved",
   });
   expect(exitCode).toBe(0);
 });

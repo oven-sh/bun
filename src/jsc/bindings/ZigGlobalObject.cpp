@@ -325,9 +325,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
-            // Every JSGlobalObject (main realm, workers, node:vm contexts,
-            // ShadowRealms) starts its Error.stackTraceLimit from this: 10
-            // like Node, or the --stack-trace-limit value.
+            // Initial Error.stackTraceLimit of every new JSGlobalObject, node:vm contexts included.
             JSC::Options::defaultErrorStackTraceLimit() = defaultStackTraceLimit;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.

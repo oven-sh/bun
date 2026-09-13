@@ -491,15 +491,12 @@ pub struct InitializeOptions {
     pub short_lived_globals: bool,
 }
 
-/// Node's default `Error.stackTraceLimit`. `--stack-trace-limit` overrides it
-/// ([`set_default_stack_trace_limit`]) before [`initialize`] seeds JSC's
-/// `defaultErrorStackTraceLimit`, which every new global object (the main
-/// realm, workers, `node:vm` contexts) starts from.
+/// Node's default `Error.stackTraceLimit`; every new global object starts from it.
 const DEFAULT_STACK_TRACE_LIMIT: u32 = 10;
 static DEFAULT_STACK_TRACE_LIMIT_OVERRIDE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(DEFAULT_STACK_TRACE_LIMIT);
 
-/// Must be called before [`initialize`]; later calls have no effect.
+/// `--stack-trace-limit`. Must be called before [`initialize`]; later calls have no effect.
 pub fn set_default_stack_trace_limit(limit: u32) {
     DEFAULT_STACK_TRACE_LIMIT_OVERRIDE.store(limit, core::sync::atomic::Ordering::Relaxed);
 }

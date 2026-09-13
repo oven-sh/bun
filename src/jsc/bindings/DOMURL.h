@@ -85,7 +85,7 @@ private:
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
-    // At least what the changes since the last flush add to the query. canDeferSearchParamsUpdate() keeps it under 2^30.
+    // At least what the changes since the last flush add to the query. deferSearchParamsUpdate() keeps it under 2^30.
     mutable uint32_t m_pendingSearchParamsLength { 0 };
     uint16_t m_initialURLCostForGC { 0 };
     mutable bool m_searchParamsDirty { false };

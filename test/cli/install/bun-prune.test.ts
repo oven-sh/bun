@@ -87,11 +87,17 @@ async function pruneMerged(dir: string, ...args: string[]) {
   }
 }
 
-// Whatever a prune removes from node_modules/.bun, no package link inside an entry that stays may point at it.
+// Whatever a prune removes from node_modules/.bun, no package link of the store that stays may point at it: not
+// in an entry's node_modules, not in the package's own node_modules (where a dependency with the package's name
+// is linked), and not in the hidden hoisted folder node_modules/.bun/node_modules.
 function expectNoDanglingStoreLinks(dir: string) {
   const store = join(dir, "node_modules", ".bun");
+  const isRealDirectory = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
   const dangling: string[] = [];
   const scan = (folder: string) => {
+    if (!isRealDirectory(folder)) {
+      return;
+    }
     for (const entry of readdirSync(folder, { withFileTypes: true })) {
       const path = join(folder, entry.name);
       if (entry.isSymbolicLink()) {
@@ -105,9 +111,20 @@ function expectNoDanglingStoreLinks(dir: string) {
   };
   for (const entry of existsSync(store) ? readdirSync(store, { withFileTypes: true }) : []) {
     // A symlinked entry belongs to the global store.
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (entry.name === "node_modules") {
+      scan(join(store, "node_modules"));
+      continue;
+    }
     const modules = join(store, entry.name, "node_modules");
-    if (entry.isDirectory() && entry.name !== "node_modules" && existsSync(modules)) {
-      scan(modules);
+    scan(modules);
+    // `name@version` or `@scope+name@version`
+    const name = entry.name.split("@", entry.name.startsWith("@") ? 2 : 1).join("@");
+    const own = name.startsWith("@") ? name.replace("+", "/") : name;
+    if (isRealDirectory(join(modules, own))) {
+      scan(join(modules, own, "node_modules"));
     }
   }
   expect(dangling).toEqual([]);

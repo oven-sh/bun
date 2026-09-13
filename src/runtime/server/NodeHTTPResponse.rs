@@ -17,7 +17,6 @@ use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
-use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
@@ -75,8 +74,6 @@ pub struct NodeHTTPResponse {
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
     pub(crate) upgrade_context: JsCell<UpgradeCTX>,
-
-    pub(crate) auto_flusher: JsCell<AutoFlusher>,
 }
 
 bitflags! {
@@ -311,19 +308,6 @@ fn on_buffer_paused_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) 
 fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
     // SAFETY: see on_timeout_shim.
     unsafe { (*this.cast_const()).on_drain(off, resp) }
-}
-
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
-// longer implemented here — the deferred-task registration is inlined in
-// `register_auto_flush` / `unregister_auto_flush` below so the whole path is
-// `&self`. The `DeferredRepeatingTask` trampoline that the trait would have
-// generated is local. Body discharges its own preconditions; a safe
-// `extern "C" fn` coerces to the `DeferredRepeatingTask` pointer at `post_task`.
-extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
-    // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
-    // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
-    // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
@@ -745,8 +729,6 @@ impl NodeHTTPResponse {
         }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
-        self.unregister_auto_flush();
-
         server.on_request_complete();
 
         if had_async_promise {
@@ -2322,52 +2304,6 @@ impl NodeHTTPResponse {
         self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
     }
 
-    fn on_auto_flush(&self) -> bool {
-        let flags = self.flags.get();
-        if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
-            if let Some(raw_response) = self.raw_response.get() {
-                raw_response.uncork();
-            }
-        }
-        self.auto_flusher.get().registered.set(false);
-        self.deref();
-        false
-    }
-
-    // R-2: inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
-    // — that helper now takes `&T`, but this type has its own
-    // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
-    // stays.
-    fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered.get() {
-            return;
-        }
-        self.ref_();
-        debug_assert!(!self.auto_flusher.get().registered.get());
-        self.auto_flusher.get().registered.set(true);
-        let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = vm_get()
-            .event_loop_ref()
-            .deferred_tasks
-            .post_task(ctx, on_auto_flush_trampoline);
-        debug_assert!(!found_existing);
-    }
-
-    fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered.get() {
-            return;
-        }
-        debug_assert!(self.auto_flusher.get().registered.get());
-        let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = vm_get()
-            .event_loop_ref()
-            .deferred_tasks
-            .unregister_task(ctx);
-        debug_assert!(removed);
-        self.auto_flusher.get().registered.set(false);
-        self.deref();
-    }
-
     pub(crate) fn flush_headers(
         &self,
         _global: &JSGlobalObject,
@@ -2376,11 +2312,7 @@ impl NodeHTTPResponse {
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
-                // Don't flush immediately; queue a microtask to uncork the socket.
-                raw_response.flush_headers(false);
-                if raw_response.is_corked() {
-                    self.register_auto_flush();
-                }
+                raw_response.flush_headers(true);
             }
         }
 
@@ -2534,12 +2466,6 @@ impl NodeHTTPResponse {
     }
 
     #[inline]
-    fn ref_(&self) {
-        // SAFETY: `self` is live; only the interior-mutable count is touched.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
-    }
-
-    #[inline]
     pub(crate) fn deref(&self) {
         // SAFETY: `self` is the live heap allocation; every field is
         // `Cell`/`JsCell`, so `Drop` writes only through interior-mutable
@@ -2673,7 +2599,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
-        auto_flusher: JsCell::new(AutoFlusher::default()),
     }));
 
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.

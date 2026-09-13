@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { Stats, statSync, utimesSync, writeFileSync } from "node:fs";
+import { Stats, statSync, utimesSync } from "node:fs";
 import path from "node:path";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):

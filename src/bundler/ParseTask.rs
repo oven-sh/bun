@@ -116,6 +116,9 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// Other files whose contents went into this one's output (what a C file `#include`s): a
+    /// change to any of them is a change to this file.
+    pub(crate) also_depends_on: Vec<Box<[u8]>>,
 }
 
 pub enum ParseTaskStage {
@@ -133,6 +136,8 @@ pub(crate) struct Result {
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
+    /// See `ParseTask::also_depends_on`.
+    pub(crate) also_depends_on: Vec<Box<[u8]>>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
@@ -289,6 +294,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         }
     }
 
@@ -329,6 +335,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         }
     }
 }
@@ -608,6 +615,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            also_depends_on: Vec::new(),
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -2547,7 +2555,15 @@ pub mod parse_worker {
             }
             let mut units = vec![bun_cc::Unit { path: filename, contents: entry_contents }];
             units.extend(linked.iter().map(|(contents, name)| bun_cc::Unit { path: name, contents }));
-            match bun_cc::compile(&units, c_target, log).output {
+            let compilation = bun_cc::compile(&units, c_target, log);
+            // Whether or not it compiled: fixing a header is how a header's error gets fixed.
+            task.also_depends_on = compilation
+                .files_read
+                .iter()
+                .filter(|path| path.as_bytes() != file_path.text)
+                .map(|path| Box::<[u8]>::from(path.as_bytes()))
+                .collect();
+            match compilation.output {
                 Some(output) => {
                     c_exports = output.exports;
                     Some(output.bir)
@@ -3003,6 +3019,7 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
+            also_depends_on: core::mem::take(&mut this.also_depends_on),
             watcher_data: match this.contents_or_fd {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,

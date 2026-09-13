@@ -264,6 +264,37 @@ describe.skipIf(!supported)("--watch", () => {
     await waitFor("answer = 22");
     proc.kill();
   });
+
+  test("bun build --watch rebuilds when a header the .c file includes changes", async () => {
+    using dir = tempDir("c-build-watch", {
+      "value.h": "#define VALUE 1\n",
+      "a.c": '#include "value.h"\nint answer(void) { return VALUE; }\n',
+      "index.ts": `import { answer } from "./a.c"; console.log("answer = " + answer());`,
+    });
+    await using builder = Bun.spawn({
+      cmd: [bunExe(), "build", "--watch", "--target", "bun", "index.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // What the bundle in out/ prints, once there is a bundle that prints `wanted`.
+    async function bundlePrints(wanted: string) {
+      const bundle = join(String(dir), "out", "index.js");
+      for (;;) {
+        if (builder.exitCode !== null) throw new Error(`bun build --watch exited: ${await builder.stderr.text()}`);
+        if (await Bun.file(bundle).exists()) {
+          const { stdout } = await run(String(dir), [bundle]);
+          if (stdout === wanted) return stdout;
+        }
+        await Bun.sleep(25);
+      }
+    }
+    expect(await bundlePrints("answer = 1\n")).toBe("answer = 1\n");
+    await Bun.write(join(String(dir), "value.h"), "#define VALUE 7\n");
+    expect(await bundlePrints("answer = 7\n")).toBe("answer = 7\n");
+    builder.kill();
+  });
 });
 
 describe.skipIf(!supported)("bundling a .c file", () => {

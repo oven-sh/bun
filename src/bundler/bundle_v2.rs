@@ -7256,6 +7256,11 @@ pub mod bv2_impl {
                         };
                     }
                 }
+                for path in &parse_result.also_depends_on {
+                    if this.should_add_watcher(path) {
+                        let _ = this.bun_watcher_mut().unwrap().add_file_by_path_slow(path);
+                    }
+                }
             }
 
             match &mut parse_result.value {

@@ -1,7 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -172,6 +172,99 @@ describe("runAllTimers", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.runAllTimers();
     expect(order.takeOrderMessages()).toEqual(["9", "10", "14", "20"]);
+  });
+
+  test("throws once timerLimit timers have run and more remain", () => {
+    vi.useFakeTimers({ timerLimit: 2 });
+    const fired: number[] = [];
+    for (const ms of [10, 20, 30]) setTimeout(() => fired.push(ms), ms);
+    expect(() => vi.runAllTimers()).toThrow("Aborting after running 2 timers, assuming an infinite loop!");
+    expect({ fired, remaining: vi.getTimerCount() }).toEqual({ fired: [10, 20], remaining: 1 });
+  });
+
+  test.each([
+    ["below", 2],
+    ["at", 3],
+  ])("does not throw when the last timer runs %s timerLimit", (_where, count) => {
+    vi.useFakeTimers({ timerLimit: 3 });
+    let fires = 0;
+    const tick = () => {
+      if (++fires < count) setTimeout(tick, 10);
+    };
+    setTimeout(tick, 10);
+    expect(vi.runAllTimers()).toBe(vi);
+    expect({ fires, remaining: vi.getTimerCount() }).toEqual({ fires: count, remaining: 0 });
+  });
+
+  test("each useFakeTimers() call starts from the default timerLimit", () => {
+    vi.useFakeTimers({ timerLimit: 1 });
+    vi.useFakeTimers();
+    const fired: number[] = [];
+    for (const ms of [10, 20, 30]) setTimeout(() => fired.push(ms), ms);
+    vi.runAllTimers();
+    expect(fired).toEqual([10, 20, 30]);
+  });
+
+  test.each([0, -1, 1.5, NaN, Infinity, 2 ** 32, "10", null, {}])(
+    "useFakeTimers({ timerLimit: %p }) throws",
+    timerLimit => {
+      expect(() => vi.useFakeTimers({ timerLimit: timerLimit as any })).toThrow(
+        "'timerLimit' must be a positive integer",
+      );
+      expect(vi.isFakeTimers()).toBe(false);
+    },
+  );
+
+  // Each source re-arms itself on every fire, so the heap never empties. It
+  // gives up after `giveUpAfter` fires only so that a build without the cap
+  // fails the assertion instead of spinning inside runAllTimers(), where no
+  // test timeout can interrupt it.
+  const giveUpAfter = 1000;
+  test.each<[string, (keepGoing: () => boolean) => void]>([
+    [
+      "setInterval",
+      keepGoing => {
+        const id = setInterval(() => {
+          if (!keepGoing()) clearInterval(id);
+        }, 10);
+      },
+    ],
+    [
+      "a recursive setTimeout",
+      keepGoing => {
+        const tick = () => {
+          if (keepGoing()) setTimeout(tick, 10);
+        };
+        setTimeout(tick, 10);
+      },
+    ],
+    [
+      "Bun.cron",
+      keepGoing => {
+        const job = Bun.cron("* * * * *", () => {
+          if (!keepGoing()) job.stop();
+        });
+      },
+    ],
+  ])("throws after timerLimit timers when %s re-arms itself forever", (_name, start) => {
+    vi.useFakeTimers({ timerLimit: 50 });
+    let fires = 0;
+    start(() => ++fires < giveUpAfter);
+    expect(() => vi.runAllTimers()).toThrow("Aborting after running 50 timers, assuming an infinite loop!");
+    expect({ fires, remaining: vi.getTimerCount() }).toEqual({ fires: 50, remaining: 1 });
+  });
+
+  // 100000 timers take about 12 seconds in a debug build, so this runs on
+  // plain release builds only.
+  test.skipIf(isDebug || isASAN)("the default timerLimit is 100000", () => {
+    vi.useFakeTimers();
+    let fires = 0;
+    const tick = () => {
+      if (++fires <= 100_000) setTimeout(tick, 1);
+    };
+    setTimeout(tick, 1);
+    expect(() => vi.runAllTimers()).toThrow("Aborting after running 100000 timers, assuming an infinite loop!");
+    expect({ fires, remaining: vi.getTimerCount() }).toEqual({ fires: 100_000, remaining: 1 });
   });
 });
 describe("getTimerCount", () => {

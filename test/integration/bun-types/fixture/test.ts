@@ -349,6 +349,10 @@ expectType(spy.mock.calls).is<any[][]>();
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
 
+jest.useFakeTimers({ now: new Date(0), timerLimit: 1000 });
+// @ts-expect-error
+jest.useFakeTimers({ timerLimit: "1000" });
+
 xtest("", () => {});
 xdescribe("", () => {});
 xit("", () => {});

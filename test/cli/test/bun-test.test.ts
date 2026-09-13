@@ -704,6 +704,31 @@ describe("bun test", () => {
       expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: boom::/);
       expect(annotation).toContain("%0A      at odd%0Aname (");
     });
+    test("should annotate a WebAssembly frame, which has a name and no location", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          // (module $kit (func $trapper (export "trapper") unreachable)), names from the "name" custom section
+          const bytes = new Uint8Array([
+            0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0, 3, 2, 1, 0,
+            7, 11, 1, 7, 0x74, 0x72, 0x61, 0x70, 0x70, 0x65, 0x72, 0, 0, 10, 5, 1, 3, 0, 0, 0x0b,
+            0, 23, 4, 0x6e, 0x61, 0x6d, 0x65, 0, 4, 3, 0x6b, 0x69, 0x74, 1, 10, 1, 0, 7, 0x74, 0x72, 0x61, 0x70, 0x70, 0x65, 0x72,
+          ]);
+          const { trapper } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+          test("trap", function trapTest() {
+            trapper();
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+          // Debug builds show private frames: the "wasm-stub" entry thunk next to the WebAssembly frame.
+          BUN_JSC_showPrivateScriptsInStackTraces: "0",
+        },
+        expectExitCode: 1,
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toContain("%0A      at kit.wasm-function[trapper]%0A      at trapTest (");
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `

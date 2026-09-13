@@ -211,8 +211,9 @@ export interface DirectBuild {
   lang?: "c" | "cxx";
   /**
    * Same semantics as NestedCmakeBuild.pic. true → -fPIC; false (default)
-   * → on darwin add -fno-pic -fno-pie to undo apple-clang's PIC default,
-   * elsewhere nothing. Windows is a no-op either way.
+   * → on unix add -fno-pic -fno-pie so the building clang's PIC/PIE default
+   * doesn't decide (Android always gets -fPIC: PIE-only platform). Windows
+   * is a no-op either way.
    */
   pic?: boolean;
   /**
@@ -337,7 +338,7 @@ export interface NestedCmakeBuild {
   sourceSubdir?: string;
   /**
    * If true, add -fPIC to C/CXX flags (non-windows). This also SUPPRESSES
-   * the default apple -fno-pic -fno-pie — you can't have both.
+   * the default unix -fno-pic -fno-pie — you can't have both.
    *
    * Most deps don't need this (we link statically into a non-PIE executable),
    * but some build intermediate tools or have internal shared libs that
@@ -1268,20 +1269,27 @@ function emitNestedCmake(
   let cflags = depFlags.cflags.join(" ");
   let cxxflags = depFlags.cxxflags.join(" ");
 
-  // PIC handling:
+  // PIC handling — the same policy bun's own objects get in flags.ts
+  // (-fno-pic -fno-pie on unix, -fPIC on Android), stated here so the
+  // building clang's default doesn't decide:
   //   spec.pic=true  → add -fPIC (non-windows), also tell cmake
-  //   spec.pic=false → on apple, add -fno-pic -fno-pie (apple clang defaults
-  //     to PIC; the resulting .o can't link into our non-PIE executable)
+  //   android        → add -fPIC regardless (bionic's loader is PIE-only)
+  //   spec.pic=false → on unix, add -fno-pic -fno-pie. Apple clang defaults
+  //     to PIC, and distro clangs (Arch, Fedora, Alpine, Homebrew) default to
+  //     PIE, which compiles every dep as PIC: .data.rel.ro grows from 109 KB
+  //     to 541 KB and startup touches 4-7% more pages. apt.llvm.org's clang
+  //     (CI) defaults to neither, so without this the result depends on who
+  //     built it.
   //
-  // Windows has no PIC concept (all code is relocatable), so both branches
-  // are guarded — no-op there.
-  if (spec.pic) {
+  // Windows has no PIC concept (all code is relocatable), so every branch
+  // is guarded — no-op there.
+  if (spec.pic || cfg.abi === "android") {
     if (!cfg.windows) {
       cflags += " -fPIC";
       cxxflags += " -fPIC";
     }
-    args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
-  } else if (cfg.darwin) {
+    if (spec.pic) args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
+  } else if (cfg.unix) {
     cflags += " -fno-pic -fno-pie";
     cxxflags += " -fno-pic -fno-pie";
   }
@@ -1571,12 +1579,17 @@ function emitDirect(
   const baseFlags = isCxx ? depFlags.cxxflags : depFlags.cflags;
 
   // PIC: mirror emitNestedCmake's handling so direct deps get the same
-  // codegen as cmake deps would. spec.pic → -fPIC; otherwise on darwin
-  // undo apple-clang's PIC default to match the non-PIE final binary.
+  // codegen as cmake deps would, and the same as bun's own objects
+  // (flags.ts). spec.pic → -fPIC, and Android always (PIE-only platform);
+  // otherwise on unix undo the building clang's PIC/PIE default to match the
+  // non-PIE final binary. Not only apple-clang has one: distro clangs (Arch,
+  // Fedora, Alpine, Homebrew) default to PIE, which made every dep PIC when
+  // built there (.data.rel.ro 541 KB instead of 109 KB, 4-7% more pages
+  // touched at startup) while CI's apt.llvm.org clang did not.
   const picFlags: string[] = [];
-  if (spec.pic) {
+  if (spec.pic || cfg.abi === "android") {
     if (!cfg.windows) picFlags.push("-fPIC");
-  } else if (cfg.darwin) {
+  } else if (cfg.unix) {
     picFlags.push("-fno-pic", "-fno-pie");
   }
 

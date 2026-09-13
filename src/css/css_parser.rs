@@ -660,7 +660,6 @@ pub trait CustomAtRuleParser {
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32);
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>);
     /// A top-level `@layer a, b;` statement that precedes every `@import`.
-    /// These go to `StyleSheet.layers_pre_import`, not `layer_names`.
     fn on_layer_statement_before_import(this: &mut Self, layers: &SmallList<LayerName, 1>);
     fn enclosing_layer_length(this: &mut Self) -> u32;
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);

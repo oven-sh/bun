@@ -145,9 +145,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // `@layer` statements may precede `@import` (css-cascade-5) so
-            // that a file can pin the order of the layers its imports create.
-            // Emit them before the imported files.
+            // Any pre-import layers come first
             if !repr.layers_pre_import.is_empty() {
                 // See the LayerName nominal-type note at `Layers::borrow`.
                 let layers_ptr =

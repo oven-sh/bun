@@ -7264,11 +7264,8 @@ pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
     lseek(fd, offset as i64, libc::SEEK_SET).map(|_| ())
 }
 
-/// `ftruncate(fd, len)` after a write that replaced the file's contents from
-/// offset 0 (the open skipped `O_TRUNC`). A target with no length to cut (a
-/// character device, a FIFO, a socket) rejects the call, and that is fine. A
-/// regular file left at another size still has its old tail, so that failure
-/// is returned.
+/// `ftruncate` that cuts the old tail after a rewrite from offset 0. Fails only
+/// for a regular file left at the wrong size (devices and FIFOs reject it).
 pub fn ftruncate_after_write(fd: Fd, len: i64) -> Maybe<()> {
     let Err(err) = ftruncate(fd, len) else {
         return Ok(());

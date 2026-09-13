@@ -4676,9 +4676,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Finishes a copy into a destination that was opened without `O_TRUNC`:
-    /// cuts the old tail at `wrote`, copies the source mode and closes the
-    /// descriptor. The copy's own error takes priority over the truncate error.
+    /// Cuts the old tail at `wrote`, copies the mode and closes. The copy error wins.
     #[cfg(not(windows))]
     fn finish_copied_dest(
         result: Maybe<ret::CopyFile>,

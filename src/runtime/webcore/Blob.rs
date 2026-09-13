@@ -5204,8 +5204,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    // A caller-owned fd keeps the old best-effort resize: only a file Bun
-    // opened itself rejects when the old tail cannot be cut.
+    // A caller-owned fd keeps the best-effort resize.
     if truncate
         && let Err(err) =
             bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))
@@ -5290,8 +5289,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    // A caller-owned fd keeps the old best-effort resize: only a file Bun
-    // opened itself rejects when the old tail cannot be cut.
+    // A caller-owned fd keeps the best-effort resize.
     if truncate
         && let Err(err) =
             bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))

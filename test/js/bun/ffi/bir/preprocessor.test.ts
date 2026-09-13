@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { includePath, lines, run, runFixtures, supported } from "./run-fixtures";
 
 // Macros, conditionals, includes, the predefined macros and the corners of the source text.
@@ -66,12 +66,12 @@ int main(void) {
     [
       "an error in a header names the header",
       "#include <bad.h>\nint main(void) { return 0; }\n",
-      "bad.h:3:11: error: expected an expression before ';'",
+      "error: expected an expression before ';'\n    at inc/bad.h:3:11\n\n1 | #include <bad.h>\n     ^\nnote: included from here\n   at src/main.c:1:2\n",
     ],
     [
       "a header that is not there",
       "int x;\n#include <missing.h>\nint main(void) { return 0; }\n",
-      "main.c:2:2: error: 'missing.h' file not found",
+      "error: 'missing.h' file not found\n    at src/main.c:2:2\n",
     ],
     [
       "a header that includes itself",
@@ -82,14 +82,18 @@ int main(void) {
     [
       "a token from a macro body is reported where the macro was used",
       "#define BAD int y = ;\n\n  BAD\nint main(void) { return 0; }\n",
-      "main.c:3:3: error: expected an expression before ';'",
+      "error: expected an expression before ';'\n    at src/main.c:3:3\n",
     ],
   ];
   for (const [name, source, message] of broken) {
     test.concurrent(name, async () => {
       using dir = tempDir("bir-include-error", { ...tree, "src/main.c": source });
       const { stdout, stderr, exitCode } = await run(join(String(dir), "src"), ["main.c"], env(String(dir)));
-      expect(stderr).toContain(message);
+      expect(
+        lines(stderr)
+          .replaceAll(String(dir) + sep, "")
+          .replaceAll("\\", "/"),
+      ).toContain(message);
       expect(stdout).toBe("");
       expect(exitCode).not.toBe(0);
     });

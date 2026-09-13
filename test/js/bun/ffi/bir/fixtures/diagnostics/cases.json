@@ -346,7 +346,7 @@
   "about": "syntax and type errors are diagnosed",
   "source": "int f(void) {",
   "line": 1,
-  "column": 14,
+  "column": 13,
   "message": "expected '}' before end of file"
  },
  {

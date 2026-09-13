@@ -343,6 +343,7 @@ dependencies = [
 name = "bun_cc"
 version = "0.0.0"
 dependencies = [
+ "bun_ast",
  "bun_core",
  "bun_paths",
  "bun_sys",

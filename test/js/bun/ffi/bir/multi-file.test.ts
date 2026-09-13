@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
-import { run, runFixtures, runProjects, supported } from "./run-fixtures";
+import { bunEnv, isWindows, tempDir } from "harness";
+import { join, sep } from "node:path";
+import { lines, run, runFixtures, runProjects, supported } from "./run-fixtures";
 
 // Linkage: what several translation units share and what stays private to one.
 runFixtures("multi-file");
@@ -12,7 +13,7 @@ describe.skipIf(!supported)("multi-file: what cannot be linked", () => {
     [
       "a function defined twice",
       { "a.c": "int f(void) { return 1; }", "b.c": "int f(void) { return 2; }" },
-      "duplicate symbol 'f': defined in a.c and in b.c",
+      "error: duplicate symbol 'f': defined in a.c and in b.c\n    at b.c\n",
     ],
     ["an object defined twice", { "a.c": "int x = 1;", "b.c": "int y; int x = 2;" }, "duplicate symbol 'x'"],
     [
@@ -36,7 +37,7 @@ describe.skipIf(!supported)("multi-file: what cannot be linked", () => {
         "a.c": "extern _Thread_local int nowhere;\nint a(void) { return nowhere; }",
         "b.c": "int b(void) { return 0; }",
       },
-      "a.c:2:22: error: thread-local variable 'nowhere' is declared but not defined in any translation unit",
+      "error: thread-local variable 'nowhere' is declared but not defined in any translation unit\n    at a.c:2:22\n",
     ],
     [
       "thread-local where it is used, ordinary where it is defined",
@@ -71,9 +72,40 @@ describe.skipIf(!supported)("multi-file: what cannot be linked", () => {
         "--outfile",
         "program",
       ]);
-      expect(stderr.replaceAll(String(dir) + "/", "").replaceAll(String(dir) + "\\", "")).toContain(message);
+      expect(lines(stderr).replaceAll(String(dir) + sep, "")).toContain(message);
       expect(stdout).not.toContain("compile");
       expect(exitCode).not.toBe(0);
+    });
+  }
+});
+
+// Files that disagree about something they share, in a way a linker lets pass: the program is made, with a remark.
+describe.skipIf(!supported)("multi-file: what is linked with a warning", () => {
+  const remarked: [string, Record<string, string>, string][] = [
+    [
+      "a declaration that disagrees with the definition",
+      {
+        "main.c": "long scale(long); int main(void) { return (int)scale(1) - 3; }",
+        "a.c": "int scale(int x) { return x * 3; }",
+        "b.c": "",
+      },
+      "warn: 'scale' is declared here with a different type than its definition in a.c\n   at main.c\n",
+    ],
+    [
+      "tentative definitions of different sizes",
+      { "main.c": "int big[2]; int main(void) { return big[1]; }", "a.c": "int big[8];", "b.c": "" },
+      "warn: 'big' has size 32 here but size 8 in main.c\n   at a.c\n",
+    ],
+  ];
+  for (const [what, files, message] of remarked) {
+    test.concurrent(what, async () => {
+      using dir = tempDir("bir-link-warning", files);
+      const program = join(String(dir), isWindows ? "program.exe" : "program");
+      const build = await run(String(dir), ["build", "--compile", "main.c", "a.c", "b.c", "--outfile", program]);
+      expect(lines(build.stderr).replaceAll(String(dir) + sep, "")).toContain(message);
+      expect(build.exitCode).toBe(0);
+      await using proc = Bun.spawn({ cmd: [program], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      expect(await proc.exited).toBe(0);
     });
   }
 });

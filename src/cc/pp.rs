@@ -15,10 +15,22 @@ use crate::lexer::Lexer;
 use crate::token::{Loc, PpKind, PpToken, Punct, Res, TokenSource, display_bytes, err};
 use crate::types::Target;
 
-/// Names of every file that contributed tokens; `Loc::file` indexes it.
+/// One entry of the file table: a file that contributed tokens, or the name `#line` gave to
+/// part of one.
+pub(crate) struct SourceFile {
+    pub(crate) name: Rc<str>,
+    pub(crate) contents: Rc<[u8]>,
+    /// The entry whose contents these are, under the name it was read by: itself, except for
+    /// an entry `#line` made.
+    pub(crate) read_as: u32,
+    /// Where the `#include` that brought the file in is.
+    pub(crate) included_at: Option<Loc>,
+}
+
+/// Every file that contributed tokens; `Loc::file` indexes it.
 #[derive(Default)]
 pub(crate) struct FileTable {
-    pub(crate) names: Vec<Rc<str>>,
+    pub(crate) files: Vec<SourceFile>,
     /// Non-fatal diagnostics (`#warning`), in source order.
     pub(crate) warnings: Vec<(Loc, String)>,
     /// `#pragma comment(lib, "name")`, in source order without duplicates.
@@ -28,13 +40,36 @@ pub(crate) struct FileTable {
 }
 
 impl FileTable {
-    pub(crate) fn add(&mut self, name: &str) -> u32 {
-        self.names.push(Rc::from(name));
-        (self.names.len() - 1) as u32
+    pub(crate) fn add(&mut self, name: &str, contents: Rc<[u8]>, included_at: Option<Loc>) -> u32 {
+        let id = self.files.len() as u32;
+        self.files.push(SourceFile {
+            name: Rc::from(name),
+            contents,
+            read_as: id,
+            included_at,
+        });
+        id
+    }
+
+    /// `#line` in `file` names what follows `name`.
+    pub(crate) fn add_presumed(&mut self, name: &str, file: u32) -> u32 {
+        let Some(read) = self.files.get(file as usize) else {
+            return file;
+        };
+        let presumed = SourceFile {
+            name: Rc::from(name),
+            contents: Rc::clone(&read.contents),
+            read_as: read.read_as,
+            included_at: read.included_at,
+        };
+        self.files.push(presumed);
+        (self.files.len() - 1) as u32
     }
 
     pub(crate) fn name(&self, id: u32) -> &str {
-        self.names.get(id as usize).map_or("<unknown>", |n| &**n)
+        self.files
+            .get(id as usize)
+            .map_or("<unknown>", |file| &*file.name)
     }
 }
 
@@ -267,8 +302,17 @@ impl Preprocessor {
     }
 
     /// Starts reading `source` as the file `path`.
-    pub(crate) fn push_source(&mut self, path: &str, source: Rc<[u8]>, found_at: Option<usize>) {
-        let file = self.files.borrow_mut().add(path);
+    pub(crate) fn push_source(
+        &mut self,
+        path: &str,
+        source: Rc<[u8]>,
+        found_at: Option<usize>,
+        included_at: Option<Loc>,
+    ) {
+        let file = self
+            .files
+            .borrow_mut()
+            .add(path, Rc::clone(&source), included_at);
         self.frames.push(Frame {
             lexer: Lexer::new(source, file),
             peeked: None,

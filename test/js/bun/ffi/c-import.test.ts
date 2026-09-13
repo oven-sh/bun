@@ -9,7 +9,9 @@ const supported =
   (isLinux && !isArm64) ||
   (isMacOS && isArm64) ||
   // (with Visual Studio's and the Windows SDK's headers, which the C in these tests includes)
-  (isWindows && !isArm64 && existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include")));
+  (isWindows &&
+    !isArm64 &&
+    existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include")));
 
 // C's stdout is in text mode on Windows: "\r\n" there.
 const text = async (stream: ReadableStream<Uint8Array>) => (await stream.text()).replaceAll("\r\n", "\n");
@@ -87,22 +89,37 @@ describe.skipIf(!supported)("importing a .c file", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a compile error is an exception that names the file, line and column", async () => {
+  test.concurrent("a compile error is a BuildMessage with the file, the line and the column", async () => {
     using dir = tempDir("c-import-error", {
       "broken.c": "int f(void) {\n  return undeclared_thing + 1;\n}\n",
       "index.ts": `
         try { await import("./broken.c"); console.log("no error"); }
-        catch (e) { console.log(String((e as Error).message).includes("broken.c:2:10: error: use of undeclared identifier 'undeclared_thing'")); }
+        catch (e) {
+          const { name, message, level, position } = e as BuildMessage;
+          console.log(JSON.stringify({ name, message, level, ...position, file: require("node:path").basename(position!.file) }));
+        }
       `,
     });
     const { stdout, exitCode } = await run(String(dir), ["index.ts"]);
-    expect(stdout.trim()).toBe("true");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "BuildMessage",
+      message: "use of undeclared identifier 'undeclared_thing'",
+      level: "error",
+      lineText: "  return undeclared_thing + 1;",
+      file: "broken.c",
+      namespace: "file",
+      line: 2,
+      column: 10,
+      length: "undeclared_thing".length,
+      offset: 23,
+    });
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("a function the process does not have is an error at import, not a crash at call", async () => {
     using dir = tempDir("c-import-undefined", {
-      "needs.c": "int bun_test_symbol_that_does_not_exist(int);\nint f(int x) { return bun_test_symbol_that_does_not_exist(x); }\n",
+      "needs.c":
+        "int bun_test_symbol_that_does_not_exist(int);\nint f(int x) { return bun_test_symbol_that_does_not_exist(x); }\n",
       "index.ts": `
         try { await import("./needs.c"); console.log("no error"); }
         catch (e) { console.log(String((e as Error).message)); }
@@ -141,15 +158,19 @@ describe.skipIf(!supported)("importing a .c file", () => {
       `,
     });
     const { stdout, exitCode } = await run(String(dir), ["--no-ffi-cc", "index.ts"]);
-    expect(stdout.trim()).toBe("ERR_FFI_CC_DISABLED | Cannot import C code because the bun:ffi C compiler is disabled.");
+    expect(stdout.trim()).toBe(
+      "ERR_FFI_CC_DISABLED | Cannot import C code because the bun:ffi C compiler is disabled.",
+    );
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("#include finds files next to the source and the compiler's own headers", async () => {
     using dir = tempDir("c-import-include", {
       "limits.h": "#define LOCAL_LIMIT 7\n",
-      "shape.h": '#pragma once\n#include <stdint.h>\n#include <stdbool.h>\n#include "limits.h"\ntypedef struct { int32_t w, h; } Size;\n',
-      "shape.c": '#include "shape.h"\n#include <stddef.h>\nint area(int w, int h) { Size s = { w, h }; bool big = s.w * s.h > LOCAL_LIMIT; return big ? s.w * s.h : (int)offsetof(Size, h); }\n',
+      "shape.h":
+        '#pragma once\n#include <stdint.h>\n#include <stdbool.h>\n#include "limits.h"\ntypedef struct { int32_t w, h; } Size;\n',
+      "shape.c":
+        '#include "shape.h"\n#include <stddef.h>\nint area(int w, int h) { Size s = { w, h }; bool big = s.w * s.h > LOCAL_LIMIT; return big ? s.w * s.h : (int)offsetof(Size, h); }\n',
       "index.ts": `import { area } from "./shape.c"; console.log(area(3, 4), area(1, 2));`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["index.ts"]);
@@ -160,9 +181,11 @@ describe.skipIf(!supported)("importing a .c file", () => {
 });
 
 describe.skipIf(!supported)("a C file as the entry point", () => {
-  test.concurrent("with a main() it is a program: arguments in, exit status out, atexit handlers and stdio flushed", async () => {
-    using dir = tempDir("c-main", {
-      "hello.c": /* c */ `
+  test.concurrent(
+    "with a main() it is a program: arguments in, exit status out, atexit handlers and stdio flushed",
+    async () => {
+      using dir = tempDir("c-main", {
+        "hello.c": /* c */ `
         #include <stdio.h>
         #include <stdlib.h>
         static void bye(void) { printf("bye\\n"); }
@@ -174,12 +197,13 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
           return 3;
         }
       `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["hello.c", "one", "two words"]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("2 arguments: [one] [two words]\nbye\n");
-    expect(exitCode).toBe(3);
-  });
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["hello.c", "one", "two words"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 arguments: [one] [two words]\nbye\n");
+      expect(exitCode).toBe(3);
+    },
+  );
 
   test.concurrent("main() is not called when the file is imported", async () => {
     using dir = tempDir("c-main-imported", {
@@ -282,7 +306,8 @@ describe.skipIf(!supported)("bundling a .c file", () => {
       "index.ts": `import { f } from "./broken.c"; console.log(f());`,
     });
     const build = await run(String(dir), ["build", "index.ts", "--target=bun", "--outdir", "out"]);
-    expect(build.stderr).toContain("broken.c:1:22: error: use of undeclared identifier 'undeclared_thing'");
+    expect(build.stderr).toContain("error: use of undeclared identifier 'undeclared_thing'\n    at ");
+    expect(build.stderr).toContain("broken.c:1:22\n");
     expect(build.exitCode).not.toBe(0);
   });
 
@@ -324,13 +349,19 @@ describe.skipIf(!supported)("bundling a .c file", () => {
           return 0;
         }
       `,
-      "util.c": '#include "shared.h"\nint calls;\nstatic int helper(void) { return 100; }\nint twice(int x) { calls++; return x * 2; }\n',
+      "util.c":
+        '#include "shared.h"\nint calls;\nstatic int helper(void) { return 100; }\nint twice(int x) { calls++; return x * 2; }\n',
       "count.c": '#include "shared.h"\nint counted(void) { return calls + twice(0); }\n',
     });
     const build = await run(String(dir), ["build", "--compile", "main.c", "util.c", "count.c", "--outfile", "prog"]);
     expect(build.stderr).not.toContain("error");
     expect(build.exitCode).toBe(0);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), executable("prog"))], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), executable("prog"))],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("42 1 2 1\n");

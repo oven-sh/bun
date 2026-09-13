@@ -12,7 +12,6 @@ pub(crate) struct Lexer {
     file: u32,
     pos: usize,
     line: u32,
-    col: u32,
     at_start_of_line: bool,
 }
 
@@ -30,18 +29,32 @@ impl Lexer {
             file,
             pos,
             line: 1,
-            col: 1,
             at_start_of_line: true,
         };
         lexer.skip_splices();
         lexer
     }
 
+    /// A scanner of `src` that starts at the byte `pos`, where a token starts.
+    pub(crate) fn at(src: Rc<[u8]>, file: u32, pos: usize) -> Lexer {
+        Lexer {
+            pos: pos.min(src.len()),
+            src,
+            file,
+            line: 1,
+            at_start_of_line: false,
+        }
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.pos
+    }
+
     fn loc(&self) -> Loc {
         Loc {
             file: self.file,
             line: self.line,
-            col: self.col,
+            offset: self.pos as u32,
         }
     }
 
@@ -66,7 +79,6 @@ impl Lexer {
             }
             self.pos += n;
             self.line += 1;
-            self.col = 1;
         }
     }
 
@@ -107,10 +119,6 @@ impl Lexer {
         self.pos += 1;
         if b == b'\n' {
             self.line += 1;
-            self.col = 1;
-        } else if b & 0xc0 != 0x80 {
-            // Count a multi-byte UTF-8 sequence as one column.
-            self.col += 1;
         }
         self.skip_splices();
         b
@@ -149,6 +157,7 @@ impl Lexer {
                             return Err(Error {
                                 loc: start,
                                 msg: "unterminated /* comment".to_string(),
+                                note: None,
                             });
                         }
                         if self.peek() == b'*' && self.peek_at(1) == b'/' {

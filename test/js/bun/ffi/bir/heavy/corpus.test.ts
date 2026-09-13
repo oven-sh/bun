@@ -712,15 +712,18 @@ async function compileAll(library: Library, root: string, files: string[], asGnu
         env,
       );
       if (exitCode === 0) continue;
-      const errors = stderr.split("\n").filter(line => line.includes("error: "));
+      const output = stderr.split("\n");
+      const errors = output.filter(line => line.startsWith("error: "));
       // A unit that only declares a thread-local object another unit defines is fine: it needs linking.
       if (
         errors.length > 0 &&
         errors.every(line => /thread-local variable .* not defined in any translation unit/.test(line))
       )
         continue;
-      const first = errors[0] ?? stderr.trim().split("\n")[0] ?? `exit code ${exitCode}`;
-      failures.set(files[index], first.replace(/^error: /, "").replaceAll(String(dir), "."));
+      // `error: message`, then `    at file:line:column`.
+      const where = output[output.indexOf(errors[0]) + 1]?.match(/^ +at (.*)$/)?.[1] ?? "";
+      const first = errors[0]?.slice("error: ".length) ?? stderr.trim().split("\n")[0] ?? `exit code ${exitCode}`;
+      failures.set(files[index], `${first} (${where.replaceAll(String(dir), ".")})`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(availableParallelism(), 16, files.length) }, worker));
@@ -738,7 +741,7 @@ function report(
   for (const [relative, message] of failures) {
     const piece = expectationFor(expected, library.name, relative);
     if (piece !== undefined && message.includes(piece)) continue;
-    const kind = messageClass(message.replace(/^.*?: error: /, ""));
+    const kind = messageClass(message.replace(/ \([^()]*\)$/, ""));
     classes.set(kind, (classes.get(kind) ?? 0) + 1);
     unexpected.push(`${relative}: ${message}`);
   }

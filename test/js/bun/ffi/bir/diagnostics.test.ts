@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { sep } from "node:path";
 import cases from "./fixtures/diagnostics/cases.json";
 import { lines, meets, run, supported } from "./run-fixtures";
 
-// What the compiler refuses, and what it says: `file:line:column: error: message`, the first error only.
+// What the compiler refuses, and what it says, the way Bun says what is wrong with a TypeScript file: the line, a
+// caret, `error: message` and `at file:line:column`. The first error only. (Here without the directory.)
 async function firstError(source: string) {
   using dir = tempDir("bir-diagnostic", { "test.c": source });
-  return await run(String(dir), ["test.c"]);
+  const { stdout, stderr, exitCode } = await run(String(dir), ["test.c"]);
+  return { stdout, stderr: lines(stderr).replaceAll(String(dir) + sep, ""), exitCode };
 }
 
 describe.skipIf(!supported)("diagnostics", () => {
@@ -15,12 +18,91 @@ describe.skipIf(!supported)("diagnostics", () => {
       if (!meets(requires)) return;
       test.concurrent(`${index}: ${about}: ${message.slice(0, 60)}`, async () => {
         const { stdout, stderr, exitCode } = await firstError(source);
-        expect(stderr).toContain(`test.c:${line}:${column}: error: ${message}`);
+        expect(stderr).toContain(`error: ${message}\n    at test.c:${line}:${column}\n`);
         expect(stdout).toBe("");
         expect(exitCode).not.toBe(0);
       });
     },
   );
+
+  // What is only worth a remark: the program is compiled and runs, and the remarks are printed the same way.
+  const remarks: [string, string, string[], string?][] = [
+    [
+      "#warning, where it is not skipped",
+      `#warning first thing
+int x;
+#if 0
+#warning skipped
+#endif
+  #  warning second "quoted" thing
+int puts(const char *);
+int main(void) { puts("ran"); return 0; }
+`,
+      ["warn: #warning first thing\n   at test.c:1:1\n", 'warn: #warning second "quoted" thing\n   at test.c:6:3\n'],
+    ],
+    [
+      "a macro defined again another way",
+      `#define A 1
+#define A 2
+int puts(const char *);
+int main(void) { puts("ran"); return A - 2; }
+`,
+      ["warn: 'A' redefined with a different definition\n   at test.c:2:9\n"],
+    ],
+    [
+      "a conversion that discards a qualifier",
+      `int puts(const char *);
+void take(char *p) { (void)p; }
+char *f(const char *s, volatile int *v) { char *p = s; take(s); int *q = v; (void)q; p = (char *)s; return s; }
+int main(void) { puts("ran"); return 0; }
+`,
+      [
+        "warn: initializing discards the 'const' qualifier: 'const char *' to 'char *'\n   at test.c:3:53\n",
+        "warn: passing an argument discards the 'const' qualifier: 'const char *' to 'char *'\n   at test.c:3:61\n",
+        "warn: initializing discards the 'volatile' qualifier: 'volatile int *' to 'int *'\n   at test.c:3:74\n",
+        "warn: returning discards the 'const' qualifier: 'const char *' to 'char *'\n   at test.c:3:101\n",
+      ],
+    ],
+    [
+      "a __declspec nobody has heard of",
+      `__declspec(something_new(1, 2)) int f(void);
+int puts(const char *);
+int main(void) { puts("ran"); return 0; }
+`,
+      ["warn: unknown attribute 'something_new'"],
+      "windows",
+    ],
+  ];
+  for (const [what, source, expected, requires] of remarks) {
+    if (!meets(requires)) continue;
+    test.concurrent(`a warning for ${what}`, async () => {
+      const { stdout, stderr, exitCode } = await firstError(source);
+      for (const remark of expected) expect(stderr).toContain(remark);
+      expect(stderr).not.toContain("skipped");
+      expect(stderr).not.toContain("error");
+      expect(lines(stdout)).toBe("ran\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("a warning and then an error: both are said, and nothing runs", async () => {
+    const { stdout, stderr, exitCode } = await firstError("#warning w\nint x = ;\n");
+    expect(stderr).toContain("warn: #warning w\n   at test.c:1:1\n");
+    expect(stderr).toContain("error: expected an expression before ';'\n    at test.c:2:9\n");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("an error about a second declaration shows the first", async () => {
+    const { stdout, stderr, exitCode } = await firstError(
+      "int f(void) { return 1; }\nint f(void) { return 2; }\nint g(int);\nlong g(int);\n",
+    );
+    expect(stderr).toContain(
+      "error: redefinition of 'f'\n    at test.c:2:5\n\n1 | int f(void) { return 1; }\n        ^\nnote: the previous declaration is here\n   at test.c:1:5\n",
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
 
   // Input nested far deeper than any program is: an error, not a stack overflow.
   const deep: [string, string, string][] = [

@@ -152,7 +152,11 @@ impl<'a> ModuleGen<'a> {
     /// How a call with these argument types is made on the target; `named` of them are
     /// declared parameters.
     fn call_abi(&self, ret: &Type, args: &[Type], named: usize, loc: Loc) -> Res<CallAbi> {
-        abi::lower_call(self.tcx, ret, args, named).map_err(|msg| crate::token::Error { loc, msg })
+        abi::lower_call(self.tcx, ret, args, named).map_err(|msg| crate::token::Error {
+            loc,
+            msg,
+            note: None,
+        })
     }
 
     /// The signature of a function of type `fty`, as its definition and plain calls see it.
@@ -2710,7 +2714,11 @@ impl<'a> FnGen<'a, '_> {
             return Ok(self.temp_object(ty));
         }
         let classify = |g: &Self| {
-            abi::sysv_classify(g.tcx, ty).map_err(|msg| crate::token::Error { loc, msg })
+            abi::sysv_classify(g.tcx, ty).map_err(|msg| crate::token::Error {
+                loc,
+                msg,
+                note: None,
+            })
         };
         let windows = target.os == Os::Windows;
         let apple_arm = target.arch == Arch::Aarch64 && target.os == Os::MacOs;

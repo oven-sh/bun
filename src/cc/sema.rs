@@ -11,7 +11,7 @@ use std::rc::Rc;
 use crate::ast::*;
 use crate::constexpr::{self, Const};
 use crate::extended::Extended;
-use crate::token::{IntSuffix, Loc, Res, err};
+use crate::token::{IntSuffix, Loc, Res, err, err_with_note};
 use crate::types::{BitField, FuncType, Member, Quals, StructDef, StructId, Target, Type, TypeCtx};
 
 #[path = "sema_builtin.rs"]
@@ -868,7 +868,12 @@ impl Sema {
                 let compatible =
                     Self::compatible(&Type::Func(Rc::clone(&f.ty)), &Type::Func(Rc::clone(&fty)));
                 if !compatible {
-                    return err(loc, format!("conflicting types for '{name}'"));
+                    return err_with_note(
+                        loc,
+                        format!("conflicting types for '{name}'"),
+                        f.loc,
+                        "the previous declaration is here",
+                    );
                 }
                 if f.ty.unprototyped || f.body.is_none() {
                     if !fty.unprototyped || f.ty.unprototyped {

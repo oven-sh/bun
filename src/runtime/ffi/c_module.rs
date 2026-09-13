@@ -317,24 +317,30 @@ fn compile_to_bir(
         )));
     };
     let options = bun_cc::CompileOptions::new(bun_cc::Target::host());
-    let compilation = bun_cc::compile_many(&[(source, filename)], &options);
+    let mut log = bun_ast::Log::default();
+    let compilation = bun_cc::compile_many(&[(source, filename)], &options, &mut log);
     for file in &compilation.files_read {
         on_file_read(file.as_bytes());
     }
-    match compilation.result {
-        Ok(output) => Ok(output.bir),
-        Err(diagnostics) => {
-            let mut combined = String::new();
-            for diagnostic in diagnostics.iter() {
-                use core::fmt::Write as _;
-                let _ = writeln!(&mut combined, "{diagnostic}");
+    match compilation.output {
+        Some(output) => {
+            if log.warnings > 0 {
+                let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
+                bun_core::Output::flush();
             }
-            Err(global_this.throw(format_args!(
-                "{} error(s) while compiling {}\n{}",
-                diagnostics.len(),
-                filename,
-                combined
-            )))
+            Ok(output.bir)
+        }
+        // What a TypeScript file that does not parse is: a BuildMessage for each message of the log.
+        None => {
+            let specifier = bun_core::String::borrow_utf8(path);
+            let error = jsc::virtual_machine::process_fetch_log(
+                global_this,
+                &specifier,
+                &bun_core::String::EMPTY,
+                &mut log,
+                jsc::CrateError::ParserError,
+            );
+            Err(global_this.throw_value(error))
         }
     }
 }

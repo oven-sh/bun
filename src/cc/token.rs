@@ -20,14 +20,18 @@ use crate::extended::{self, Extended};
 pub(crate) struct Loc {
     /// Index into the compilation's file table.
     pub(crate) file: u32,
+    /// As `#line` has it, for `__LINE__`; a diagnostic is placed by `offset`.
     pub(crate) line: u32,
-    pub(crate) col: u32,
+    /// Byte offset in the file's contents.
+    pub(crate) offset: u32,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Error {
     pub(crate) loc: Loc,
     pub(crate) msg: String,
+    /// Another place worth showing, and what it is.
+    pub(crate) note: Option<(Loc, String)>,
 }
 
 pub(crate) type Res<T> = Result<T, Error>;
@@ -36,6 +40,20 @@ pub(crate) fn err<T>(loc: Loc, msg: impl Into<String>) -> Res<T> {
     Err(Error {
         loc,
         msg: msg.into(),
+        note: None,
+    })
+}
+
+pub(crate) fn err_with_note<T>(
+    loc: Loc,
+    msg: impl Into<String>,
+    note_loc: Loc,
+    note: &str,
+) -> Res<T> {
+    Err(Error {
+        loc,
+        msg: msg.into(),
+        note: Some((note_loc, note.to_owned())),
     })
 }
 

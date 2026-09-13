@@ -594,7 +594,7 @@ impl Preprocessor {
         let file = match expanded.get(1) {
             Some(t) if t.kind == PpKind::StrLit && t.text.len() >= 2 => {
                 let name = display_bytes(&t.text[1..t.text.len() - 1]);
-                Some(self.files.borrow_mut().add(&name))
+                Some(self.files.borrow_mut().add_presumed(&name, loc.file))
             }
             Some(_) => return err(loc, "invalid file name in #line"),
             None => None,
@@ -924,7 +924,7 @@ impl Preprocessor {
         let Some(source) = self.load(&path, found_at.is_some()) else {
             return err(loc, format!("'{name}' file not found"));
         };
-        self.push_source(&path, source, found_at);
+        self.push_source(&path, source, found_at, Some(loc));
         Ok(())
     }
 }

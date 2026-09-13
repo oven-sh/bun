@@ -11,7 +11,9 @@ use crate::ast::*;
 use crate::extended::Extended;
 use crate::init::{Designator, Init, InitEntry, MAX_OBJECT_SIZE};
 use crate::sema::{FieldDecl, FnCtx, Sema, Storage, Symbol, Tag};
-use crate::token::{Kw, Loc, PackOp, Punct, Res, Tok, Token, TokenSource, classify, err};
+use crate::token::{
+    Kw, Loc, PackOp, Punct, Res, Tok, Token, TokenSource, classify, err, err_with_note,
+};
 use crate::types::{FuncType, Quals, Target, Type, WideKind};
 
 #[path = "parser_ms.rs"]
@@ -935,7 +937,12 @@ impl<S: TokenSource> Parser<S> {
         };
         let id = self.declare_function(Rc::clone(name), Rc::clone(&fty), &decl, spec, true)?;
         if self.sema.funcs[id as usize].body.is_some() {
-            return err(loc, format!("redefinition of '{name}'"));
+            return err_with_note(
+                loc,
+                format!("redefinition of '{name}'"),
+                self.sema.funcs[id as usize].loc,
+                "the previous declaration is here",
+            );
         }
         self.sema.funcs[id as usize].ty = Rc::clone(&fty);
 

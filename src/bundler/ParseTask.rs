@@ -2557,19 +2557,9 @@ pub mod parse_worker {
             }
             let mut units: Vec<(&[u8], &str)> = vec![(entry_contents, filename)];
             units.extend(linked.iter().map(|(contents, name)| (contents.as_slice(), name.as_str())));
-            match bun_cc::compile_many(&units, &c_options).result {
-                Ok(output) => Some(output.bir),
-                Err(diagnostics) => {
-                    for diagnostic in diagnostics {
-                        // logger OOM-only
-                        let _ = log.add_error_fmt(
-                            None,
-                            Loc::EMPTY,
-                            format_args!("{diagnostic}"),
-                        );
-                    }
-                    return Err(AnyError::ParserError);
-                }
+            match bun_cc::compile_many(&units, &c_options, log).output {
+                Some(output) => Some(output.bir),
+                None => return Err(AnyError::ParserError),
             }
         } else {
             None

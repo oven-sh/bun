@@ -320,8 +320,7 @@ pub struct PackageManager {
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
-    /// `env` without the project's `.env*` files, which a cloned repository
-    /// controls. Git children and the proxy / TLS settings read this one.
+    /// The process environment with no `.env*` file merged in (git children, proxy, TLS).
     pub(crate) process_env: dot_env::Loader,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress

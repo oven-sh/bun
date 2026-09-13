@@ -136,8 +136,7 @@ impl SloppyGlobalGitConfig {
 pub use bun_install_types::resolver_hooks::Repository;
 
 /// The environment every `git` the install spawns runs with (see `GitEnv::get`).
-/// Built from `PackageManager::process_env`: git runs what `GIT_SSH_COMMAND` and
-/// `GIT_CONFIG_*` name, so the project's `.env*` files must not reach it.
+/// Built from `PackageManager::process_env`: the project's `.env*` files must not reach git.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,

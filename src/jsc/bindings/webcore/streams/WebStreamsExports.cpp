@@ -199,16 +199,61 @@ extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleR
     stream->m_consumedAsBody = true;
 }
 
+// markConsumedAsBody for Rust `to_any_blob`, which took the payload of a stream nothing started: no reader exists to close it.
+extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_consumedAsBody = true;
+    ASSERT(!stream->m_reader);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    readableStreamCloseIfPossible(globalObject, stream);
+    scope.assertNoExceptionExceptTermination();
+}
+
+// The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
+static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
+{
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
+        return &bytesSource->m_lockedStream;
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
+        return &fileSource->m_lockedStream;
+    return nullptr;
+}
+
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
 // Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
 // disturbed checks behave as they do after readStreamIntoSink acquires a reader.
-extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
     stream->m_disturbed = true;
     stream->m_lockedWithoutReader = true;
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return;
+    if (auto* slot = lockedStreamSlot(handle.asCell()))
+        slot->set(JSC::getVM(globalObject), handle.asCell(), stream);
+}
+
+// The source of a stream that ReadableStream__lockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__NativeStreamSource__endLockedStream(JSC::EncodedJSValue encodedHandle, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto* slot = lockedStreamSlot(JSValue::decode(encodedHandle).asCell());
+    if (!slot || !slot->get())
+        return;
+    auto* stream = uncheckedDowncast<JSReadableStream>(slot->get());
+    slot->clear();
+
+    JSValue error = JSValue::decode(reason);
+    if (error.isEmpty())
+        readableStreamCloseIfPossible(globalObject, stream);
+    else
+        Bun::WebStreams::webStreamControllerError(globalObject, stream, error);
 }
 
 extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
@@ -222,12 +267,18 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+// A locked stand-in for a body's stream. `consumed`: the body was read to its end (closed, disturbed), not still being read.
+extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject, bool consumed)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
+    if (consumed) {
+        stream->m_disturbed = true;
+        readableStreamClose(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);

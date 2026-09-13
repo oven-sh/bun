@@ -10,8 +10,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // were live at each rehash.
 //
 // Only the first Map or Set of a process that reaches that cell is hit, so each case runs in
-// its own process, as a CommonJS file (other entry paths allocate in another order). A build
-// with another memory layout (debug, ASAN) does not have the bug.
+// its own process, as a CommonJS file (other entry paths allocate in another order). These
+// cases need that memory layout, so only a release build can fail them. The "conservative
+// roots" case in test/js/bun/jsc/bun-jsc.test.ts covers the same rule on every build.
 test.concurrent.each(["Set", "Map"])(
   "a %s that adds and removes entries in turn does not keep the removed entries alive",
   async kind => {

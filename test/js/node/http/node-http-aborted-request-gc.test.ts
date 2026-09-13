@@ -14,9 +14,10 @@ import path from "node:path";
 // allocation order in the server process. At most two connections are open at a time. That
 // keeps the Set at its initial capacity, where it replaces its table every third connection.
 //
-// The bug needs the memory layout of a release build: the first table is kept after about
+// This case needs the memory layout of a release build: the first table is kept after about
 // 400 connections there. Debug and ASAN builds do not have that layout, and 1000 connections
-// plus two full collections take longer than the default timeout on them.
+// plus two full collections take longer than the default timeout on them. The "conservative
+// roots" case in test/js/bun/jsc/bun-jsc.test.ts covers the engine rule on every build.
 test.skipIf(isDebug || isASAN)(
   "http.Server does not keep the sockets and requests of aborted connections alive",
   async () => {

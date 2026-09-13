@@ -89,6 +89,14 @@ describe("$.env() argument validation", () => {
       expect(() => $$.env(value)).not.toThrow();
     });
 
+    test("$.env() accepts it", () => {
+      try {
+        expect(() => $.env(value)).not.toThrow();
+      } finally {
+        $.env(undefined);
+      }
+    });
+
     test("$`cmd`.env() accepts it", () => {
       expect(() => {
         $`true`.env(value);

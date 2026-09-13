@@ -1410,6 +1410,43 @@ describe("bundler", () => {
       stdout: "helped:x helped:y helped:z true",
     },
   });
+  // `--minify-syntax` rewrites `X["name"]` to `X.name`. The new node is still the
+  // call target or the template tag, so the call still passes `X` as `this`.
+  itBundled("cjs2esm/DefaultImportComputedMemberKeepsThisMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        import st from "./lib.cjs";
+        console.log(st["parse"]("y"), st["tag"]\`z\`);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('console.log(exports_lib.parse("y"), exports_lib.tag`z`);');
+    },
+    run: {
+      stdout: "helped:y helped:z",
+    },
+  });
+  itBundled("cjs2esm/StarImportComputedMemberKeepsThisMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.cjs";
+        console.log(ns["parse"]("y"), ns["tag"]\`z\`);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // Each access keeps a receiver. The printed name of `ns` is not part of this test.
+      expect(api.readFile("/out.js")).toMatch(/console\.log\(\w+\.parse\("y"\), \w+\.tag`z`\);/);
+    },
+    run: {
+      stdout: "helped:y helped:z",
+    },
+  });
   itBundled("cjs2esm/StarImportMethodCallThroughExportStarKeepsThis", {
     files: {
       "/entry.js": /* js */ `
@@ -1530,6 +1567,31 @@ describe("bundler", () => {
     },
     run: {
       stdout: "helped:in helped:module helped:tag",
+    },
+  });
+  itBundled("cjs2esm/SelfComputedMemberKeepsThisMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        import { internal, viaTag } from "./lib.cjs";
+        console.log(internal(), viaTag());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.tag = function (strings) { return this._helper(strings[0]); };
+        exports.internal = function () { return exports["parse"]("in"); };
+        exports.viaTag = function () { return exports["tag"]\`tag\`; };
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('return exports_lib.parse("in");');
+      expect(out).toContain("return exports_lib.tag`tag`;");
+    },
+    run: {
+      stdout: "helped:in helped:tag",
     },
   });
   itBundled("cjs2esm/SelfMethodCallWithoutThisBindsDirectly", {

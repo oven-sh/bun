@@ -491,12 +491,27 @@ pub struct InitializeOptions {
     pub short_lived_globals: bool,
 }
 
+/// Node's default `Error.stackTraceLimit`. `--stack-trace-limit` overrides it
+/// ([`set_default_stack_trace_limit`]) before [`initialize`] seeds JSC's
+/// `defaultErrorStackTraceLimit`, which every new global object (the main
+/// realm, workers, `node:vm` contexts) starts from.
+const DEFAULT_STACK_TRACE_LIMIT: u32 = 10;
+static DEFAULT_STACK_TRACE_LIMIT_OVERRIDE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(DEFAULT_STACK_TRACE_LIMIT);
+
+/// Must be called before [`initialize`]; later calls have no effect.
+pub fn set_default_stack_trace_limit(limit: u32) {
+    DEFAULT_STACK_TRACE_LIMIT_OVERRIDE.store(limit, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
+    let default_stack_trace_limit =
+        DEFAULT_STACK_TRACE_LIMIT_OVERRIDE.load(core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
@@ -508,6 +523,7 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            default_stack_trace_limit,
         )
     };
 }
@@ -1562,6 +1578,7 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        default_stack_trace_limit: u32,
     );
 }
 

@@ -2050,3 +2050,39 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/42602
+describe("Error.stackTraceLimit in a new context", () => {
+  const script = `
+    const vm = require("node:vm");
+    function deep(n) {
+      return n === 0 ? vm.runInNewContext("new Error().stack.split('\\\\n').length - 1") : deep(n - 1);
+    }
+    console.log(JSON.stringify({
+      main: Error.stackTraceLimit,
+      vm: vm.runInNewContext("Error.stackTraceLimit"),
+      frames: deep(60),
+    }));
+  `;
+
+  async function run(...flags: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("defaults to 10, like the main context", async () => {
+    expect(await run()).toEqual({ main: 10, vm: 10, frames: 10 });
+  });
+
+  test.concurrent("--stack-trace-limit applies to the new context", async () => {
+    expect(await run("--stack-trace-limit=50")).toEqual({ main: 50, vm: 50, frames: 50 });
+  });
+});

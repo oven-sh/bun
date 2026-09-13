@@ -568,6 +568,9 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
+        // A lazy export (JSON, text, a file path) is not CommonJS that the unwrap list converts.
+        p.unwrap_all_requires = false;
+
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
@@ -1605,7 +1608,6 @@ impl<'a> Parser<'a> {
         if p.options.features.unwrap_commonjs_to_esm
             && p.unwrap_all_requires
             && !p.options.is_entry_point
-            && !p.has_es_module_syntax
             && p.commonjs_named_exports.count() == 0
             && !p.has_top_level_return
             && !p.has_with_scope

@@ -3287,12 +3287,6 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
 }
-impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_some(self) -> bool {
-        !self.is_none()
-    }
-}
 
 /// `GenericIndex::Optional` — `MAX` is `none`.
 #[repr(transparent)]

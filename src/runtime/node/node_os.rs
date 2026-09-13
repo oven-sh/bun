@@ -397,12 +397,16 @@ mod _impl {
             }
         }
 
-        // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
+        // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_max_freq to get the maximum frequency of
+        // the cpufreq policy (optional). Same as libuv since https://github.com/libuv/libuv/pull/5200
+        // (Node on libuv <= 1.52.1 reads scaling_cur_freq). The kernel computes scaling_cur_freq on
+        // each read, and on x86 Linux 4.13 to 5.18 arch_freq_get_on_cpu() sleeps for about 20 ms for
+        // each CPU whose last sample is over 1 s old.
         for (&cpu_id, &slot) in &slot_by_cpu_id {
             let speed = read_under_root(
                 &mut file_buf,
                 root,
-                format_args!("/sys/devices/system/cpu/cpu{cpu_id}/cpufreq/scaling_cur_freq"),
+                format_args!("/sys/devices/system/cpu/cpu{cpu_id}/cpufreq/scaling_max_freq"),
             )
             .and_then(|contents| parse_u64(strings::trim(contents, b" \n")).ok())
             .map_or(0, |khz| khz / 1000);

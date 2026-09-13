@@ -160,7 +160,7 @@ describe.skipIf(!isLinux)("cpus on Linux", () => {
         .join(""),
     };
     for (const id of freqIds) {
-      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`] = `${(id + 1) * 1000}\n`;
+      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_max_freq`] = `${(id + 1) * 1000}\n`;
     }
     return tempDir("os-cpus", { ...files, ...overrides });
   }
@@ -202,15 +202,28 @@ describe.skipIf(!isLinux)("cpus on Linux", () => {
     ]);
   });
 
-  it("keeps the defaults when /proc/cpuinfo or scaling_cur_freq cannot be read", () => {
+  it("keeps the defaults when /proc/cpuinfo or scaling_max_freq cannot be read", () => {
     // A directory opens for reading, and then read() fails with EISDIR.
     using root = procfs([0, 1], [], [1], {
       "proc/cpuinfo": {},
-      "sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": {},
+      "sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq": {},
     });
     expect(linuxCpusFromRoot(String(root))).toEqual([
       { times: times(0), model: "unknown", speed: 0 },
       { times: times(1), model: "unknown", speed: 2 },
+    ]);
+  });
+
+  // On x86 Linux 4.13 to 5.18 a read of scaling_cur_freq can sleep for about 20 ms per CPU.
+  // libuv after v1.52.1 reads scaling_max_freq: https://github.com/libuv/libuv/pull/5200
+  it("reads the speed from scaling_max_freq and never from scaling_cur_freq", () => {
+    using root = procfs([0, 1], [0, 1], [0], {
+      "sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": "800000\n",
+      "sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq": "800000\n",
+    });
+    expect(linuxCpusFromRoot(String(root))).toEqual([
+      { times: times(0), model: "EPYC 7713 (cpu 0)", speed: 1 },
+      { times: times(1), model: "EPYC 7713 (cpu 1)", speed: 0 },
     ]);
   });
 });

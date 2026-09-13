@@ -93,7 +93,9 @@ async function main() {
   console.log(JSON.stringify({ liveTrust, relistenTrust, beforeListenTrust, initialTrust, explicitTrust }));
 }
 
-main().catch(error => {
+try {
+  await main();
+} catch (error) {
   console.error(error?.code || error?.message || String(error));
-  process.exit(1);
-});
+  process.exitCode = 1;
+}

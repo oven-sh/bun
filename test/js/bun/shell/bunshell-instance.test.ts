@@ -53,6 +53,50 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+describe("$.env() argument validation", () => {
+  // `undefined` is not in this list: it restores process.env.
+  const notObjects = [5, 0, NaN, 1n, "str", "", true, false, null, Symbol("env")];
+  const error = expect.objectContaining({ name: "TypeError", message: "env must be an object or undefined" });
+
+  for (const value of notObjects) {
+    test(`new $.Shell().env(${Bun.inspect(value)}) throws and keeps the previous env`, async () => {
+      const $$ = new $.Shell();
+      $$.env({ BUN: "bun" });
+
+      // @ts-expect-error
+      expect(() => $$.env(value)).toThrow(error);
+      expect(await $$`echo $BUN`.text()).toBe("bun\n");
+    });
+  }
+
+  test("the global $ rejects the same values", () => {
+    for (const value of notObjects) {
+      // @ts-expect-error
+      expect(() => $.env(value)).toThrow(error);
+    }
+  });
+
+  // $.env() sets the default that $`cmd`.env() sets for one command, so both take the same values.
+  // A block body keeps expect() from waiting on the returned ShellPromise, which never starts.
+  test("accepts what $`cmd`.env() accepts: any object", () => {
+    const $$ = new $.Shell();
+    for (const value of [{}, Object.create(null), [], new Map(), () => {}]) {
+      expect(() => {
+        $$`true`.env(value);
+      }).not.toThrow();
+      expect(() => {
+        $$.env(value);
+      }).not.toThrow();
+    }
+    for (const value of notObjects) {
+      expect(() => {
+        // @ts-expect-error
+        $$`true`.env(value);
+      }).toThrow("env must be an object");
+    }
+  });
+});
+
 test("$.text", async () => {
   expect(await $`echo hello`.text()).toBe("hello\n");
 });

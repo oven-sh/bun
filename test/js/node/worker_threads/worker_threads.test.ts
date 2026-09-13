@@ -401,6 +401,20 @@ describe("execArgv preloads", () => {
     return message;
   }
 
+  async function runPreloadFailureProbe(preload: string) {
+    const source = `
+      const { Worker } = require("node:worker_threads");
+      const events = [];
+      const worker = new Worker(${JSON.stringify(entry)}, { execArgv: ["--import", ${JSON.stringify(preload)}] });
+      worker.on("message", message => events.push(["message", message]));
+      worker.on("error", error => events.push(["error", error.message]));
+      worker.on("exit", code => console.log(JSON.stringify({ events, code })));
+    `;
+    const proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   describe.each([
     ["separate import and inline require", "separate-import"],
     ["inline import and separate require", "inline-import"],
@@ -454,13 +468,13 @@ describe("execArgv preloads", () => {
   });
 
   test("reports preload failures on the Worker", async () => {
-    const worker = new Worker(entry, {
-      execArgv: ["--import", "data:text/javascript,throw%20new%20Error(%22execArgv%20preload%20failed%22)"],
+    expect(
+      await runPreloadFailureProbe("data:text/javascript,throw%20new%20Error(%22execArgv%20preload%20failed%22)"),
+    ).toEqual({
+      stdout: '{"events":[["error","execArgv preload failed"]],"code":1}\n',
+      stderr: "",
+      exitCode: 0,
     });
-    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
-    const [error] = await once(worker, "error");
-    expect(error.message).toContain("execArgv preload failed");
-    expect(await exited).toBe(1);
   });
 
   test("keeps exit code zero when a preload error is handled", async () => {
@@ -469,11 +483,11 @@ describe("execArgv preloads", () => {
       process.on("uncaughtException", error => parentPort.postMessage("handled:" + error.message));
       throw new Error("handled preload failure");
     `)}`;
-    const worker = new Worker(entry, { execArgv: ["--import", preload] });
-    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
-    const [message] = await once(worker, "message");
-    expect(message).toBe("handled:handled preload failure");
-    expect(await exited).toBe(0);
+    expect(await runPreloadFailureProbe(preload)).toEqual({
+      stdout: '{"events":[["message","handled:handled preload failure"]],"code":0}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   describe.each([

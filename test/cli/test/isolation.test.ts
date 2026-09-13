@@ -409,6 +409,60 @@ describe.concurrent("bun test --isolate", () => {
     }
   });
 
+  test("with --isolate, what a leaked listener's close handler opens is closed before next file", async () => {
+    using dir = tempDir("isolate-close-handler", {
+      "a-listen.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("leak a listener whose close handler binds a UDP socket", async () => {
+          const { promise: accepted, resolve } = Promise.withResolvers<void>();
+          const listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open() { resolve(); },
+              data() {},
+              async close() {
+                // Not in any socket group: only its owner's context closes it.
+                const late = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+                fs.writeFileSync(process.env.PORT_FILE!, String(late.port));
+              },
+            },
+          });
+          await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+          await accepted;
+          // intentionally leaving both open
+        });
+      `,
+      "b-check.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("the late socket's port is free again", async () => {
+          const port = Number(fs.readFileSync(process.env.PORT_FILE!, "utf8"));
+          expect(port).toBeGreaterThan(0);
+          const socket = await Bun.udpSocket({ hostname: "127.0.0.1", port });
+          try {
+            expect(socket.port).toBe(port);
+          } finally {
+            socket.close();
+          }
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-listen.test.ts", "./b-check.test.ts"],
+      { ...bunEnv, PORT_FILE: join(String(dir), "port.txt") },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
     using dir = tempDir("isolate-fswatch", {
       "watched/.keep": "",
@@ -1400,13 +1454,13 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue
 // holds a ref that is dropped on the work-pool thread. After unwatchFile +
 // GC of the JS wrapper, that queue ref is the LAST ref, so the watcher is
-// freed off the JS thread — where the thread-local isolation registry is
-// unreachable. The registry entry must therefore be removed in close() (JS
-// thread), not in the refcount destructor; otherwise the file-boundary drain
-// pops a dangling pointer and calls close() on freed memory (UAF, caught by
+// freed off the JS thread — where its context's handle list must not be
+// touched. The watcher must therefore leave its context in close() (JS
+// thread), not in the refcount destructor; otherwise the file-boundary sweep
+// reaches a dangling pointer and calls close() on freed memory (UAF, caught by
 // ASAN).
 test.concurrent(
-  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry",
+  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling handle in its context",
   async () => {
     // The dance, per file:
     //   1. watchFile, then touch the file until the listener fires — proof the
@@ -1418,8 +1472,8 @@ test.concurrent(
     //      the closed watcher and drops the queue ref — the last one — freeing
     //      the watcher on the work-pool thread. No JS-observable signal exists
     //      for that free, hence the bounded sleep.
-    // The file boundary after each file then drains the isolation registry,
-    // which must no longer reference the freed watcher.
+    // The file boundary after each file then sweeps the file's context, which
+    // must no longer reference the freed watcher.
     const raceFixture = `
     import { test } from "bun:test";
     import fs from "node:fs";

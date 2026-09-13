@@ -2,7 +2,6 @@
 //! code for `Bun.spawnSync`
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
@@ -141,8 +140,8 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// Our ref on the `signal` option; released in `clear_abort_signal`.
-    pub(crate) abort_signal: JsCell<Option<bun_jsc::AbortSignalRef>>,
+    /// Follows the `signal` option until `clear_abort_signal`.
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -287,7 +286,7 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
-        /// `handle_abort_signal` sent `kill_signal`; `on_process_exit` closes
+        /// The `signal` option fired and `kill_signal` was sent; `on_process_exit` closes
         /// pipe readers instead of waiting on EOF a grandchild may never send.
         const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
@@ -306,30 +305,15 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-impl Subprocess<'_> {
-    #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
-    fn handle_abort_signal(&self, _reason: JSValue) {
-        self.clear_abort_signal();
-        if !self.has_exited() {
-            self.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
-        }
-        let _ = self.try_kill(self.kill_signal);
+bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live.
+    let this = unsafe { &*this };
+    this.clear_abort_signal();
+    if !this.has_exited() {
+        this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
-}
-
-/// Module-level wrapper so callers in `js_bun_spawn_bindings` (which alias the
-/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal`
-/// path. Forwards to the macro-emitted `unsafe extern "C" fn` thunk.
-///
-/// # Safety
-/// `ctx` must be the `*mut Subprocess` that was registered with
-/// `AbortSignal::add_listener`; the AbortSignal guarantees it is live for the
-/// duration of the callback.
-pub(crate) unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
-    // SAFETY: caller upholds the `# Safety` contract above — `ctx` is the live
-    // `*mut Subprocess` registered with the AbortSignal.
-    unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
-}
+    let _ = this.try_kill(this.kill_signal);
+});
 
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
@@ -345,7 +329,7 @@ impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
     #[inline]
     pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
-        self.abort_signal.get().as_deref()
+        self.abort_handle.signal()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1283,11 +1267,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.take() {
-            signal.pending_activity_unref();
-            signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            // Dropping `signal` unrefs it.
-        }
+        self.abort_handle.unfollow();
     }
 
     pub fn finalize(&self) {

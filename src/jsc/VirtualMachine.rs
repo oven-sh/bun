@@ -362,7 +362,13 @@ pub struct VirtualMachine {
 
     pub initial_script_execution_context_identifier: i32,
 
-    pub test_isolation_generation: u32,
+    /// Owns what script running in this VM's global opens. `bun test --isolate`
+    /// stops it and renews its identity at every file swap.
+    pub(crate) root_context: crate::ScriptExecutionContext,
+    /// Owns what belongs to the VM rather than to the realm script runs in:
+    /// stopped only by teardown.
+    pub vm_context: crate::ScriptExecutionContext,
+    pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
     pub test_isolation_enabled: bool,
     pub test_isolation_state: TestIsolationState,
 }
@@ -1025,6 +1031,28 @@ impl VirtualMachine {
     #[inline]
     pub fn script_allowed(&self) -> bool {
         self.handle.script_allowed()
+    }
+
+    /// The context the running script belongs to: what it opens from here is
+    /// stopped with that context.
+    #[inline]
+    pub fn current_context(&self) -> &crate::ScriptExecutionContext {
+        &self.root_context
+    }
+
+    /// Whether the context `id` names has not stopped.
+    #[inline]
+    pub fn is_context_live(&self, id: crate::ContextId) -> bool {
+        id == self.root_context.id() || id == self.vm_context.id()
+    }
+
+    /// One stop-phase sweep over the armed handles of this VM's contexts.
+    pub fn stop_context_handles(&self, reason: crate::StopReason) -> SweepResult {
+        let result = self.root_context.stop_handles(reason);
+        match reason {
+            crate::StopReason::TestIsolation => result,
+            crate::StopReason::VmTeardown => result.and(self.vm_context.stop_handles(reason)),
+        }
     }
 
     /// From here no script runs on this VM: JS entry is refused at the
@@ -2136,13 +2164,17 @@ impl VirtualMachine {
         }
 
         // ---- E. free owners --------------------------------------------------
+        debug_assert!(
+            vm.stop_context_handles(crate::StopReason::VmTeardown) == SweepResult::Idle,
+            "a handle was armed after the last stop-phase sweep"
+        );
         // SAFETY: fn contract; last use of `this`.
         unsafe { (*this).destroy() };
     }
 }
 
 impl VirtualMachine {
-    /// One stop-phase sweep: registered handles (servers, listeners, watchers,
+    /// One stop-phase sweep: armed handles (servers, listeners, watchers,
     /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
     /// handles, every socket group, the VM-global dns channel. Reports whether
     /// it found anything.
@@ -2156,10 +2188,13 @@ impl VirtualMachine {
         // readable): their completions then arrive through the wait.
         // SAFETY: fn contract.
         unsafe { (*this).jobs.get() }.cancel_all();
-        if let Some(hooks) = hooks {
-            // SAFETY: fn contract.
-            result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
-        }
+        // SAFETY: fn contract.
+        result = result.and(unsafe {
+            match hooks {
+                Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(this),
+                None => (*this).stop_context_handles(crate::StopReason::VmTeardown),
+            }
+        });
         // A worker's uv loop is closed in D, so every pipe / tty / child-process
         // handle open on it closes now — through whoever drives it (reader,
         // writer, IPC channel, named pipe, Process), or directly if nothing
@@ -2735,6 +2770,10 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
+            addr_of_mut!((*vm).root_context).write(Default::default());
+            addr_of_mut!((*vm).vm_context).write(Default::default());
+            addr_of_mut!((*vm).context_ids).write(Default::default());
+            (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());
@@ -5178,10 +5217,10 @@ impl VirtualMachine {
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
-    /// first so leaked watchers/servers are stopped (dropping their JS-side
-    /// Strongs, which otherwise pin the outgoing global) before the blind
-    /// socket-group close below. That helper lives in the higher-tier crate
-    /// and cannot be called from here.
+    /// first so leaked watchers/servers are stopped while their close handlers
+    /// can still run (dropping their JS-side Strongs, which otherwise pin the
+    /// outgoing global) before the blind socket-group close below. It also
+    /// resets the high tier's fake-timer state, which this crate cannot reach.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
@@ -5248,9 +5287,15 @@ impl VirtualMachine {
         // The outgoing file's exit: work it left in flight (thread-pool jobs,
         // the children just killed) lands later and must not resume its script.
         Zig__GlobalObject__retireForTestIsolation(self.global());
-        self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+        // What the outgoing file's close handlers and last microtasks opened
+        // since the caller's sweep.
+        let _ = self
+            .root_context
+            .stop_handles(crate::StopReason::TestIsolation);
+        let next_context = self.context_ids.next();
+        self.root_context.renew(next_context);
 
-        // Generation-stale JS timers would otherwise release their pins only
+        // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
         // Strong on its wrapper (and thereby the outgoing global's whole
         // graph) for an hour. Every TimeoutObject / ImmediateObject /

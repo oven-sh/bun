@@ -1477,12 +1477,11 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if let Some(handles) = crate::jsc_hooks::active_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
-                    (),
-                ));
-            }
+            // SAFETY: `server` is heap-allocated and leaves its context in
+            // `stop_listening` / `deinit`.
+            unsafe {
+                bun_jsc::AbortHandle::arm_owner(server, global_object.bun_vm().current_context())
+            };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`

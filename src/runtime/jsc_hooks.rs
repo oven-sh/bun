@@ -94,7 +94,6 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
-    pub(crate) active_handles: ActiveHandles,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -103,39 +102,6 @@ pub(crate) struct RuntimeState {
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-/// A native handle behind a JS object that must be stopped while the VM is
-/// alive rather than by a GC finalizer during `~VM` (Node's `HandleWrap` list):
-/// registered while open, removed by its own close, and closed by
-/// [`stop_active_handles_for_vm_teardown`] in every teardown's stop phase and at the
-/// `bun test --isolate` global swap.
-pub(crate) enum ActiveHandle {
-    FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
-    StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
-    Server(crate::server::AnyServer),
-    Listener(ptr::NonNull<crate::socket::Listener>),
-    /// A `Bun.udpSocket` / node:dgram socket: not in any uSockets group; on
-    /// Windows its armed receive is a request only closing the handle ends.
-    UdpSocket(ptr::NonNull<crate::socket::udp_socket::UDPSocket>),
-    /// TLS over a JS duplex (`tls.connect({ socket })`, `new TLSSocket(duplex)`):
-    /// not in any uSockets group, so closed through its owner.
-    DuplexUpgrade(ptr::NonNull<crate::socket::DuplexUpgradeContext>),
-    /// A socket over a Windows named pipe: not in any uSockets group either.
-    #[cfg(windows)]
-    WindowsNamedPipe(ptr::NonNull<crate::socket::WindowsNamedPipeContext>),
-    /// A `fetch()` out on the HTTP thread; stopping it aborts the transport.
-    Fetch(ptr::NonNull<crate::webcore::fetch::FetchTasklet>),
-    /// An S3 request / streaming download out on the HTTP thread; same.
-    S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
-    S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
-    /// A `Bun.build` running on the bundle thread with this VM's plugins/env.
-    Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
-    /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
-    DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
-}
-
-pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -204,33 +170,6 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
     }
     // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
     Some(unsafe { &mut (*state).cron_jobs })
-}
-
-#[inline]
-pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
-    let state = runtime_state();
-    if state.is_null() {
-        return None;
-    }
-    // SAFETY: live boxed per-thread `RuntimeState`.
-    Some(unsafe { &mut (*state).active_handles })
-}
-
-impl ActiveHandle {
-    /// This owner now holds something the stop phase must stop (JS thread).
-    pub(crate) fn register(self) {
-        if let Some(handles) = active_handles() {
-            bun_core::handle_oom(handles.put(self, ()));
-        }
-    }
-
-    /// The owner closed it itself (JS thread; a no-op off-thread, where the
-    /// registry is unreachable and the owner must already have unregistered).
-    pub(crate) fn unregister(&self) {
-        if let Some(handles) = active_handles() {
-            handles.swap_remove(self);
-        }
-    }
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -406,7 +345,6 @@ unsafe fn init_runtime_state(
                 )
             }
         },
-        active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
     }));
@@ -1712,31 +1650,22 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
 /// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
-/// handles when it runs, so drain first so they land in the registry before it
-/// empties, then stop. (VM teardown must *not* drain here — its
+/// handles when it runs, so drain first so they are armed before the sweep,
+/// then stop. (VM teardown must *not* drain here — its
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles(vm, StopReason::TestIsolation);
+    let _ = stop_active_handles(vm, bun_jsc::StopReason::TestIsolation);
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
-    stop_active_handles(vm, StopReason::VmTeardown)
+    stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StopReason {
-    VmTeardown,
-    /// The VM keeps running (`bun test --isolate` global swap).
-    TestIsolation,
-}
-
-fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResult {
-    let state = runtime_state();
-    if state.is_null() {
-        return SweepResult::Idle;
-    }
-    let mut result = SweepResult::Idle;
+/// One stop-phase sweep over what the VM's contexts own: every armed
+/// [`bun_jsc::AbortHandle`] (Node's `HandleWrap` list) is closed natively now,
+/// while the VM is alive, rather than by a GC finalizer during `~VM`.
+fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
@@ -1746,8 +1675,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // touch the outgoing signals.
     {
         let all = timer_all();
-        // SAFETY: `state` is non-null so `timer_all()` is non-null; single
-        // JS thread, no re-entry while we hold the field borrow.
+        // SAFETY: single JS thread, no re-entry while we hold the field borrow.
         if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
             let global = vm.global();
             // SAFETY: as above; only touches `fake_timers.active` and the
@@ -1760,76 +1688,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             unsafe { (*all).event_loop_delay.disable() };
         }
     }
-    // Entries that stay registered across a test-isolation swap.
-    let mut kept: Vec<ActiveHandle> = Vec::new();
-    loop {
-        // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
-        // the close below re-enters JS.
-        let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
-            break;
-        };
-        result = SweepResult::Stopped;
-        match kv.key {
-            // SAFETY: live until it unregisters in `detach`.
-            ActiveHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
-            // Live until it unregisters in `close()` (JS thread, us) — a
-            // registered entry implies `close()` has not run, and `deinit`
-            // cannot fire before `close()` drops the wrapper's Strong ref.
-            ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
-            ActiveHandle::Server(mut s) => s.stop(true),
-            ActiveHandle::Listener(l) => {
-                // SAFETY: live until it unregisters in `do_stop`/`finalize`.
-                crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
-            }
-            ActiveHandle::UdpSocket(u) => {
-                // SAFETY: live until it unregisters in `on_close`.
-                crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
-            }
-            ActiveHandle::DuplexUpgrade(c) => {
-                // SAFETY: live until it unregisters in `deinit`.
-                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
-            }
-            // SAFETY: live until it unregisters when its deinit task runs.
-            #[cfg(windows)]
-            ActiveHandle::WindowsNamedPipe(c) => unsafe {
-                crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
-            },
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::Fetch(t) => unsafe {
-                crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
-            },
-            // SAFETY: live until they unregister in `on_response`.
-            ActiveHandle::S3Request(t) => unsafe {
-                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(
-                    t.as_ptr(),
-                )
-            },
-            // SAFETY: as above.
-            ActiveHandle::S3Download(t) => unsafe {
-                crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
-            },
-            // A live VM cannot cancel a build: hop tasks it already queued here
-            // would still be dispatched against the finished pass. The build
-            // runs on; its completion lands on the next file's global.
-            ActiveHandle::Bundle(_) if reason == StopReason::TestIsolation => kept.push(kv.key),
-            // SAFETY: live until it unregisters in `on_complete_anytask`.
-            ActiveHandle::Bundle(c) => unsafe {
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(
-                    c.as_ptr(),
-                )
-            },
-            // Live until it unregisters in `destroy_channel`.
-            // SAFETY: registered ⇒ live; may free itself inside, not touched after.
-            ActiveHandle::DnsResolver(r) => unsafe {
-                let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
-            },
-        }
-    }
-    for handle in kept {
-        handle.register();
-    }
-    result
+    vm.stop_context_handles(reason)
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.

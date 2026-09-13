@@ -82,7 +82,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
-    crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).unregister();
+    this.abort_handle.leave();
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -546,7 +546,14 @@ pub struct UDPSocket {
     /// replaces the config. POSIX-only, like the registry itself.
     #[cfg(not(windows))]
     registered_fd: Cell<Option<c_int>>,
+    /// Armed while open: the socket closes with the context that opened it.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
+    UDPSocket::close_socket(unsafe { &*this })
+});
 
 impl UDPSocket {
     pub(crate) fn new(init: Self) -> *mut Self {
@@ -583,6 +590,7 @@ impl UDPSocket {
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
             registered_fd: Cell::new(None),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
         });
         // SAFETY: just allocated above; we are the sole owner. R-2: shared
         // borrow — every mutated field is `Cell`/`JsCell`.
@@ -708,8 +716,11 @@ impl UDPSocket {
         this.socket.set(if created.is_null() {
             None
         } else {
-            // Open: the VM's stop phase closes it if script never does.
-            crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).register();
+            // Open: its context closes it when it stops if script never does.
+            // SAFETY: heap-allocated above; leaves its context in `on_close`.
+            unsafe {
+                bun_jsc::AbortHandle::arm_owner(this_ptr, global_this.bun_vm().current_context())
+            };
             Some(created)
         });
 
@@ -1686,12 +1697,6 @@ impl UDPSocket {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
         Ok(JSValue::UNDEFINED)
-    }
-
-    /// The VM's stop phase (script forbidden): close the uSockets socket, as
-    /// `close()` from script would; `on_close` unregisters and drops the keep-alive.
-    pub(crate) fn stop_for_vm_teardown(this: &Self) {
-        Self::close_socket(this);
     }
 
     #[bun_jsc::host_fn(method)]

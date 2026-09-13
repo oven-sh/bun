@@ -4235,7 +4235,16 @@ pub(crate) struct DuplexUpgradeContext {
     /// when `StartTLS` builds it. Unused for client upgrades.
     pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
     mode: SocketMode,
+    /// A TLS socket over a JS duplex is in no uSockets group, so the context
+    /// that upgraded it closes it through this owner when it stops.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+// `close` may re-enter (`on_close`) and schedule the free of `this`.
+bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ `deinit` has not run).
+    unsafe { bun_ptr::ThisPtr::new(this) }.upgrade.close()
+});
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4487,15 +4496,6 @@ impl DuplexUpgradeContext {
         Self::enqueue_self_task(this);
     }
 
-    /// VM stop phase: close the upgraded duplex natively, so the TLS wrapper's
-    /// GC finalizer finds a closed socket and dispatches nothing.
-    ///
-    /// `close` may re-enter (`on_close`) and schedule the free of `this` through
-    /// the normal on_close → deinit path, so nothing is touched afterwards.
-    pub(crate) fn stop_for_vm_teardown(this: bun_ptr::ThisPtr<Self>) {
-        this.upgrade.close();
-    }
-
     /// # Safety
     /// `this` must be the unique live pointer to the heap allocation produced
     /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
@@ -4503,14 +4503,10 @@ impl DuplexUpgradeContext {
     /// be a Stacked Borrows protector violation when the backing `Box` is
     /// reclaimed below).
     unsafe fn deinit(this: *mut Self) {
-        // SAFETY: fn contract — the live allocation registered in `js_upgrade_duplex_to_tls`.
-        crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
-            core::ptr::NonNull::new_unchecked(this)
-        })
-        .unregister();
         {
             // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
             let ctx = unsafe { &*this };
+            ctx.abort_handle.leave();
             ctx.tls.set(None);
             // Close raced ahead of StartTLS — drop the unconsumed config / ctx.
             ctx.ssl_config.set(None);
@@ -4730,6 +4726,8 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).owned_ctx).write(JsCell::new(owned_ctx));
         ptr::addr_of_mut!((*duplex_context).is_open).write(Cell::new(false));
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
+        ptr::addr_of_mut!((*duplex_context).abort_handle)
+            .write(bun_jsc::AbortHandle::for_owner::<DuplexUpgradeContext>());
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
         } else {
@@ -4804,14 +4802,8 @@ pub fn js_upgrade_duplex_to_tls(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
-    // A TLS socket over a JS duplex is in no uSockets group, so the VM's stop
-    // phase closes it through this owner (see `stop_for_vm_teardown`) rather
-    // than leaving it to a GC finalizer.
-    // SAFETY: non-null, fully initialised; unregistered again in `deinit`.
-    crate::jsc_hooks::ActiveHandle::DuplexUpgrade(unsafe {
-        core::ptr::NonNull::new_unchecked(duplex_context)
-    })
-    .register();
+    // SAFETY: non-null, fully initialised, heap-pinned; leaves its context in `deinit`.
+    unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, global.bun_vm().current_context()) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
     let array = JSValue::create_empty_array(global, 2)?;

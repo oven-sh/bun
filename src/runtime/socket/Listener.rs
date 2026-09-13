@@ -96,7 +96,14 @@ pub struct Listener {
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
+    /// Armed while listening: the listener stops with the context that opened it.
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not finalized).
+    Listener::do_stop(unsafe { &*this }, true)
+});
 
 #[derive(Clone, Copy, Default)]
 pub enum ListenerType {
@@ -249,6 +256,7 @@ impl Listener {
                     secure_ctx: JsCell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
+                    abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
                 }));
                 // SAFETY: just allocated, non-null; every field touched below
                 // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
@@ -335,12 +343,8 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-                if let Some(handles) = crate::jsc_hooks::active_handles() {
-                    bun_core::handle_oom(handles.put(
-                        crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
-                        (),
-                    ));
-                }
+                // SAFETY: heap-allocated above; owned by the JS wrapper from here.
+                unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
                 return Ok(this_value);
             }
         }
@@ -378,6 +382,7 @@ impl Listener {
             secure_ctx: JsCell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
         }));
         // SAFETY: just allocated, non-null; every field touched through this
         // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
@@ -605,12 +610,8 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
-                crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
-                (),
-            ));
-        }
+        // SAFETY: heap-allocated above; owned by the JS wrapper from here.
+        unsafe { bun_jsc::AbortHandle::arm_owner(this, vm.current_context()) };
 
         Ok(this_value)
     }
@@ -847,23 +848,12 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// The VM (or the finished `--isolate` file) is being torn down: stop
-    /// listening and close accepted connections now, while script can still
-    /// run their close handlers, instead of from the GC finalizer.
-    pub(crate) fn stop_for_vm_teardown(this: &Self) {
-        Self::do_stop(this, true);
-    }
-
     fn do_stop(this: &Self, force_close: bool) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
-                this,
-            )));
-        }
+        this.abort_handle.leave();
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -904,13 +894,7 @@ impl Listener {
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
-        if !matches!(listener, ListenerType::None) {
-            if let Some(handles) = crate::jsc_hooks::active_handles() {
-                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
-                    &*self,
-                )));
-            }
-        }
+        self.abort_handle.leave();
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);

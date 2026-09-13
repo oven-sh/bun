@@ -134,10 +134,20 @@ pub struct S3HttpSimpleTask {
     /// copy instead of borrowing caller memory.
     pub(crate) body: Box<[u8]>,
     pub poll_ref: KeepAlive,
-    /// The HTTP client's abort flag: set by the VM's stop phase so a request
-    /// still queued or in flight fails promptly and comes back.
+    /// The HTTP client's abort flag: set when the request's context stops so a
+    /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
+    // run); `http` is initialised before the task is armed.
+    unsafe {
+        (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+        bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+    }
+});
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
@@ -285,8 +295,8 @@ impl S3HttpSimpleTask {
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
-        crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
-            .unregister();
+        // SAFETY: fn contract — `this` is live.
+        unsafe { (*this).abort_handle.leave() };
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
         // `this` is dropped at scope exit.
@@ -462,19 +472,6 @@ impl S3HttpSimpleTask {
         }
     }
 
-    /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
-    /// thread fails the request promptly and hands it back.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ its response has not run); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `http` is initialised before the task is registered.
-        unsafe {
-            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
-        }
-    }
-
     fn release_portable(&mut self) {
         // SAFETY: `http` is always initialised before the task pointer escapes (see
         // `execute_simple_s3_request`).
@@ -640,6 +637,7 @@ pub(crate) fn execute_simple_s3_request(
         body: Box::<[u8]>::from(options.body),
         poll_ref,
         signal_store: Default::default(),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.
@@ -701,12 +699,13 @@ pub(crate) fn execute_simple_s3_request(
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
-    // SAFETY: as above.
-    unsafe { (*task_ptr).http_ticket = Some(VirtualMachine::get().ticket()) };
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
+    // Out on the HTTP thread until its final callback: its context aborts it
+    // when it stops, and the VM waits for it (the ticket).
+    // SAFETY: as above; the task is heap-allocated and drops its handle with itself.
+    unsafe {
+        (*task_ptr).http_ticket = Some(VirtualMachine::get().ticket());
+        bun_jsc::AbortHandle::arm_owner(task_ptr, VirtualMachine::get().current_context());
+    }
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

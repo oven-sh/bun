@@ -89,7 +89,15 @@ pub struct JSBundleCompletionTask {
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
     pub(crate) started_at_ns: u64,
+    /// Armed while the build is out on the bundle thread: the context that
+    /// called `Bun.build` gives up on the result when it stops.
+    pub(crate) abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
+    unsafe { JSBundleCompletionTask::give_up_on_result(this) }
+});
 
 #[repr(u8)]
 pub(crate) enum Stage {
@@ -109,7 +117,7 @@ pub(crate) enum Stage {
 impl Drop for JSBundleCompletionTask {
     fn drop(&mut self) {
         // Already `Done` (and this may be the bundle thread) for a build
-        // released unstarted; see `stop_for_vm_teardown`.
+        // released unstarted; see `give_up_on_result`.
         if self.poll_ref.is_active() {
             self.poll_ref.disable();
         }
@@ -148,6 +156,7 @@ impl JSBundleCompletionTask {
             cancelled: core::sync::atomic::AtomicBool::new(false),
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
             stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
+            abort_handle: jsc::AbortHandle::for_owner::<Self>(),
             html_build_task: None,
             result: BundleV2Result::Pending,
             next: bun_threading::Link::new(),
@@ -174,9 +183,15 @@ impl JSBundleCompletionTask {
 
         // Out on the bundle thread from here until it posts the completion: it
         // reads this VM's env loader and the plugin cell, so the VM cancels it at
-        // teardown (registry) and waits for it (`bundle_ticket`).
-        crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
-            .register();
+        // teardown and waits for it (`bundle_ticket`). The VM's, not the calling
+        // realm's: a live VM cannot cancel a build (hop tasks it already queued
+        // here would still be dispatched against the finished pass), so one that
+        // outlives its `bun test --isolate` file completes on the next file's global.
+        // SAFETY: `completion` is the live heap allocation; it leaves its
+        // context in `on_complete_anytask`.
+        unsafe {
+            jsc::AbortHandle::arm_owner(completion, &(*completion).global_this.bun_vm().vm_context)
+        };
         bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
     }
 }
@@ -543,7 +558,8 @@ impl JSBundleCompletionTask {
     }
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
-        crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
+        // SAFETY: `ctx` is the live heap allocation (fn contract).
+        unsafe { (*ctx).abort_handle.leave() };
         // SAFETY: `ctx` is the live heap allocation; takes over the +1 taken by
         // the `complete_on_bundle_thread` enqueue.
         let _guard = unsafe { RefPtr::from_raw(ctx) };
@@ -555,7 +571,7 @@ impl JSBundleCompletionTask {
         unsafe { &mut *ctx }.on_complete()
     }
 
-    /// VM teardown's stop phase (JS thread): give up on the result.
+    /// The VM is tearing down (JS thread): give up on the result.
     ///
     /// * Still queued behind other builds: release the JS side here (plugin
     ///   cell, promise, keep-alive), return the count, and leave the inert rest
@@ -567,8 +583,8 @@ impl JSBundleCompletionTask {
     ///   completion, which teardown waits for and releases.
     ///
     /// # Safety
-    /// `this` is live (registered ⇒ its completion has not run); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+    /// `this` is live (its completion has not run); JS thread.
+    unsafe fn give_up_on_result(this: *mut Self) {
         use core::sync::atomic::Ordering;
         // SAFETY: fn contract; the plugin cell is protected by this task; the
         // loop pointer is a thread's uws loop, valid for that thread's
@@ -886,7 +902,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         while unsafe { (*this).stage.load(Ordering::Acquire) } != Stage::ReleasedUnstarted as u8 {
             core::hint::spin_loop();
         }
-        // The VM released everything thread-affine (`stop_for_vm_teardown`);
+        // The VM released everything thread-affine (`give_up_on_result`);
         // what is left — config, log, an empty promise slot, a `Done`
         // keep-alive, the handle clone — is ours to drop here. The queue held
         // the creation reference.

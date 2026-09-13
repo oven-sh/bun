@@ -33,8 +33,8 @@ pub struct TimerObjectInternals {
     pub(crate) interval: Cell<u32>,
     pub this_value: JsCell<JsRef>,
     pub(crate) flags: Cell<Flags>,
-    /// `bun test --isolate` generation this timer was created in.
-    pub(crate) generation: u32,
+    /// The context whose script created the timer.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 impl TimerObjectInternals {
@@ -56,7 +56,7 @@ impl Default for TimerObjectInternals {
             interval: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
-            generation: 0,
+            context: bun_jsc::ContextId::default(),
         }
     }
 }
@@ -298,7 +298,7 @@ impl TimerObjectInternals {
             },
             interval: Cell::new(interval),
             // SAFETY: `vm` is the live per-thread VM; field read only.
-            generation: unsafe { (*vm).test_isolation_generation },
+            context: unsafe { (*vm).current_context().id() },
             this_value: JsCell::new(JsRef::empty()),
         };
 
@@ -371,7 +371,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: as above.
-            || s.generation != unsafe { (*vm).test_isolation_generation }
+            || !unsafe { (*vm).is_context_live(s.context) }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -490,7 +490,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
-            || s.generation != unsafe { (*vm).test_isolation_generation };
+            || !unsafe { (*vm).is_context_live(s.context) };
 
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 

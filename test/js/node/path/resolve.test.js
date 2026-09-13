@@ -117,11 +117,32 @@ describe("path.resolve", () => {
     }
   });
 
-  test.skipIf(!isWindows)("preserves UTF-16 slicing for a separator-free POSIX cwd", () => {
+  test("preserves a lone UTF-16 surrogate in the resolved path", () => {
     const originalCwd = process.cwd;
-    process.cwd = () => "C:😀";
+    process.cwd = () => (isWindows ? "C:😀" : "\ude00");
     try {
       expect(path.posix.resolve("child")).toBe("\ude00/child");
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("does not hold path scratch across a reentrant process.cwd", () => {
+    const originalCwd = process.cwd;
+    let calls = 0;
+    let nested;
+    process.cwd = () => {
+      calls++;
+      if (calls === 1) {
+        nested = path.posix.resolve("nested");
+        return "/outer";
+      }
+      return "/inner";
+    };
+    try {
+      expect(path.posix.resolve("child")).toBe("/outer/child");
+      expect(nested).toBe("/inner/nested");
+      expect(calls).toBe(2);
     } finally {
       process.cwd = originalCwd;
     }

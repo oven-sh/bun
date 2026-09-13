@@ -2138,6 +2138,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// See `Symbol::import_used_as_value`.
+    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
+        if !opts.is_property_access_target() && !self.is_control_flow_dead {
+            self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -2263,12 +2270,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                self.note_import_use(ref_, opts);
                 return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
+            self.note_import_use(ref_, opts);
             return self.new_expr(
                 E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
                 loc,
@@ -5492,7 +5501,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            IdentifierOpts::new()
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -5529,14 +5540,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
+        for (i, part) in parts.iter().enumerate() {
             if let Some(rewrote) = self.maybe_rewrite_property_access(
                 loc,
                 value,
                 part,
                 loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
+                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
             ) {
                 value = rewrote;
             } else {

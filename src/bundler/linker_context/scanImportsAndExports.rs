@@ -75,6 +75,42 @@ macro_rules! col_ref {
     };
 }
 
+/// Importers of lifted CommonJS file `root` get its real `module.exports`, not the namespace object that stands in for it.
+fn keep_commonjs_wrapper_of_lifted_file(
+    root: usize,
+    exports_kind: &mut [ExportsKind],
+    flags: &mut [js_meta::Flags],
+    ast_flags: &[AstFlags],
+    export_star_import_records: &[bun_alloc::AstVec<u32>],
+    import_records: &[ImportRecordList<'_>],
+) {
+    let mut pending = vec![root];
+    while let Some(file) = pending.pop() {
+        let is_wrapped =
+            exports_kind[file] == ExportsKind::Cjs && flags[file].wrap == WrapKind::Cjs;
+        exports_kind[file] = ExportsKind::Cjs;
+        flags[file].wrap = WrapKind::Cjs;
+        // Another path can wrap `root` and leave the files behind it lifted.
+        if is_wrapped && file != root {
+            continue;
+        }
+        // A lifted file's export star was `module.exports = require("./b")`: the object of "./b".
+        for &star in export_star_import_records[file].iter() {
+            if let Some(record) = import_records[file].as_slice().get(star as usize)
+                && record.source_index.is_valid()
+            {
+                let target = record.source_index.get() as usize;
+                if target != root
+                    && target < ast_flags.len()
+                    && ast_flags[target].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                {
+                    pending.push(target);
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
@@ -172,7 +208,11 @@ pub(crate) fn scan_imports_and_exports(
             // Named static imports contribute exactly their aliases to the
             // importee's observable-export set (see below); `* as ns` and
             // `export * from` make everything observable.
-            for ni in col_ref!(named_imports)[id].values() {
+            for (import_ref, ni) in col_ref!(named_imports)[id]
+                .keys()
+                .iter()
+                .zip(col_ref!(named_imports)[id].values())
+            {
                 let Some(record) = col_ref!(import_records_list)[id]
                     .as_slice()
                     .get(ni.import_record_index as usize)
@@ -183,9 +223,33 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other = record.source_index.get() as usize;
-                if other >= col_ref!(exports_kind).len()
-                    || col_ref!(exports_kind)[other] != ExportsKind::Esm
+                if other >= col_ref!(exports_kind).len() {
+                    continue;
+                }
+                // `Object.freeze`, `defineProperty` and `delete` on a held default import need the real `module.exports`.
+                if col_ref!(ast_flags_list)[other].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    && !ni.alias_is_star
+                    && ni.alias.is_some_and(|alias| alias.slice() == b"default")
+                    && this
+                        .graph
+                        .symbols
+                        .get_const(*import_ref)
+                        .is_some_and(|symbol| {
+                            // `ns.default` can be the module's own `default` export, which only step 3 resolves.
+                            symbol.import_item_status != bun_ast::ImportItemStatus::Generated
+                                && (ni.is_exported || symbol.import_used_as_value())
+                        })
                 {
+                    keep_commonjs_wrapper_of_lifted_file(
+                        other,
+                        col!(exports_kind),
+                        col!(flags),
+                        col_ref!(ast_flags_list),
+                        col_ref!(export_star_import_records),
+                        col_ref!(import_records_list),
+                    );
+                }
+                if col_ref!(exports_kind)[other] != ExportsKind::Esm {
                     continue;
                 }
                 // The default import of a lifted CommonJS module is its namespace.

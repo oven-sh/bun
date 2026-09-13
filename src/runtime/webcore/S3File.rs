@@ -566,6 +566,7 @@ pub(crate) fn get_presign_url_from(
 
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
+    let mut content_length: Option<u64> = None;
 
     let s3 = this.store.get().as_ref().unwrap().data.as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
@@ -597,6 +598,22 @@ pub(crate) fn get_presign_url_from(
                 }
                 expires = expires_ as usize;
             }
+            if let Some(content_length_) = options.get_optional::<i64>(global, "contentLength")? {
+                // Signing a length onto a request that carries no body yields a URL whose
+                // request must send a Content-Length it was never going to send, so it fails at
+                // use with nothing to say why — refuse it here instead.
+                if method != Method::PUT {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "contentLength is only supported when method is PUT, received {method:?}"
+                    )));
+                }
+                if content_length_ < 0 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "contentLength must be greater than or equal to 0, received {content_length_}"
+                    )));
+                }
+                content_length = Some(content_length_ as u64);
+            }
         }
         credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
     }
@@ -615,6 +632,7 @@ pub(crate) fn get_presign_url_from(
             content_md5: None,
             search_params: None,
             content_encoding: None,
+            content_length,
         },
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {

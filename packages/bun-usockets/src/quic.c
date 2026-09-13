@@ -157,7 +157,6 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 #endif
 
 static void us_quic_after_engine_call(us_quic_socket_context_t *ctx);
-static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx, int flush);
 
 /* lsquic forbids entering the engine from a callback it made. Every engine
  * call that can make callbacks sits between this pair. */
@@ -923,18 +922,29 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+/* A listener whose close is still pending holds its UDP port, and stop(true)
+ * promises that the port is free when it returns. Release it before a bind to
+ * that port. Its closing conns then go silent. */
+static void us_quic_release_pending_port(struct us_loop_t *loop, int port) {
+    if (port == 0) return;
+    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+        for (us_quic_listen_socket_t *ls = ctx->listeners; ls; ) {
+            if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) { ls = ls->next; continue; }
+            ls->close_pending = 0;
+            us_udp_socket_close(ls->udp);
+            /* udp_on_close unlinked `ls`; restart from the head. */
+            ls = ctx->listeners;
+        }
+    }
+}
+
 us_quic_listen_socket_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size)
 {
     ctx->stream_ext_size = stream_ext_size;
 
-    /* A listener whose close is still pending holds its UDP port, and
-     * stop(true) promises that the port is free when it returns. Release it
-     * before the bind. Its closing conns then go silent. */
-    for (us_quic_socket_context_t *c = ctx->loop->data.quic_head; c; c = c->next) {
-        us_quic_finish_pending_closes(c, 0);
-    }
+    us_quic_release_pending_port(ctx->loop, port);
 
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_calloc(1, sizeof(*ls));
     if (!ls) return NULL;
@@ -996,14 +1006,11 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
     us_quic_listen_socket_finish_close(ls);
 }
 
-/* `flush` is set when the engine may be entered. Without it only the fd is
- * released. */
-static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx, int flush) {
+static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
     for (us_quic_listen_socket_t *ls = ctx->listeners; ls; ) {
         if (!ls->close_pending) { ls = ls->next; continue; }
         ls->close_pending = 0;
-        if (flush) us_quic_listen_socket_finish_close(ls);
-        else us_udp_socket_close(ls->udp);
+        us_quic_listen_socket_finish_close(ls);
         /* udp_on_close unlinked `ls`; restart from the head. */
         ls = ctx->listeners;
     }
@@ -1016,7 +1023,7 @@ static void us_quic_after_engine_call(us_quic_socket_context_t *ctx) {
         ctx->shutdown_pending = 0;
         us_quic_socket_context_finish_shutdown(ctx);
     }
-    us_quic_finish_pending_closes(ctx, 1);
+    us_quic_finish_pending_closes(ctx);
 }
 
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {

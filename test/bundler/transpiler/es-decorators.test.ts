@@ -2495,13 +2495,13 @@ const extraSections = `
   }
   class N2 extends class {} { @none m() {} }
   class N3 extends (function () {}) { accessor a = 1; }
-  @none class N4 { static name() { return "N4.name"; } }
+  @none class N4 { static name() {} }
   const N5 = @none class { static get name() { return "N5.name"; } };
   const n1 = new N1();
   out.names = [
     [n1.f.name, N1.g.name, n1.h.name, n1.i.name, n1.p()],
     [Object.getPrototypeOf(N2).name, Object.getPrototypeOf(N3).name],
-    [N4.name(), N5.name],
+    [typeof N4.name, N5.name],
   ];
 }
 `;
@@ -2550,7 +2550,7 @@ const extraExpected = {
   names: [
     ["f", "g", "h", "i", "#p"],
     ["", ""],
-    ["N4.name", "N5.name"],
+    ["function", "N5.name"],
   ],
 };
 

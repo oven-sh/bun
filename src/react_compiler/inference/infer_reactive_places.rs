@@ -17,12 +17,13 @@
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::dominator::post_dominator_frontier;
+use crate::hir::dominator::{PostDominator, post_dominator_frontier};
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Terminal, Type,
+    BasicBlock, BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Terminal,
+    Type,
 };
 
 use crate::utils::DisjointSet;
@@ -62,12 +63,6 @@ pub(crate) fn infer_reactive_places(
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
     let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
-    let mut reactive_throws = ReactiveThrows::default();
-    let has_handler = func
-        .body
-        .blocks
-        .values()
-        .any(|block| throws_to_handler(&block.terminal));
     for &block_id in &block_ids {
         let frontier = post_dominator_frontier(func, &post_dominators, block_id);
         let mut tests = Vec::new();
@@ -89,12 +84,18 @@ pub(crate) fn infer_reactive_places(
             }
         }
         control_tests.insert(block_id, tests);
-        if has_handler && !frontier.is_empty() {
-            reactive_throws
-                .frontiers
-                .insert(block_id, frontier.into_iter().collect());
-        }
     }
+
+    let has_handler = func
+        .body
+        .blocks
+        .values()
+        .any(|block| throws_to_handler(&block.terminal));
+    let mut reactive_throws = ReactiveThrows::new(if has_handler {
+        env.next_block_id().0 as usize
+    } else {
+        0
+    });
 
     // Track phi operand reactive flags during fixpoint.
     // In TS, isReactive() sets place.reactive as a side effect. But when a phi
@@ -251,7 +252,7 @@ pub(crate) fn infer_reactive_places(
             let throws_reactively = throws_to_handler(&block.terminal)
                 && (block_has_reactive_input || has_reactive_control);
             if throws_reactively || reactive_throws.controls(*block_id) {
-                reactive_throws.mark_reactive(*block_id);
+                reactive_throws.mark_dependents(block, &post_dominators);
             }
             if let Terminal::Try {
                 handler,
@@ -474,30 +475,84 @@ fn throws_to_handler(terminal: &Terminal) -> bool {
     )
 }
 
+/// The terminals with more than one successor.
+fn for_each_branch_target(terminal: &Terminal, mut f: impl FnMut(BlockId)) {
+    match terminal {
+        Terminal::MaybeThrow {
+            continuation,
+            handler: Some(handler),
+            ..
+        } => {
+            f(*continuation);
+            f(*handler);
+        }
+        Terminal::If {
+            consequent,
+            alternate,
+            ..
+        }
+        | Terminal::Branch {
+            consequent,
+            alternate,
+            ..
+        } => {
+            f(*consequent);
+            f(*alternate);
+        }
+        Terminal::Switch { cases, .. } => {
+            for case in cases {
+                f(case.block);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// `try` / `catch` control flow: a `MaybeThrow` with a handler is a branch that has no test operand.
-#[derive(Default)]
 struct ReactiveThrows {
-    /// Post-dominator frontier of each block, recorded only when the function has a handler.
-    frontiers: IdMap<BlockId, Vec<BlockId>>,
-    /// Blocks that throw reactively, plus every block that only runs depending on one of them.
-    blocks: HashSet<BlockId>,
+    /// By `BlockId`: a reactive throw decides whether the block runs. Empty without a handler.
+    controlled: Vec<bool>,
     /// Reactive handler bindings. Only reads count: a binding is declared before its `try`, out of scope.
     caught_values: HashSet<IdentifierId>,
     has_changes: bool,
 }
 
 impl ReactiveThrows {
-    /// Transitive, because in a `try` the frontier of a block is mostly just the block before it.
-    fn controls(&self, block_id: BlockId) -> bool {
-        self.frontiers
-            .get(block_id)
-            .is_some_and(|frontier| frontier.iter().any(|id| self.blocks.contains(id)))
+    fn new(block_count: usize) -> Self {
+        ReactiveThrows {
+            controlled: vec![false; block_count],
+            caught_values: HashSet::default(),
+            has_changes: false,
+        }
     }
 
-    fn mark_reactive(&mut self, block_id: BlockId) {
-        if self.blocks.insert(block_id) {
-            self.has_changes = true;
-        }
+    /// Transitive, because in a `try` the frontier of a block is mostly just the block before it.
+    fn controls(&self, block_id: BlockId) -> bool {
+        self.controlled
+            .get(block_id.0 as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Marks the blocks control-dependent on `block`: each branch target, then up the post-dominator tree.
+    fn mark_dependents(&mut self, block: &BasicBlock, post_dominators: &PostDominator) {
+        let stop = post_dominators.get(block.id);
+        for_each_branch_target(&block.terminal, |target| {
+            let mut current = target;
+            while Some(current) != stop {
+                let Some(controlled) = self.controlled.get_mut(current.0 as usize) else {
+                    break;
+                };
+                if !*controlled {
+                    *controlled = true;
+                    self.has_changes = true;
+                }
+                let Some(next) = post_dominators.get(current) else {
+                    break;
+                };
+                current = next;
+            }
+        });
     }
 
     fn is_caught_value(&self, id: IdentifierId) -> bool {

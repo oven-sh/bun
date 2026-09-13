@@ -3303,20 +3303,22 @@ describe("script-sized stream containers throw when they cannot grow", () => {
 
   // A string chunk takes arrayBuffer() and bytes() off the all-binary path. The mixed path
   // keeps a 16-byte entry per chunk.
-  test.concurrent.each(["readableStreamToArrayBuffer", "readableStreamToBytes"])(
+  describe.each(["readableStreamToArrayBuffer", "readableStreamToBytes"])(
     "Bun.%s() over string and binary chunks",
-    async consumer => {
-      const MAX_CHUNKS = LIMIT_BYTES / 16;
-      const result = await runInSubprocess(`
-        ${batchedStream}
-        const chunk = new Uint8Array([97]);
-        const consume = total => Bun.${consumer}(batchedStream(total, "a", chunk)).then(bytes => bytes.byteLength, describeError);
-        console.log(JSON.stringify({ fits: await consume(${MAX_CHUNKS}), tooMany: await consume(${MAX_CHUNKS} + 1) }));
-      `);
-      expect(result).toEqual({
-        stdout: { fits: MAX_CHUNKS, tooMany: outOfMemory },
-        stderr: "",
-        exitCode: 0,
+    consumer => {
+      test.concurrent("throws when the chunk list cannot grow", async () => {
+        const MAX_CHUNKS = LIMIT_BYTES / 16;
+        const result = await runInSubprocess(`
+          ${batchedStream}
+          const chunk = new Uint8Array([97]);
+          const consume = total => Bun.${consumer}(batchedStream(total, "a", chunk)).then(bytes => bytes.byteLength, describeError);
+          console.log(JSON.stringify({ fits: await consume(${MAX_CHUNKS}), tooMany: await consume(${MAX_CHUNKS} + 1) }));
+        `);
+        expect(result).toEqual({
+          stdout: { fits: MAX_CHUNKS, tooMany: outOfMemory },
+          stderr: "",
+          exitCode: 0,
+        });
       });
     },
   );

@@ -332,10 +332,12 @@ fn has_in_place_member_update(func: &HirFunction, env: &Environment) -> bool {
     };
     matches!(
         &func.instructions[first.0 as usize].value,
-        InstructionValue::DeclareLocal { lvalue, .. } if matches!(
-            env.identifiers[lvalue.place.identifier.0 as usize].name,
-            Some(IdentifierName::Promoted(_))
-        )
+        InstructionValue::DeclareLocal { lvalue, .. }
+            if lvalue.kind == InstructionKind::Let
+                && matches!(
+                    env.identifiers[lvalue.place.identifier.0 as usize].name,
+                    Some(IdentifierName::Promoted(_))
+                )
     )
 }
 

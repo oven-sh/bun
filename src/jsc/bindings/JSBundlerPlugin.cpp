@@ -215,10 +215,22 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
+// nullptr means it threw. Checked, not assumed: bun:jsc's getProtectedObjects() hands this cell to JS.
+static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto* thisObject = dynamicDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]]
+        Bun::throwInvalidThisCallError(globalObject, callFrame, "BundlerPlugin"_s);
+    return thisObject;
+}
+
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -239,6 +251,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
 
     uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Checked after the last conversion that can run user code, so nothing runs between this and the append.
+    if (thisObject->plugin.filtersFrozen) [[unlikely]]
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "addFilter() called after the build started"_s);
 
     unsigned index = 0;
     if (isOnLoad) {
@@ -340,9 +356,12 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -413,8 +432,14 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
-        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
     }
+
+    // Checked after the last conversion that can run user code, so nothing runs between this and the appends.
+    if (thisObject->plugin.filtersFrozen) [[unlikely]]
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "onBeforeParse() called after the build started"_s);
+
+    if (externalPtr)
+        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
 
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 
@@ -423,7 +448,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
     if (auto kind = thisObject->plugin.takeRequest(context))
         thisObject->plugin.addError(context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
@@ -432,7 +460,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -445,7 +476,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -471,7 +505,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundle
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
     // Only a request the plugins still hold can defer: once answered it is the bundle thread's again.
     if (!thisObject->plugin.holdsRequest(BundlerPlugin::RequestKind::Load, context)) {
@@ -513,8 +550,11 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
+    // Every name the builtins in BundlerPlugin.ts read off this object is an own property from here.
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("promises"_s)), jsUndefined(), 0);
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
@@ -598,7 +638,8 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         JSBundlerPlugin::createStructure(
             globalObject->vm(),
             globalObject,
-            globalObject->objectPrototype()),
+            // Null prototype: an accessor on Object.prototype would otherwise receive this object.
+            jsNull()),
         nullptr,
         target);
 }
@@ -649,7 +690,9 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
-    auto* lexicalGlobalObject = uncheckedDowncast<JSFunction>(JSValue::decode(encodedSetupFunction))->globalObject();
+    // setup() is any callable, and a callable Proxy is not a JSFunction.
+    auto* setupObject = JSValue::decode(encodedSetupFunction).getObject();
+    auto* lexicalGlobalObject = setupObject ? setupObject->globalObject() : plugin->globalObject();
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
@@ -693,6 +736,11 @@ void BundlerPlugin::tombstone()
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" void JSBundlerPlugin__freezeFilters(Bun::JSBundlerPlugin* plugin)
+{
+    plugin->plugin.filtersFrozen = true;
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)

@@ -165,7 +165,9 @@ impl JSBundleCompletionTask {
         let plugins = self.plugins;
         let completion = RefPtr::new(self).into_raw();
         if let Some(plugin) = plugins {
-            Plugin::opaque_mut(plugin.as_ptr()).set_config(completion.cast());
+            let plugin = Plugin::opaque_mut(plugin.as_ptr());
+            plugin.set_config(completion.cast());
+            plugin.freeze_filters();
         }
 
         // Ensure this exists before we spawn the thread to prevent any race

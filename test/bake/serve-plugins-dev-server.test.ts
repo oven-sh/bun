@@ -137,3 +137,83 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
 });
+
+// The DevServer's parse workers read the plugin object's filter lists with no lock, so nothing may
+// append to them once a bundle pass has the plugin. The private plugin object is a gcProtect'ed
+// cell, so bun:jsc.getProtectedObjects() returns it.
+test.concurrent("DevServer's [serve.static] plugin object refuses a new filter once it bundles", async () => {
+  using dir = tempDir("serve-plugins-devserver-late-filter", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      import { getProtectedObjects } from "bun:jsc";
+
+      const hasOwn = Object.prototype.hasOwnProperty;
+      function findPlugin() {
+        for (const object of getProtectedObjects()) {
+          // The list holds raw protected cells. Some of them are internal and reject a property
+          // lookup, so skip whatever throws.
+          try {
+            if (object && typeof object === "object" && hasOwn.call(object, "addFilter") && hasOwn.call(object, "generateDeferPromise")) {
+              return object;
+            }
+          } catch {}
+        }
+        return undefined;
+      }
+
+      let plugin: any;
+      function addFilter() {
+        try {
+          plugin.addFilter(/never-matches/, "probe", 1);
+          return "accepted";
+        } catch (e: any) {
+          return e.code ?? e.name;
+        }
+      }
+
+      globalThis.outcomes = {};
+      export default {
+        name: "late-filter-plugin",
+        setup(build) {
+          plugin = findPlugin();
+          globalThis.outcomes.duringSetup = addFilter();
+          build.onLoad({ filter: /entry\\.ts$/ }, () => {
+            globalThis.outcomes.duringBundle = addFilter();
+            return undefined;
+          });
+        },
+      };
+    `,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("ORIGINAL_MARKER");`,
+    "server.ts": `
+      import html from "./index.html";
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/": html },
+        fetch() { return new Response("fallback"); },
+      });
+      const res = await fetch(server.url, { signal: AbortSignal.timeout(10_000) });
+      await res.text();
+      await server.stop(true);
+      console.log(JSON.stringify({ status: res.status, outcomes: globalThis.outcomes }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const line = stdout.split("\n").find(l => l.startsWith("{"));
+  expect(line ? JSON.parse(line) : { stdout, stderr }).toEqual({
+    status: 200,
+    outcomes: { duringSetup: "accepted", duringBundle: "ERR_INVALID_STATE" },
+  });
+  expect(exitCode).toBe(0);
+});

@@ -111,6 +111,21 @@ describe("heapStats() mimalloc integration", () => {
     expect(exitCode).toBe(0);
   });
 
+  // JSC hands its structure heap to mimalloc as an arena of its own (`mi_manage_os_memory_ex`), and it halves that
+  // reservation when address space is short (`ulimit -v`). mimalloc has to take a small one as well: when it refused
+  // 256 MiB and less (page meta data at 256 MiB boundaries, without MI_FREE_USE_PAGEMAP), bun aborted on startup.
+  test("starts with a small structure heap reservation", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log(typeof {})"],
+      env: { ...bunEnv, BUN_JSC_structureHeapSizeInKB: "131072" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("object\n");
+    expect(exitCode).toBe(0);
+  });
+
   // The allocator's purge thread takes back what was freed 100 ms after the free. What a thread freed while the purge thread
   // was in the middle of a pass was left out for good: it stayed resident until the event loop went idle or something forced
   // a collection. A script that keeps its thread busy does neither. It took a pass in which each of the allocator's arenas

@@ -185,6 +185,11 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
 }
 
 #define US_NQ_HSET_MIN_BUF 256
+/* Fallback ceiling for nq_hsi_prepare_decode when maxHeaderLength is
+ * unlimited: lsqpack requests the decode buffer from the peer-declared
+ * length varint before any value bytes arrive, so this bounds how much a
+ * few wire bytes can reserve per stream. */
+#define US_NQ_HSET_MAX_BUF (128 * 1024)
 
 struct nq_hset {
     struct lsxpack_header xhdr;
@@ -212,21 +217,18 @@ static void *nq_hsi_create_header_set(void *ctx, lsquic_stream_t *s,
     }
     return h;
 }
-/* The largest decode window one header may ask for. lsqpack reserves 1.5x a
- * Huffman string's declared length (up to 2^24) before its bytes arrive, so
- * the peer chooses `space`; tie it to the configured maxHeaderLength, with a
- * 64 KB floor for when none is set. */
-static size_t nq_hset_max_window(const struct nq_hset *h) {
-    size_t cap = (size_t) h->max_bytes * 2;
-    if (cap < UINT16_MAX) cap = UINT16_MAX;
-    if (cap > LSXPACK_MAX_STRLEN) cap = LSXPACK_MAX_STRLEN;
-    return cap;
-}
 static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    if (space > nq_hset_max_window(h))
+    /* 2x max_bytes covers the Huffman decode-window headroom for a single
+     * header that is itself the whole configured maxHeaderLength; floored at
+     * US_NQ_HSET_MAX_BUF so a small or unset limit never lowers the abort
+     * threshold (a header over max_bytes is still silently dropped in
+     * process_header, which keeps the session alive). */
+    size_t cap = (size_t) h->max_bytes * 2;
+    if (cap < US_NQ_HSET_MAX_BUF) cap = US_NQ_HSET_MAX_BUF;
+    if (space > LSXPACK_MAX_STRLEN || space > cap)
         return NULL;
     if (space > h->decode_cap) {
         size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;

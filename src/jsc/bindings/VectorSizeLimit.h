@@ -18,8 +18,7 @@ size_t maxVectorSize()
     return std::min(maxBytes, Bun__stringSyntheticAllocationLimit) / sizeof(T);
 }
 
-// The most elements a Deque<T> can hold before Deque::append CRASH()es: its capacity is a
-// power of two within the Vector bound, and the ring keeps one slot empty.
+// A Deque's capacity is a power of two within the Vector bound, and the ring keeps one slot empty.
 template<typename T>
 size_t maxDequeSize()
 {

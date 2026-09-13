@@ -174,8 +174,7 @@ public:
 
     // Byte-queue manual mutators (the byte controller updates its two slots by hand).
     // Callers adjust [[queueTotalSize]] separately via adjustTotalSize().
-    // Script picks the entry count, so a caller checks isFull() before it takes the lock and
-    // throws when the queue is full. Only then is append() safe.
+    // A caller checks isFull() and throws before it takes the lock. append() assumes room.
     bool isFull() const { return m_queue.size() >= Bun::maxDequeSize<Entry>(); }
     void append(const WTF::AbstractLocker&, Entry&& entry)
     {

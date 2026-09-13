@@ -194,15 +194,13 @@ size_t readableStreamGetNumReadIntoRequests(JSReadableStream* stream)
     return static_cast<JSReadableStreamBYOBReader*>(stream->m_reader.get())->m_readIntoRequests.size();
 }
 
-// Script adds one request per read(), so the deque can fill. Null-safe like
-// readableStreamGetNumReadRequests.
+// Null-safe like readableStreamGetNumReadRequests.
 bool readableStreamReadRequestsFull(JSReadableStream* stream)
 {
     return readableStreamGetNumReadRequests(stream) >= Bun::maxDequeSize<WriteBarrier<JSReadRequest>>();
 }
 
-// ReadableStreamAddReadRequest(stream, readRequest). The throw (a GC allocation) happens before
-// the cell lock is taken.
+// ReadableStreamAddReadRequest(stream, readRequest). Throws (a GC allocation) before the cell lock.
 void readableStreamAddReadRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadRequest* readRequest)
 {
     auto& vm = getVM(globalObject);
@@ -218,7 +216,7 @@ void readableStreamAddReadRequest(JSGlobalObject* globalObject, JSReadableStream
     reader->m_readRequests.append(WriteBarrier<JSReadRequest>(vm, reader, readRequest));
 }
 
-// ReadableStreamAddReadIntoRequest(stream, readRequest). Fallible like readableStreamAddReadRequest.
+// ReadableStreamAddReadIntoRequest(stream, readRequest). Throws before the cell lock.
 void readableStreamAddReadIntoRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadIntoRequest* readRequest)
 {
     auto& vm = getVM(globalObject);
@@ -1143,10 +1141,7 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
     return teeState->cancelPromise();
 }
 
-// Spec chunk steps 3.2 ("If cloneResult is an abrupt completion"): error both branches and
-// resolve cancelPromise with ReadableStreamCancel(stream, thrown). A branch enqueue that throws
-// (a queue that cannot grow) ends the tee the same way. The tee's m_reading stays true, so no
-// further read is started.
+// Spec chunk steps 3.2 (an abrupt cloneResult): error both branches and cancel the source.
 template<typename Controller, typename ErrorController>
 static EncodedJSValue teeAbortWithError(JSGlobalObject* globalObject, JSStreamTeeState* teeState, Controller* controller1, Controller* controller2, JSValue thrown, ErrorController errorController)
 {

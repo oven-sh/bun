@@ -42,8 +42,7 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// Script adds one pull-into descriptor per read, so the deque can fill. A caller checks this
-// before it transfers a buffer or takes the cell lock, and throws.
+// Checked before a buffer transfer or the cell lock, so the caller can still throw.
 static bool pendingPullIntosFull(const JSReadableByteStreamController* controller)
 {
     return controller->m_pendingPullIntos.size() >= Bun::maxDequeSize<WriteBarrier<JSPullIntoDescriptor>>();
@@ -413,8 +412,7 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
         pullIntoDescriptor->m_viewConstructor = JSC::TypeUint8;
         pullIntoDescriptor->m_readerType = ReaderType::Default;
     }
-    // The request deque can refuse the read. Add the request before the pull-into descriptor,
-    // so a refused read leaves no descriptor behind. Nothing observes the order.
+    // The request goes first, so a refused read leaves no descriptor behind.
     readableStreamAddReadRequest(globalObject, stream, readRequest);
     RETURN_IF_EXCEPTION(scope, void());
     if (pullIntoDescriptor) {
@@ -787,8 +785,7 @@ void readableByteStreamControllerEnqueueChunkToQueue(JSGlobalObject* globalObjec
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (controller->m_queue.isFull()) [[unlikely]] {
-        // The buffer is already transferred or cloned, so a refused append loses the chunk.
-        // Error the stream, as a failed clone does, and throw.
+        // The buffer is already transferred, so the chunk is lost: error the stream as a failed clone does.
         JSObject* error = createOutOfMemoryError(globalObject);
         readableByteStreamControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1048,8 +1045,7 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     pullIntoDescriptor->m_viewConstructor = ctor;
     pullIntoDescriptor->m_readerType = ReaderType::Byob;
     if (!controller->m_pendingPullIntos.isEmpty()) {
-        // The request deque can refuse the read. Add the request before the descriptor, so a
-        // refused read leaves no descriptor behind. Nothing observes the order.
+        // The request goes first, so a refused read leaves no descriptor behind.
         readableStreamAddReadIntoRequest(globalObject, stream, readIntoRequest);
         RETURN_IF_EXCEPTION(scope, void());
         WTF::Locker locker { controller->cellLock() };

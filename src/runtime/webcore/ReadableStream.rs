@@ -381,8 +381,8 @@ impl ReadableStream {
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
                         self.lock_native(global);
-                        file_reader.parent_const().end_locked_stream(None);
                         let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
+                        file_reader.parent_const().end_locked_stream(None);
                         return NativeWireResult::EndedInline(None);
                     }
                     Some(_) | None => {}

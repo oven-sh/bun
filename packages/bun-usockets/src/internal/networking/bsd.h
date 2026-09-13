@@ -161,6 +161,11 @@ struct udp_sendbuf {
 
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
+#if !defined(_WIN32) && !defined(__APPLE__)
+/* sendmmsg(2) with its return contract, EINTR retried. Where a seccomp filter
+ * refuses sendmmsg, it sends with one sendmsg(2) per message. */
+int bsd_sendmmsg_msgvec(LIBUS_SOCKET_DESCRIPTOR fd, struct mmsghdr *msgvec, unsigned int vlen, int flags);
+#endif
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);

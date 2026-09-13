@@ -280,7 +280,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
                 r = (int) injected;
             } else {
-                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+                r = bsd_sendmmsg_msgvec(fd, mm, k, 0);
             }
             (void) injected; (void) unused;
         }
@@ -297,7 +297,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
          * break — that's the backpressure lsquic's pause is for. */
         if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
-            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            r = bsd_sendmmsg_msgvec(fd, mm, k, 0);
         }
         if (r < 0) break;
         sent += (unsigned) r;

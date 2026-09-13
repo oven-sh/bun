@@ -9,6 +9,7 @@ import {
   runInThisContext,
   Script,
   SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1704,6 +1705,71 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:vm SourceTextModule instances with the same identifier and source text", () => {
+  // JSC lets module records with the same key and source text in one global object run the same
+  // ModuleProgramExecutable. What import() and stack traces report comes from that executable's source,
+  // which is also where node:vm keeps a module's importModuleDynamically hook and its line/column offsets.
+  // JSC finds the executable through a weak map, and a module's functions keep it alive. So every source here
+  // exports a function and every module stays reachable.
+  const modules: SourceTextModule[] = [];
+
+  async function load(tag: string) {
+    const dependency = new SyntheticModule(["tag"], function () {
+      this.setExport("tag", tag);
+    });
+    await dependency.link(() => {});
+    await dependency.evaluate();
+
+    const calls: { specifier: string; referrerIsThisModule: boolean }[] = [];
+    const module = new SourceTextModule(
+      `export const fromTopLevel = import("dep");
+       export function fromFunction() { return import("dep"); }`,
+      {
+        identifier: "same-identifier-and-source.mjs",
+        importModuleDynamically(specifier, referrer) {
+          calls.push({ specifier, referrerIsThisModule: referrer === module });
+          return dependency;
+        },
+      },
+    );
+    modules.push(module);
+    await module.link(() => {});
+    await module.evaluate();
+    const namespace = module.namespace as any;
+    return { calls, imported: [(await namespace.fromTopLevel).tag, (await namespace.fromFunction()).tag] };
+  }
+
+  test("each module calls its own importModuleDynamically", async () => {
+    const first = await load("first");
+    const second = await load("second");
+    const calls = [
+      { specifier: "dep", referrerIsThisModule: true },
+      { specifier: "dep", referrerIsThisModule: true },
+    ];
+    expect({ first, second }).toEqual({
+      first: { calls, imported: ["first", "first"] },
+      second: { calls, imported: ["second", "second"] },
+    });
+  });
+
+  test("each module reports positions with its own lineOffset", async () => {
+    async function lineOfThrow(identifier: string, lineOffset: number) {
+      const module = new SourceTextModule(`export function where() { return new Error("here").stack; }`, {
+        identifier,
+        lineOffset,
+      });
+      modules.push(module);
+      await module.link(() => {});
+      await module.evaluate();
+      return Number(/:(\d+):\d+\)?$/m.exec((module.namespace as any).where())![1]);
+    }
+    const shifted = await lineOfThrow("same-identifier-other-offset.mjs", 100);
+    const unshifted = await lineOfThrow("same-identifier-other-offset.mjs", 0);
+    expect(unshifted).toBe(await lineOfThrow("never-seen-identifier.mjs", 0));
+    expect(shifted).toBeGreaterThan(unshifted);
   });
 });
 

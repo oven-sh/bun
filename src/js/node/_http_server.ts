@@ -71,6 +71,7 @@ const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -103,26 +104,18 @@ const DateNow = Date.now;
 
 let cluster;
 
-function emitCloseServer(self: Server, generation) {
+function emitCloseServer(self: Server) {
   // Node's net.Server waits for every accepted connection to drain before
   // emitting close. Bun's native promise only tracks in-flight requests.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2439-L2454
-  if (generation.closeEmitted) return;
-  if (generation.connections.size > 0) {
-    generation.pendingDrainClose = true;
-    return;
-  }
-  generation.pendingDrainClose = false;
-  generation.closeEmitted = true;
-  if (self[kListenerGeneration] === generation) self[kListenerGeneration] = undefined;
-  generation.handle = undefined;
-  const callback = generation.closeCallback;
-  generation.closeCallback = undefined;
-  callback?.();
+  if (!self[kPendingDrainClose]) return;
+  if (self[serverSymbol] || self[kTrackedConnections].size > 0) return;
+  self[kPendingDrainClose] = false;
+  self[kListenerGeneration] = undefined;
   self.emit("close");
 }
-function emitCloseNTServer(this: Server, generation) {
-  process.nextTick(emitCloseServer, this, generation);
+function emitCloseNTServer(this: Server) {
+  process.nextTick(emitCloseServer, this);
 }
 
 function setCloseCallback(self, callback) {
@@ -294,6 +287,7 @@ function Server(options, callback): void {
   defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
+  this[kPendingDrainClose] = false;
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
@@ -466,6 +460,7 @@ Server.prototype.closeAllConnections = function () {
     return;
   }
   this[serverSymbol] = undefined;
+  this[kPendingDrainClose] = true;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
 
@@ -499,12 +494,10 @@ Server.prototype.close = function (optionalCallback?) {
     // Like Node.js's net.Server#close, close() returns the server.
     return this;
   }
+  if (typeof optionalCallback === "function") this.once("close", optionalCallback);
   this[serverSymbol] = undefined;
-  const generation = this[kListenerGeneration];
-  if (generation?.handle === server) {
-    generation.closeCallback = typeof optionalCallback === "function" ? optionalCallback : undefined;
-  }
   this.listening = false;
+  this[kPendingDrainClose] = true;
   server.closeIdleConnections();
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
@@ -1071,17 +1064,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     const handle = this[serverSymbol];
     listenerGeneration = {
-      handle,
       isUnix: !!socketPath,
-      connections: new Set(),
-      pendingDrainClose: false,
-      closeEmitted: false,
-      closeCallback: undefined,
     };
     this[kListenerGeneration] = listenerGeneration;
     // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
     this.listening = true;
-    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
+    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
 
     if (this?._unref) {
@@ -1522,7 +1510,6 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     #resetSupported;
-    #listenerGeneration;
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1541,7 +1528,6 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
-      this.#listenerGeneration = listenerGeneration;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
@@ -1555,7 +1541,6 @@ function getNodeHTTPServerSocket() {
       // events on the socket.
       this.on("error", socketOnError);
       server[kTrackedConnections]?.add(this);
-      listenerGeneration?.connections.add(this);
       // Like Node.js's connectionListener: server.setTimeout's per-socket
       // inactivity timeout is armed when the connection is established.
       const serverTimeout = server.timeout;
@@ -1655,15 +1640,10 @@ function getNodeHTTPServerSocket() {
       const tracked = server?.[kTrackedConnections];
       if (tracked) {
         tracked.delete(this);
-      }
-      const listenerGeneration = this.#listenerGeneration;
-      if (listenerGeneration) {
-        listenerGeneration.connections.delete(this);
-        if (listenerGeneration.connections.size === 0 && listenerGeneration.pendingDrainClose) {
-          listenerGeneration.pendingDrainClose = false;
+        if (tracked.size === 0 && server[kPendingDrainClose]) {
           // The server callback follows this socket's public close event, as
           // Node's _connections decrement does from Socket._destroy().
-          this.once("close", () => process.nextTick(emitCloseServer, server, listenerGeneration));
+          this.once("close", () => process.nextTick(emitCloseServer, server));
         }
       }
       const timer = this[kSocketTimeoutTimer];

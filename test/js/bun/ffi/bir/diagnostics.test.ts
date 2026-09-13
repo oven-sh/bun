@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import cases from "./fixtures/diagnostics/cases.json";
-import { meets, run, supported } from "./run-fixtures";
+import { lines, meets, run, supported } from "./run-fixtures";
 
 // What the compiler refuses, and what it says: `file:line:column: error: message`, the first error only.
 async function firstError(source: string) {
@@ -68,7 +68,7 @@ int chain(int x) { return x${" + x".repeat(990)}; }
 int nested(void) { return ${"(".repeat(240)}7${")".repeat(240)}; }
 int main(void) { printf("%d %d\\n", chain(2), nested()); return 0; }`;
     const { stdout, stderr, exitCode } = await firstError(source);
-    expect(stdout, stderr).toBe("1982 7\n");
+    expect(lines(stdout), stderr).toBe("1982 7\n");
     expect(exitCode).toBe(0);
   });
   for (const [what, source, message] of deep) {

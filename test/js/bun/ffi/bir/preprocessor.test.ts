@@ -12,7 +12,10 @@ describe.skipIf(!supported)("preprocessor: where #include looks", () => {
     "inc/b.h": "#ifndef B_H\n#define B_H\n#define B_VALUE 40\n#endif\n",
     "sys/chain.h": "#define CHAIN 1\n#include_next <chain.h>\n",
     "sys2/chain.h": "#define CHAIN2 (CHAIN + 1)\n",
-    "sys2/stddef.h": "#error the builtin stddef.h must win\n",
+    // The compiler's own <stddef.h> is the one found. For Microsoft C it only adds to the one the search path has
+    // (cl has no headers of its own, only INCLUDE), and this directory is on the path ahead of Visual Studio's.
+    "sys2/stddef.h":
+      "#ifndef _MSC_VER\n#error the builtin stddef.h must win\n#endif\n#define FOUND_ON_THE_SEARCH_PATH 1\n#include_next <stddef.h>\n",
     "src/local.h": "#define LOCAL 2\n#include <a.h>\n",
     "inc/bad.h": "\n\nint bad = ;\n",
     "inc/loop.h": '#include "loop.h"\n',
@@ -39,6 +42,9 @@ describe.skipIf(!supported)("preprocessor: where #include looks", () => {
 #define QUOTED "b.h"
 #include QUOTED
 int printf(const char *, ...);
+#if defined(_MSC_VER) != defined(FOUND_ON_THE_SEARCH_PATH)
+#error which <stddef.h> is found
+#endif
 #if __has_include(<chain.h>) && __has_include("local.h") && !__has_include(<local.h>) && __has_include_next(<limits.h>)
 int total(void) { return a_value + LOCAL + CHAIN2 + (INT_MAX == 2147483647) + (int)sizeof(size_t); }
 #endif
@@ -57,11 +63,27 @@ int main(void) {
   });
 
   const broken: [string, string, string][] = [
-    ["an error in a header names the header", "#include <bad.h>\nint main(void) { return 0; }\n", "bad.h:3:11: error: expected an expression before ';'"],
-    ["a header that is not there", "int x;\n#include <missing.h>\nint main(void) { return 0; }\n", "main.c:2:2: error: 'missing.h' file not found"],
-    ["a header that includes itself", '#include "loop.h"\nint main(void) { return 0; }\n', "#include nested too deeply"],
+    [
+      "an error in a header names the header",
+      "#include <bad.h>\nint main(void) { return 0; }\n",
+      "bad.h:3:11: error: expected an expression before ';'",
+    ],
+    [
+      "a header that is not there",
+      "int x;\n#include <missing.h>\nint main(void) { return 0; }\n",
+      "main.c:2:2: error: 'missing.h' file not found",
+    ],
+    [
+      "a header that includes itself",
+      '#include "loop.h"\nint main(void) { return 0; }\n',
+      "#include nested too deeply",
+    ],
     ["#include without a name", "#include\nint main(void) { return 0; }\n", "#include expects"],
-    ["a token from a macro body is reported where the macro was used", "#define BAD int y = ;\n\n  BAD\nint main(void) { return 0; }\n", "main.c:3:3: error: expected an expression before ';'"],
+    [
+      "a token from a macro body is reported where the macro was used",
+      "#define BAD int y = ;\n\n  BAD\nint main(void) { return 0; }\n",
+      "main.c:3:3: error: expected an expression before ';'",
+    ],
   ];
   for (const [name, source, message] of broken) {
     test.concurrent(name, async () => {

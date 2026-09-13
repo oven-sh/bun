@@ -4,15 +4,24 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 // Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
-export const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
+export const supported = (isLinux && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64 && microsoftHeaders());
+
+// Visual Studio's and the Windows SDK's headers: named by a developer prompt, or where the compiler looks for them.
+function microsoftHeaders() {
+  return (
+    Boolean(process.env.INCLUDE) ||
+    existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include"))
+  );
+}
 
 /**
  * What a fixture needs beyond `supported`, in a `<name>.requires` file (a `requires` file for a project) or a
  * diagnostics case's `requires`: `x64` (x86-64 instructions, intrinsics or diagnostics), `arm64` (`<arm_neon.h>`),
  * `x87` (80-bit `long double`: x86-64 outside Windows), `x64-sysv` (the System V calling convention for x86-64), `glibc` (its symbols or headers), `posix` (headers and
  * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
- * and choice of enumeration types, which Windows does not share), `windows`, or `msvc-headers` (Windows with
- * Visual Studio's and the Windows SDK's headers where `INCLUDE` or `BUN_C_MSVC_INCLUDE` says they are).
+ * and choice of enumeration types, which Windows does not share), `c99-inline` (C99's and GNU C's rules for which
+ * `inline` definitions other files see: Microsoft C has its own), `windows`, or `msvc-headers` (Windows with
+ * Visual Studio's and the Windows SDK's headers installed).
  */
 export function meets(requirement: string | undefined) {
   switch (requirement?.trim()) {
@@ -30,18 +39,12 @@ export function meets(requirement: string | undefined) {
     case "posix":
     case "lp64":
     case "sysv":
+    case "c99-inline":
       return !isWindows;
     case "windows":
       return isWindows;
     case "msvc-headers":
-      // Visual Studio's and the Windows SDK's: named by a developer prompt, or where the compiler looks for them.
-      return (
-        isWindows &&
-        (Boolean(process.env.INCLUDE) ||
-          existsSync(
-            join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include"),
-          ))
-      );
+      return isWindows && microsoftHeaders();
     default:
       throw new Error(`unknown requirement ${JSON.stringify(requirement)}`);
   }

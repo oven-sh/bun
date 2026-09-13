@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { existsSync } from "fs";
 import { join } from "path";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
-// These have run on Linux x64 and macOS arm64.
-const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
+// These have run on Linux x64, macOS arm64 and Windows x64.
+const supported =
+  (isLinux && !isArm64) ||
+  (isMacOS && isArm64) ||
+  // (with Visual Studio's and the Windows SDK's headers, which the C in these tests includes)
+  (isWindows && !isArm64 && existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include")));
 
 // C's stdout is in text mode on Windows: "\r\n" there.
 const text = async (stream: ReadableStream<Uint8Array>) => (await stream.text()).replaceAll("\r\n", "\n");

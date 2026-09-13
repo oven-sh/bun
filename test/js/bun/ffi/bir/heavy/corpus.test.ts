@@ -3,7 +3,7 @@ import { bunEnv, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { availableParallelism, homedir } from "node:os";
 import { join } from "node:path";
-import { includePath, run, supported, wrapperSource } from "../run-fixtures";
+import { includePath, meets, run, supported, wrapperSource } from "../run-fixtures";
 
 // The C libraries vendored for Bun (and a few from other checkouts), every file of each compiled by itself with
 // `bun build`: the product compiles C when it bundles, without running it. What this knows about each library is
@@ -16,7 +16,8 @@ import { includePath, run, supported, wrapperSource } from "../run-fixtures";
 // then ~/code/bun/vendor; the generated configuration headers in $BUN_C_CORPUS_BUILD (default
 // <repo>/build/release-local/deps). The libraries from other checkouts are found through $BUN_C_CORPUS_NODE
 // (default ~/code/node/deps), $BUN_C_CORPUS_WEBKIT (~/code/WebKit) and $BUN_C_CORPUS_LLVM (~/code/llvm-project-bun).
-const heavy = supported && process.env.BUN_C_COMPILER_HEAVY_TESTS === "1";
+// (The table is each library's x86-64 Linux build: its file list, macros and generated configuration.)
+const heavy = supported && meets("glibc") && meets("x64") && process.env.BUN_C_COMPILER_HEAVY_TESTS === "1";
 const repo = process.env.BUN_C_CORPUS_REPO ?? join(import.meta.dir, "../../../../../..");
 const places = {
   vendor: process.env.BUN_C_CORPUS_VENDOR

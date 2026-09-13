@@ -152,6 +152,12 @@ mod windows_runtime {
             b"vscanf" => Bun__CModule__vscanf as *mut c_void,
             b"vfscanf" => Bun__CModule__vfscanf as *mut c_void,
             b"vsscanf" => Bun__CModule__vsscanf as *mut c_void,
+            // Set by the statically linked part of Microsoft's runtime when the processor has AVX2, for
+            // <wchar.h>'s inline wmemchr and friends to choose a path by. Zero is the portable path.
+            b"_Avx2WmemEnabled" => {
+                static AVX2_WMEM_ENABLED: core::ffi::c_int = 0;
+                (&raw const AVX2_WMEM_ENABLED).cast_mut().cast::<c_void>()
+            }
             // Microsoft's compiler turns a call to either into one to the function the runtime exports
             // under another name.
             b"_setjmp" => return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmp")),

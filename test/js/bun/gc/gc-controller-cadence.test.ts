@@ -310,11 +310,13 @@ test.skipIf(!isLinux || isASAN)(
             const held = rss();
             // transfer(0) frees the 8 MB here and now, no collection involved. They stay resident until they are purged.
             for (const array of arrays) array.buffer.transfer(0);
-            // Wait for the purge thread to start on them. If it never does, Bun.gc(true) has all of it to return by itself.
+            // Wait for the purge thread to start on them, which it does once the purge delay (100 ms) has passed. A round in
+            // which it was not seen at work says nothing about the two at once, so it does not count as passed.
             const deadline = performance.now() + 1000;
-            while (rss() > held - 32 && performance.now() < deadline);
+            let started = false;
+            while (!(started = rss() <= held - 32) && performance.now() < deadline);
             Bun.gc(true);
-            rounds.push({ held, released: held - rss() });
+            rounds.push({ held, started, released: held - rss() });
           }
           console.log(JSON.stringify(rounds));
         `,
@@ -324,7 +326,10 @@ test.skipIf(!isLinux || isASAN)(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    for (const { released } of JSON.parse(stdout)) expect(released, stdout).toBeGreaterThan(300);
+    for (const { started, released } of JSON.parse(stdout)) {
+      expect(started, stdout).toBe(true);
+      expect(released, stdout).toBeGreaterThan(300);
+    }
     expect(exitCode).toBe(0);
   },
 );

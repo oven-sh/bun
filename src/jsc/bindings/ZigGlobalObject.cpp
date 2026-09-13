@@ -2152,9 +2152,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSStatFSClassStructure(init);
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
-             Bun::initJSBigIntStatFSClassStructure(init);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiClassStructure), [](LazyClassStructure::Initializer& init) {
              init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
          } },

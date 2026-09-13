@@ -328,27 +328,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
-                            // references the receiver twice. Only identifiers and `this` can
-                            // be repeated safely; any other receiver is captured in a
-                            // temporary so its side effects run once and nested private
-                            // calls don't duplicate the whole subtree (the duplication is
-                            // exponential in the length of a chain like `o.#m().#m().#m()`).
-                            let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
-                                    let obj_ref = id.ref_;
-                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
-                                }
-                                js_ast::ExprData::EThis(_) => {
-                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
-                                }
-                                _ => {
-                                    let tmp_ref = self.declared_temp(b"_obj");
-                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
-                                    let read = self.use_ref(tmp_ref, expr_loc);
-                                    (write, read)
-                                }
-                            };
+                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`.
+                            let (get_obj, this_arg) = self.capture_receiver(obj_expr, expr_loc);
                             let private_access = self.private_get_expr(get_obj, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {
@@ -421,8 +402,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::ETemplate(e) => {
-                if let Some(t) = &mut e.tag {
-                    self.rewrite_private_accesses_in_expr(t, map);
+                if let Some(tag) = &mut e.tag {
+                    if let js_ast::ExprData::EIndex(tag_idx) = &tag.data
+                        && let js_ast::ExprData::EPrivateIdentifier(pi) = &tag_idx.index.data
+                        && let Some(info) = map.get(&pi.ref_.inner_index()).copied()
+                    {
+                        // ``x.#m`...` `` becomes ``__privateGet(x, _m).bind(x)`...` ``: the
+                        // lowered tag is not a member access, so `this` has to be bound.
+                        // `.call(x, strings)` cannot replace it, the strings array is the
+                        // one the engine keeps for the call site.
+                        let tag_loc = tag.loc;
+                        let mut obj_expr = tag_idx.target;
+                        self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
+                        let (get_obj, this_arg) = self.capture_receiver(obj_expr, tag_loc);
+                        let private_access = self.private_get_expr(get_obj, &info, tag_loc);
+                        let bind = self.new_expr(
+                            E::Dot {
+                                target: private_access,
+                                name: b"bind".into(),
+                                name_loc: tag_loc,
+                                ..Default::default()
+                            },
+                            tag_loc,
+                        );
+                        *tag = self.new_expr(
+                            E::Call {
+                                target: bind,
+                                args: ExprNodeList::init_one(this_arg),
+                                ..Default::default()
+                            },
+                            tag_loc,
+                        );
+                    } else {
+                        self.rewrite_private_accesses_in_expr(tag, map);
+                    }
                 }
                 for part in e.parts_mut().iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);
@@ -514,6 +527,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => {}
+        }
+    }
+
+    /// Two references to the receiver of a lowered `x.#m(...)` or ``x.#m`...` ``:
+    /// the one that evaluates it, and the one that passes it as `this`. `this` and
+    /// an identifier are read twice. Any other receiver goes through a temporary,
+    /// so it is evaluated once and a chain like `o.#m().#m().#m()` does not
+    /// duplicate the whole subtree at each link.
+    fn capture_receiver(&mut self, obj: Expr, loc: bun_ast::Loc) -> (Expr, Expr) {
+        match &obj.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                let obj_ref = id.ref_;
+                (obj, self.use_ref(obj_ref, obj.loc))
+            }
+            js_ast::ExprData::EThis(_) => (obj, self.new_expr(E::This {}, obj.loc)),
+            _ => {
+                let tmp_ref = self.declared_temp(b"_obj");
+                let write = self.assign_to(tmp_ref, obj, loc);
+                let read = self.use_ref(tmp_ref, loc);
+                (write, read)
+            }
         }
     }
 

@@ -1655,6 +1655,30 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("static field true function true\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a TypeScript parameter property that holds the decorator lists keeps its name", async () => {
+      // The field of \`constructor(public x)\` is the only member with a key.
+      using dir = tempDir("es-dec-param-prop-key", {
+        "tsconfig.json": "{}",
+        "test.ts": `
+          const dec = (v: any, ctx: any) => {};
+          const seen: unknown[] = [];
+          class C { @dec #a = 1; constructor(public x: number) { seen.push(this.#a); } }
+          const c = new C(5);
+          function scope() {
+            const y = "outer";
+            class D { @dec #b = 2; constructor(public y: number) { seen.push(this.#b); } }
+            return new D(6);
+          }
+          const d = scope();
+          console.log(JSON.stringify([c.x, Object.keys(c), d.y, Object.keys(d), seen]));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["test.ts"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('[5,["x"],6,["y"],[1,2]]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

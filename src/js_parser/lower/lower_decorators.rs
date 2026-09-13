@@ -1290,12 +1290,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return (key_temp, Some(key_temp));
         }
         if !effects.is_empty() {
-            effects.push(key);
+            effects.push(self.key_as_value(prop, key));
             prop.key = Some(Expr::join_all_with_comma(effects));
             prop.flags.insert(Flags::Property::IsComputed);
             effects.clear();
         }
         (key, None)
+    }
+
+    /// The key of `prop` as the expression a computed key needs. The visit pass
+    /// keys the field of a TypeScript parameter property by an identifier.
+    fn key_as_value(&mut self, prop: &Property, key: Expr) -> Expr {
+        if !prop.flags.contains(Flags::Property::IsComputed)
+            && let js_ast::ExprData::EIdentifier(id) = &key.data
+        {
+            let name: &'a [u8] = self.symbols[id.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            return self.new_expr(E::EString::init(name), key.loc);
+        }
+        key
     }
 
     /// Runs `effects` right after the key of `prop` is evaluated. `key_temp`
@@ -1314,7 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts.push(key_temp);
         } else if !prop.flags.contains(Flags::Property::IsComputed) || Self::is_constant_key(&key) {
             parts.extend_from_slice(effects);
-            parts.push(key);
+            parts.push(self.key_as_value(prop, key));
         } else if let js_ast::ExprData::EBinary(comma) = &key.data
             && comma.op == js_ast::OpCode::BinComma
             && Self::is_constant_key(&comma.right)

@@ -1165,6 +1165,68 @@ describe("ES Decorators", () => {
     });
   });
 
+  // A decorated `#x` is lowered to a WeakMap, and a read of `o.#x` becomes the
+  // call `__privateGet(o, _x)`. A call is not a valid assignment target, so
+  // every position that writes to `o.#x` needs its own form.
+  describe("assignment targets of lowered private members", () => {
+    test.concurrent("every way to write to a decorated private field", async () => {
+      // The body of `run()`, and what node prints for the class without the decorator.
+      const forms = [
+        ["this.#x = 3", 3],
+        ["this.#x++", 2],
+        ["++this.#x", 2],
+        ["this.#x--", 0],
+        ["this.#x += 2", 3],
+        ["this.#x **= 3", 1],
+        ["this.#x ??= 5", 1],
+        ["this.#x ||= 5", 1],
+        ["this.#x &&= 5", 5],
+        ["[this.#x] = [9]", 9],
+        ["({ a: this.#x } = { a: 7 })", 7],
+        ["for (this.#x of [4]) {}", 4],
+        ["for (this.#x in { k: 1 }) {}", "k"],
+      ] as const;
+      const runs = forms.map(([body]) => `new (class { @dec #x = 1; run() { ${body}; return this.#x; } })().run()`);
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = () => {};
+        console.log(JSON.stringify([${runs.join(", ")}]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(forms.map(([, value]) => value));
+      expect(exitCode).toBe(0);
+    });
+
+    // `__privateWrapper(o, _x)._` is a property that reads and writes the
+    // member, valid wherever a reference is. The helper allocates an object,
+    // so a compound assignment goes through `__privateGet` and `__privateSet`
+    // when its receiver can be repeated.
+    test("only the forms that need a reference allocate a wrapper", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const wrapperCalls = (body: string) => {
+        const output = transpiler.transformSync(`class C { @dec #x = 1; m(o) { ${body} } }`);
+        expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+        return output.match(/__privateWrapper\w*\(/g)?.length ?? 0;
+      };
+      expect({
+        "this.#x = 1": wrapperCalls("this.#x = 1"),
+        "this.#x += 1": wrapperCalls("this.#x += 1"),
+        "o.#x ??= 1": wrapperCalls("o.#x ??= 1"),
+        "f().#x += 1": wrapperCalls("f().#x += 1"),
+        "this.#x++": wrapperCalls("this.#x++"),
+        "[this.#x, o.#x] = []": wrapperCalls("[this.#x, o.#x] = []"),
+        "for (this.#x of []);": wrapperCalls("for (this.#x of []);"),
+      }).toEqual({
+        "this.#x = 1": 0,
+        "this.#x += 1": 0,
+        "o.#x ??= 1": 0,
+        "f().#x += 1": 1,
+        "this.#x++": 1,
+        "[this.#x, o.#x] = []": 2,
+        "for (this.#x of []);": 1,
+      });
+    });
+  });
+
   // `bun run` has no symbol renamer: the lowering's `var _init`, `var _dec` and the
   // WeakMap behind each accessor or `#private` are printed under the name the
   // parser gave them, so that name has to be unique in the file.
@@ -2089,6 +2151,166 @@ const extraSections = `
   out.privateUpdates = U.run(new U());
 }
 
+// Every way to write to a decorated \`#private\` member. The name is lowered to
+// a WeakMap, so each assignment target has to be rewritten. The expected
+// values are what node prints for the same classes without the decorators.
+{
+  let n = 0;
+  let sets = 0;
+  const caught = (fn) => { try { return fn(); } catch (e) { return e.constructor.name; } };
+  class W {
+    @dec #f = "5";
+    @dec #b = 1n;
+    @dec #o = { k: 1, list: [1] };
+    @dec accessor #a = 1;
+    #pair = 10;
+    @dec get #g() { return this.#pair; }
+    @dec set #g(v) { sets++; this.#pair = v; }
+    @dec static #s = 1;
+    @dec #m() { return "m"; }
+    @dec get #ro() { return 1; }
+    @dec set #wo(v) {}
+    @dec #init = 1;
+    other = null;
+    static update(o) {
+      const mk = () => (n++, o);
+      const r = [++o.#f, o.#f++, o.#f--, --o.#f, o.#f];
+      o.#b++;
+      --o.#b;
+      r.push((o.#b++).toString(), (++o.#b).toString());
+      r.push(o.#a++, ++o.#a, o.#g--, --o.#g, W.#s++, ++W.#s, this.#s--);
+      r.push(mk().#f++, ++mk().#a, mk().#g++, o.#f, o.#a, o.#g);
+      r.push(o.#o.k++, ++o.#o.list[0], typeof o.#f, -o.#f, void o.#f++, o.#f);
+      for (o.#f = 0; o.#f < 3; o.#f++) r.push(o.#f);
+      return r;
+    }
+    compound() {
+      const mk = () => (n++, this);
+      this.#f = 7;
+      const r = [this.#f += 2, this.#f -= 1, this.#f *= 3, this.#f /= 2, this.#f %= 7, this.#f **= 2];
+      r.push(this.#f <<= 2, this.#f >>= 1, this.#f >>>= 1, this.#f |= 9, this.#f &= 12, this.#f ^= 5);
+      r.push(this.#f += "s", (this.#b += 2n).toString());
+      r.push(this.#a += 5, this.#g -= 3, W.#s *= 10, mk().#f += "t", mk().#a -= 1, mk().#g *= 2);
+      r.push(this.#o.k += 5, this.#o.list[0] *= 4, this.#f = this.#a += 1, this.#f);
+      return r;
+    }
+    logical() {
+      const mk = () => (n++, this);
+      const rhs = (v) => (n += 100, v);
+      this.#f = null;
+      this.#a = 0;
+      this.#g = 1;
+      sets = 0;
+      const r = [this.#f ??= rhs("a"), this.#f ??= rhs("b"), this.#f ||= rhs("c"), this.#f &&= rhs("d"), this.#f];
+      r.push(this.#a ||= rhs(2), this.#a ||= rhs(3), this.#a &&= rhs(0), this.#a &&= rhs(4), this.#a ??= rhs(5), this.#a);
+      r.push(this.#g &&= rhs(0), this.#g &&= rhs(1), this.#g ||= rhs(6), this.#g ||= rhs(7), this.#g ??= rhs(8), sets);
+      r.push(mk().#f &&= rhs(null), mk().#f ??= rhs("e"), mk().#f ||= rhs("f"), mk().#g &&= rhs(9), W.#s &&= rhs(2));
+      r.push(0 || (this.#f &&= rhs("g")), (this.#a &&= rhs(0)) || "h", null ?? (this.#f ||= rhs("i")), n);
+      return r;
+    }
+    destructuring(other) {
+      const mk = () => (n++, this);
+      const r = [];
+      [this.#f, this.#a] = [1, 2];
+      [this.#f, this.#a] = [this.#a, this.#f];
+      r.push(this.#f, this.#a);
+      ({ f: this.#f, a: this.#a, g: this.#g, s: W.#s } = { f: 3, a: 4, g: 5, s: 6 });
+      r.push(this.#f, this.#a, this.#g, W.#s);
+      [this.#f = 7, [this.#a = 8, { g: this.#g = 9 }]] = [undefined, [undefined, {}]];
+      r.push(this.#f, this.#a, this.#g);
+      [this.#f, ...this.#a] = [10, 11, 12];
+      ({ f: this.#f, ...this.#g } = { f: 13, x: 14 });
+      r.push(this.#f, this.#a, this.#g);
+      ({ [this.#f]: this.#a = this.#f, x: this.#o.k, y: this.#o.list[0] } = { x: 15, y: 16 });
+      r.push(this.#a, this.#o.k, this.#o.list[0]);
+      [mk().#f, other.#f, mk().other.#a] = [17, 18, 19];
+      r.push(this.#f, other.#f, other.#a);
+      r.push(([this.#f] = [20]).length, this.#f);
+      const arrow = (a = ([this.#f] = [21])) => [a[0], this.#f];
+      r.push(arrow());
+      return r;
+    }
+    loopHeads() {
+      const mk = () => (n++, this);
+      const r = [];
+      for (this.#f of [1, 2]) r.push(this.#f);
+      for (this.#a in { x: 1, y: 2 }) r.push(this.#a);
+      for ([this.#f, this.#g = 3] of [[4], [5, 6]]) r.push(this.#f, this.#g);
+      for ({ k: this.#a, ...this.#f } of [{ k: 7, z: 8 }]) r.push(this.#a, this.#f);
+      for (mk().#f of [9, 10]) r.push(this.#f);
+      for (W.#s in { z: 1 }) r.push(W.#s);
+      for (this.#o.k of [13]) r.push(this.#o.k);
+      label: for (this.#f of [11, 12]) { if (this.#f === 11) continue label; r.push(this.#f); }
+      return r;
+    }
+    nested() {
+      const self = this;
+      this.#f = 0;
+      const arrow = () => this.#f++;
+      function plain() { return ++self.#f; }
+      class Inner {
+        field = self.#f += 10;
+        static { self.#f ??= "never"; }
+        m(o, by = o.#f++) { return [by, o.#f--]; }
+      }
+      const obj = { get v() { return self.#f *= 2; }, [self.#f++]: 1 };
+      return [arrow(), plain(), new Inner().field, new Inner().m(this), obj.v, Object.keys(obj)];
+    }
+    // A method and a getter alone cannot be written to, a setter alone cannot
+    // be read, and \`foreign\` has none of the members.
+    errors(foreign) {
+      const before = n;
+      const thrown = [
+        caught(() => this.#m = 1), caught(() => this.#m++), caught(() => { [this.#m] = [1]; }),
+        caught(() => this.#ro = 1), caught(() => this.#ro += 1), caught(() => { for (this.#ro of [1]); }),
+        caught(() => this.#wo += 1), caught(() => this.#wo++), caught(() => this.#wo ??= 1),
+        caught(() => foreign.#f++), caught(() => foreign.#f += 1), caught(() => foreign.#f ??= 1),
+        caught(() => { [foreign.#f] = [1]; }), caught(() => { for (foreign.#a of [1]); }),
+        caught(() => foreign.#f += (n++, 1)), caught(() => { [foreign.#f = (n++, 1)] = []; }),
+      ];
+      const typeErrors = thrown.every((name) => name === "TypeError") ? thrown.length : thrown;
+      return [typeErrors, typeof (this.#m ??= 1), typeof (this.#m ||= 1), n - before];
+    }
+    field = (this.#init += 1, this.#init++, [this.#init] = [this.#init * 2], this.#init);
+    static { W.#s += 1; W.#s++; [W.#s] = [W.#s * 2]; }
+    static initial = W.#s;
+  }
+  // Each form calls the functions the decorators of an accessor returned, as
+  // often and in the order it would call a native getter and setter.
+  const trace = [];
+  const traced = (value, ctx) => ({
+    get() { trace.push("get"); return value.get.call(this); },
+    set(v) { trace.push("set:" + v); value.set.call(this, v); },
+  });
+  class T {
+    @traced accessor #a = 1;
+    run() {
+      this.#a++;
+      this.#a += 2;
+      this.#a ??= 9;
+      this.#a &&= 5;
+      [this.#a] = [6];
+      for (this.#a of [7]);
+      return trace;
+    }
+  }
+  const w = new W();
+  w.other = new W();
+  out.privateTargets = {
+    accessorTrace: new T().run(),
+    field: w.field,
+    initial: W.initial,
+    update: W.update(new W()),
+    compound: w.compound(),
+    logical: w.logical(),
+    destructuring: w.destructuring(w.other),
+    loopHeads: w.loopHeads(),
+    nested: w.nested(),
+    errors: w.errors({}),
+    receiverEvals: n,
+  };
+}
+
 // \`super\`, \`this\` and nested scopes in the static code of a decorated
 // class. The expected values are what node prints for the same class without
 // the decorator.
@@ -2408,6 +2630,19 @@ const extraExpected = {
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
+  privateTargets: {
+    accessorTrace: ["get", "set:2", "get", "set:4", "get", "get", "set:5", "set:6", "set:7"],
+    field: 6,
+    initial: 6,
+    update: [6, 6, 7, 5, 5, "1", "3", 1, 3, 10, 8, 6, 8, 8, 5, 4, 8, 6, 4, 9, 1, 2, "number", -6, null, 7, 0, 1, 2],
+    compound: [9, 8, 24, 12, 5, 25, 100, 50, 25, 25, 8, 13, "13s", "3", 6, 7, 70, "13st", 5, 14, 6, 4, 6, 6],
+    logical: ["a", "a", "a", "d", "d", 2, 2, 0, 0, 0, 0, 0, 0, 6, 6, 6, 2, null, "e", "e", 9, 2, "g", "h", "g", 1110],
+    destructuring: [2, 1, 3, 4, 5, 6, 7, 8, 9, 13, [11, 12], { "x": 14 }, 13, 15, 16, 17, 18, 19, 1, 20, [21, 21]],
+    loopHeads: [1, 2, "x", "y", 4, 3, 5, 6, 7, { "z": 8 }, 9, 10, "z", 13, 12],
+    nested: [1, 3, 13, [23, 24], 46, ["0", "v"]],
+    errors: [16, "function", "function", 1],
+    receiverEvals: 1115,
+  },
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],
   staticScopesAsync: 1,

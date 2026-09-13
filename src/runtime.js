@@ -239,6 +239,14 @@ export var __privateSet = (obj, member, value, setter) => (
   value
 );
 export var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+export var __privateWrapper = (obj, member, setter, getter) => ({
+  set _(value) {
+    __privateSet(obj, member, value, setter);
+  },
+  get _() {
+    return __privateGet(obj, member, getter);
+  },
+});
 
 export var __decoratorStart = base => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];

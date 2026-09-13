@@ -248,8 +248,6 @@ pub(crate) enum SearchDir {
 pub(crate) struct Preprocessor {
     pub(crate) files: Rc<RefCell<FileTable>>,
     pub(crate) target: Target,
-    /// Microsoft C: a Windows target with no GNU C version claimed.
-    pub(crate) msvc: bool,
     pub(crate) macros: BTreeMap<Rc<str>, Rc<Macro>>,
     pub(crate) frames: Vec<Frame>,
     /// Macro expansions in progress, innermost last.
@@ -286,7 +284,6 @@ impl Preprocessor {
         Preprocessor {
             files,
             target,
-            msvc: false,
             macros: BTreeMap::new(),
             frames: Vec::new(),
             contexts: Vec::new(),

@@ -191,6 +191,15 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
         ExprKind::FloatLit(v) => Ok(Const::Float(*v)),
         ExprKind::LongDoubleLit(v) => Ok(Const::LongDouble(*v)),
         ExprKind::AddrOf(inner) | ExprKind::Decay(inner) => eval_addr(inner, tcx),
+        ExprKind::Cast(inner) if ty.is_long_double() && inner.ty.is_int128() => {
+            match eval_int128(inner, tcx) {
+                Some(v) if !tcx.is_signed(&inner.ty) => {
+                    Ok(Const::LongDouble(Extended::from_u128(v as u128)))
+                }
+                Some(v) => Ok(Const::LongDouble(Extended::from_i128(v))),
+                None => not_constant(e.loc),
+            }
+        }
         ExprKind::Cast(inner) => {
             let v = eval(inner, tcx)?;
             let from = &inner.ty;

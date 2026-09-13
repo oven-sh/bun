@@ -823,7 +823,8 @@ impl Preprocessor {
         }
         // Microsoft's C runtime has these itself, written for one another: the compiler's own
         // stand in only where that one is not installed.
-        let theirs_first = self.msvc && MSVC_RUNTIME_HEADERS.contains(&name);
+        let theirs_first =
+            self.target.os == crate::types::Os::Windows && MSVC_RUNTIME_HEADERS.contains(&name);
         for index in start..self.search.len() {
             if theirs_first && matches!(self.search[index], SearchDir::Builtin) {
                 continue;

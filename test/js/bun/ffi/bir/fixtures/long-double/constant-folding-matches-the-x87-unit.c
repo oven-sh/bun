@@ -1,0 +1,522 @@
+/* The compiler computes with long double constants itself, in software, and must get what the x87 unit gets: the
+   same operands are combined in static initializers (at compile time) and at run time, and the ten bytes of each
+   result compared. The operands are ones that are hard to round: results that are subnormal, that overflow, that
+   cancel, operands sixty-four binary places apart, ties. */
+#include <float.h>
+#include <stdio.h>
+#include <string.h>
+
+static int checks, wrong;
+static void same(const char *what, int row, long double folded, long double computed) {
+  checks++;
+  if (memcmp(&folded, &computed, 10) != 0) {
+    wrong++;
+    printf("WRONG: row %d %s: %La at compile time, %La at run time\n", row, what, folded, computed);
+  }
+}
+
+#define ROW(n, A, B) \
+  static const long double sum##n = (A) + (B), difference##n = (A) - (B), product##n = (A) * (B), quotient##n = (A) / (B); \
+  static void row##n(void) { \
+    volatile long double a = (A), b = (B); \
+    same("+", n, sum##n, a + b); \
+    same("-", n, difference##n, a - b); \
+    same("*", n, product##n, a * b); \
+    same("/", n, quotient##n, a / b); \
+  }
+
+ROW(0, -0xad7dd140587fc437p-16445L, 0xe5ecf8a23bce1c54p-66L)
+ROW(1, 0x8000000000000000p-96L, 0xaf78685383922c4dp-16443L)
+ROW(2, -0xb9bff89000000000p-92L, 0xb931f6e82f5e11f1p-16443L)
+ROW(3, 0x8000000000000000p-67L, 0xc714249200000000p16318L)
+ROW(4, -0x8c0f3d4cbb2a9eb3p-16445L, -0xe98866e04dc12153p-43L)
+ROW(5, -0x8000000000000000p12310L, -0x8000000000000000p12310L)
+ROW(6, 0x8000000000000000p16320L, 0x8000000000000000p16320L)
+ROW(7, -0x8000000000000000p12192L, -0x8000000000000000p12192L)
+ROW(8, 0xad6005a38f2e874ep-16445L, -0xd4c74f6326f5e000p-16445L)
+ROW(9, 0x0d71c00000000000p-16445L, 0x034b06fc9f879b0ep-16445L)
+ROW(10, 0xcef632b38904dcefp16318L, -0xc13e4b1225889400p16320L)
+ROW(11, -0xdfe9771954000000p16318L, -0xd700d4bc91b7acb5p16317L)
+ROW(12, 0x9d78162175df7166p-63L, 0x8f790d37f0b9a438p-62L)
+ROW(13, -0x91cd1d0c0129b881p8310L, -0xa7dd26c29f22f717p14338L)
+ROW(14, -0xfa9b31e400000000p-126L, -0xd85a6c5895b09627p-62L)
+ROW(15, 0xcec6bbdbcd1ad144p-64L, 0xfc2c9d7bc0000000p0L)
+ROW(16, 0xbfeb67df00000000p-128L, 0xe7de561d0bb7f5d7p-64L)
+ROW(17, 0x8000000000000001p-63L, 0x8000000000000000p-127L)
+ROW(18, 0x8000000000000001p-63L, 0x8000000000000001p-127L)
+ROW(19, 0xffffffffffffffffp-63L, 0x8000000000000000p-127L)
+ROW(20, 0xc90fdaa22168c235p-62L, 0xb504f333f9de6484p-63L)
+ROW(21, 0x0000000000000001p-16445L, 0x8000000000000000p-64L)
+ROW(22, 0x0000000000000003p-16445L, 0x8000000000000000p-64L)
+ROW(23, 0xffffffffffffffffp16320L, 0x8000000000000000p-128L)
+ROW(24, 0xffffffffffffffffp16320L, 0x8000000000000000p16255L)
+ROW(25, 0x0000000000655b2ep-16445L, 0xaa87aec600000000p16275L)
+ROW(26, -0xbed4e6d400000000p-16382L, -0x8fbfe1b400000000p-11823L)
+ROW(27, -0xc1bdd36a87c6cd13p-1422L, -0xdc2e8f700a705049p-1422L)
+ROW(28, 0x0000000018b4803dp-16445L, -0x80000000000000dfp-16378L)
+ROW(29, -0x8064bc4dd83d529fp-16417L, 0xa655c3e620d23aa1p-13781L)
+ROW(30, 0x0000000003bec190p-16445L, 0xc65062fda1441b58p16253L)
+ROW(31, 0xb8c6849800000000p-16435L, -0x8000000000000000p11236L)
+ROW(32, 0x8000000000000000p-123L, 0xcba8464330b20c14p-132L)
+ROW(33, 0xfe0f4b7bf4f81063p-16432L, 0xffb6829a00000000p-16388L)
+ROW(34, -0xdc98f47ce8a275bep2641L, 0xae45f2d3ff998a7dp-16408L)
+ROW(35, -0xffffffffffffffffp1180L, -0xea0744837d071869p1180L)
+ROW(36, 0x8000000000000000p2786L, 0x800000000000005ep-93L)
+ROW(37, 0x91de927e00000000p8072L, -0x8000000000000000p-16399L)
+ROW(38, -0xffffffffffffffffp-16413L, -0x80000000000000b2p9475L)
+ROW(39, -0xffffffffffffffffp13767L, 0xdf739cf674aed80bp-16418L)
+ROW(40, -0xffffffffffffffffp5271L, -0x8000000000000000p6853L)
+ROW(41, 0xb72da6e200000000p-103L, -0x0000000000011c5ap-16445L)
+ROW(42, -0x80000000000000e0p5L, -0xedf8876400000000p-19L)
+ROW(43, 0x8000000000000087p-16377L, -0xffffffffffffffffp-1144L)
+ROW(44, 0x800000000000004ep16263L, -0xe3ba3e49931eed2cp16263L)
+ROW(45, -0x8000000000000000p-6873L, -0x96cc8b7600000000p10219L)
+ROW(46, -0xfccb93c800000000p5415L, -0x8000000000000000p5415L)
+ROW(47, 0x8000000000000020p6015L, 0xd8044a9c00000000p-16395L)
+ROW(48, 0x8000000000000000p16315L, -0xffffffffffffffffp5677L)
+ROW(49, 0x8000000000000000p-109L, 0xfb499a5200000000p16313L)
+ROW(50, -0xa8692a83c9085a27p-70L, -0x8000000000000064p-70L)
+ROW(51, -0xffffffffffffffffp-16436L, 0x0000000000000098p-16445L)
+ROW(52, -0xffffffffffffffffp-13101L, 0xa8175aa748053ec0p13464L)
+ROW(53, -0x8000000000000088p16276L, 0xffffffffffffffffp4803L)
+ROW(54, -0xcb4862cc00000000p-15614L, 0xcd9cb437ef0e0c90p-15614L)
+ROW(55, 0x0000000000077b1bp-16445L, 0x8000000000000000p-16429L)
+ROW(56, -0xa64cd2e8cf9c0f17p7674L, -0x8e01a7b6cc9559d6p16252L)
+ROW(57, -0xe48408cb8b5ff55cp3613L, 0x94ad37fbab97b3fep3670L)
+ROW(58, -0x80000000000000aap-75L, 0x8e201455702f6698p-75L)
+ROW(59, 0x9713af7a00000000p6648L, -0xd7aeb5cff0416e55p7027L)
+ROW(60, 0xb124138c741f5668p-90L, -0x8000000000000000p-90L)
+ROW(61, 0x995cd0ec1325df21p16032L, -0x80000000000000d9p16050L)
+ROW(62, 0x0a2db415adb0ae44p-16445L, -0xe963388200000000p11231L)
+ROW(63, 0x8f833404149fdc4dp-4969L, 0xffffffffffffffffp-4969L)
+ROW(64, 0x900128b3f949a037p-8235L, -0x8dc62be7bfa7d2e6p-39L)
+ROW(65, 0xffffffffffffffffp-7029L, -0xffffffffffffffffp-7120L)
+ROW(66, 0x9502720648e75adbp-535L, 0xe928ba3800000000p-16418L)
+ROW(67, 0xe247f1aff01de5c3p8746L, -0x8000000000000000p5736L)
+ROW(68, -0x8000000000000000p16258L, 0x95a5f89096272c26p1814L)
+ROW(69, 0x9fcc2680b894b964p11514L, 0xe8b8841c026322e6p-5075L)
+ROW(70, -0xffffffffffffffffp16252L, 0xffffffffffffffffp2229L)
+ROW(71, 0x003220a323c0d7d8p-16445L, 0xfe66965200000000p5258L)
+ROW(72, 0x8fbcecfc79e88df6p-110L, -0x800000000000004ap-139L)
+ROW(73, -0x80000000000000f9p-14401L, -0xffffffffffffffffp-14345L)
+ROW(74, 0x80d0dade00000000p-2188L, 0xffffffffffffffffp-2135L)
+ROW(75, 0xffffffffffffffffp2879L, 0x0042ca6e26f29de2p-16445L)
+ROW(76, 0x0000000000000038p-16445L, -0xd57525c9a4e55de2p12402L)
+ROW(77, 0x80000000000000eap13425L, -0xda0c1a00b948d556p-9416L)
+ROW(78, -0x800000000000000ap15629L, -0xffffffffffffffffp-57L)
+ROW(79, 0xc2a37182250fb552p14362L, -0xffffffffffffffffp16256L)
+ROW(80, 0x8000000000000050p-8745L, 0x0000001f84e83cf6p-16445L)
+ROW(81, 0x8000000000000000p16279L, -0xc844248535e37c88p16264L)
+ROW(82, 0x8000000000000000p-2194L, 0xaf3a545441eed3e0p4754L)
+ROW(83, 0x8000000000000000p2204L, -0xc04a1ec0804457d9p-4508L)
+ROW(84, 0xffffffffffffffffp4005L, 0xb60e369800000000p4005L)
+ROW(85, 0x8000000000000000p-4358L, 0x8000000000000000p-14997L)
+ROW(86, 0x98d37cca00000000p-16400L, 0x8ae9745f59fd5574p-16434L)
+ROW(87, 0x80000000000000b5p12761L, 0xb398bd81ccd92e3dp12764L)
+ROW(88, -0xa7906eb030d2e52ap2726L, -0xe02cc5a549025211p2752L)
+ROW(89, -0x0008a3d7032ec8a2p-16445L, -0xcfbb87180393959ap12336L)
+ROW(90, 0xbdce62b367db66d3p-16434L, -0xcc82a124331c85f9p-15870L)
+ROW(91, 0xe717854e00000000p-564L, -0xb6a6f64a55554b04p-534L)
+ROW(92, 0xb27b428a8f3d0820p16114L, -0x98c5c7a188ff752fp14854L)
+ROW(93, -0x8000000000000000p-16438L, -0x8000000000000000p-118L)
+ROW(94, 0xb4b9b06000000000p16266L, 0xe438ec2934daed5dp-10115L)
+ROW(95, 0x8000000000000000p10838L, -0x8000000000000000p11771L)
+ROW(96, -0x8000000000000000p16312L, 0x8000000000000000p1434L)
+ROW(97, 0x8000000000000078p-16427L, -0x9ac84003ed58ad42p-16407L)
+ROW(98, 0xd782373400000000p111L, 0x00074da5f9cd088dp-16445L)
+ROW(99, 0xb100f99abb4fdb75p14296L, -0xe6b57b585294bd8dp14234L)
+ROW(100, 0x914e54ccce85162fp-11724L, 0xf2631a5d8203ba63p-11724L)
+ROW(101, 0x000000000000470dp-16445L, 0xfc32b8f895381fccp9077L)
+ROW(102, 0x831af4f000000000p-15017L, -0xe9b33a349a201026p-6960L)
+ROW(103, -0x8000000000000000p-128L, -0xffffffffffffffffp-13190L)
+ROW(104, -0x0000000000000001p-16445L, -0xffffffffffffffffp-130L)
+ROW(105, -0xaf48a3dc00000000p-8L, -0x8000000000000000p-5209L)
+ROW(106, 0xffffffffffffffffp-85L, 0x000000000000000cp-16445L)
+ROW(107, 0x8000000000000000p16257L, 0x804555e5cd3b608bp16257L)
+ROW(108, 0x8000000000000014p-16442L, -0xe16fb52c0f8e308ep-14794L)
+ROW(109, -0x8000000000000000p12241L, -0xa6199ede00000000p16290L)
+ROW(110, 0x80000000000000f0p-73L, -0xb75058ab0dac2f97p11409L)
+ROW(111, 0x8d6d3516e9ca0b9cp4005L, -0x8000000000000000p4005L)
+ROW(112, -0x00000008a9c2f527p-16445L, 0x003db7f217f9b349p-16445L)
+ROW(113, -0x8000000000000000p-12391L, 0x000e5df79e6be371p-16445L)
+ROW(114, -0xabd03d4e00000000p802L, -0xb180c905417c8518p-1995L)
+ROW(115, 0x00000000000016cdp-16445L, 0xe2fd6b8600000000p-7506L)
+ROW(116, 0x8000000000000000p4566L, 0xd930e02032883853p-15527L)
+ROW(117, 0x0000000031dcb1a9p-16445L, 0x9d501fc7612f452fp-16407L)
+ROW(118, -0x8000000000000000p-9412L, -0x8651b130559e2ddfp16287L)
+ROW(119, 0xffffffffffffffffp7424L, -0xa679ce3cd661f4ccp7398L)
+ROW(120, -0x8000000000000096p-14791L, -0x9f38979a00000000p-14804L)
+ROW(121, -0x0000000000000001p-16445L, -0x9a5ea59c00000000p-119L)
+ROW(122, 0x8000000000000000p-51L, 0x8000000000000000p16305L)
+ROW(123, -0xbdfc0e4d74443a16p-28L, 0xd0549ce3478a3e78p16265L)
+ROW(124, 0x80000000000000aep-1750L, -0x9e25e417cd027b7bp2651L)
+ROW(125, -0xe1aa36f7dece865ap13856L, 0x8000000000000000p16273L)
+ROW(126, -0xa3c248d600000000p8823L, 0xffffffffffffffffp8781L)
+ROW(127, 0x02aa7db20e2eb9c0p-16445L, 0x800000000000009dp-7466L)
+ROW(128, -0xea58253600000000p16262L, 0xc5c2216000000000p-69L)
+ROW(129, 0xabe7c2bf7388a1edp-2436L, -0x8000000000000079p7284L)
+ROW(130, 0x8000000000000000p-14659L, -0x9b5913ab66669f50p-11377L)
+ROW(131, 0x800000000000000ep-86L, -0x8000000000000000p13372L)
+ROW(132, -0x8000000000000077p4334L, -0xfceaa0ff60c38d41p-61L)
+ROW(133, -0x80000000000000cdp-9409L, 0xffffffffffffffffp-1536L)
+ROW(134, -0xffffffffffffffffp8815L, 0xef82c21433ef8319p-6199L)
+ROW(135, 0xb39ba2a800000000p-117L, -0x8000000000000000p-16377L)
+ROW(136, 0x0000000000000d44p-16445L, 0x8000000000000000p-13046L)
+ROW(137, 0xbd3fec8c00000000p-16383L, -0xf7e91ba200000000p-16403L)
+ROW(138, -0x9b93c83000000000p4295L, -0xc53e7d5531e99cb8p4282L)
+ROW(139, 0x840667c600000000p6667L, -0x800000000000001fp6667L)
+ROW(140, 0x8000000000000025p16286L, -0x96a3973423bb36bfp4881L)
+ROW(141, 0x8000000000000000p8855L, 0xc9569638bfd1eca0p-68L)
+ROW(142, -0xa424734400000000p16252L, 0x8000000000000000p-4191L)
+ROW(143, 0xfc477284c18344fep-49L, -0x80000000000000fbp-16409L)
+ROW(144, -0x800000000000000bp16263L, 0x8000000000000000p8768L)
+ROW(145, -0x0000000002db1b5fp-16445L, -0xc6bf76aacf1566c3p16273L)
+ROW(146, 0x8000000000000000p-16433L, -0xb43afcdf33d0963bp10966L)
+ROW(147, 0x8000000000000000p1374L, -0x8000000000000000p-1098L)
+ROW(148, 0x8000000000000000p16260L, -0xffffffffffffffffp16287L)
+ROW(149, 0xfd21f96400000000p12730L, -0x80000000000000fap13408L)
+ROW(150, 0x8000000000000000p9100L, 0xfb9f405ba2cfe4bep9134L)
+ROW(151, -0x800000000000004ap14633L, 0x81f93900b0ee721dp-7099L)
+ROW(152, -0xfad50d99ce679fd0p-16388L, -0xc997c08c00000000p16217L)
+ROW(153, -0x81bf2ac6ac2e2ba1p-11268L, -0x8000000000000000p2L)
+ROW(154, -0x8000000000000000p16294L, -0x0000000000000360p-16445L)
+ROW(155, 0xffffffffffffffffp16268L, 0x8000000000000015p16298L)
+ROW(156, -0xe93ea44d68ab6a7bp-2017L, 0x94a647511422261fp-17L)
+ROW(157, -0xe3dd5cb51f882961p-13007L, 0xb40c520c95444a6ep-12989L)
+ROW(158, -0x8000000000000000p-1534L, -0x8000000000000000p-6219L)
+ROW(159, 0xc6a3ea1c5d68bd05p-16441L, -0x800000000000004ep-6596L)
+ROW(160, 0x0000000000000004p-16445L, -0x8000000000000000p14429L)
+ROW(161, -0x8000000000000000p-105L, 0xffffffffffffffffp777L)
+ROW(162, -0x800000000000002fp11179L, -0x8000000000000000p-16377L)
+ROW(163, -0xffffffffffffffffp12101L, -0x9b85fadd8620e382p16312L)
+ROW(164, 0x8000000000000000p-795L, 0xffffffffffffffffp-92L)
+ROW(165, 0xffffffffffffffffp11308L, 0x800000000000001ep-11380L)
+ROW(166, 0x00000000019e05a6p-16445L, 0xffffffffffffffffp-11372L)
+ROW(167, -0xb5820c0465706458p-16383L, 0x0000000000000002p-16445L)
+ROW(168, 0x80000000000000d5p9415L, 0xa6d30bc2ec0ca51cp9415L)
+ROW(169, -0x8bee4b8e532c8389p-112L, 0xae945bb000000000p16255L)
+ROW(170, 0xffffffffffffffffp6845L, -0xe71818f0d1042e08p-9239L)
+ROW(171, -0x80000000000000afp-16329L, 0x000000000000003cp-16445L)
+ROW(172, 0xd60a62a800000000p16263L, 0xe940bff800000000p-2102L)
+ROW(173, 0x905b68271ce928dcp16265L, -0xb240aef313a5ef17p16265L)
+ROW(174, -0x001d4df8a8c3c49dp-16445L, 0x8000000000000089p15861L)
+ROW(175, 0xc4d4235b5564b55ap704L, -0x000000015df20276p-16445L)
+ROW(176, 0xb92d2a3f4a4727b4p-13113L, -0xb53b48eb77705937p16280L)
+ROW(177, -0xffffffffffffffffp-11244L, 0x000000002e204df8p-16445L)
+ROW(178, 0xffffffffffffffffp-10277L, 0xffffffffffffffffp-10277L)
+ROW(179, -0xffffffffffffffffp16312L, -0xaed89492adcf0188p-114L)
+ROW(180, -0xe22bea1c313a12eap4845L, 0x0000000004bb3982p-16445L)
+ROW(181, 0x8000000000000000p2157L, -0xaf9504b8ba9f32aep2157L)
+ROW(182, -0xd4619f507837fd1dp16269L, -0x8000000000000000p16306L)
+ROW(183, 0x00060df5268673fdp-16445L, -0xe8a4d8f01e78ed78p10182L)
+ROW(184, 0xd2497e532ddadbecp-16381L, 0x8000000000000000p-16381L)
+ROW(185, -0xc19aeaa0e8ccef17p5617L, 0x8000000000000075p16257L)
+ROW(186, 0x800000000000003fp-1683L, -0xe9589cdc00000000p-71L)
+ROW(187, 0xffffffffffffffffp9992L, 0xffffffffffffffffp16314L)
+ROW(188, -0xa943cb6f91672003p13660L, -0x8000000000000000p-4270L)
+ROW(189, -0x92f96681a706f6cbp1992L, -0xc10f54f200000000p1992L)
+ROW(190, 0x8000000000000000p-3148L, 0xe99fc74a00000000p8661L)
+ROW(191, -0xffffffffffffffffp-6219L, -0xf3d0598261f7c985p-99L)
+ROW(192, 0x8000000000000000p16296L, 0xff409659edb65334p1811L)
+ROW(193, -0xa3524285d5bb7c6bp-13769L, 0x8b9b2a8ee9a106b9p-16442L)
+ROW(194, -0x80000000000000e6p151L, -0x00061880931d471ep-16445L)
+ROW(195, -0x8000000000000000p15974L, 0x800000000000004dp-16384L)
+ROW(196, -0x000001b5137b23efp-16445L, 0xa20808984e5ddbcap-4867L)
+ROW(197, 0xb464c1887a6840e7p1553L, -0x80000000000000f0p1553L)
+ROW(198, 0x8000000000000002p-15957L, 0xa7835b83d509834ap-16020L)
+ROW(199, 0x80000000000000abp-27L, 0x0000025091647c7fp-16445L)
+ROW(200, 0x995b274135123eb8p362L, -0x8000000000000000p-3671L)
+ROW(201, 0x8000000000000000p4479L, 0x92d90ee7c71411afp-6L)
+ROW(202, 0x800000000000004dp7303L, -0xb4d5d4e800000000p6442L)
+ROW(203, 0xfb536df016f46bc0p-10788L, -0xbabef11a05426c4dp-1742L)
+ROW(204, 0xce0c910400000000p3090L, 0xf72f8b508452599bp-16410L)
+ROW(205, -0xffffffffffffffffp2L, -0x8000000000000000p16303L)
+ROW(206, 0x000931a0f294ddeep-16445L, 0xcc930e3c00000000p-12614L)
+ROW(207, -0x000000000067e206p-16445L, 0x8000000000000000p-9181L)
+ROW(208, 0xbc20515c00000000p-9039L, 0x8000000000000057p12188L)
+ROW(209, 0x8000000000000000p16291L, -0xa04cd8fc4958a382p-16377L)
+ROW(210, 0xefe019d400000000p5932L, -0xffffffffffffffffp-16410L)
+ROW(211, -0x80000000000000fcp10482L, 0xbdfdabccf1726ea2p9987L)
+ROW(212, -0xc7f96c7ef334c60dp-13939L, -0x8000000000000018p14722L)
+ROW(213, 0x80000000000000c3p16260L, 0x8000000000000000p-16444L)
+ROW(214, 0x80a89fd2180b6150p158L, 0xf4de06f8e34c8030p13170L)
+ROW(215, -0x80000000000000ffp-16382L, -0xfd60b5f255bab0afp-13893L)
+ROW(216, 0xda470c9800000000p16262L, 0xb1c156c000000000p16262L)
+ROW(217, 0x8000000000000000p16272L, 0xffffffffffffffffp-109L)
+ROW(218, -0xfc55682441e408e7p7390L, 0xffffffffffffffffp7414L)
+ROW(219, 0x000000004ffa054fp-16445L, -0x8000000000000000p11410L)
+ROW(220, 0xffffffffffffffffp16255L, -0x90fc6e9d7bc51e0ep4942L)
+ROW(221, -0xffffffffffffffffp-107L, 0xffffffffffffffffp-107L)
+ROW(222, 0x80f2daac55e56edep-3875L, 0x8000000000000000p7076L)
+ROW(223, 0x00000000000dfe57p-16445L, 0xbd9ca19200000000p-8067L)
+ROW(224, -0x8000000000000000p16284L, 0x8000000000000000p-89L)
+
+/* Conversions of constants, either way. */
+static const double as_double = 0.1L, from_double = (long double)0.1;
+static const float as_float = 16777217.0L;
+static const long long truncated = (long long)2.5L, truncated_negative = (long long)-2.5L;
+static const unsigned long long big_unsigned = (unsigned long long)18446744073709551615.0L;
+static const long double from_unsigned = 18446744073709551615ULL, from_negative = -1LL, from_wide = (long double)((__int128)1 << 100);
+static const long double third = 1.0L / 3.0L, thirds = 1.0L / 3.0L + 1.0L / 3.0L + 1.0L / 3.0L, tenth_squared = 0.1L * 0.1L;
+static const int compared = (0.1L < 0.2L) + (0.1L == 0.1L) * 2 + (1.0L / 3.0L > 0.3333L) * 4 + (-0.0L == 0.0L) * 8;
+
+int main(void) {
+
+  row0();
+  row1();
+  row2();
+  row3();
+  row4();
+  row5();
+  row6();
+  row7();
+  row8();
+  row9();
+  row10();
+  row11();
+  row12();
+  row13();
+  row14();
+  row15();
+  row16();
+  row17();
+  row18();
+  row19();
+  row20();
+  row21();
+  row22();
+  row23();
+  row24();
+  row25();
+  row26();
+  row27();
+  row28();
+  row29();
+  row30();
+  row31();
+  row32();
+  row33();
+  row34();
+  row35();
+  row36();
+  row37();
+  row38();
+  row39();
+  row40();
+  row41();
+  row42();
+  row43();
+  row44();
+  row45();
+  row46();
+  row47();
+  row48();
+  row49();
+  row50();
+  row51();
+  row52();
+  row53();
+  row54();
+  row55();
+  row56();
+  row57();
+  row58();
+  row59();
+  row60();
+  row61();
+  row62();
+  row63();
+  row64();
+  row65();
+  row66();
+  row67();
+  row68();
+  row69();
+  row70();
+  row71();
+  row72();
+  row73();
+  row74();
+  row75();
+  row76();
+  row77();
+  row78();
+  row79();
+  row80();
+  row81();
+  row82();
+  row83();
+  row84();
+  row85();
+  row86();
+  row87();
+  row88();
+  row89();
+  row90();
+  row91();
+  row92();
+  row93();
+  row94();
+  row95();
+  row96();
+  row97();
+  row98();
+  row99();
+  row100();
+  row101();
+  row102();
+  row103();
+  row104();
+  row105();
+  row106();
+  row107();
+  row108();
+  row109();
+  row110();
+  row111();
+  row112();
+  row113();
+  row114();
+  row115();
+  row116();
+  row117();
+  row118();
+  row119();
+  row120();
+  row121();
+  row122();
+  row123();
+  row124();
+  row125();
+  row126();
+  row127();
+  row128();
+  row129();
+  row130();
+  row131();
+  row132();
+  row133();
+  row134();
+  row135();
+  row136();
+  row137();
+  row138();
+  row139();
+  row140();
+  row141();
+  row142();
+  row143();
+  row144();
+  row145();
+  row146();
+  row147();
+  row148();
+  row149();
+  row150();
+  row151();
+  row152();
+  row153();
+  row154();
+  row155();
+  row156();
+  row157();
+  row158();
+  row159();
+  row160();
+  row161();
+  row162();
+  row163();
+  row164();
+  row165();
+  row166();
+  row167();
+  row168();
+  row169();
+  row170();
+  row171();
+  row172();
+  row173();
+  row174();
+  row175();
+  row176();
+  row177();
+  row178();
+  row179();
+  row180();
+  row181();
+  row182();
+  row183();
+  row184();
+  row185();
+  row186();
+  row187();
+  row188();
+  row189();
+  row190();
+  row191();
+  row192();
+  row193();
+  row194();
+  row195();
+  row196();
+  row197();
+  row198();
+  row199();
+  row200();
+  row201();
+  row202();
+  row203();
+  row204();
+  row205();
+  row206();
+  row207();
+  row208();
+  row209();
+  row210();
+  row211();
+  row212();
+  row213();
+  row214();
+  row215();
+  row216();
+  row217();
+  row218();
+  row219();
+  row220();
+  row221();
+  row222();
+  row223();
+  row224();
+
+  volatile long double one = 1.0L, three = 3.0L, tenth = 0.1L;
+  same("1/3", 100, third, one / three);
+  same("1/3+1/3+1/3", 101, thirds, one / three + one / three + one / three);
+  same("0.1*0.1", 102, tenth_squared, tenth * tenth);
+  volatile long double wide_unsigned = 18446744073709551615.0L;
+  volatile unsigned long long all_ones = 18446744073709551615ULL;
+  volatile long long minus_one = -1;
+  same("from unsigned", 103, from_unsigned, (long double)all_ones);
+  same("from negative", 104, from_negative, (long double)minus_one);
+  volatile __int128 shifted = (__int128)1 << 100;
+  same("from 128 bits", 105, from_wide, (long double)shifted);
+  checks += 6;
+  wrong += as_double != (double)tenth;
+  wrong += from_double != 0.1;
+  wrong += as_float != 16777216.0f;
+  wrong += truncated != 2 || truncated_negative != -2;
+  wrong += big_unsigned != (unsigned long long)wide_unsigned;
+  wrong += compared != 15;
+
+  /* Decimal and hexadecimal constants round to the nearest 64-bit significand, ties to even. */
+  printf("%La %La %La %La\n", 1.0L, 1.5L, 0.1L, 3.1415926535897932384626433832795029L);
+  printf("%La %La %La %La\n", LDBL_MAX, LDBL_MIN, LDBL_EPSILON, 3.64519953188247460253e-4951L);
+  printf("%La %La %La\n", 1e-5000L, 1.8e-4951L, 1.9e-4951L);
+  printf("%La %La %La\n", 18446744073709551615.5L, 18446744073709551616.5L, 18446744073709551617.5L);
+  printf("%La %La %La\n", 0x1.0000000000000001p0L, 0x1.0000000000000003p0L, 0x1.00000000000000010000001p0L);
+  printf("%La %La\n", 0x0.0000000000000008p-16385L, 0x0.0000000000000018p-16385L);
+  printf("%.21Lg %.21Lg %.21Lg\n", 0.1L, 1e4931L, 123456789012345678901234567890.0L);
+  printf("%.21Lg %.21Lg\n", 2.2250738585072014e-308L, 4.9406564584124654e-324L);
+
+  printf("%s, %d wrong\n", checks == 912 ? "every check made" : "checks are missing", wrong);
+  return wrong != 0;
+}

@@ -162,8 +162,6 @@ pub(crate) struct Parser<S: TokenSource> {
     /// A `cleanup` attribute written among a declarator's pointer qualifiers
     /// (`char *__attribute__((cleanup(f))) p`): it belongs to the variable being declared.
     declarator_cleanup: Option<(Rc<str>, Loc)>,
-    /// Microsoft C: a Windows target with no GNU C version claimed.
-    msvc: bool,
     /// See `Attrs::declspec_align`.
     declspec_struct_align: Option<u64>,
 }
@@ -237,7 +235,6 @@ impl<S: TokenSource> Parser<S> {
             declarator_parens: 0,
             pending_cleanups: Vec::new(),
             declarator_cleanup: None,
-            msvc: false,
             declspec_struct_align: None,
         };
         parser.cur = parser.fetch()?;
@@ -393,12 +390,6 @@ impl<S: TokenSource> Parser<S> {
     }
 
     // ───────────────────────────── translation unit ─────────────────────────────
-
-    /// Microsoft C rather than GNU C, where they differ in meaning and not just in spelling.
-    pub(crate) fn microsoft_c(mut self, yes: bool) -> Self {
-        self.msvc = yes;
-        self
-    }
 
     pub(crate) fn parse_program(mut self) -> Res<Program> {
         while self.cur.tok != Tok::Eof {
@@ -736,7 +727,7 @@ impl<S: TokenSource> Parser<S> {
         }
         // Microsoft's `inline` is C++'s: every unit that uses the function has a definition of
         // its own, whatever other declarations say, and none is the program's one.
-        if self.msvc && spec.is_inline && is_definition {
+        if self.dialect.microsoft && spec.is_inline && is_definition {
             f.inlining |= INLINE_ONLY_DEFINITION;
             f.linkonce = !is_static;
         }
@@ -954,7 +945,9 @@ impl<S: TokenSource> Parser<S> {
             labels: BTreeMap::new(),
             nlabels: 0,
             nstatics: 0,
-            shared_statics: self.msvc && spec.is_inline && spec.storage != Storage::Static,
+            shared_statics: self.dialect.microsoft
+                && spec.is_inline
+                && spec.storage != Storage::Static,
             variadic: fty.variadic,
             address_labels: Vec::new(),
             label_vla_paths: BTreeMap::new(),
@@ -3260,6 +3253,18 @@ impl<S: TokenSource> Parser<S> {
         let mut operand_names: [Vec<Option<Vec<u8>>>; 2] = [Vec::new(), Vec::new()];
         let mut clobber_list: Vec<Vec<u8>> = Vec::new();
         let mut clobbers_memory = false;
+        // Without a colon the statement is "basic asm": its text is the instructions as they
+        // are, and a `%` in it is a percent sign rather than the start of an operand.
+        if !self.at(Punct::Colon) {
+            let mut literal = Vec::with_capacity(template.len());
+            for &byte in &template {
+                literal.push(byte);
+                if byte == b'%' {
+                    literal.push(b'%');
+                }
+            }
+            template = literal;
+        }
         for section in 0..3 {
             if !(self.eat(Punct::Colon)?) {
                 break;
@@ -3406,9 +3411,11 @@ impl<S: TokenSource> Parser<S> {
                     .any(|(m, _)| &m[..] == b"lfence" || &m[..] == b"sfence"));
         // Directives that only place the code that follows.
         let placement: &[&[u8]] = &[b".p2align", b".align", b".balign"];
-        let only_hints = instructions
-            .iter()
-            .all(|(m, _)| is(m, hints) || is(m, placement));
+        // (`rep; nop` and `rep nop` spell `pause`; before anything else `rep` is a prefix.)
+        let only_hints = instructions.iter().all(|(m, a)| {
+            let repeats_something = &m[..] == b"rep" && !a.is_empty() && &a[..] != b"nop";
+            (is(m, hints) && !repeats_something) || is(m, placement)
+        });
         let xgetbv = x86
             && match instructions.as_slice() {
                 [(m, _)] if &m[..] == b"xgetbv" => true,

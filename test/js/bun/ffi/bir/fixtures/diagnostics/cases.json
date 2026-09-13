@@ -1237,5 +1237,205 @@
   "column": 67,
   "message": "_InterlockedCompareExchange128: a 16-byte compare and swap is not supported",
   "requires": "windows"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"popq %%rax\" : : : \"rax\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'popq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"ret\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'ret' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"call 1f\\n1:\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'call' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"int $3\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'int' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"syscall\" : : : \"rcx\", \"r11\", \"memory\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'syscall' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { long long v; __asm__(\"movq foo(%%rip), %0\" : \"=r\"(v)); return (int)v; }",
+  "line": 1,
+  "column": 31,
+  "message": "inline assembly: 'foo' is not a number",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { long long v = 1; __asm__(\"frobnicate %0\" : \"+r\"(v)); return (int)v; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: unsupported instruction 'frobnicate'",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { long long v = 1; __asm__(\"jmp *%0\" : : \"r\"(v)); return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: '*%rax' is not a number",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { long long v = 1; __asm__(\"movq %0\" : \"+r\"(v)); return (int)v; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: 'movq' does not take these operands",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { int v = 1; __asm__(\"addl $1, (%0,%%rsp)\" : : \"r\"(&v) : \"memory\"); return v; }",
+  "line": 1,
+  "column": 29,
+  "message": "inline assembly: %rsp cannot be an index register",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { int v = 0x1234; __asm__(\"movb %%ah, %%sil\" : : \"a\"(v) : \"rsi\"); return 0; }",
+  "line": 1,
+  "column": 34,
+  "message": "inline assembly: %ah, %ch, %dh and %bh cannot be used together with %spl, %sil, %r8 and later, or a 64-bit operand",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"incl\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'incl' does not take these operands",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { int v = 1; __asm__(\"inc (%0)\" : : \"r\"(&v) : \"memory\"); return v; }",
+  "line": 1,
+  "column": 29,
+  "message": "inline assembly: 'inc' needs a size suffix (b, w, l or q): no operand is a register",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"jmp 3f\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: there is no label 3 after this branch",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long a = 1, b; __asm__(\"movq %2, %0\" : \"=r\"(b) : \"r\"(a)); return (int)b; }",
+  "line": 1,
+  "column": 38,
+  "message": "inline assembly: the asm template uses operand 2, but there are only 2",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long v = 1; __asm__(\"movq %[nobody], %0\" : \"+r\"(v)); return (int)v; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: the asm template names an operand 'nobody' that does not exist",
+  "requires": "x64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"pushq %rax\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long v; __asm__(\"xorl %%r8d, %%r8d\" : \"=A\"(v) : : \"r8\"); return (int)v; }",
+  "line": 1,
+  "column": 31,
+  "message": "inline assembly: the constraint \"=A\" names x87 registers or a register pair, which are not supported",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long a, b; __asm__(\"xorl %%r8d, %%r8d\" : \"=a\"(a), \"=a\"(b) : : \"r8\"); return (int)(a + b); }",
+  "line": 1,
+  "column": 34,
+  "message": "inline assembly: two outputs are in %rax",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long a = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"a\"(a) : \"rax\", \"r8\"); return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: %rax is both an operand and clobbered",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(int argc, char **argv) { __asm__(\"xorl %%r8d, %%r8d\" : : \"i\"(argc) : \"r8\"); return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: the operand for the constraint \"i\" is not a constant",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { double d = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"a\"(d) : \"r8\"); return 0; }",
+  "line": 1,
+  "column": 32,
+  "message": "inline assembly: the constraint \"a\" puts a value that is not an integer or a pointer in a general register",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { struct { long long a, b, c; } s = {1, 2, 3}; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(s) : \"r8\"); return 0; }",
+  "line": 1,
+  "column": 63,
+  "message": "inline assembly: the constraint \"r\" is not supported for this operand",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long v = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v), \"r\"(v) : \"r8\"); return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: the asm statement needs more general registers than there are",
+  "requires": "x64"
+ },
+ {
+  "about": "asm operands that cannot be placed",
+  "source": "int main(void) { long long v = 1; __asm__(\"xorl %%r8d, %%r8d\" : : \"r\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v), \"m\"(v) : \"r8\"); return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "inline assembly: an asm statement can have at most 30 operands",
+  "requires": "x64"
  }
 ]

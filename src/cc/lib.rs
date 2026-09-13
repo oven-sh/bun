@@ -46,40 +46,6 @@ pub struct Unit<'a> {
     pub contents: &'a [u8],
 }
 
-/// What a compilation is done with, all of which follows from its target.
-struct Settings {
-    target: Target,
-    /// Searched for `<...>` headers, and for `"..."` ones not found next to their includer, after
-    /// the compiler's own headers.
-    system_include_dirs: Vec<String>,
-    /// Claim to be that GNU C, the way Clang claims 4.2.1, by predefining `__GNUC__` and the
-    /// macros that go with it. Code written for GCC then takes its GCC paths (builtins,
-    /// attributes, `always_inline`).
-    gnu_version: Option<(u32, u32, u32)>,
-}
-
-impl Settings {
-    fn new(target: Target) -> Settings {
-        Settings {
-            target,
-            system_include_dirs: files::system_include_dirs(target),
-            // Apple's SDK headers are written for a GNU C compatible compiler: without the claim
-            // `NAN` is a call to a function that exists only on x86 and `va_list` is `void *`.
-            gnu_version: if target.os == Os::MacOs {
-                Some((9, 0, 0))
-            } else {
-                None
-            },
-        }
-    }
-
-    /// A Windows target is compiled as Microsoft C (its predefined macros, its C runtime's own
-    /// standard headers, its `inline`) unless a GNU C version is claimed, the way MinGW does.
-    fn is_microsoft_c(&self) -> bool {
-        self.target.os == Os::Windows && self.gnu_version.is_none()
-    }
-}
-
 /// What compiling produced.
 pub struct Compilation {
     /// The module; `None` when it could not be made, and the log says why (the first error of
@@ -109,22 +75,23 @@ struct Compiled {
 /// one object merge. Defining a symbol twice is an error. Errors and warnings go to `log`.
 pub fn compile(units: &[Unit<'_>], target: Target, log: &mut Log) -> Compilation {
     let mut files_read = Vec::new();
-    let output = compile_and_link(units, &Settings::new(target), log, &mut files_read);
+    let output = compile_and_link(units, target, log, &mut files_read);
     Compilation { output, files_read }
 }
 
 fn compile_and_link(
     units: &[Unit<'_>],
-    options: &Settings,
+    target: Target,
     log: &mut Log,
     files_read: &mut Vec<String>,
 ) -> Option<Output> {
     let mut compiled = Vec::with_capacity(units.len());
     let mut undefined_tls = Vec::with_capacity(units.len());
     let names: Vec<String> = units.iter().map(|unit| unit.path.to_string()).collect();
+    let system_include_dirs = files::system_include_dirs(target);
     for unit in units {
         files_read.push(unit.path.to_string());
-        let one = compile_unit(unit.contents, unit.path, options, log, files_read)?;
+        let one = compile_unit(unit, target, &system_include_dirs, log, files_read)?;
         compiled.push(one.unit);
         undefined_tls.push(one.undefined_tls);
     }
@@ -173,30 +140,29 @@ fn compile_and_link(
 
 /// Compiles one translation unit to its in-memory module.
 fn compile_unit(
-    source: &[u8],
-    filename: &str,
-    options: &Settings,
+    unit: &Unit<'_>,
+    target: Target,
+    system_include_dirs: &[String],
     log: &mut Log,
     files_read: &mut Vec<String>,
 ) -> Option<Compiled> {
     let files = Rc::new(RefCell::new(FileTable::default()));
-    let compiled = compile_unit_with(source, filename, options, log, &files);
+    let compiled = compile_unit_with(unit, target, system_include_dirs, log, &files);
     files_read.append(&mut files.borrow_mut().read);
     compiled
 }
 
 fn compile_unit_with(
-    source: &[u8],
-    filename: &str,
-    options: &Settings,
+    unit: &Unit<'_>,
+    target: Target,
+    system_include_dirs: &[String],
     log: &mut Log,
     files: &Rc<RefCell<FileTable>>,
 ) -> Option<Compiled> {
+    let filename = unit.path;
     let result = (|| {
-        let tokens = preprocessor(source, filename, options, files)?;
-        let mut program = parser::Parser::new(tokens, options.target)?
-            .microsoft_c(options.is_microsoft_c())
-            .parse_program()?;
+        let tokens = preprocessor(unit.contents, filename, target, system_include_dirs, files);
+        let mut program = parser::Parser::new(tokens, target)?.parse_program()?;
         files.borrow_mut().warnings.append(&mut program.warnings);
         codegen::generate(&program)
     })();
@@ -240,20 +206,22 @@ fn compile_unit_with(
 fn preprocessor(
     source: &[u8],
     filename: &str,
-    options: &Settings,
+    target: Target,
+    system_include_dirs: &[String],
     files: &Rc<RefCell<FileTable>>,
-) -> token::Res<Preprocessor> {
+) -> Preprocessor {
+    // `<...>` headers, and `"..."` ones not found next to their includer: the compiler's own,
+    // then the system's.
     let mut search: Vec<SearchDir> = vec![SearchDir::Builtin];
-    for dir in &options.system_include_dirs {
+    for dir in system_include_dirs {
         search.push(SearchDir::Dir(Rc::from(dir.as_str())));
     }
-    let mut pp = Preprocessor::new(Rc::clone(files), options.target, search, filename);
-    pp.msvc = options.is_microsoft_c();
+    let mut pp = Preprocessor::new(Rc::clone(files), target, search, filename);
     pp.define_builtins();
 
     // Sources are stacked, so the last one pushed is read first.
     pp.push_source(filename, Rc::from(source), None, None);
-    if options.target.os == Os::Windows {
+    if target.os == Os::Windows {
         // What Microsoft's intrinsics do: see `parser_ms.rs`.
         let prelude = format!(
             "#define __BUN_MS(ret, name, params, ...) static __inline __attribute__((__always_inline__, __unused__)) ret __bun_ms_##name params __VA_ARGS__\n{}\n#undef __BUN_MS\n",
@@ -263,9 +231,9 @@ fn preprocessor(
     }
     pp.push_source(
         "<built-in>",
-        Rc::from(pp_predef::predefined_macros(options.target, options.gnu_version).as_bytes()),
+        Rc::from(pp_predef::predefined_macros(target).as_bytes()),
         None,
         None,
     );
-    Ok(pp)
+    pp
 }

@@ -237,14 +237,16 @@ fn classify(operand: &OperandInfo, is_output: bool) -> Res<Classified> {
             });
         }
     }
-    if integer && has(b"rlRgpX") {
+    // `q` is any register that has a byte form, which in 64-bit code is all of them.
+    if integer && has(b"rlRgpXq") {
         return Ok(Classified {
             kind: Kind::General { legacy_only: false },
             in_out,
             early_clobber,
         });
     }
-    if integer && has(b"qQ") {
+    // `Q` is the four whose second byte has a name too (%ah, %bh, %ch, %dh).
+    if integer && has(b"Q") {
         return Ok(Classified {
             kind: Kind::General { legacy_only: true },
             in_out,
@@ -661,187 +663,4 @@ pub(crate) fn plan(
         inputs: plan_inputs,
         outputs: plan_outputs,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn operand(constraint: &str, size: u64) -> OperandInfo {
-        OperandInfo {
-            name: None,
-            constraint: constraint.as_bytes().to_vec(),
-            class: ValueClass::Integer,
-            size,
-            constant: None,
-            pinned: None,
-        }
-    }
-
-    #[test]
-    fn zstd_select() {
-        // asm("cmp %1, %2\n cmova %3, %0" : "+r"(candidate) : "r"(index), "r"(lowLimit), "r"(backup))
-        let outputs = [operand("+r", 8)];
-        let inputs = [operand("r", 4), operand("r", 4), operand("r", 8)];
-        let planned = plan(
-            b"cmp %1, %2\ncmova %3, %0",
-            &outputs,
-            &inputs,
-            &[],
-            false,
-            0,
-        )
-        .unwrap();
-        // candidate rax, index rcx, lowLimit rdx, backup rsi
-        assert_eq!(planned.outputs, vec![(0, 0)]);
-        assert_eq!(
-            planned.inputs,
-            vec![
-                (Source::Output(0), 0),
-                (Source::Input(0), 1),
-                (Source::Input(1), 2),
-                (Source::Input(2), 6)
-            ]
-        );
-        // cmp %ecx, %edx ; cmova %rsi, %rax
-        assert_eq!(planned.code, vec![0x39, 0xca, 0x48, 0x0f, 0x47, 0xc6]);
-        assert!(!planned.side_effects);
-    }
-
-    #[test]
-    fn specific_registers_and_matching() {
-        // asm("mulq %3" : "=a"(lo), "=d"(hi) : "a"(x), "rm"(y))
-        let outputs = [operand("=a", 8), operand("=d", 8)];
-        let inputs = [operand("a", 8), operand("rm", 8)];
-        let planned = plan(b"mulq %3", &outputs, &inputs, &[], false, 0).unwrap();
-        assert_eq!(planned.outputs, vec![(0, 0), (1, 2)]);
-        assert_eq!(
-            planned.inputs,
-            vec![(Source::Input(0), 0), (Source::Input(1), 1)]
-        );
-        assert_eq!(planned.code, vec![0x48, 0xf7, 0xe1]);
-
-        // asm("bswap %0" : "=r"(out) : "0"(in))
-        let planned = plan(
-            b"bswap %0",
-            &[operand("=r", 4)],
-            &[operand("0", 4)],
-            &[],
-            false,
-            0,
-        )
-        .unwrap();
-        assert_eq!(planned.outputs, vec![(0, 0)]);
-        assert_eq!(planned.inputs, vec![(Source::Input(0), 0)]);
-        assert_eq!(planned.code, vec![0x0f, 0xc8]);
-    }
-
-    #[test]
-    fn memory_immediates_names_and_clobbers() {
-        // asm volatile("lock; addl %1, %0" : "+m"(*p) : "ir"(5) : "memory", "cc")
-        let mut five = operand("ir", 4);
-        five.constant = Some(5);
-        let planned = plan(
-            b"lock; addl %1, %0",
-            &[operand("+m", 4)],
-            &[five],
-            &[b"memory".to_vec(), b"cc".to_vec()],
-            true,
-            0,
-        )
-        .unwrap();
-        assert!(planned.side_effects);
-        assert_eq!(planned.inputs, vec![(Source::OutputAddress(0), 0)]);
-        assert!(planned.outputs.is_empty());
-        assert_eq!(planned.code, vec![0xf0, 0x83, 0x00, 0x05]);
-
-        // Named operands, a modifier, and a clobbered register that is then not handed out.
-        let mut value = operand("r", 8);
-        value.name = Some(b"v".to_vec());
-        let mut result = operand("=r", 4);
-        result.name = Some(b"out".to_vec());
-        let planned = plan(
-            b"movl %k[v], %[out]",
-            &[result],
-            &[value],
-            &[b"rax".to_vec(), b"%rcx".to_vec()],
-            false,
-            0,
-        )
-        .unwrap();
-        assert_eq!(planned.clobbers, vec![0, 1]);
-        assert_eq!(planned.outputs, vec![(0, 2)]);
-        assert_eq!(planned.inputs, vec![(Source::Input(0), 6)]);
-        // movl %esi, %edx
-        assert_eq!(planned.code, vec![0x89, 0xf2]);
-
-        // The thread pointer.
-        let planned = plan(b"movq %%fs:0, %0", &[operand("=r", 8)], &[], &[], false, 0).unwrap();
-        assert_eq!(planned.code, vec![0x64, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0]);
-
-        // The AT&T half of a dialect alternative, and %=.
-        let planned = plan(
-            b"{movq %1, %0|mov %0, %1}\n1%=: ",
-            &[operand("=r", 8)],
-            &[operand("r", 8)],
-            &[],
-            false,
-            7,
-        )
-        .unwrap();
-        assert_eq!(planned.code, vec![0x48, 0x89, 0xc8]);
-    }
-
-    #[test]
-    fn rejections() {
-        let error = |template: &[u8],
-                     outputs: &[OperandInfo],
-                     inputs: &[OperandInfo],
-                     clobbers: &[Vec<u8>]| {
-            plan(template, outputs, inputs, clobbers, false, 0).unwrap_err()
-        };
-        assert!(crate::tests::has(
-            &error(b"", &[operand("=A", 8)], &[], &[]),
-            "x87 registers or a register pair"
-        ));
-        assert!(crate::tests::has(
-            &error(b"", &[operand("=a", 8), operand("=a", 8)], &[], &[]),
-            "two outputs"
-        ));
-        assert!(crate::tests::has(
-            &error(b"", &[], &[operand("a", 8)], &[b"rax".to_vec()]),
-            "both an operand and clobbered"
-        ));
-        assert!(crate::tests::has(
-            &error(b"", &[], &[operand("i", 4)], &[]),
-            "not a constant"
-        ));
-        assert!(crate::tests::has(
-            &error(b"mov %2, %0", &[operand("=r", 8)], &[operand("r", 8)], &[]),
-            "only 2"
-        ));
-        assert!(crate::tests::has(
-            &error(b"frob %0", &[operand("=r", 8)], &[], &[]),
-            "unsupported instruction"
-        ));
-        let mut floating = operand("r", 8);
-        floating.class = ValueClass::Floating;
-        assert!(crate::tests::has(
-            &error(b"", &[], &[floating], &[]),
-            "not supported for this operand"
-        ));
-    }
-
-    #[test]
-    fn register_names() {
-        assert_eq!(register_number(b"rax"), Some(0));
-        assert_eq!(register_number(b"%ebx"), Some(3));
-        assert_eq!(register_number(b"r10d"), Some(10));
-        assert_eq!(register_number(b"xmm3"), Some(19));
-        assert_eq!(register_number(b"dil"), Some(7));
-        assert_eq!(register_number(b"r16"), None);
-        assert_eq!(register_number(b"memory"), None);
-        assert_eq!(register_name(9, 4), "%r9d");
-        assert_eq!(register_name(6, 1), "%sil");
-    }
 }

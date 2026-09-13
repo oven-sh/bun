@@ -498,14 +498,6 @@ impl Extended {
         }
     }
 
-    /// What the x87 unit stores for `(int64_t)x`: out of range gives the smallest value.
-    #[cfg(test)]
-    pub(crate) fn to_i64(self) -> i64 {
-        self.to_i128()
-            .and_then(|v| i64::try_from(v).ok())
-            .unwrap_or(i64::MIN)
-    }
-
     pub(crate) fn add(self, other: Extended) -> Extended {
         match (self.class(), other.class()) {
             (Class::Nan, _) => return self.quieted(),

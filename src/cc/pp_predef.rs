@@ -4,15 +4,19 @@ use std::fmt::Write as _;
 
 use crate::types::{Arch, Os, Target};
 
-pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u32)>) -> String {
+pub(crate) fn predefined_macros(target: Target) -> String {
     let mut out = String::new();
     let mut def = |name: &str, value: &str| {
         let _ = writeln!(out, "#define {name} {value}");
     };
+    // A Windows target is compiled as Microsoft C.
     let windows = target.os == Os::Windows;
-    // A Windows target is Microsoft C unless a GNU C version is claimed (the MinGW way).
-    let msvc = windows && gnu_version.is_none();
     let lp64 = !windows;
+    // Apple's SDK headers are written for a GNU C compatible compiler: without the claim to be
+    // one (the way Clang claims 4.2.1) `NAN` is a call to a function that exists only on x86
+    // and `va_list` is `void *`. Code written for GCC then takes its GCC paths (builtins,
+    // attributes, `always_inline`).
+    let gnu_version: Option<(u32, u32, u32)> = (target.os == Os::MacOs).then_some((9, 0, 0));
     let char_signed = target.char_is_signed();
     // long double is x87 extended on x86-64 SysV, IEEE quad on aarch64 Linux, double elsewhere.
     let long_double_bytes = match (target.arch, target.os) {
@@ -22,7 +26,7 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
 
     // (`cl` leaves `__STDC__` to `/Zc:__STDC__`, and the C runtime's headers declare the POSIX
     // names only without it.)
-    if msvc {
+    if windows {
         def("__STDC_VERSION__", "201710L");
     } else {
         def("__STDC__", "1");
@@ -100,12 +104,7 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
             // glibc only defines these for GNU C (as which it defines them itself), and some of its headers (<spawn.h>) use
             // them unguarded. Declarations can carry an assembler name here, so they are
             // exactly what <sys/cdefs.h> would have defined.
-            let redirects: &[&str] = if gnu_version.is_some() {
-                &[]
-            } else {
-                &["__REDIRECT", "__REDIRECT_NTH", "__REDIRECT_NTHNL"]
-            };
-            for name in redirects {
+            for name in ["__REDIRECT", "__REDIRECT_NTH", "__REDIRECT_NTHNL"] {
                 def(
                     &format!("{name}(name, proto, alias)"),
                     "name proto __asm__(#alias)",
@@ -131,20 +130,18 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
             } else {
                 def("_M_ARM64", "1");
             }
-            if msvc {
-                // Visual Studio 2022 17.14 (toolset 14.44), `/std:c17 /MD`.
-                def("_MSC_VER", "1944");
-                def("_MSC_FULL_VER", "194435207");
-                def("_MSC_BUILD", "1");
-                def("_MSC_EXTENSIONS", "1");
-                def("_INTEGRAL_MAX_BITS", "64");
-                def("_MSVC_TRADITIONAL", "0");
-                def("_MSVC_EXECUTION_CHARACTER_SET", "65001");
-                def("_M_FP_PRECISE", "1");
-                def("_CRT_USE_BUILTIN_OFFSETOF", "1");
-                def("_MT", "1");
-                def("_DLL", "1");
-            }
+            // Visual Studio 2022 17.14 (toolset 14.44), `/std:c17 /MD`.
+            def("_MSC_VER", "1944");
+            def("_MSC_FULL_VER", "194435207");
+            def("_MSC_BUILD", "1");
+            def("_MSC_EXTENSIONS", "1");
+            def("_INTEGRAL_MAX_BITS", "64");
+            def("_MSVC_TRADITIONAL", "0");
+            def("_MSVC_EXECUTION_CHARACTER_SET", "65001");
+            def("_M_FP_PRECISE", "1");
+            def("_CRT_USE_BUILTIN_OFFSETOF", "1");
+            def("_MT", "1");
+            def("_DLL", "1");
         }
     }
     if lp64 {

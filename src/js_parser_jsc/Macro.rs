@@ -28,7 +28,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore,
+    JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -542,7 +542,9 @@ pub(crate) struct Run<'a> {
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
     pub(crate) source: &'a Source,
+    /// Keyed by cell address. `visited_roots` keeps the keys alive so none gets reused.
     pub(crate) visited: VisitMap,
+    pub(crate) visited_roots: &'a mut MarkedArgumentBuffer,
     pub(crate) is_top_level: bool,
 }
 
@@ -569,20 +571,23 @@ impl<'a> Run<'a> {
                 .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
         });
 
-        let mut runner = Run {
-            caller,
-            macro_,
-            global: VirtualMachine::get().global(),
-            bump,
-            log,
-            source,
-            visited: VisitMap::default(),
-            is_top_level: false,
-        };
+        MarkedArgumentBuffer::new(|visited_roots| {
+            let mut runner = Run {
+                caller,
+                macro_,
+                global: VirtualMachine::get().global(),
+                bump,
+                log,
+                source,
+                visited: VisitMap::default(),
+                visited_roots,
+                is_top_level: false,
+            };
 
-        // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
+            // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
 
-        runner.run(result)
+            runner.run(result)
+        })
     }
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
@@ -700,6 +705,7 @@ impl<'a> Run<'a> {
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }
+                self.visited_roots.append(value);
 
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
@@ -741,6 +747,7 @@ impl<'a> Run<'a> {
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }
+                self.visited_roots.append(value);
 
                 // Reserve a placeholder to break cycles.
                 let expr = Expr::init(
@@ -874,6 +881,7 @@ impl<'a> Run<'a> {
                 let result = self.run(promise_result)?;
 
                 self.visited.insert(value, result);
+                self.visited_roots.append(value);
                 return Ok(result);
             }
             _ => {}

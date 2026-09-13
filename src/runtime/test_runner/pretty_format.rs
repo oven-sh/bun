@@ -1,4 +1,5 @@
 use crate::test_runner::expect::JSValueTestExt;
+use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_collections::HashMap;
@@ -95,15 +96,44 @@ pub enum MessageLevel {
     Debug = 3,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct FormatOptions {
     pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Output budget in bytes for values already printed once; after it they print as `[Object]` (#34178).
+    pub(crate) shared_reference_budget: usize,
+}
+
+/// Shared by the writer and the [`Formatter`] of one `format` call: `FmtAdapter<AsFmt>` hides the writer.
+#[derive(Default)]
+struct Output {
+    written: Cell<usize>,
+    /// The formatter spent [`FormatOptions::shared_reference_budget`] and abbreviated a value.
+    abbreviated: Cell<bool>,
+}
+
+struct CountingWriter<'a> {
+    inner: &'a mut dyn bun_io::Write,
+    output: &'a Output,
+}
+
+impl bun_io::Write for CountingWriter<'_> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        let written = &self.output.written;
+        written.set(written.get().saturating_add(buf.len()));
+        self.inner.write_all(buf)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 impl JestPrettyFormat {
+    /// Returns whether it abbreviated a value (see [`FormatOptions::shared_reference_budget`]).
     pub(crate) fn format<W: bun_io::Write>(
         level: MessageLevel,
         global: &JSGlobalObject,
@@ -111,21 +141,26 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut W,
         options: FormatOptions,
-    ) -> JsResult<()> {
+    ) -> JsResult<bool> {
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
         // type up front so the whole `Formatter` tree is instantiated once.
         let flush = options.flush;
+        let output = Output::default();
         let result = {
-            let mut bridge = AsFmt::new(&mut *writer);
+            let mut counting = CountingWriter {
+                inner: &mut *writer,
+                output: &output,
+            };
+            let mut bridge = AsFmt::new(&mut counting);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, &output)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
             let _ = writer.flush();
         }
-        result
+        result.map(|()| output.abbreviated.get())
     }
 
     fn format_adapted(
@@ -135,6 +170,7 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
         options: FormatOptions,
+        output: &Output,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -144,7 +180,7 @@ impl JestPrettyFormat {
         // exit path of this function (early return, `?` propagation, happy path).
 
         if len == 1 {
-            fmt = Formatter::new(global);
+            fmt = Formatter::new(global, output, options.shared_reference_budget);
             fmt.quote_strings = options.quote_strings;
             let tag = Tag::get(vals[0], global)?;
 
@@ -189,7 +225,7 @@ impl JestPrettyFormat {
 
         // The flush must fire on every exit including `?` propagation from
         // `Tag::get` / `fmt.format`. Wrap the fallible body and flush before bubbling.
-        fmt = Formatter::new(global);
+        fmt = Formatter::new(global, output, options.shared_reference_budget);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
 
@@ -307,6 +343,16 @@ pub mod visited {
     pub type PoolNode = bun_collections::pool::Node<Map>;
 }
 
+/// How the walk enters an Array, Object, Map or Set that is not one of its ancestors.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Visit {
+    First,
+    /// The walk printed the value before, and prints it again.
+    Repeated,
+    /// The walk printed the value before, and the budget for such values is spent.
+    Abbreviated,
+}
+
 pub struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
@@ -318,10 +364,20 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    output: &'a Output,
+    /// Every container the walk has entered (`map` holds only the ancestors). Compared, never dereferenced.
+    seen: visited::Map,
+    shared_reference_budget: usize,
+    /// Output of the finished visits to values that were in `seen`.
+    repeated_bytes: usize,
+    /// Visits to values that were in `seen` and are in progress.
+    repeat_depth: u32,
+    /// `output.written` when the outermost of those visits began.
+    repeat_start: usize,
 }
 
 impl<'a> Formatter<'a> {
-    pub(crate) fn new(global: &'a JSGlobalObject) -> Self {
+    fn new(global: &'a JSGlobalObject, output: &'a Output, shared_reference_budget: usize) -> Self {
         Self {
             remaining_values: &[],
             map: visited::Map::default(),
@@ -332,6 +388,44 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            output,
+            seen: visited::Map::default(),
+            shared_reference_budget,
+            repeated_bytes: 0,
+            repeat_depth: 0,
+            repeat_start: 0,
+        }
+    }
+
+    /// Records that the walk enters the container `value`, which `map` just took as an ancestor.
+    #[inline(never)]
+    fn begin_visit(&mut self, value: JSValue) -> Visit {
+        if !self.seen.get_or_put(value).expect("unreachable").found_existing {
+            return Visit::First;
+        }
+        let in_progress = if self.repeat_depth > 0 {
+            self.output.written.get().saturating_sub(self.repeat_start)
+        } else {
+            0
+        };
+        if self.repeated_bytes.saturating_add(in_progress) >= self.shared_reference_budget {
+            self.output.abbreviated.set(true);
+            let _ = self.map.remove(&value);
+            return Visit::Abbreviated;
+        }
+        if self.repeat_depth == 0 {
+            self.repeat_start = self.output.written.get();
+        }
+        self.repeat_depth += 1;
+        Visit::Repeated
+    }
+
+    #[inline(never)]
+    fn end_repeated_visit(&mut self) {
+        self.repeat_depth -= 1;
+        if self.repeat_depth == 0 {
+            let bytes = self.output.written.get().saturating_sub(self.repeat_start);
+            self.repeated_bytes = self.repeated_bytes.saturating_add(bytes);
         }
     }
 
@@ -421,9 +515,20 @@ impl Tag {
         )
     }
 
+    /// Not `Event`: its generic arm re-enters `print_as::<Object>` with the same value.
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
+    }
+
+    /// What a container prints as after the walk spent `FormatOptions::shared_reference_budget`.
+    const fn abbreviation(self, enable_ansi_colors: bool) -> &'static str {
+        match self {
+            Tag::Array => pretty_fmt_const!(enable_ansi_colors, "<r><cyan>[Array]<r>"),
+            Tag::Map => pretty_fmt_const!(enable_ansi_colors, "<r><cyan>[Map]<r>"),
+            Tag::Set => pretty_fmt_const!(enable_ansi_colors, "<r><cyan>[Set]<r>"),
+            _ => pretty_fmt_const!(enable_ansi_colors, "<r><cyan>[Object]<r>"),
+        }
     }
 }
 
@@ -1047,6 +1152,7 @@ impl<'a> Formatter<'a> {
         // methods in this file, so we leave it None here.
         let mut writer = WrappedWriter::new(writer_);
 
+        let mut visit = Visit::First;
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
                 // `visited::Pool::get()` returns an RAII `PoolGuard` that
@@ -1078,6 +1184,15 @@ impl<'a> Formatter<'a> {
                 }
                 // Return BEFORE the remove() cleanup below is reached,
                 // so the parent frame's entry stays in the map.
+                return Ok(());
+            }
+
+            visit = self.begin_visit(value);
+            if visit == Visit::Abbreviated {
+                writer.write_all(FORMAT.abbreviation(ENABLE_ANSI_COLORS).as_bytes());
+                if writer.failed {
+                    self.failed = true;
+                }
                 return Ok(());
             }
         }
@@ -2480,6 +2595,9 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             let _ = self.map.remove(&value);
+        }
+        if visit == Visit::Repeated {
+            self.end_repeated_visit();
         }
         if writer.failed {
             self.failed = true;

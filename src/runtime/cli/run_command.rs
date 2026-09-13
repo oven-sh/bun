@@ -1335,6 +1335,30 @@ impl Run<'_> {
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
+        // ── pprof heap profile ──────────────────────────────────────────────
+        if ctx.runtime_options.pprof_heap.enabled {
+            let opts = &ctx.runtime_options.pprof_heap;
+            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
+            let path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.path.as_ref()) };
+            let interval = match opts.sample_interval {
+                0 => bun_pprof::heap::DEFAULT_SAMPLE_INTERVAL,
+                bytes => bytes,
+            };
+            bun_jsc::bun_heap_pprof::install();
+            match bun_pprof::heap::start(interval) {
+                Ok(()) => {
+                    vm.pprof_heap_config = Some(bun_jsc::bun_heap_pprof::PprofHeapConfig { path });
+                }
+                Err(e) => {
+                    bun_core::Output::err(
+                        <&'static str>::from(e),
+                        "Failed to start --pprof-heap",
+                        (),
+                    );
+                }
+            }
+        }
+
         Self::add_conditional_globals(vm, ctx);
 
         // ── redis preconnect (must run under the API lock) ─────────────────

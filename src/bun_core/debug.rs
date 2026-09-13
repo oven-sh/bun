@@ -280,6 +280,180 @@ impl StackIterator {
 
 pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 
+/// [`StackIterator`] for a sampling profiler: `fps[i]` and the return address saved in it,
+/// `pcs[i]`, for each frame from `fp` up, with one syscall per window of stack (Linux), bounded
+/// by the thread's stack (Apple) or from `RtlCaptureStackBackTrace` (Windows, `fps` zeroed).
+#[inline(never)]
+pub fn capture_frame_chain(fp: usize, fps: &mut [usize], pcs: &mut [usize]) -> usize {
+    let cap = fps.len().min(pcs.len());
+    let (fps, pcs) = (&mut fps[..cap], &mut pcs[..cap]);
+    if cfg!(miri) || cap == 0 {
+        return 0;
+    }
+    #[cfg(windows)]
+    {
+        let _ = fp;
+        fps.fill(0);
+        // SAFETY: `pcs` is valid for `cap` writes; the hash out-param may be null.
+        return unsafe {
+            bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
+                // This function and its caller.
+                2,
+                cap.min(u16::MAX as usize) as u32,
+                pcs.as_mut_ptr().cast::<*mut core::ffi::c_void>(),
+                core::ptr::null_mut(),
+            )
+        } as usize;
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        static WINDOW_READS_REFUSED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+        if !WINDOW_READS_REFUSED.load(core::sync::atomic::Ordering::Relaxed) {
+            if let Some(n) = capture_frame_chain_windowed(fp, fps, pcs) {
+                return n;
+            }
+            WINDOW_READS_REFUSED.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        return capture_frame_chain_bounded(fp, fps, pcs);
+    }
+    #[cfg(not(any(windows, target_vendor = "apple")))]
+    {
+        let mut it = StackIterator::init(fp);
+        let mut n = 0usize;
+        while n < cap {
+            let frame = it.fp;
+            match it.next() {
+                Some(pc) => {
+                    fps[n] = frame;
+                    pcs[n] = pc;
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        n
+    }
+}
+
+/// `None`: the kernel refused `process_vm_readv` on our own pid (seccomp, qemu-user).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn capture_frame_chain_windowed(
+    mut fp: usize,
+    fps: &mut [usize],
+    pcs: &mut [usize],
+) -> Option<usize> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WINDOW_WORDS: usize = 1024;
+    let mut window = [0usize; WINDOW_WORDS];
+    // The words of `window` that hold the stack at `[base, base + have)`.
+    let (mut base, mut have) = (0usize, 0usize);
+    let mut n = 0usize;
+    // SAFETY: no preconditions. Not cached: after fork() the pid is another one.
+    let pid = unsafe { libc::getpid() };
+    while n < fps.len() {
+        let Some(frame) = fp.checked_sub(StackIterator::FP_OFFSET) else {
+            break;
+        };
+        if frame == 0 || frame % core::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        let Some(last_word) = frame.checked_add(StackIterator::PC_OFFSET) else {
+            break;
+        };
+        if frame < base || last_word.saturating_add(WORD) > base + have {
+            let local = libc::iovec {
+                iov_base: window.as_mut_ptr().cast(),
+                iov_len: core::mem::size_of_val(&window),
+            };
+            let remote = libc::iovec {
+                iov_base: frame as *mut core::ffi::c_void,
+                iov_len: core::mem::size_of_val(&window),
+            };
+            // SAFETY: `local` is a writable buffer of the stated size. A `remote` range that is
+            // not mapped gives a short count or EFAULT.
+            let got = unsafe {
+                libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0)
+            };
+            if got < 0 {
+                if crate::ffi::errno() == libc::EFAULT {
+                    break;
+                }
+                return if n == 0 { None } else { Some(n) };
+            }
+            base = frame;
+            have = got as usize;
+            if last_word + WORD > base + have {
+                break;
+            }
+        }
+        let next_fp = window[(frame - base) / WORD];
+        let pc = window[(last_word - base) / WORD];
+        if pc == 0 {
+            break;
+        }
+        fps[n] = fp;
+        pcs[n] = pc;
+        n += 1;
+        // The stack grows down: a caller's frame is above its callee's.
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+    Some(n)
+}
+
+#[cfg(target_vendor = "apple")]
+fn capture_frame_chain_bounded(mut fp: usize, fps: &mut [usize], pcs: &mut [usize]) -> usize {
+    const WORD: usize = core::mem::size_of::<usize>();
+    // SAFETY: no preconditions; `pthread_self()` is the calling thread.
+    let (top, size) = unsafe {
+        let this = libc::pthread_self();
+        (
+            libc::pthread_get_stackaddr_np(this) as usize,
+            libc::pthread_get_stacksize_np(this),
+        )
+    };
+    let bottom = top.saturating_sub(size);
+    let mut n = 0usize;
+    while n < fps.len() {
+        let Some(frame) = fp.checked_sub(StackIterator::FP_OFFSET) else {
+            break;
+        };
+        let Some(last_word) = frame.checked_add(StackIterator::PC_OFFSET) else {
+            break;
+        };
+        if frame % core::mem::align_of::<usize>() != 0
+            || frame < bottom
+            || last_word.saturating_add(WORD) > top
+        {
+            break;
+        }
+        // SAFETY: `[frame, last_word + WORD)` lies inside this thread's stack.
+        let (next_fp, pc) = unsafe {
+            (
+                core::ptr::read(frame as *const usize),
+                core::ptr::read(last_word as *const usize),
+            )
+        };
+        if pc == 0 {
+            break;
+        }
+        fps[n] = fp;
+        pcs[n] = pc;
+        n += 1;
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+    n
+}
+
 /// Capture the current thread's call stack.
 ///
 /// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace` via

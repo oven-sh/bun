@@ -299,3 +299,57 @@ bun --heap-prof --heap-prof-dir ./profiles script.js
 | `--heap-prof-name <filename>`  | Set output filename                                                                                                                        |
 | `--heap-prof-dir <dir>`        | Set output directory                                                                                                                       |
 | `--heap-prof-interval <bytes>` | Accepted for Node.js compatibility (the snapshot is taken once at exit; JavaScriptCore has no allocation sampling to apply an interval to) |
+
+## Native heap profiling (pprof)
+
+`Bun.pprof.heap` samples the allocations of Bun's native allocator and writes a [pprof](https://github.com/google/pprof) heap profile. Each sample has the JavaScript and native frames that allocated. Use it to find what holds native memory: `ArrayBuffer` contents, strings, buffers inside Bun's APIs.
+
+```ts
+Bun.pprof.heap.start();
+await work();
+await Bun.write("heap.pb.gz", Bun.pprof.heap.stop());
+```
+
+To profile a whole run without changing the code:
+
+```sh terminal icon="terminal"
+bun --pprof-heap=heap.pb.gz script.js
+```
+
+Open the profile with any pprof viewer:
+
+```sh terminal icon="terminal"
+go tool pprof -http=: heap.pb.gz
+go tool pprof -top -sample_index=alloc_space heap.pb.gz
+```
+
+[speedscope](https://www.speedscope.app) opens the same file. For continuous profiling, serve `Bun.pprof.heap.profile()` from an endpoint and point a profiler that scrapes pprof endpoints, such as Pyroscope or Parca, at it:
+
+```ts
+Bun.pprof.heap.start();
+
+Bun.serve({
+  routes: {
+    "/debug/pprof/heap": () => new Response(Bun.pprof.heap.profile()),
+  },
+  fetch: () => new Response("hello"),
+});
+```
+
+| API / flag                                  | Description                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| `Bun.pprof.heap.start({ sampleInterval? })` | Start profiling. `sampleInterval` is in bytes (default `524288`)  |
+| `Bun.pprof.heap.profile()`                  | The profile so far as a gzipped `Uint8Array`. Profiling continues |
+| `Bun.pprof.heap.stop()`                     | Stop and return the profile                                       |
+| `Bun.pprof.heap.isRunning`                  | Whether a profile is running                                      |
+| `--pprof-heap[=<path>]`                     | Profile the whole run and write the profile on exit               |
+| `--pprof-heap-interval=<bytes>`             | The sample interval for `--pprof-heap`                            |
+
+Notes:
+
+- The profile has four sample types: `alloc_objects`, `alloc_space`, `inuse_objects`, `inuse_space`. `inuse_*` is what was allocated since `start()` and not freed.
+- There is one profile per process. It includes Workers and Bun's own threads. Samples have a `thread` label, and a `worker` label on a Worker's JavaScript thread. Filter with `-tagfocus=thread=...`.
+- JavaScript objects are not sampled one by one. The garbage-collected heap shows up as the blocks it takes from the allocator. Use `--heap-prof` or `Bun.generateHeapSnapshot()` for objects.
+- Native frames are addresses in a release build of Bun. To see function names, download the `bun-profile` build of the same version and pass it first: `go tool pprof -http=: ./bun-profile heap.pb.gz`.
+- In an executable built with `bun build --compile`, and in code loaded from `--bytecode` output, a JavaScript frame has the line where its function starts, and a function that has not been named yet is `(anonymous)`.
+- On macOS, memory that system frameworks allocate is not part of the profile.

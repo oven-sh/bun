@@ -207,6 +207,7 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
+    pub pprof_heap_config: Option<crate::bun_heap_pprof::PprofHeapConfig>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -664,6 +665,11 @@ impl VMHolder {
                 crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
             {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+        if let Some(config) = vm.pprof_heap_config.take() {
+            if let Err(e) = crate::bun_heap_pprof::stop_and_write_profile(vm, &config) {
+                bun_core::Output::err(e, "Failed to write pprof heap profile", ());
             }
         }
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
@@ -1881,6 +1887,11 @@ impl VirtualMachine {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
+        if let Some(config) = self.pprof_heap_config.take() {
+            if let Err(e) = crate::bun_heap_pprof::stop_and_write_profile(self, &config) {
+                bun_core::Output::err(e, "Failed to write pprof heap profile", ());
+            }
+        }
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -1897,6 +1908,11 @@ impl VirtualMachine {
             self.run_cleanup_hooks();
         }
         self.has_run_cleanup_hooks = true;
+
+        // A Worker's sourcemaps are gone with it, and only its thread can use them.
+        if self.worker.is_some() {
+            crate::bun_heap_pprof::resolve_sampled_positions(self);
+        }
 
         // Persist the Node compile cache (NODE_COMPILE_CACHE /
         // module.enableCompileCache()) after user exit handlers ran.
@@ -2716,6 +2732,7 @@ impl VirtualMachine {
             // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
+            addr_of_mut!((*vm).pprof_heap_config).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.

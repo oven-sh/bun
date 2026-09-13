@@ -905,6 +905,7 @@ dependencies = [
  "bun_options_types",
  "bun_patch",
  "bun_paths",
+ "bun_pprof",
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
@@ -1125,6 +1126,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_pprof"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_libdeflate_sys",
+ "bun_sys",
+ "bun_threading",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
 name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
@@ -1279,6 +1294,7 @@ dependencies = [
  "bun_paths",
  "bun_picohttp",
  "bun_platform",
+ "bun_pprof",
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",

@@ -464,6 +464,8 @@ pub mod bindgen;
 pub mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
+#[path = "BunHeapPprof.rs"]
+pub mod bun_heap_pprof;
 #[path = "BunHeapProfiler.rs"]
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]

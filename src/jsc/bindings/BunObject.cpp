@@ -99,6 +99,8 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
+static JSValue constructPprofObject(VM& vm, JSObject* bunObject);
+JSC::JSObject* createPprofObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject); // BunPprofObject.cpp
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
@@ -1017,6 +1019,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
+    pprof                                          constructPprofObject                                                DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
@@ -1128,6 +1131,11 @@ static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return Bun::createSecretsObject(vm, zigGlobalObject);
+}
+
+static JSValue constructPprofObject(VM& vm, JSObject* bunObject)
+{
+    return Bun::createPprofObject(vm, bunObject->globalObject());
 }
 
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)

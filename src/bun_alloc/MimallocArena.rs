@@ -88,6 +88,42 @@ unsafe impl Send for MimallocArena {}
 // Cross-thread `deallocate` is permitted (mimalloc `mi_free` is thread-safe).
 unsafe impl Sync for MimallocArena {}
 
+/// `mi_heap_destroy` frees blocks without `mi_free`, so mimalloc's sampling hooks miss them.
+pub mod heap_destroy_hook {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
+
+    use crate::mimalloc;
+
+    static HOOK: OnceLock<fn(*const mimalloc::Heap)> = OnceLock::new();
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+
+    pub fn register(hook: fn(*const mimalloc::Heap)) {
+        let _ = HOOK.set(hook);
+    }
+
+    pub fn set_enabled(enabled: bool) {
+        ENABLED.store(enabled, Ordering::Release);
+    }
+
+    #[inline]
+    pub(super) fn before_destroy(heap: *const mimalloc::Heap) {
+        if ENABLED.load(Ordering::Relaxed) {
+            if let Some(hook) = HOOK.get() {
+                hook(heap);
+            }
+        }
+    }
+}
+
+/// # Safety
+/// `heap` came from `mi_heap_new` and is not used again.
+unsafe fn destroy_heap(heap: *mut mimalloc::Heap) {
+    heap_destroy_hook::before_destroy(heap);
+    // SAFETY: fn contract.
+    unsafe { mimalloc::mi_heap_destroy(heap) };
+}
+
 impl Default for MimallocArena {
     #[inline]
     fn default() -> Self {
@@ -198,7 +234,7 @@ impl MimallocArena {
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
-        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+        unsafe { destroy_heap(self.heap_ptr()) };
         // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
@@ -452,7 +488,7 @@ impl Drop for MimallocArena {
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
-        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+        unsafe { destroy_heap(self.heap_ptr()) };
     }
 }
 

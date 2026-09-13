@@ -78,6 +78,55 @@ pub struct struct_mi_heap_area_s {
     pub full_block_size: usize,
     pub reserved1: *mut core::ffi::c_void,
 }
+/// `mi_profiler_sample_data_t` (mimalloc-profile.h): stored in front of each sampled block
+/// when the profiler has an `on_free`. `user_data` is `sample_data_size` bytes long.
+#[repr(C)]
+pub struct mi_profiler_sample_data_t {
+    pub user_data_size: usize,
+    pub user_data: [*mut c_void; 1],
+}
+
+pub type mi_profiler_on_alloc_fun = unsafe extern "C" fn(
+    profiler: *mut mi_profiler_t,
+    data: *mut mi_profiler_sample_data_t,
+    ptr: *mut c_void,
+    requested_size: usize,
+    bytes_sample_rate: usize,
+    bytes_since_last_sample: u64,
+    heap: *const Heap,
+) -> usize;
+pub type mi_profiler_on_free_fun = unsafe extern "C" fn(
+    profiler: *mut mi_profiler_t,
+    data: *mut mi_profiler_sample_data_t,
+    ptr: *mut c_void,
+    heap: *const Heap,
+);
+pub type mi_profiler_on_realloc_inplace_fun = unsafe extern "C" fn(
+    profiler: *mut mi_profiler_t,
+    data: *mut mi_profiler_sample_data_t,
+    ptr: *mut c_void,
+    old_size: usize,
+    heap: *const Heap,
+) -> usize;
+
+/// `mi_profiler_t` (mimalloc-profile.h). mimalloc keeps the enabled bit in `reserved`.
+#[repr(C)]
+pub struct mi_profiler_t {
+    pub reserved: *mut c_void,
+    pub sample_data_size: usize,
+    pub initial_sample_rate: usize,
+    pub on_alloc: core::option::Option<mi_profiler_on_alloc_fun>,
+    pub on_free: core::option::Option<mi_profiler_on_free_fun>,
+    pub on_realloc_inplace: core::option::Option<mi_profiler_on_realloc_inplace_fun>,
+}
+
+unsafe extern "C" {
+    pub fn mi_profile(profiler: *mut mi_profiler_t) -> bool;
+    pub fn mi_profiler_start(profiler: *mut mi_profiler_t) -> bool;
+    pub fn mi_profiler_stop(profiler: *mut mi_profiler_t) -> bool;
+    pub fn mi_heap_profile_disable(heap: *mut Heap);
+}
+
 pub type mi_heap_area_t = struct_mi_heap_area_s;
 
 type mi_block_visit_fun =

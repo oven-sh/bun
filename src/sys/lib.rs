@@ -904,6 +904,7 @@ pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
+pub mod loaded_modules;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -8391,6 +8392,9 @@ pub mod net {
 pub mod elf {
     pub const PT_LOAD: u32 = 1;
     pub const PT_INTERP: u32 = 3;
+    pub const PT_NOTE: u32 = 4;
+    /// `p_flags`: the segment is executable.
+    pub const PF_X: u32 = 1;
 
     /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
     /// segment spans a given address.

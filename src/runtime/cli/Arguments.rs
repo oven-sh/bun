@@ -201,6 +201,12 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
+        "--pprof-heap <STR>?               Sample native and JavaScript allocations and write a pprof heap profile (.pb.gz) on exit, optionally to the given path"
+    ),
+    parse_param!(
+        "--pprof-heap-interval <STR>       Specify the average number of bytes allocated between samples of --pprof-heap (default: 524288)"
+    ),
+    parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
     ),
     parse_param!("--no-install                      Disable auto install in the Bun runtime"),
@@ -1418,6 +1424,40 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
                 Output::flush();
                 Global::exit(9);
+            }
+        }
+
+        // Spelled here and in the two `parse_param!` lines for them.
+        const PPROF_HEAP: &[u8] = b"--pprof-heap";
+        const PPROF_HEAP_INTERVAL: &[u8] = b"--pprof-heap-interval";
+        if let Some(path) = args.option(PPROF_HEAP) {
+            ctx.runtime_options.pprof_heap.enabled = true;
+            ctx.runtime_options.pprof_heap.path = path.into();
+        }
+        if let Some(interval) = args.option(PPROF_HEAP_INTERVAL) {
+            let min = bun_pprof::heap::MIN_SAMPLE_INTERVAL;
+            match strings::parse_int::<usize>(interval, 10) {
+                Ok(bytes) if bytes >= min && ctx.runtime_options.pprof_heap.enabled => {
+                    ctx.runtime_options.pprof_heap.sample_interval = bytes;
+                }
+                Ok(bytes) if bytes >= min => {
+                    let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                    bun_core::pretty_errorln!(
+                        "{}: --pprof-heap-interval must be used with --pprof-heap",
+                        BStr::new(argv0.as_bytes()),
+                    );
+                    Output::flush();
+                    Global::exit(9);
+                }
+                _ => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: --pprof-heap-interval must be a number of bytes, at least {} (got {})",
+                        min,
+                        bun_core::fmt::quote(interval),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
             }
         }
 

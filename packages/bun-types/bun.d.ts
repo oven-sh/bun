@@ -5402,6 +5402,88 @@ declare module "bun" {
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
 
+  /**
+   * Profiles in the [pprof](https://github.com/google/pprof) format (`profile.proto`), the format of
+   * `go tool pprof`, speedscope, Pyroscope and Parca.
+   */
+  namespace pprof {
+    /**
+     * A sampling profile of the process's native heap.
+     *
+     * Bun's allocator takes a sample about once per `sampleInterval` allocated bytes and remembers
+     * the stack that allocated, JavaScript and native frames together, until the memory is
+     * freed. The profile has the four sample types of a Go heap profile: `alloc_objects`,
+     * `alloc_space`, `inuse_objects` and `inuse_space`.
+     *
+     * There is one heap profile per process. It covers every thread: Workers, the HTTP client
+     * and the thread pool. Samples carry a `thread` label with the name of the thread, and those
+     * taken on a Worker's JavaScript thread a `worker` label with its `threadId`.
+     *
+     * What it sees is memory from Bun's allocator: `ArrayBuffer` contents, strings, native
+     * objects, the buffers of Bun's APIs. The JavaScript heap shows up as the blocks the garbage
+     * collector takes from the allocator, attributed to the allocation that made it need
+     * another block, not as individual objects; for those, use {@link generateHeapSnapshot}.
+     * On macOS, memory that system frameworks allocate is not included.
+     *
+     * The same profile can be written when the process exits, without a change to the code:
+     * `bun --pprof-heap[=<path>] [--pprof-heap-interval=<bytes>]`.
+     *
+     * @example
+     * ```ts
+     * Bun.pprof.heap.start();
+     * await work();
+     * await Bun.write("heap.pb.gz", Bun.pprof.heap.stop());
+     * // go tool pprof -http=: heap.pb.gz
+     * ```
+     */
+    namespace heap {
+      interface StartOptions {
+        /**
+         * Average number of bytes allocated between two samples. A smaller interval gives a more
+         * detailed profile and costs more time.
+         *
+         * At least 131072 (128 KiB).
+         *
+         * @default 524288 (512 KiB)
+         */
+        sampleInterval?: number | undefined;
+      }
+
+      /**
+       * Start the heap profile of this process.
+       *
+       * @throws if a heap profile is already running, in this thread or another
+       */
+      function start(options?: StartOptions): void;
+
+      /**
+       * The profile so far, gzipped, as `go tool pprof` and the others read it. The profile keeps
+       * running: `alloc_*` count from {@link start}, `inuse_*` is what is live now. Serve it
+       * from an endpoint such as `/debug/pprof/heap` for a continuous profiler to scrape.
+       *
+       * Positions in code that a bundler or Bun's transpiler changed are mapped back through
+       * sourcemaps for frames of the calling thread and of Workers that have exited. Samples
+       * with a frame of another Worker that is still running have the positions of the code as
+       * it runs, and the label `generated=true`.
+       *
+       * @throws if no heap profile is running
+       */
+      function profile(): Uint8Array<ArrayBuffer>;
+
+      /**
+       * Stop the heap profile and return it, like {@link profile}.
+       *
+       * @throws if no heap profile is running
+       */
+      function stop(): Uint8Array<ArrayBuffer>;
+
+      /**
+       * Whether a heap profile is running in this process.
+       */
+      const isRunning: boolean;
+    }
+  }
+
   namespace unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.

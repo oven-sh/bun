@@ -1571,12 +1571,11 @@ function getNodeHTTPServerSocket() {
     }
     uncork() {
       const dispatcherCorkDepth = this[kDispatcherCorkDepth];
-      const corkedBefore = this.writableCorked;
       const result = super.uncork();
-      // A caller can consume the dispatcher cork before the next request and
-      // replace it with its own. Do not later release that caller-owned cork.
-      if (dispatcherCorkDepth !== 0 && corkedBefore <= dispatcherCorkDepth) {
-        this[kDispatcherCorkDepth] = 0;
+      // Caller corks can sit below the dispatcher's cork. Follow partial
+      // releases down to zero so handoff still removes exactly Bun's cork.
+      if (dispatcherCorkDepth !== 0) {
+        this[kDispatcherCorkDepth] = Math.min(dispatcherCorkDepth, this.writableCorked);
       }
       return result;
     }

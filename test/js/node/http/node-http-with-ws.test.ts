@@ -258,6 +258,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
   test.each([
     ["a fresh caller cork", "fresh"],
     ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["nested caller corks after a partial release", "partial-nested"],
     ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
     ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
@@ -267,6 +268,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     server.on("connection", socket => {
       serverSocket = socket;
       if (mode !== "replaced-dispatcher") socket.cork();
+      if (mode === "partial-nested") socket.cork();
       if (mode === "suppressed-dispatcher") {
         suppressedCork = socket.cork;
         socket.cork = () => {};
@@ -297,6 +299,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
         serverSocket.uncork();
         serverSocket.cork();
       }
+      if (mode === "partial-nested") serverSocket.uncork();
       client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
       const opened = waitForWebSocketOpen(client);
       const message = waitForWebSocketMessage(client);
@@ -311,7 +314,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
       expect(bufferedBeforeRelease).toBeGreaterThan(0);
       expect(received.toString()).toBe("pending");
     } finally {
-      if (serverSocket?.writableCorked) serverSocket.uncork();
+      while (serverSocket?.writableCorked) serverSocket.uncork();
       client?.terminate();
       await clientEvents;
       agent.destroy();

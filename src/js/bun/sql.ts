@@ -1179,34 +1179,6 @@ SQL.PostgresError = PostgresError;
 SQL.SQLiteError = SQLiteError;
 SQL.MySQLError = MySQLError;
 
-// // Helper functions for native code to create error instances
-// // These are internal functions used by native code
-// export function $createPostgresError(
-//   message: string,
-//   code: string,
-//   detail: string,
-//   hint: string,
-//   severity: string,
-//   additionalFields?: Record<string, any>,
-// ) {
-//   const options = {
-//     code,
-//     detail,
-//     hint,
-//     severity,
-//     ...additionalFields,
-//   };
-//   return new PostgresError(message, options);
-// }
-
-// export function $createSQLiteError(message: string, code: string, errno: number) {
-//   return new SQLiteError(message, { code, errno });
-// }
-
-// export function $createSQLError(message: string) {
-//   return new SQLError(message);
-// }
-
 export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,

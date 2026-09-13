@@ -60,14 +60,6 @@ pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
     pub(crate) context: C,
 }
-impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            context: C::default(),
-        }
-    }
-}
 impl<T, C> PriorityQueue<T, C> {
     pub fn init(context: C) -> Self {
         Self {

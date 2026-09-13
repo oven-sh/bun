@@ -42,7 +42,9 @@ void setSubclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFra
     auto* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, void());
     auto* newTargetGlobalObject = defaultGlobalObject(functionGlobalObject);
-    auto* subclassStructure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure(vm, *newTargetGlobalObject));
+    auto* structure = baseStructure(vm, *newTargetGlobalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* subclassStructure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, structure);
     RETURN_IF_EXCEPTION(scope, void());
     jsObject->setStructure(vm, subclassStructure);
 }

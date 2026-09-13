@@ -12,7 +12,7 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm, bool isUserRequireResolve);
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
 namespace Zig {
@@ -20,11 +20,16 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-class ImportMetaObject final : public JSC::JSNonFinalObject {
+class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ImportMetaObject*>(cell)->ImportMetaObject::~ImportMetaObject();
+    }
 
     /// Must be called with a valid url string (for `import.meta.url`)
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);

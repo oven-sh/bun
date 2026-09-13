@@ -121,7 +121,8 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
+/* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
+int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
@@ -138,12 +139,21 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
+    if (!loop->data.wakeup_async) {
+        us_free(loop->data.recv_buf);
+        us_free(loop->data.send_buf);
+#ifdef LIBUS_USE_LIBUV
+        us_timer_close(loop->data.sweep_timer, 0);
+#endif
+        return -1;
+    }
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");
     }
 #endif
+    return 0;
 }
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
@@ -485,7 +495,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        if (us_poll_start_rc(accepted_p, loop, LIBUS_SOCKET_READABLE) != 0) {
+                        if (us_poll_start_rc(accepted_p, loop, listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) != 0) {
                             /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
                              * peer sees a RST instead of a connection that silently
                              * never answers. */
@@ -504,7 +514,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
-                        s->flags.is_paused = 0;
+                        s->flags.is_paused = listen_socket->accept_paused;
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;

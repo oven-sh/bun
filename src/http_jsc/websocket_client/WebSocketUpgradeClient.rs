@@ -26,16 +26,18 @@ use std::io::Write as _;
 
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
+use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::{FeatureFlags, ZBox};
-use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
-use bun_ptr::{JsCell, ThisPtr};
-use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
+use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+
+use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
+use bun_uws::{self as uws, SocketHandler, SocketKind};
 
 use super::cpp_websocket::CppWebSocket;
 use super::websocket_deflate as WebSocketDeflate;
@@ -64,17 +66,6 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
             .get()
             .unwrap_or(120),
     )
-}
-
-/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
-/// Forwards to the canonical fully-populated vtable in `bun_jsc`.
-///
-/// # Safety
-/// `vm` must be the live per-thread VM singleton.
-#[inline]
-unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
-    // SAFETY: caller contract above.
-    unsafe { bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
 }
 
 /// `uws.NewSocketHandler(ssl)`
@@ -107,38 +98,22 @@ enum HeadParse {
     NeedMore,
 }
 
-/// Owned +1 reference to an `SslCtx` (`SSL_CTX*`); releases the ref via
-/// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
-/// Either dropped here, or transferred to the connected `WebSocket` via
-/// `into_raw()` after the upgrade completes.
-struct SslCtxOwned(*mut SslCtx);
+use boringssl::c::OwnedSslCtx;
 
-impl SslCtxOwned {
-    /// Transfer ownership of the retained ref to the caller without freeing.
-    fn into_raw(self) -> *mut SslCtx {
-        core::mem::ManuallyDrop::new(self).0
-    }
-}
-
-impl Drop for SslCtxOwned {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` is an owned retained ref (returned with +1 by
-        // `ssl_ctx_cache_get_or_create`) that has not been transferred out.
-        unsafe { boringssl::c::SSL_CTX_free(self.0) };
-    }
-}
-
-/// WebSocket HTTP upgrade client, generic over `SSL`.
-///
-/// Intrusive single-thread
-/// refcount; `ref_count` field below, `ref()`/`deref()` inherent methods, `deinit`
-/// runs when count hits 0.
+/// WebSocket HTTP upgrade client, generic over `SSL`. Intrusively refcounted;
+/// dropped when the count hits 0.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct HTTPClient<const SSL: bool> {
     ref_count: Cell<u32>,
     tcp: Cell<Socket<SSL>>,
-    outgoing_websocket: Cell<Option<*mut CppWebSocket>>,
+    /// The ref held on behalf of the TCP socket's userdata pointer; released
+    /// in `handle_close` / `handle_connect_error` / `cancel`, or when the
+    /// socket is handed to the connected `WebSocket`.
+    socket_ref: Cell<Option<RefPtr<Self>>>,
+    /// C++ `WebSocket::m_upgradeClient` and the ref held on its behalf;
+    /// released together when C++ lets go (`cancel`, `didConnect*`,
+    /// `didAbruptClose`).
+    outgoing_websocket: JsCell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: JsCell<Vec<u8>>,
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
@@ -162,7 +137,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.
-    secure: JsCell<Option<SslCtxOwned>>,
+    secure: JsCell<Option<OwnedSslCtx>>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
@@ -187,49 +162,29 @@ pub struct HTTPClient<const SSL: bool> {
 // C++ callbacks; a `&mut Self` argument across either is UB under Stacked
 // Borrows (argument protectors / aliased `&mut`). Mutable state lives in
 // `Cell`/`JsCell` fields so every access is a short shared borrow.
-impl<const SSL: bool> HTTPClient<SSL> {
-    const TYPE_NAME: &'static str = if SSL {
-        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(true)"
-    } else {
-        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(false)"
-    };
-
-    /// Called by `RefCount` when the count hits zero.
-    ///
-    /// # Safety
-    /// `this` must be the unique remaining pointer to a `Self` allocated via
-    /// `heap::alloc` in `connect`.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is the unique remaining ref.
-        unsafe {
-            (*this).clear_data();
-            debug_assert!((*this).tcp.get().is_detached());
-            // allocated via heap::alloc in `connect`.
-            bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::TYPE_NAME, this);
-            drop(bun_core::heap::take(this));
-        }
-    }
-
-    /// On error, this returns null.
-    /// Returning null signals to the parent function that the connection failed.
+impl<const SSL: bool> HTTPClient<SSL>
+where
+    Self: IntoUpgradeClientRef,
+{
+    /// On error, this returns `None`, which signals to the C++ caller that the
+    /// connection failed. On success the returned pointer carries the ref held
+    /// in `outgoing_websocket` on C++'s behalf.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) unsafe fn connect(
+    pub(crate) fn connect(
         global: &JSGlobalObject,
-        websocket: *mut CppWebSocket,
+        websocket: &CppWebSocket,
         host: &BunString,
         port: u16,
         pathname: &BunString,
         client_protocol: &BunString,
-        header_names: *const BunString,
-        header_values: *const BunString,
-        header_count: usize,
+        header_names: &[BunString],
+        header_values: &[BunString],
         // Proxy parameters
         proxy_host: Option<&BunString>,
         proxy_port: u16,
         proxy_authorization: Option<&BunString>,
-        proxy_header_names: *const BunString,
-        proxy_header_values: *const BunString,
-        proxy_header_count: usize,
+        proxy_header_names: &[BunString],
+        proxy_header_values: &[BunString],
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: Option<Box<SSLConfig>>,
         // Whether the target URL is wss:// (separate from ssl template parameter)
@@ -242,7 +197,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
     ) -> Option<*mut Self> {
-        let vm_ptr = global.bun_vm_ptr();
         let vm = global.bun_vm().as_mut();
 
         debug_assert!(vm.event_loop_handle.is_some());
@@ -256,15 +210,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let pathname_slice = pathname.to_utf8();
         let client_protocol_slice = client_protocol.to_utf8();
 
-        // Headers8Bit::init only returns AllocError; handle OOM as a crash per
-        // the OOM contract instead of masking it as a connection failure.
-        // SAFETY: header_names/header_values point to header_count live BunStrings per extern-C contract.
-        let extra_headers = unsafe { Headers8Bit::init(header_names, header_values, header_count) };
+        let extra_headers = Headers8Bit::init(header_names, header_values);
 
-        let proxy_host_slice: Option<Utf8Slice> = proxy_host.map(|ph| ph.to_utf8());
-        let target_authorization_slice: Option<Utf8Slice> =
+        let proxy_host_slice: Option<Utf8Bytes> = proxy_host.map(|ph| ph.to_utf8());
+        let target_authorization_slice: Option<Utf8Bytes> =
             target_authorization.map(|ta| ta.to_utf8());
-        let unix_socket_path_slice: Option<Utf8Slice> = unix_socket_path.map(|usp| usp.to_utf8());
+        let unix_socket_path_slice: Option<Utf8Bytes> = unix_socket_path.map(|usp| usp.to_utf8());
 
         let using_proxy = proxy_host.is_some();
 
@@ -300,19 +251,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
-            let proxy_auth_decoded: Option<Utf8Slice> =
+            let proxy_auth_decoded: Option<Utf8Bytes> =
                 proxy_authorization.map(|auth| auth.to_utf8());
             let proxy_auth_slice: Option<&[u8]> = proxy_auth_decoded.as_ref().map(|s| s.slice());
 
             // Parse proxy headers (temporary, freed after building CONNECT request)
-            // Headers8Bit::init / to_headers only return AllocError; OOM should
-            // crash, not silently become a connection failure.
-            // SAFETY: proxy_header_names/values point to proxy_header_count live BunStrings per extern-C contract.
-            let proxy_extra_headers = unsafe {
-                Headers8Bit::init(proxy_header_names, proxy_header_values, proxy_header_count)
-            };
+            let proxy_extra_headers = Headers8Bit::init(proxy_header_names, proxy_header_values);
 
-            let proxy_hdrs: Option<Headers> = if proxy_header_count > 0 {
+            let proxy_hdrs: Option<Headers> = if !proxy_header_names.is_empty() {
                 Some(proxy_extra_headers.to_headers())
             } else {
                 None
@@ -351,7 +297,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             subprotocols
         };
 
-        let display_host_: &[u8] = if using_proxy {
+        let display_host: &[u8] = if using_proxy {
             proxy_host_slice.as_ref().unwrap().slice()
         } else {
             host_slice.slice()
@@ -359,14 +305,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let connect_port = if using_proxy { proxy_port } else { port };
 
         let mut poll_ref = KeepAlive::init();
-        // SAFETY: `vm_ptr` is the live per-thread VM (`global.bun_vm_ptr()`).
-        poll_ref.r#ref(unsafe { vm_loop_ctx(vm_ptr) });
-        let display_host: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && display_host_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                display_host_
-            };
+        poll_ref.r#ref(vm.loop_ctx());
 
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
@@ -395,10 +334,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
         // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         //
-        let mut secure: Option<SslCtxOwned> = None;
+        let mut secure: Option<OwnedSslCtx> = None;
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
-            let hooks =
-                bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
             'brk: {
                 if let Some(config) = &ssl_config {
                     if config.requires_custom_request_ctx {
@@ -406,15 +343,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
                         // with the same CA shares one CTX with each other and with
                         // any `Bun.connect`/Postgres/etc. that named it.
-                        // SAFETY: `vm_ptr` is the live per-thread VM (caller
-                        // contract); JS thread.
-                        let ctx = unsafe {
-                            (hooks.ssl_ctx_cache_get_or_create)(
-                                vm_ptr,
-                                &config.as_usockets_for_client_verification(),
-                                &mut err,
-                            )
-                        };
+                        let ctx = vm.ssl_ctx_cache_get_or_create(
+                            &config.as_usockets_for_client_verification(),
+                            &mut err,
+                        );
                         let Some(ctx) = ctx else {
                             // Do NOT fall through to the default trust store — the
                             // user passed an explicit CA/cert and BoringSSL
@@ -422,25 +354,25 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            // SAFETY: `vm_ptr` is the live per-thread VM.
-                            poll_ref.unref(unsafe { vm_loop_ctx(vm_ptr) });
+                            poll_ref.unref(vm.loop_ctx());
                             return None;
                         };
-                        secure = Some(SslCtxOwned(ctx));
-                        break 'brk Some(ctx);
+                        let raw = ctx.as_ptr();
+                        secure = Some(ctx);
+                        break 'brk Some(raw);
                     }
                 }
-                // SAFETY: `vm_ptr` is the live per-thread VM; JS thread.
-                Some(unsafe { (hooks.default_client_ssl_ctx)(vm_ptr) })
+                Some(vm.default_client_ssl_ctx())
             }
         } else {
             None
         };
 
-        let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
+        let client = RefPtr::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
-            outgoing_websocket: Cell::new(Some(websocket)),
+            socket_ref: Cell::new(None),
+            outgoing_websocket: JsCell::new(None),
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
@@ -454,105 +386,101 @@ impl<const SSL: bool> HTTPClient<SSL> {
             expected_accept: request_result.expected_accept,
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols: JsCell::new(subprotocols),
-        }));
-        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
-        // SAFETY: `client` was just allocated above (live, refcount == 1).
-        let this = unsafe { ThisPtr::new(client) };
+        });
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
+        let this = client.this_ptr();
 
         // Unix domain socket path (ws+unix:// / wss+unix://)
         if let Some(usp) = &unix_socket_path_slice {
-            match Socket::<SSL>::connect_unix_group(
+            let socket = Socket::<SSL>::connect_unix_group(
                 group,
                 kind,
                 secure_ptr,
                 usp.slice(),
-                client,
+                client.as_ptr(),
                 false,
-            ) {
-                Ok(socket) => {
-                    this.tcp.set(socket);
-                    if this.state.get() == State::Failed {
-                        // SAFETY: `client` from heap::alloc above.
-                        unsafe { Self::deref(client) };
-                        return None;
-                    }
-                    bun_analytics::features::web_socket
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            )
+            .ok()?;
+            this.tcp.set(socket);
+            if this.state.get() == State::Failed {
+                socket.take_ext_owner::<Self>();
+                return None;
+            }
+            bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-                    if SSL {
-                        // SNI uses the URL host (defaulted to "localhost" in
-                        // C++ when absent), mirroring the TCP path below. A
-                        // user-supplied Host header does NOT affect SNI; use
-                        // `tls: { checkServerIdentity }` or put the hostname
-                        // in the URL (wss+unix://name/path) to verify against
-                        // a specific certificate name.
-                        if !host_slice.slice().is_empty() {
-                            this.hostname.set(ZBox::from_bytes(host_slice.slice()));
-                        }
-                    }
-
-                    socket.set_timeout(handshake_timeout_seconds());
-                    this.state.set(State::Reading);
-                    // +1 for cpp_websocket
-                    this.ref_();
-                    return Some(client);
-                }
-                Err(_) => {
-                    // SAFETY: `client` from heap::alloc above; never
-                    // installed as userdata on the Err path.
-                    unsafe { Self::deref(client) };
+            if SSL {
+                // SNI uses the URL host (defaulted to "localhost" in
+                // C++ when absent), mirroring the TCP path below. A
+                // user-supplied Host header does NOT affect SNI; use
+                // `tls: { checkServerIdentity }` or put the hostname
+                // in the URL (wss+unix://name/path) to verify against
+                // a specific certificate name.
+                if !host_slice.slice().is_empty() {
+                    this.hostname.set(ZBox::from_bytes(host_slice.slice()));
                 }
             }
-            return None;
+
+            socket.set_timeout(handshake_timeout_seconds());
+            this.state.set(State::Reading);
+            return Some(Self::connected(client, websocket));
         }
 
-        match Socket::<SSL>::connect_group(
+        let sock = Socket::<SSL>::connect_group(
             group,
             kind,
             secure_ptr,
             display_host,
             c_int::from(connect_port),
-            client,
+            client.as_ptr(),
             false,
-        ) {
-            Ok(sock) => {
-                this.tcp.set(sock);
-                // I don't think this case gets reached.
-                if this.state.get() == State::Failed {
-                    // SAFETY: `client` from heap::alloc above.
-                    unsafe { Self::deref(client) };
-                    return None;
-                }
-                bun_analytics::features::web_socket
-                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        )
+        .ok()?;
+        this.tcp.set(sock);
+        // I don't think this case gets reached.
+        if this.state.get() == State::Failed {
+            sock.take_ext_owner::<Self>();
+            return None;
+        }
+        bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-                if SSL {
-                    // SNI for the outer TLS socket must use the host we actually
-                    // dialed. For HTTPS proxy connections, that's the proxy host,
-                    // not the wss:// target.
-                    if !display_host_.is_empty() {
-                        this.hostname.set(ZBox::from_bytes(display_host_));
-                    }
-                }
-
-                sock.set_timeout(handshake_timeout_seconds());
-                this.state.set(State::Reading);
-                // +1 for cpp_websocket
-                this.ref_();
-                Some(client)
-            }
-            Err(_) => {
-                // SAFETY: `client` from heap::alloc above; never installed
-                // as userdata on the Err path.
-                unsafe { Self::deref(client) };
-                None
+        if SSL {
+            // SNI for the outer TLS socket must use the host we actually
+            // dialed. For HTTPS proxy connections, that's the proxy host,
+            // not the wss:// target.
+            if !display_host.is_empty() {
+                this.hostname.set(ZBox::from_bytes(display_host));
             }
         }
+
+        sock.set_timeout(handshake_timeout_seconds());
+        this.state.set(State::Reading);
+        Some(Self::connected(client, websocket))
     }
 
-    pub(crate) fn clear_input(&self) {
-        self.input_body_buf.set(Vec::new());
-        self.to_send_len.set(0);
+    /// The socket now holds `client` as its userdata; record that ref and take
+    /// one more on behalf of C++'s `m_upgradeClient`, returning its pointer.
+    fn connected(client: RefPtr<Self>, websocket: &CppWebSocket) -> *mut Self {
+        let this = client.this_ptr();
+        this.outgoing_websocket
+            .set(Some((BackRef::new(websocket), client.clone())));
+        this.socket_ref.set(Some(client));
+        this.as_ptr()
+    }
+
+    /// C++'s back-reference, while it still holds one.
+    fn cpp_websocket(&self) -> Option<BackRef<CppWebSocket>> {
+        self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws)
+    }
+
+    /// C++ let go of `m_upgradeClient`: forget the back-reference and release
+    /// the ref held on its behalf. May free `self`.
+    fn release_cpp_ref(&self) {
+        self.outgoing_websocket.set(None);
+    }
+
+    /// Release the ref held for the socket's userdata pointer. May free `self`.
+    fn release_socket_ref(&self) {
+        self.socket_ref.set(None);
     }
 
     /// Write the unsent suffix of `input_body_buf` via `write` (which returns
@@ -576,36 +504,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         usize::try_from(socket.write(buf)).ok()
     }
 
-    pub(crate) fn clear_data(&self) {
-        self.poll_ref.with_mut(|p| {
-            // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
-            p.unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) })
-        });
-
-        self.subprotocols.with_mut(|s| s.clear_and_free());
-        self.clear_input();
-        self.body.set(Vec::new());
-
-        if !self.hostname.get().is_empty() {
-            self.hostname.set(ZBox::default());
-        }
-
-        // Clean up proxy state. Null the field and detach the tunnel's
-        // back-reference before deinit so that SSLWrapper shutdown callbacks
-        // cannot re-enter clear_data() while the proxy is still reachable.
-        if let Some(proxy) = self.proxy.replace(None) {
-            if let Some(tunnel) = proxy.get_tunnel() {
-                // SAFETY: `proxy` holds a live ref on `tunnel`.
-                unsafe { ThisPtr::new(tunnel.as_ptr()) }.detach_upgrade_client();
-            }
-            drop(proxy);
-        }
-        // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
-        self.ssl_config.set(None);
-        // secure: Option<SslCtxOwned> — Drop releases the ref taken in `connect`.
-        self.secure.set(None);
-    }
-
     /// Takes `ThisPtr<Self>` because `tcp.close()` synchronously dispatches
     /// `handle_close` from the socket userdata pointer, and the trailing
     /// `deref` may free `this`.
@@ -617,13 +515,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
         // below), which may free `this` — no `&`/`&mut Self` is live at that
         // point.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
-        if this.outgoing_websocket.take().is_some() {
-            // SAFETY: refcount > 1 here (the +1 from `_guard` above).
-            unsafe { Self::deref(this.as_ptr()) };
-        }
+        this.release_cpp_ref();
 
         // Copy `tcp` out so no borrow of `*this` spans the close.
         let tcp = this.tcp.get();
@@ -635,17 +530,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // `connect()`. Take it back here and deref it ourselves; any callback
         // that does fire sees `ext == None` and no-ops via the
         // `RawPtrHandler` guard.
-        let had_socket_ref = tcp
-            .ext::<Option<core::ptr::NonNull<Self>>>()
-            // SAFETY: ext slot is the `Option<NonNull<Self>>` written in
-            // `connect_group`; single-threaded (JS thread), no other `&mut`
-            // to it is live.
-            .is_some_and(|ext| unsafe { (*ext).take().is_some() });
+        let had_socket_ref = tcp.take_ext_owner::<Self>();
         tcp.close(uws::CloseCode::Failure);
         if had_socket_ref {
             this.tcp.set(Socket::<SSL>::detached());
-            // SAFETY: refcount > 1 (the +1 from `_guard` above).
-            unsafe { Self::deref(this.as_ptr()) };
+            this.release_socket_ref();
         }
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
@@ -673,11 +562,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// handlers and may re-enter via C++ `cancel()`, and the trailing `deref`
     /// may free `this`.
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
-        let ws = this.outgoing_websocket.take();
-        if let Some(ws) = ws {
-            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
-            // SAFETY: `this` carries root provenance; may free `this`.
-            unsafe { Self::deref(this.as_ptr()) };
+        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
+            ws.did_abrupt_close(code);
         }
     }
 
@@ -690,9 +576,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         this.clear_data();
         this.tcp.set(Socket::<SSL>::detached());
         Self::dispatch_abrupt_close(this, ErrorCode::Ended);
-
-        // SAFETY: may free `this`; no borrow of `*this` is live.
-        unsafe { Self::deref(this.as_ptr()) };
+        this.release_socket_ref();
     }
 
     /// See `fail`.
@@ -715,10 +599,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         );
 
         let handshake_success = success == 1;
-        let mut reject_unauthorized = false;
-        if let Some(ws) = this.outgoing_websocket.get() {
-            reject_unauthorized = CppWebSocket::opaque_ref(ws).reject_unauthorized();
-        }
+        let reject_unauthorized = this
+            .cpp_websocket()
+            .is_some_and(|ws| ws.reject_unauthorized());
 
         if handshake_success {
             // handshake completed but we may have ssl errors
@@ -733,36 +616,21 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 }
-                // SAFETY: native handle on a TLS socket is `*SSL`.
-                let ssl_ptr = socket
-                    .get_native_handle()
-                    .map_or(core::ptr::null_mut(), |h| h.cast::<boringssl::c::SSL>());
-                if ssl_ptr.is_null() {
-                    // No SSL object to verify against — treat as handshake failure
-                    // rather than dereferencing null below.
+                let Some(ssl) = socket.ssl_mut() else {
+                    // No SSL object to verify against — treat as handshake failure.
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
-                }
-                // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
-                // returns a nullable borrowed C string valid for the SSL's lifetime.
-                // Keep the raw pointer — round-tripping through `&c_char` would
-                // shrink provenance to 1 byte and make the CStr scan UB.
-                let servername = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0) };
+                };
                 let identity_ok = {
                     let own_hostname = this.hostname.get();
-                    let hostname = if !own_hostname.is_empty() {
+                    let sni: Vec<u8>;
+                    let hostname: &[u8] = if !own_hostname.is_empty() {
                         own_hostname.as_bytes()
-                    } else if !servername.is_null() {
-                        // SAFETY: SSL_get_servername returns a NUL-terminated C string
-                        // owned by the SSL session; full provenance retained above.
-                        unsafe { bun_core::ffi::cstr(servername) }.to_bytes()
                     } else {
-                        b""
+                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
+                        &sni
                     };
-                    !hostname.is_empty()
-                        // SAFETY: `ssl_ptr` is non-null (checked above) and is the live `*SSL`
-                        // for this open socket; reached only after a successful TLS handshake.
-                        && boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
                 };
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
@@ -790,17 +658,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if SSL {
             let hostname = this.hostname.get();
             if !hostname.is_empty() {
-                if let Some(handle) = socket.get_native_handle() {
-                    // SAFETY: native handle on a TLS socket is `*SSL`; live for the
-                    // open socket's lifetime.
-                    let handle = handle.cast::<boringssl::c::SSL>();
-                    // `configureHTTPClient` ext-method hasn't landed on
-                    // boringssl::SSL; use bun_http's helper.
-                    // SAFETY: `handle` is the live `*mut SSL` for this just-opened
-                    // socket (uSockets never passes null); `this.hostname` is a
-                    // NUL-terminated CString that outlives this call.
+                if let Some(ssl) = socket.ssl_mut() {
                     bun_http::configure_http_client_with_alpn(
-                        unsafe { &mut *handle },
+                        ssl,
                         if bun_core::ip_address::is_ip_address(hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
@@ -874,13 +734,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if this.state.get() == State::Done {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
-                // SAFETY: `proxy` holds a live ref on `tunnel`.
-                WebSocketProxyTunnel::receive(unsafe { ThisPtr::new(tunnel.as_ptr()) }, data);
+                WebSocketProxyTunnel::receive(tunnel, data);
             }
             return;
         }
 
-        if this.outgoing_websocket.get().is_none() {
+        if this.cpp_websocket().is_none() {
             this.state.set(State::Failed);
             this.clear_data();
             // No borrow of `*this` is live across this call (handle_close reenters).
@@ -889,7 +748,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
         // below. No `&`/`&mut Self` is live when the guard drops.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         debug_assert!(this.is_same_socket(socket));
 
@@ -905,8 +764,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
-                // SAFETY: `proxy` holds a live ref on `tunnel`.
-                WebSocketProxyTunnel::receive(unsafe { ThisPtr::new(tunnel.as_ptr()) }, data);
+                WebSocketProxyTunnel::receive(tunnel, data);
                 return;
             }
         }
@@ -924,19 +782,17 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     /// Forward the handshake response to C++ as a `'handshake'` event.
-    fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
+    fn dispatch_handshake(ws: BackRef<CppWebSocket>, response: &picohttp::Response, body: &[u8]) {
         let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
             .headers
             .list
             .iter()
             .map(|h| super::cpp_websocket::RawHeader {
-                name_ptr: h.name().as_ptr(),
-                name_len: h.name().len(),
-                value_ptr: h.value().as_ptr(),
-                value_len: h.value().len(),
+                name: h.name().into(),
+                value: h.value().into(),
             })
             .collect();
-        CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+        ws.did_receive_handshake_response(
             u16::try_from(response.status_code).unwrap_or(0),
             response.status,
             &raw_headers,
@@ -944,7 +800,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         );
     }
 
-    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
+    /// Caller holds a `RefPtr` guard and owns `full` (must not borrow `self`).
     fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
         let mut scratch = [picohttp::Header::ZERO; 128];
         let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
@@ -957,9 +813,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let _scope = is_101
             .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        if let Some(ws) = this.outgoing_websocket.get() {
+        if let Some(ws) = this.cpp_websocket() {
             Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
-            if this.outgoing_websocket.get().is_none() {
+            if this.cpp_websocket().is_none() {
                 return;
             }
         }
@@ -1056,23 +912,22 @@ impl<const SSL: bool> HTTPClient<SSL> {
         log!("startProxyTLSHandshake");
 
         // Get certificate verification setting
-        let reject_unauthorized = match this.outgoing_websocket.get() {
-            Some(ws) => CppWebSocket::opaque_ref(ws).reject_unauthorized(),
-            None => true,
-        };
+        let reject_unauthorized = this
+            .cpp_websocket()
+            .is_none_or(|ws| ws.reject_unauthorized());
 
         // Create proxy tunnel with all parameters.
         // Safely unwrap proxy state - it must exist if we're called from handle_proxy_response.
         // The shared borrow of `proxy` spans only `init`, which allocates.
-        let init_result = this.proxy.get().as_ref().map(|p| {
+        let tunnel = this.proxy.get().as_ref().map(|p| {
             WebSocketProxyTunnel::init::<SSL>(
-                this,
+                Self::upgrade_client_ref(this),
                 socket,
                 p.get_target_host(),
                 reject_unauthorized,
             )
         });
-        let Some(Ok(tunnel)) = init_result else {
+        let Some(tunnel) = tunnel else {
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
@@ -1089,27 +944,24 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         // Start TLS handshake
-        // SAFETY: `tunnel` was just allocated by `init` (live, ref_count == 1).
-        let tunnel_this = unsafe { ThisPtr::new(tunnel.as_ptr()) };
-        if WebSocketProxyTunnel::start(tunnel_this, &ssl_options, initial_data).is_err() {
-            // SAFETY: release the ref taken by `init`.
-            unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
+        if WebSocketProxyTunnel::start(tunnel.this_ptr(), &ssl_options, initial_data).is_err() {
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
         // can fail the client and take `proxy`.
-        let attached = this.proxy.with_mut(|proxy| match proxy.as_mut() {
+        let unattached = this.proxy.with_mut(|proxy| match proxy.as_mut() {
             Some(p) => {
-                p.set_tunnel(Some(tunnel));
-                true
+                p.set_tunnel(tunnel);
+                None
             }
-            None => false,
+            None => Some(tunnel),
         });
-        if !attached {
-            // SAFETY: release the ref taken by `init`; nothing else holds the tunnel.
-            unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
+        if let Some(tunnel) = unattached {
+            // Nothing else holds the tunnel.
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -1152,8 +1004,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
-        // SAFETY: `proxy` holds a live ref on `tunnel`.
-        let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
         Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
     }
 
@@ -1163,7 +1013,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// drop may free `this`; see `fail`.
     pub(crate) fn handle_decrypted_data(this: ThisPtr<Self>, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Process as if it came directly from the socket.
         let full = match this.buffer_and_parse_head(data) {
@@ -1280,12 +1130,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                 break 'brk false;
                             }
 
-                            if let Some(ws) = this.outgoing_websocket.get() {
-                                let mut protocol_str = BunString::clone_latin1(protocol);
-                                CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
-                                // `BunString` is `Copy`; explicitly drop the
-                                // ref taken by `clone_latin1`.
-                                protocol_str.deref();
+                            if let Some(ws) = this.cpp_websocket() {
+                                ws.set_protocol(BunString::clone_latin1(protocol));
                             }
                             true
                         };
@@ -1389,11 +1235,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         }
 
-        // if (!visited_version) {
-        //     this.terminate(ErrorCode.invalid_websocket_version);
-        //     return;
-        // }
-
         if upgrade_header
             .name()
             .len()
@@ -1439,26 +1280,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        // Ownership transfer: `overflow` is HANDED OFF across FFI —
-        // `WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`
-        // adopts the raw `(ptr, len)` into an `InitialDataHandler` queued as a
-        // microtask, which reclaims it via `Box::<[u8]>::from_raw` when the
-        // microtask runs. Allocate as `Box<[u8]>` and `heap::alloc` it so the
-        // alloc/free pair through the SAME Rust global allocator (mimalloc).
-        // Do NOT keep a `Vec`/`Box` binding past the FFI call — it would drop
-        // at scope exit and leave the queued microtask with a dangling pointer
-        // (UAF on read in `handle_data`, then double-free on drop).
-        let overflow_len = remain_buf.len();
-        let overflow_ptr: *mut u8 = if overflow_len > 0 {
-            let mut v: Vec<u8> = Vec::new();
-            bun_core::handle_oom(v.try_reserve_exact(overflow_len));
-            v.extend_from_slice(remain_buf);
-            // Leak across the FFI boundary; `InitialDataHandler` reconstructs
-            // the `Box<[u8]>` and drops it after delivery.
-            bun_core::heap::into_raw(v.into_boxed_slice()).cast::<u8>()
-        } else {
-            core::ptr::null_mut()
-        };
+        // Ownership transfer: `overflow` is handed through C++
+        // (`WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`)
+        // as an opaque box to the connected client's `InitialDataHandler`.
+        let overflow =
+            || (!remain_buf.is_empty()).then(|| Box::new(super::InitialData(remain_buf.to_vec())));
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
@@ -1469,7 +1295,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // The tunnel forwards decrypted data to the WebSocket client.
             bun_jsc::mark_binding!();
             let tcp = this.tcp.get();
-            let has_ws = this.outgoing_websocket.get().is_some();
+            let has_ws = this.cpp_websocket().is_some();
             if !tcp.is_closed() && has_ws {
                 tcp.set_timeout(0);
                 log!("onDidConnect (tunnel mode)");
@@ -1479,7 +1305,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // never call cancel() to drop it. The TCP socket's ref (released
                 // in handle_close) is what keeps this struct alive to forward
                 // socket data to the tunnel after we switch to .done.
-                let ws = this.outgoing_websocket.take().unwrap();
+                let (ws, _cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
@@ -1495,22 +1321,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 this.state.set(State::Done);
 
                 // Create the WebSocket client with the tunnel
-                // SAFETY: live C++ back-reference.
-                unsafe {
-                    (*ws).did_connect_with_tunnel(
-                        tunnel.as_ptr().cast::<c_void>(),
-                        overflow_ptr,
-                        overflow_len,
-                        if deflate_result.enabled {
-                            Some(&deflate_result.params)
-                        } else {
-                            None
-                        },
-                    )
-                };
-
-                // SAFETY: drops the outgoing_websocket ref; no borrow of `*this` is live.
-                unsafe { Self::deref(this.as_ptr()) };
+                ws.did_connect_with_tunnel(
+                    tunnel,
+                    overflow(),
+                    if deflate_result.enabled {
+                        Some(&deflate_result.params)
+                    } else {
+                        None
+                    },
+                );
             } else if tcp.is_closed() {
                 Self::terminate(this, ErrorCode::Cancel);
             } else if !has_ws {
@@ -1521,7 +1340,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Normal (non-tunnel) mode — original code path. Transfer the
-        // custom `SslCtxOwned` to the connected WebSocket (it must outlive
+        // custom `OwnedSslCtx` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
         let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
@@ -1530,45 +1349,36 @@ impl<const SSL: bool> HTTPClient<SSL> {
         this.clear_data();
         bun_jsc::mark_binding!();
         let tcp = this.tcp.get();
-        let has_ws = this.outgoing_websocket.get().is_some();
+        let has_ws = this.cpp_websocket().is_some();
         if !tcp.is_closed() && has_ws {
             tcp.set_timeout(0);
             log!("onDidConnect");
 
-            let ws = this.outgoing_websocket.take().unwrap();
+            let (ws, cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
             this.tcp.set(Socket::<SSL>::detached());
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
-                // SAFETY: live C++ back-reference.
-                unsafe {
-                    (*ws).did_connect(
-                        &mut *native_socket,
-                        overflow_ptr,
-                        overflow_len,
-                        if deflate_result.enabled {
-                            Some(&deflate_result.params)
-                        } else {
-                            None
-                        },
-                        // ownership transferred; `into_raw` suppresses the
-                        // RAII release at fn end.
-                        saved_secure.take().map(|s| &mut *s.into_raw()),
-                    )
-                };
+                ws.did_connect(
+                    bun_opaque::opaque_deref_mut(native_socket),
+                    overflow(),
+                    if deflate_result.enabled {
+                        Some(&deflate_result.params)
+                    } else {
+                        None
+                    },
+                    // Ownership transferred to the connected client.
+                    saved_secure.take(),
+                );
             } else {
                 Self::terminate(this, ErrorCode::FailedToConnect);
             }
-            // SAFETY: two refs are released here (the outgoing_websocket ref
-            // then the TCP socket ref). The first call cannot reach zero
-            // because the second ref is still held. The second may free
-            // `this`; no borrow of `*this` is live.
-            // Once for the outgoing_websocket.
-            unsafe { Self::deref(this.as_ptr()) };
-            // Once again for the TCP socket.
-            // SAFETY: releases the TCP-socket ref; may free `this` — no borrow of `*this` is live.
-            unsafe { Self::deref(this.as_ptr()) };
+            // Two refs are released here (C++'s, then the TCP socket's — the
+            // socket now belongs to the connected WebSocket). The second may
+            // free `this`.
+            drop(cpp_ref);
+            this.release_socket_ref();
         } else if tcp.is_closed() {
             Self::terminate(this, ErrorCode::Cancel);
         } else if !has_ws {
@@ -1595,13 +1405,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // `on_writable`/`write` flush the tunnel and can reach `terminate` →
         // `handle_close`, dropping the socket's ref while this frame still
         // reads `*this`.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Forward to proxy tunnel if active
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
         if let Some(tunnel) = tunnel {
-            // SAFETY: `proxy` holds a live ref on `tunnel`.
-            let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
             WebSocketProxyTunnel::on_writable(tunnel);
             // In .done state (after WebSocket upgrade), just handle tunnel writes
             if this.state.get() == State::Done {
@@ -1644,56 +1452,75 @@ impl<const SSL: bool> HTTPClient<SSL> {
             this.state.set(State::Failed);
         }
 
-        // SAFETY: may free `this`; no borrow of `*this` is live.
-        unsafe { Self::deref(this.as_ptr()) };
+        this.release_socket_ref();
     }
 }
 
-/// Decodes an array of BunString header name/value pairs to UTF-8 up front.
-///
-/// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
-/// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
-/// which then corrupts the HTTP upgrade request and can cause heap corruption.
-///
-/// Using `bun_core::String::to_utf8()` either borrows the 8-bit ASCII backing
-/// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
-/// here so build_request_body / build_connect_request can index them by &[u8].
-///
-// Storing parallel `name_slices` / `value_slices` arrays borrowing into
-// `slices` would be self-referential; instead store only the `Utf8Slice` array (len =
-// 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
+impl<const SSL: bool> HTTPClient<SSL> {
+    const TYPE_NAME: &'static str = if SSL {
+        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(true)"
+    } else {
+        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(false)"
+    };
+
+    pub(crate) fn clear_input(&self) {
+        self.input_body_buf.set(Vec::new());
+        self.to_send_len.set(0);
+    }
+
+    pub(crate) fn clear_data(&self) {
+        self.poll_ref
+            .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+
+        self.subprotocols.with_mut(|s| s.clear_and_free());
+        self.clear_input();
+        self.body.set(Vec::new());
+
+        if !self.hostname.get().is_empty() {
+            self.hostname.set(ZBox::default());
+        }
+
+        // Clean up proxy state. Null the field and detach the tunnel's
+        // back-reference before deinit so that SSLWrapper shutdown callbacks
+        // cannot re-enter clear_data() while the proxy is still reachable.
+        if let Some(proxy) = self.proxy.replace(None) {
+            if let Some(tunnel) = proxy.get_tunnel() {
+                tunnel.detach_upgrade_client();
+            }
+            drop(proxy);
+        }
+        // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
+        self.ssl_config.set(None);
+        // secure: Option<OwnedSslCtx> — Drop releases the ref taken in `connect`.
+        self.secure.set(None);
+    }
+}
+
+impl<const SSL: bool> Drop for HTTPClient<SSL> {
+    fn drop(&mut self) {
+        self.clear_data();
+        debug_assert!(self.tcp.get().is_detached());
+        bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::TYPE_NAME, self);
+    }
+}
+
+/// Header name/value pairs decoded to UTF-8 up front (borrowed when 8-bit
+/// ASCII, else transcoded — never raw Latin-1/UTF-16 code units), stored flat
+/// (names at even indices, values at odd) and yielded as pairs via `iter()`.
 struct Headers8Bit<'a> {
-    slices: Vec<Utf8Slice>,
-    _marker: core::marker::PhantomData<&'a BunString>,
+    slices: Vec<Utf8Bytes<'a>>,
 }
 
 impl<'a> Headers8Bit<'a> {
-    /// # Safety
-    /// `names_ptr` and `values_ptr` must each be null or point to `len` valid
-    /// `BunString`s alive for `'a`.
-    unsafe fn init(names_ptr: *const BunString, values_ptr: *const BunString, len: usize) -> Self {
-        if len == 0 {
-            return Self {
-                slices: Vec::new(),
-                _marker: core::marker::PhantomData,
-            };
-        }
-        // SAFETY: per fn contract.
-        let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
-        // SAFETY: per fn contract — `values_ptr` points to `len` live `BunString`s.
-        let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
-
-        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
-        for i in 0..len {
-            slices.push(names_in[i].to_utf8());
-            slices.push(values_in[i].to_utf8());
+    fn init(names_in: &'a [BunString], values_in: &'a [BunString]) -> Self {
+        debug_assert_eq!(names_in.len(), values_in.len());
+        let mut slices: Vec<Utf8Bytes<'a>> = Vec::with_capacity(names_in.len() * 2);
+        for (name, value) in names_in.iter().zip(values_in) {
+            slices.push(name.to_utf8());
+            slices.push(value.to_utf8());
         }
 
-        Self {
-            slices,
-            _marker: core::marker::PhantomData,
-        }
+        Self { slices }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
@@ -1987,8 +1814,9 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 // symbol name; crate of origin is irrelevant at link time.
 
 // ──────────────────────────────────────────────────────────────────────────
-// extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.
-// Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
+// C++ (`WebCore::WebSocket`) entry points for the generic
+// `connect`/`cancel`/`memoryCost`, monomorphized for both transports; the
+// `extern "C"` thunks are generated from the `HOST_EXPORT` markers.
 //
 // C-ABI mapping (verified against the declarations in
 // src/jsc/bindings/headers.h and the call sites in WebSocket.cpp):
@@ -1996,107 +1824,132 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 //   - nullable `const BunString*` params (proxyHost/proxyAuthorization/
 //     targetAuthorization/unixSocketPath, passed as `nullptr` or `&local`)
 //     → `Option<&BunString>` (guaranteed null-pointer niche);
-//   - `BunString*` array + `size_t` count pairs → `*const BunString` + `usize`
-//     (count may be 0 with a dangling/null begin(); never dereferenced then);
+//   - `const BunString*` array + `size_t` count → `&[BunString]`
+//     (count may be 0 with a dangling/null begin());
 //   - `void* sslConfig` (ownership transferred, boxed by
 //     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
 //     (null-pointer niche; Box matches the transferred ownership).
 // Keep these signatures in sync with headers.h if either side changes.
 // ──────────────────────────────────────────────────────────────────────────
 
-macro_rules! export_http_client {
-    ($ssl:literal, $connect:ident, $cancel:ident, $memory_cost:ident) => {
-        const _: () = {
-            // `pub(crate)`: these exist only for the C++ caller via `no_mangle`;
-            // the anonymous `const` block makes them unreachable from Rust paths.
-            #[unsafe(no_mangle)]
-            pub(crate) unsafe extern "C" fn $connect(
-                global: &JSGlobalObject,
-                websocket: *mut CppWebSocket,
-                host: &BunString,
-                port: u16,
-                pathname: &BunString,
-                client_protocol: &BunString,
-                header_names: *const BunString,
-                header_values: *const BunString,
-                header_count: usize,
-                proxy_host: Option<&BunString>,
-                proxy_port: u16,
-                proxy_authorization: Option<&BunString>,
-                proxy_header_names: *const BunString,
-                proxy_header_values: *const BunString,
-                proxy_header_count: usize,
-                ssl_config: Option<Box<SSLConfig>>,
-                target_is_secure: bool,
-                target_authorization: Option<&BunString>,
-                unix_socket_path: Option<&BunString>,
-                offer_permessage_deflate: bool,
-            ) -> *mut HTTPClient<$ssl> {
-                // SAFETY: extern-C contract — caller (WebCore::WebSocket C++)
-                // guarantees `header_names`/`header_values` point to
-                // `header_count` live `BunString`s (and likewise for the proxy
-                // header arrays), and that `websocket` is a live back-ref.
-                match unsafe {
-                    HTTPClient::<$ssl>::connect(
-                        global,
-                        websocket,
-                        host,
-                        port,
-                        pathname,
-                        client_protocol,
-                        header_names,
-                        header_values,
-                        header_count,
-                        proxy_host,
-                        proxy_port,
-                        proxy_authorization,
-                        proxy_header_names,
-                        proxy_header_values,
-                        proxy_header_count,
-                        ssl_config,
-                        target_is_secure,
-                        target_authorization,
-                        unix_socket_path,
-                        offer_permessage_deflate,
-                    )
-                } {
-                    Some(p) => p,
-                    None => ptr::null_mut(),
-                }
-            }
-
-            #[unsafe(no_mangle)]
-            pub(crate) unsafe extern "C" fn $cancel(this: *mut HTTPClient<$ssl>) {
-                // SAFETY: caller (C++) holds a live ref; `this` carries root
-                // (userdata) provenance from `heap::alloc`.
-                HTTPClient::<$ssl>::cancel(unsafe { ThisPtr::new(this) });
-            }
-
-            #[unsafe(no_mangle)]
-            pub(crate) unsafe extern "C" fn $memory_cost(this: *mut HTTPClient<$ssl>) -> usize {
-                // SAFETY: caller (C++) holds a live ref.
-                unsafe { (*this).memory_cost() }
-            }
-        };
-    };
+// HOST_EXPORT(Bun__WebSocketHTTPClient__connect, c)
+#[allow(clippy::too_many_arguments)]
+pub fn bun__websockethttpclient__connect(
+    global: &JSGlobalObject,
+    websocket: &crate::websocket_client::cpp_websocket::CppWebSocket,
+    host: &BunString,
+    port: u16,
+    pathname: &BunString,
+    client_protocol: &BunString,
+    header_names: &[BunString],
+    header_values: &[BunString],
+    proxy_host: Option<&BunString>,
+    proxy_port: u16,
+    proxy_authorization: Option<&BunString>,
+    proxy_header_names: &[BunString],
+    proxy_header_values: &[BunString],
+    ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    target_is_secure: bool,
+    target_authorization: Option<&BunString>,
+    unix_socket_path: Option<&BunString>,
+    offer_permessage_deflate: bool,
+) -> *mut crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient {
+    HttpUpgradeClient::connect(
+        global,
+        websocket,
+        host,
+        port,
+        pathname,
+        client_protocol,
+        header_names,
+        header_values,
+        proxy_host,
+        proxy_port,
+        proxy_authorization,
+        proxy_header_names,
+        proxy_header_values,
+        ssl_config,
+        target_is_secure,
+        target_authorization,
+        unix_socket_path,
+        offer_permessage_deflate,
+    )
+    .unwrap_or(ptr::null_mut())
 }
-// `${concat(...)}` metavar-expr is unstable; hand-expand the two
-// instantiations by passing the pre-concatenated idents.
 
-export_http_client!(
-    false,
-    Bun__WebSocketHTTPClient__connect,
-    Bun__WebSocketHTTPClient__cancel,
-    Bun__WebSocketHTTPClient__memoryCost
-);
-export_http_client!(
-    true,
-    Bun__WebSocketHTTPSClient__connect,
-    Bun__WebSocketHTTPSClient__cancel,
-    Bun__WebSocketHTTPSClient__memoryCost
-);
+// HOST_EXPORT(Bun__WebSocketHTTPClient__cancel, c)
+pub fn bun__websockethttpclient__cancel(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+) {
+    HttpUpgradeClient::cancel(this);
+}
 
-/// Aliases for `WebSocketProxyTunnel`.
+// HOST_EXPORT(Bun__WebSocketHTTPClient__memoryCost, c)
+pub fn bun__websockethttpclient__memorycost(
+    this: &crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient,
+) -> usize {
+    this.memory_cost()
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__connect, c)
+#[allow(clippy::too_many_arguments)]
+pub fn bun__websockethttpsclient__connect(
+    global: &JSGlobalObject,
+    websocket: &crate::websocket_client::cpp_websocket::CppWebSocket,
+    host: &BunString,
+    port: u16,
+    pathname: &BunString,
+    client_protocol: &BunString,
+    header_names: &[BunString],
+    header_values: &[BunString],
+    proxy_host: Option<&BunString>,
+    proxy_port: u16,
+    proxy_authorization: Option<&BunString>,
+    proxy_header_names: &[BunString],
+    proxy_header_values: &[BunString],
+    ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    target_is_secure: bool,
+    target_authorization: Option<&BunString>,
+    unix_socket_path: Option<&BunString>,
+    offer_permessage_deflate: bool,
+) -> *mut crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient {
+    HttpsUpgradeClient::connect(
+        global,
+        websocket,
+        host,
+        port,
+        pathname,
+        client_protocol,
+        header_names,
+        header_values,
+        proxy_host,
+        proxy_port,
+        proxy_authorization,
+        proxy_header_names,
+        proxy_header_values,
+        ssl_config,
+        target_is_secure,
+        target_authorization,
+        unix_socket_path,
+        offer_permessage_deflate,
+    )
+    .unwrap_or(ptr::null_mut())
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__cancel, c)
+pub fn bun__websockethttpsclient__cancel(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+) {
+    HttpsUpgradeClient::cancel(this);
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__memoryCost, c)
+pub fn bun__websockethttpsclient__memorycost(
+    this: &crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient,
+) -> usize {
+    this.memory_cost()
+}
+
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
-pub(crate) type HttpUpgradeClient = HTTPClient<false>;
-pub(crate) type HttpsUpgradeClient = HTTPClient<true>;
+pub type HttpUpgradeClient = HTTPClient<false>;
+pub type HttpsUpgradeClient = HTTPClient<true>;

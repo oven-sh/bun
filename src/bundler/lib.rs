@@ -92,6 +92,7 @@ pub mod thread_pool;
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
+pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
@@ -119,6 +120,12 @@ pub mod linker_context {
 
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
+
+    #[path = "mergeSmallChunks.rs"]
+    pub mod merge_small_chunks;
+
+    #[path = "crossChunkNames.rs"]
+    pub mod cross_chunk_names;
 
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
@@ -245,6 +252,8 @@ pub mod options {
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
+    /// The type behind `BundleOptions::transform_options`.
+    pub use bun_options_types::schema::api::TransformOptions;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -267,6 +276,20 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        /// Ahead-of-time bytecode for an internal module (node:fs etc.) a --compile executable uses; `dest_path` is the
+        /// InternalModuleRegistry id in decimal.
+        #[strum(serialize = "builtin-bytecode")]
+        BuiltinBytecode,
+        /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
+        #[strum(serialize = "bytecode-string-table")]
+        BytecodeStringTable,
+        /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
+        #[strum(serialize = "module-info-string-table")]
+        ModuleInfoStringTable,
+        /// The pre-resolved ES module graph of a --compile executable (`prelinked_module_graph::build`), consumed by
+        /// JSC's module loader (`JSC::PrelinkedModuleGraph`).
+        #[strum(serialize = "prelinked-module-graph")]
+        PrelinkedModuleGraph,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -280,6 +303,10 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::BuiltinBytecode
+                    | OutputKind::BytecodeStringTable
+                    | OutputKind::ModuleInfoStringTable
+                    | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )
@@ -355,7 +382,7 @@ bun_dispatch::link_interface! {
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;
-        fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
+        fn blob_store_path(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
         fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
         fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];
         fn blob_deinit(blob: options::OpaqueBlob);

@@ -18,7 +18,6 @@ public:
 
     /* --- bun --- */
     GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForBufferList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };
@@ -119,8 +118,8 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForCrossRealmTransformState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStreamFromIterableContext { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamController { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDirectStreamSource { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativeStreamSourceAdapter { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForDirectSinkCloseState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAsyncIteratorSourceOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadStreamIntoSinkOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunStandaloneTextSink { nullptr };

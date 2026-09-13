@@ -137,7 +137,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
-    RETURN_IF_EXCEPTION(scope, {});
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
@@ -162,9 +161,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         const ScriptOptions& scriptOptions = script->options();
         String url = scriptOptions.filenameProvided ? scriptOptions.filename : "evalmachine.<anonymous>"_s;
         decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, scriptOptions.lineOffset);
+        RETURN_IF_EXCEPTION(scope, {});
         throwException(globalObject, scope, exception);
         return {};
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -199,11 +200,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (script->options().produceCachedData) {
+    } else if (script->options().produceCachedData)
         script->cacheBytecode();
-        // TODO(@heimskr): is there ever a case where bytecode production fails?
-        script->cachedDataProduced(true);
-    }
 
     return JSValue::encode(script);
 }
@@ -251,29 +249,26 @@ JSC::ProgramExecutable* NodeVMScript::createExecutable()
 
 void NodeVMScript::cacheBytecode()
 {
-    if (!m_cachedExecutable) {
-        createExecutable();
-    }
-
-    m_cachedBytecode = getBytecode(globalObject(), m_cachedExecutable.get(), m_source);
+    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
     m_cachedDataProduced = m_cachedBytecode != nullptr;
 }
 
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 {
+    auto scope = DECLARE_THROW_SCOPE(vm());
     if (!m_options.produceCachedData) {
         return nullptr;
     }
 
     if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode) {
+        if (!m_cachedBytecode)
             cacheBytecode();
-        }
-
-        ASSERT(m_cachedBytecode);
+        if (!m_cachedBytecode)
+            return nullptr;
 
         std::span<const uint8_t> bytes = m_cachedBytecode->span();
         m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (!m_cachedBytecodeBuffer) {
             return nullptr;
         }

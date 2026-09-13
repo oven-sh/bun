@@ -87,9 +87,8 @@ export type Source =
       /**
        * Commit sha or tag. Both work for github archive URLs
        * (`/archive/<ref>.tar.gz`). Prefer commit shas — tags can move,
-       * breaking the identity hash. If upstream only publishes tags
-       * (e.g. brotli `v1.1.0`), fine, but be aware a retag will silently
-       * change what we fetch.
+       * breaking the identity hash. A tag works, but be aware a retag
+       * will silently change what we fetch.
        */
       commit: string;
     }

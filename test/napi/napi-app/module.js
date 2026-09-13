@@ -16,17 +16,23 @@ async function tryGcUntil(fn, max = 100) {
     await new Promise(resolve => {
       setTimeout(resolve, 1);
     });
-    if (typeof Bun == "object") {
-      Bun.gc(true);
-    } else {
-      // if this fails, you need to pass --expose-gc to node
-      global.gc();
-    }
+    collectGarbage();
     if (fn()) {
       return true;
     }
   }
   return false;
+}
+
+// Unlike the GC runner main.js passes in, this prints nothing, so tests whose
+// number of GCs differs between the runtimes can use it.
+function collectGarbage() {
+  if (typeof Bun == "object") {
+    Bun.gc(true);
+  } else {
+    // if this fails, you need to pass --expose-gc to node
+    global.gc();
+  }
 }
 
 async function gcUntil(fn, max = 100) {
@@ -116,6 +122,17 @@ nativeTests.test_threadsafe_function_abort_full_queue = async () => {
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
 };
 
+nativeTests.test_threadsafe_function_finalizer_uses_handle = async () => {
+  nativeTests.test_napi_threadsafe_function_finalizer_uses_handle();
+  let report;
+  for (let i = 0; i < 1000; i++) {
+    report = nativeTests.test_napi_threadsafe_function_finalizer_uses_handle_report();
+    if (report !== undefined) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalizer saw:", report);
+};
+
 nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
   // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
   // producers that block on the condvar, then abort
@@ -125,6 +142,35 @@ nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
     await new Promise(resolve => setImmediate(resolve));
   }
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
+nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
+  // create (thread_count=2) with the second reference held by a thread that
+  // makes no calls, then abort from this thread
+  nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref();
+  // the finalizer runs from the abort's dispatch on this thread, so a bounded
+  // number of turns is enough; it must not wait for the other thread
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized());
+  // the other thread releases once it has seen the finalizer run (or gives up
+  // after 2s and says so); that is the one step here that depends on OS
+  // scheduling, so wait for it by deadline, under the test runner's 5s
+  const deadline = Date.now() + 3_000;
+  while (
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status() === -1 &&
+    Date.now() < deadline
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  console.log(
+    "released after finalize:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize(),
+    "status:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(),
+  );
 };
 
 nativeTests.test_get_exception = (_, value) => {
@@ -1416,6 +1462,18 @@ nativeTests.test_cleanup_hook_order = () => {
   addon.test();
 };
 
+// Node tears an addon's env down (its cleanup hooks, then the finalizers of
+// whatever it still has alive) only when the main thread's event loop runs dry.
+// process.exit() skips all of it, so only the two lines printed by test() are
+// expected here: no "hookN executed" lines and no "finalize order" line.
+nativeTests.test_env_teardown_skipped_by_process_exit = () => {
+  const hooks = require("./build/Debug/test_cleanup_hook_order.node");
+  const wraps = require("./build/Debug/test_wrap_cleanup_order.node");
+  hooks.test();
+  globalThis.keep = wraps.createParentAndChildren(1);
+  process.exit(0);
+};
+
 nativeTests.test_cleanup_hook_remove_nonexistent = () => {
   const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
   addon.test();
@@ -1770,6 +1828,59 @@ nativeTests.test_reference_ref_after_collect_driver = async gc => {
   const ext = nativeTests.test_create_weak_ref_for_gc();
   await gcUntil(() => nativeTests.test_weak_ref_is_collected(gc, ext));
   nativeTests.test_reference_ref_after_collect(gc, ext);
+};
+
+const tickImmediate = () => new Promise(resolve => setImmediate(resolve));
+
+// The test_delete_ref_cancels_finalizer addon declares a released Node-API
+// version, so its finalizers run from the event loop after the GC. Deleting
+// the reference in between (what an addon does when it frees the native
+// object itself) must cancel them. Both drivers retry with fresh objects when a
+// conservative scan keeps an object alive, and print only what does not depend
+// on how many attempts that took.
+nativeTests.test_delete_ref_after_collect = async () => {
+  const addon = require("./build/Debug/test_delete_ref_cancels_finalizer.node");
+  for (const [name, useAddFinalizer] of [
+    ["napi_wrap", false],
+    ["napi_add_finalizer", true],
+  ]) {
+    let collected = false;
+    for (let attempt = 0; attempt < 100 && !collected; attempt++) {
+      addon.makeSolo(useAddFinalizer);
+      collectGarbage();
+      collected = addon.isSoloCollected();
+      // In the same turn as the GC that queued the finalizer.
+      addon.deleteSolo();
+      if (!collected) await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    // A queued finalizer would run on the next turn.
+    for (let i = 0; i < 5; i++) await tickImmediate();
+    console.log(
+      `${name}: collected before delete: ${collected}, finalized after delete: ${addon.soloFinalizedAfterDelete()}`,
+    );
+  }
+};
+
+nativeTests.test_delete_ref_after_collect_parent_and_children = async () => {
+  const addon = require("./build/Debug/test_delete_ref_cancels_finalizer.node");
+  for (const parentFirst of [true, false]) {
+    let collected = false;
+    for (let attempt = 0; attempt < 100 && !collected; attempt++) {
+      addon.makePair(parentFirst);
+      collectGarbage();
+      collected = addon.isParentCollected();
+      if (!collected) {
+        addon.discardPair();
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    }
+    for (let i = 0; i < 1000 && !addon.isParentFinalized(); i++) await tickImmediate();
+    // Give the children's finalizers, queued by the same GC, their turn too.
+    for (let i = 0; i < 5; i++) await tickImmediate();
+    console.log(
+      `parent created ${parentFirst ? "before" : "after"} children: parent collected: ${collected}, parent finalized: ${addon.isParentFinalized()}, children finalized after delete: ${addon.childFinalizedAfterDelete()}`,
+    );
+  }
 };
 
 // Microtasks queued by one threadsafe-function callback must be drained before

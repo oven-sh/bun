@@ -227,7 +227,7 @@ If output from these commands looks wrong (mis-parsed annotation HTML, a field B
 
 ## Reading PR Feedback
 
-`gh pr view --comments` silently omits review summaries and line-level review comments. For the complete picture — especially when responding to a review — use `bun run pr:comments`, which fetches issue comments, reviews, and line comments in one chronological, labelled listing.
+Use **bun run pr::comments** to read PR comments. `gh` CLI misses comments after 100 and you get confused by the GraphQL API sometimes.
 
 ```bash
 bun run pr:comments                    # current branch's PR — resolved threads hidden

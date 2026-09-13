@@ -48,6 +48,10 @@ fn start_manifest_task(
     is_required: bool,
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
+    // best-effort metadata backfill: nothing to do without the network
+    if manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(());
+    }
     let task_id = Task::Id::for_manifest(pkg_name);
     if run_tasks::has_created_network_task(manager, task_id, is_required) {
         return Ok(());

@@ -47,7 +47,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_identifier(initialIdentifier())
     , m_contextThreadUID(Thread::currentSingleton().uid())
 {
-    relaxAdoptionRequirement();
     addToContextsMap();
 }
 
@@ -59,7 +58,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
 {
-    relaxAdoptionRequirement();
     addToContextsMap();
 }
 
@@ -178,7 +176,7 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its
@@ -194,7 +192,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
             return false;
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
-    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
+    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
     return true;
 }
 
@@ -268,7 +266,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
+        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular);
         return true;
     }
     // On its own thread the context cannot be destroyed under us.

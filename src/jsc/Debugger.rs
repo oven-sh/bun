@@ -156,15 +156,15 @@ impl Default for Debugger {
 }
 
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
-// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
-// out-param. Remaining args are by-value scalars.
+// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]`
+// in-param C++ only reads. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &mut BunString,
+        url: &BunString,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -487,15 +487,15 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let mut url = BunString::clone_utf8(from_env);
+            let url = BunString::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let mut url = BunString::clone_utf8(path_or_port);
+            let url = BunString::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
 
         let _ = this.global().handle_rejected_promises();
@@ -554,7 +554,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
-    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
     this.as_mut().debugger = Some(Box::new(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {
@@ -808,17 +808,17 @@ unsafe extern "C" {
         agent: &mut TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -835,7 +835,7 @@ impl TestReporterHandle {
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
@@ -847,10 +847,10 @@ impl TestReporterHandle {
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
@@ -929,7 +929,7 @@ impl TestReporterAgent {
         &self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {

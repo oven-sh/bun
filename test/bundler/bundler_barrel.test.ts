@@ -1,4 +1,6 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -85,6 +87,96 @@ describe("bundler", () => {
     outdir: "/out",
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toContain("alpha");
+    },
+  });
+
+  // A "sideEffects" array must not enable barrel deferral: a deferred
+  // re-export target may itself be listed in the array. See #40650.
+  itBundled("barrel/SideEffectsArrayKeepsListedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["./src/effect.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("THE_SIDE_EFFECT_RAN");
+    },
+  });
+
+  itBundled("barrel/SideEffectsArrayGlobKeepsListedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["**/effect.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("THE_SIDE_EFFECT_RAN");
+    },
+  });
+
+  // A module the array does not list is still tree-shaken away.
+  itBundled("barrel/SideEffectsArrayDropsUnlistedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["./src/plain.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").not.toContain("THE_SIDE_EFFECT_RAN");
     },
   });
 
@@ -588,40 +680,45 @@ describe("bundler", () => {
   });
 
   // --- Ported from Rolldown: dynamic-import-entry ---
-  // A submodule dynamically imports the barrel back. import() returns the full
-  // module namespace — all barrel exports must be preserved, even if the
-  // import() result is discarded (we can't statically prove it isn't used).
-
-  itBundled("barrel/DynamicImportInSubmodule", {
-    files: {
-      "/entry.js": /* js */ `
-        import { a } from 'dynlib';
-        console.log(a);
-      `,
-      "/node_modules/dynlib/package.json": JSON.stringify({
-        name: "dynlib",
-        main: "./index.js",
-        sideEffects: false,
-      }),
-      "/node_modules/dynlib/index.js": /* js */ `
-        export { a } from './a.js';
-        export { b } from './b.js';
-      `,
-      "/node_modules/dynlib/a.js": /* js */ `
-        export const a = 'dyn-a';
-        import('./index.js');
-      `,
-      "/node_modules/dynlib/b.js": /* js */ `
-        export const b = 'dyn-b';
-      `,
-    },
-    outdir: "/out",
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toContain("dyn-a");
-      // b must be included — import() needs the full namespace
-      api.expectFile("/out/entry.js").toContain("dyn-b");
-    },
-  });
+  // A submodule dynamically imports the barrel back. When the namespace it
+  // yields can be observed (here it escapes to a global), every barrel export
+  // must be preserved; a bare `import('./index.js');` statement observes
+  // nothing, so only the statically imported `a` survives.
+  for (const [name, stmt, keepsB] of [
+    ["barrel/DynamicImportInSubmodule", `import('./index.js').then(ns => { globalThis.ns = ns; });`, true],
+    ["barrel/DynamicImportInSubmoduleBare", `import('./index.js');`, false],
+  ] as const) {
+    itBundled(name, {
+      files: {
+        "/entry.js": /* js */ `
+          import { a } from 'dynlib';
+          console.log(a);
+        `,
+        "/node_modules/dynlib/package.json": JSON.stringify({
+          name: "dynlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/dynlib/index.js": /* js */ `
+          export { a } from './a.js';
+          export { b } from './b.js';
+        `,
+        "/node_modules/dynlib/a.js": /* js */ `
+          export const a = 'dyn-a';
+          ${stmt}
+        `,
+        "/node_modules/dynlib/b.js": /* js */ `
+          export const b = 'dyn-b';
+        `,
+      },
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain("dyn-a");
+        if (keepsB) api.expectFile("/out/entry.js").toContain("dyn-b");
+        else api.expectFile("/out/entry.js").not.toContain("dyn-b");
+      },
+    });
+  }
 
   // Dynamic import returns the full namespace at runtime — consumer can access any export.
   // When a file also has a static named import of the same barrel, the barrel
@@ -1584,7 +1681,7 @@ describe("bundler", () => {
     outdir: "/out",
     // Plugin transforms a.js content
     plugins(builder) {
-      builder.onLoad({ filter: /loadlib\/a\.js$/ }, () => {
+      builder.onLoad({ filter: /loadlib[\/\\]a\.js$/ }, () => {
         return { contents: 'export const A = "transformed-by-plugin";', loader: "js" };
       });
     },
@@ -1913,5 +2010,115 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("BETA_STAR_MARKER");
     },
     run: { stdout: "gamma BETA_STAR_MARKER" },
+  });
+
+  // --- Entry points are never barrels ---
+  // An entry point's exports are the public interface of the build. Nothing
+  // imports an entry point, so a deferred record would never be un-deferred
+  // and the output would export bindings that were shaken away.
+  // https://github.com/oven-sh/bun/issues/40578
+
+  itBundled("barrel/EntryPointPureReExportSideEffectsFalse", {
+    files: {
+      "/entry.ts": /* ts */ `export { a } from './a';`,
+      "/a.ts": /* ts */ `export const a = 1;`,
+      "/package.json": JSON.stringify({ name: "repro", sideEffects: false }),
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("a = 1");
+    },
+  });
+
+  itBundled("barrel/EntryPointImportThenExportSideEffectsFalse", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from './a';
+        export { a };
+      `,
+      "/a.ts": /* ts */ `export const a = 1;`,
+      "/package.json": JSON.stringify({ name: "repro", sideEffects: false }),
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("a = 1");
+    },
+  });
+
+  // The barrel deferral must produce the same output no matter in which order
+  // the parse tasks finish. When a request un-defers a barrel record, every
+  // alias the barrel imports through that record has to propagate to the next
+  // barrel, the same set Phase 1 seeding propagates for a record that is live
+  // when the barrel finishes parsing. Otherwise the inner barrel's records
+  // stay deferred in one order and live in another, the symbol binding flips,
+  // and minified identifier names differ between builds of an unchanged tree.
+  // https://github.com/oven-sh/bun/issues/40657
+  test("barrel deferral does not depend on parse completion order", async () => {
+    // A large comment slows down the parse of the file that carries it
+    // without changing the minified output: comments are excluded from the
+    // output and from the identifier char-frequency table, and both trees
+    // carry exactly one copy of the same comment.
+    const pad = "// " + Buffer.alloc(4_000_000, "x").toString() + "\n";
+
+    const makeFiles = (padConsumer: 1 | 2) => ({
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", sideEffects: false }),
+      "node_modules/dep/outer.js": `
+        export { other } from './impl-other.js';
+        export { used, extraA, extraB, extraC, extraD, extraE } from './inner.js';
+      `,
+      "node_modules/dep/inner.js": `
+        export { used } from './impl-used.js';
+        export { extraA, extraB, extraC, extraD, extraE } from './impl-extra.js';
+      `,
+      "node_modules/dep/impl-used.js": `export function used() { return 'used value'; }`,
+      "node_modules/dep/impl-other.js": `export function other() { return 'other value'; }`,
+      "node_modules/dep/impl-extra.js": `
+        export function extraA() { return 'A' + extraB(); }
+        export function extraB() { return 'B' + extraC(); }
+        export function extraC() { return 'C' + extraD(); }
+        export function extraD() { return 'D' + extraE(); }
+        export function extraE() { return 'E'; }
+      `,
+      "consumer1.js":
+        (padConsumer === 1 ? pad : "") +
+        `
+        import { other } from 'dep/outer.js';
+        import { extraA } from 'dep/impl-extra.js';
+        export function c1() { return other() + extraA(); }
+      `,
+      "consumer2.js":
+        (padConsumer === 2 ? pad : "") +
+        `
+        import { used } from 'dep/outer.js';
+        export function c2() { return used(); }
+      `,
+      "entry.js": `
+        import { c1 } from './consumer1.js';
+        import { c2 } from './consumer2.js';
+        console.log(c1(), c2());
+      `,
+    });
+
+    const build = async (root: string) => {
+      const out = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        target: "browser",
+        format: "esm",
+        minify: true,
+      });
+      return await out.outputs.find(o => o.kind === "entry-point")!.text();
+    };
+
+    // Tree A: consumer2 parses slowly, so the barrels finish before anything
+    // requests "used" and outer's record to inner is deferred, then
+    // un-deferred late. Tree B: consumer1 parses slowly, so "used" is
+    // requested before outer parses and the record is live from the start.
+    using dirA = tempDir("barrel-order-a", makeFiles(2));
+    using dirB = tempDir("barrel-order-b", makeFiles(1));
+
+    const a = await build(String(dirA));
+    const b = await build(String(dirB));
+    expect(a).toContain("used value");
+    expect(a).toBe(b);
   });
 });

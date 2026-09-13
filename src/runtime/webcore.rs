@@ -31,8 +31,6 @@ pub mod text_encoder;
 pub mod text_encoder_stream_encoder;
 
 // ─── flat re-exports ─────────────────────────────────────────────────────────
-pub use bun_jsc::js_error_code::DOMExceptionCode;
-pub use bun_jsc::web_worker;
 pub use cookie_map::{CookieMap, CookieMapRef};
 pub use s3_client::S3Client;
 pub use s3_stat::S3Stat;
@@ -188,9 +186,7 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
-    for streams::HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
@@ -333,7 +329,7 @@ pub mod s3 {
 pub mod streams;
 
 pub enum PathOrFileDescriptor {
-    Path(bun_core::zig_string::Slice),
+    Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
 
@@ -351,7 +347,6 @@ pub enum SinkHandle {
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    H3Response(bun_ptr::BackRef<streams::H3ResponseSink, bun_ptr::Mut>),
     ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
 
@@ -383,8 +378,6 @@ impl SinkHandle {
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::H3Response(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
     }
@@ -404,7 +397,6 @@ impl SinkHandle {
             SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::H3Response(_) => {}
             SinkHandle::ArrayBuffer(_) => {}
         }
     }

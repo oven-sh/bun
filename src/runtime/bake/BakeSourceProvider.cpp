@@ -32,7 +32,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     global,
-    source.toWTFString(),
+    source.transferToWTFString(),
     origin,
     WTF::move(string),
     WTF::TextPosition(),
@@ -66,7 +66,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     global,
-    source.toWTFString(),
+    source.transferToWTFString(),
     origin,
     WTF::move(string),
     WTF::TextPosition(),
@@ -90,7 +90,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   // Use DevServerSourceProvider with the source map JSON
   auto provider = DevServerSourceProvider::create(
     global,
-    source.toWTFString(),
+    source.transferToWTFString(),
     sourceMapJSONPtr,
     sourceMapJSONLength,
     origin,

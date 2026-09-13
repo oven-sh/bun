@@ -301,12 +301,13 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizer();
+    weakValue->callFinalizerFromGC();
 }
 
 void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    // The ref goes away right here, so the finalizer is queued as a copy that does not need it.
     weakValue->callFinalizer();
     delete weakValue;
 }
@@ -337,7 +338,7 @@ void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg
     }
 }
 
-napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope)
+napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -370,18 +371,24 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
     if (property.getter != nullptr || property.setter != nullptr) {
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            descriptor.setGetter(NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr));
+            auto* getter = NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr);
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+            descriptor.setGetter(getter);
         }
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            descriptor.setSetter(NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr));
+            auto* setter = NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr);
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+            descriptor.setSetter(setter);
         }
     } else if (property.method != nullptr) {
         WTF::String name;
         if (!propertyName.isSymbol()) {
             name = propertyName.string();
         }
-        descriptor.setValue(NapiClass::create(vm, env, name, property.method, dataPtr, 0, nullptr));
+        auto* method = NapiClass::create(vm, env, name, property.method, dataPtr, 0, nullptr);
+        RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+        descriptor.setValue(method);
         descriptor.setWritable(writable);
         failureStatus = napi_generic_failure;
     } else {
@@ -647,7 +654,6 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     }
 
     auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(arrayBuffer));
-    NAPI_RETURN_IF_EXCEPTION(env);
 
     if (data && jsArrayBuffer->impl()) [[likely]] {
         *data = jsArrayBuffer->impl()->data();
@@ -746,6 +752,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, void());
 
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, void());
         strongExportsObject = { vm, exportsObject };
     } else {
         JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
@@ -799,7 +806,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
-    if (!scope.exception() && strongExportsObject && strongExportsObject.get() != resultValue) {
+    if (strongExportsObject && strongExportsObject.get() != resultValue) {
         PutPropertySlot slot(strongObject.get(), false);
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
         RETURN_IF_EXCEPTION(scope, void());
@@ -980,6 +987,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     }
 
     auto function = NapiClass::create(vm, env, name, cb, data, 0, nullptr);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     ASSERT(function->isCallable());
     *result = toNapi(JSValue(function), globalObject);
@@ -1010,29 +1018,24 @@ extern "C" napi_status
 napi_define_properties(napi_env env, napi_value object, size_t property_count,
     const napi_property_descriptor* properties)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, throwScope);
+    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, object);
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
+    Zig::GlobalObject* globalObject = toJS(env);
 
     JSValue objectValue = toJS(object);
     JSC::JSObject* objectObject = objectValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_object_expected));
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
 
     for (size_t i = 0; i < property_count; i++) {
-        napi_status status = Napi::defineProperty(env, objectObject, properties[i], throwScope);
-
-        RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
+        napi_status status = Napi::defineProperty(env, objectObject, properties[i], napi_preamble_throw_scope__);
+        NAPI_RETURN_IF_EXCEPTION(env);
         if (status != napi_ok) {
             return napi_set_last_error(env, status);
         }
     }
 
-    throwScope.release();
-    return napi_set_last_error(env, napi_ok);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 static JSC::ErrorInstance* createErrorWithCode(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& code, const WTF::String& message, JSC::ErrorType type)
@@ -1720,7 +1723,6 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     arrayBuffer->makeShared();
 
     auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
-    NAPI_RETURN_IF_EXCEPTION(env);
 
     if (data && jsArrayBuffer->impl()) [[likely]] {
         *data = jsArrayBuffer->impl()->data();

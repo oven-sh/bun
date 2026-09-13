@@ -233,8 +233,6 @@ public:
 
         instance->m_ctx = ptr;
 
-        RETURN_IF_EXCEPTION(scope, {});
-
         auto size = Response__estimatedSize(ptr);
         vm.heap.reportExtraMemoryAllocated(instance, size);
 

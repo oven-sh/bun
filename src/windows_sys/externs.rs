@@ -1130,12 +1130,6 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
-        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
-        /// thread-local Winsock error slot.
-        pub safe fn WSAGetLastError() -> c_int;
-        /// No preconditions; writes the thread-local Winsock error slot.
-        pub safe fn WSASetLastError(err: c_int);
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
@@ -1155,8 +1149,6 @@ pub mod ws2_32 {
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
 }
-pub use ws2_32::WSAGetLastError;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
 // codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
@@ -1205,6 +1197,7 @@ impl Win32Error {
     pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
     pub const BAD_PATHNAME: Win32Error = Win32Error(161);
     pub const ALREADY_EXISTS: Win32Error = Win32Error(183);
+    pub const BAD_EXE_FORMAT: Win32Error = Win32Error(193);
     pub const ENVVAR_NOT_FOUND: Win32Error = Win32Error(203);
     pub const NO_SIGNAL_SENT: Win32Error = Win32Error(205);
     pub const FILENAME_EXCED_RANGE: Win32Error = Win32Error(206);
@@ -1280,9 +1273,22 @@ impl Win32Error {
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
+    /// `GetLastError()` (see [`from_u32`](Self::from_u32)).
     #[inline]
     pub fn get() -> Win32Error {
-        Win32Error(kernel32::GetLastError() as u16)
+        Self::from_u32(kernel32::GetLastError() as u32)
+    }
+
+    /// Win32 error codes fit in 16 bits. An `HRESULT` that wraps one
+    /// (`FACILITY_WIN32`, `0x8007xxxx`) is unwrapped to it; any other larger
+    /// value saturates to `0xFFFF`, which no code uses.
+    #[inline]
+    pub const fn from_u32(code: u32) -> Win32Error {
+        if code <= u16::MAX as u32 || code & 0xFFFF_0000 == 0x8007_0000 {
+            Win32Error(code as u16)
+        } else {
+            Win32Error(u16::MAX)
+        }
     }
 
     #[inline]
@@ -1297,7 +1303,7 @@ impl Win32Error {
 
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
-        Win32Error(RtlNtStatusToDosError(status) as u16)
+        Self::from_u32(RtlNtStatusToDosError(status) as u32)
     }
     /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
     /// callers — `from_nt_status`).
@@ -1596,8 +1602,8 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
-    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
-    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// decodes to this handle so `openat(Fd::cwd(), …)` resolves relative
+    /// paths against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,

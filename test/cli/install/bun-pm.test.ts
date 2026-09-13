@@ -73,7 +73,7 @@ it("should list top-level dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo@moo
 `);
   expect(await exited).toBe(0);
@@ -190,7 +190,7 @@ it("should list top-level aliased dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo-1@moo
 `);
   expect(await exited).toBe(0);
@@ -316,7 +316,7 @@ it("should list only trusted dependencies with --trusted", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── bar@0.0.2
 `);
     expect(await exited).toBe(0);
@@ -333,7 +333,7 @@ it("should list only trusted dependencies with --trusted", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 ├── bar@0.0.2
 └── moo@moo
 `);
@@ -525,7 +525,7 @@ it("should list nothing with --trusted when no dependencies are trusted", async 
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (1)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
 `);
   expect(await exited).toBe(0);
 });
@@ -600,7 +600,7 @@ it.each([
   const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
-    "<dir> node_modules (5)
+    "<dir> node_modules (5 installed)
     ├── bar@0.0.2
     ├── bar-alias@0.0.2
     ├── ws-once@workspace:packages/ws-once
@@ -622,7 +622,7 @@ it("should list a trusted workspace the root also depends on once with --trusted
   const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted");
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
-    "<dir> node_modules (5)
+    "<dir> node_modules (5 installed)
     └── ws-once@workspace:packages/ws-once"
   `);
   expect(exitCode).toBe(0);
@@ -670,7 +670,7 @@ it("should list a root optional peer that a dependency provides", async () => {
   const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
-    "<dir> node_modules (2)
+    "<dir> node_modules (2 installed)
     ├── bar@0.0.2
     └── moo@moo"
   `);
@@ -872,7 +872,7 @@ test.each([
     cmd: ["list"],
     packageName: "test-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: true,
   },
   {
@@ -880,7 +880,7 @@ test.each([
     cmd: ["pm", "list"],
     packageName: "test-pm-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
   {
@@ -888,7 +888,7 @@ test.each([
     cmd: ["pm", "ls"],
     packageName: "test-pm-ls",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
 ])("$name", async ({ cmd, packageName, dependencies, expectedOutput, checkReservationMessage }) => {

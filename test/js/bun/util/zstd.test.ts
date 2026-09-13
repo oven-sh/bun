@@ -682,6 +682,76 @@ describe("sync compression argument handling", () => {
   }, 60_000);
 });
 
+// The async functions read the input on a pool thread. The unfixed build segfaults there, so each
+// case runs in a child process: it compares the result against a fixed-length input's result.
+describe.concurrent("async compression of a resizable ArrayBuffer that shrinks after the call", () => {
+  async function runInChild(script: string, expectedStdout: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(expectedStdout);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  it("zstdCompress reads the bytes the caller passed", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.alloc(256 * 1024, 0x41);
+      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
+      let wrong = 0;
+      for (let i = 0; i < 20; i++) {
+        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+        new Uint8Array(ab).fill(0x41);
+        const promise = Bun.zstdCompress(new Uint8Array(ab));
+        ab.resize(0);
+        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
+      }
+      console.log("wrong:", wrong);
+    `,
+      "wrong: 0\n",
+    );
+  });
+
+  it("zstdDecompress reads the bytes the caller passed", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.from(Bun.zstdCompressSync(Buffer.alloc(256 * 1024, 0x41)));
+      const expected = Buffer.from(Bun.zstdDecompressSync(fixed)).toString("hex");
+      let wrong = 0;
+      for (let i = 0; i < 20; i++) {
+        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+        new Uint8Array(ab).set(fixed);
+        const promise = Bun.zstdDecompress(new Uint8Array(ab));
+        ab.resize(0);
+        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
+      }
+      console.log("wrong:", wrong);
+    `,
+      "wrong: 0\n",
+    );
+  });
+
+  it("a growable SharedArrayBuffer stays a borrow and compresses the same bytes", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.alloc(256 * 1024, 0x41);
+      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
+      const sab = new SharedArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+      new Uint8Array(sab).fill(0x41);
+      const promise = Bun.zstdCompress(new Uint8Array(sab, 0, fixed.byteLength));
+      sab.grow(1 << 21);
+      console.log(Buffer.from(await promise).toString("hex") === expected ? "same" : "different");
+    `,
+      "same\n",
+    );
+  });
+});
+
 describe.concurrent("Zstandard HTTP compression", () => {
   // Sample data for HTTP tests
   const testData = {

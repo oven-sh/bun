@@ -36,7 +36,7 @@ import {
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"latest" | "previous" | "oldest" | "eol" | "beta"} Tier
  * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
@@ -408,7 +408,7 @@ function getTestAgent(platform, options) {
     // box — because the tier split bottlenecked the smaller pool and Intel
     // can't run latest anyway.
     return {
-      queue: `test-${os}`,
+      queue: tier === "beta" ? darwinBetaQueue : `test-${os}`,
       os,
       arch,
       ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
@@ -826,13 +826,6 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push("--exclude=internal/source-lints");
   }
 
-  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
-  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
-  // time and still run on every other PR lane and on main's darwin lanes.
-  if (os === "darwin" && !platform.tier) {
-    args.push("--skip-slower-than=10000");
-  }
-
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
@@ -843,10 +836,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
-    retry: getRetry(),
+
+    // No automatic retry on the beta tier: agent loss would re-queue the
+    // job onto a single-box queue with nobody to take it, and a job that
+    // never starts is not something soft_fail can convert.
+    retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+    // One beta box: one shard. soft_fail keeps a failing run from
+    // failing the build, and the lane is never added on the merge queue
+    // (see betaDarwinTestPlatforms). One window stays open: the box was
+    // connected at upload but drops off during the build wait, so the
+    // step sits `scheduled` with nobody to take it. That holds only this
+    // PR's own build, and a cancel clears it.
+    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
+    // The beta lane runs the whole suite as one shard on one box (~35 min).
+    timeout_in_minutes:
+      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
@@ -1452,6 +1458,95 @@ async function getPipelineOptions() {
 }
 
 /**
+ * True when the darwin beta queue can take one more job right now: an
+ * agent is connected to it, and no live build has a job targeting it in
+ * any non-terminal state (`waiting` counts: the beta test step waits on
+ * the darwin build for tens of minutes before it is ever `scheduled`).
+ * Reads the cluster secret `CI_QUEUE_PROBE_TOKEN` (a REST token with
+ * read_builds and read_agents only); without it, or on any error, the
+ * answer is false and the lane is simply not added. Two uploads a few
+ * seconds apart can both see "idle"; a queue of two is the worst case.
+ * @returns {Promise<boolean>}
+ */
+async function darwinBetaQueueIdle() {
+  if (!isBuildkite) {
+    return false;
+  }
+  try {
+    // getSecret throws on Buildkite when the secret is absent; the probe
+    // must never take the pipeline down with it.
+    const token = getSecret("CI_QUEUE_PROBE_TOKEN", { required: false });
+    if (!token) {
+      return false;
+    }
+    const api = async path => {
+      const res = await fetch(`https://api.buildkite.com/v2/organizations/bun/${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return res.ok ? res : undefined;
+    };
+
+    // No connected agent: a step added now would sit `scheduled` until
+    // the box comes back, and soft_fail does nothing for a job that
+    // never starts. The org has a few hundred agents and the list pages
+    // at 100, so follow `Link: rel="next"`; `stopping` does not count.
+    let connected = false;
+    let next = "agents?per_page=100";
+    for (let page = 0; next && page < 10 && !connected; page++) {
+      const res = await api(next);
+      if (!res) {
+        return false;
+      }
+      const agents = await res.json();
+      connected = agents.some(
+        ({ connection_state, meta_data = [] }) =>
+          connection_state === "connected" && meta_data.includes(`queue=${darwinBetaQueue}`),
+      );
+      const link = res.headers.get("link") ?? "";
+      const match = link.match(/<https:\/\/api\.buildkite\.com\/v2\/organizations\/bun\/([^>]+)>;\s*rel="next"/);
+      next = match?.[1];
+    }
+    if (!connected) {
+      return false;
+    }
+
+    // Builds in `failing` and `canceling` still carry live jobs.
+    const res = await api(
+      "pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&state%5B%5D=failing&state%5B%5D=canceling&per_page=100",
+    );
+    if (!res) {
+      return false;
+    }
+    const builds = await res.json();
+    const terminal = new Set([
+      "passed",
+      "failed",
+      "canceled",
+      "skipped",
+      "timed_out",
+      "expired",
+      "broken",
+      "finished",
+      "waiting_failed",
+      "blocked_failed",
+      "unblocked_failed",
+    ]);
+    const busy = builds.some(({ jobs = [] }) =>
+      jobs.some(
+        ({ state, agent_query_rules = [] }) =>
+          !terminal.has(state) && agent_query_rules.includes(`queue=${darwinBetaQueue}`),
+      ),
+    );
+    return !busy;
+  } catch {
+    return false;
+  }
+}
+
+const darwinBetaQueue = "test-darwin-beta";
+
+/**
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
@@ -1580,11 +1675,22 @@ async function getPipeline(options = {}) {
     { os: "darwin", arch: "x64", release: "any" },
   ];
   const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // The macOS beta lane: a single home-hosted mini on the next macOS,
+  // its own queue, soft-fail. PR builds get it only when that queue is
+  // idle at upload time, so it is always busy while PRs flow and never
+  // has a backlog: a PR that misses it loses nothing.
+  // Never on the merge queue: a step that cannot start (box offline) would
+  // hold the required check open and stall the queue.
+  const betaDarwinTestPlatforms =
+    !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
+      ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
+      : [];
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
   )
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
-    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms);
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {

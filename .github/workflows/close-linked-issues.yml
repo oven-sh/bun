@@ -1,0 +1,950 @@
+name: Close issues linked from merged PRs
+
+# GitHub closes "Fixes #1" on merge, but only the first reference after each
+# keyword: "Fixes #1, #2" leaves #2 open, "Supersedes #3" links nothing, and a
+# pull request is never closed by a reference. This reads the merged PR's
+# description and closes the rest: issues as completed, pull requests as
+# superseded.
+#
+# Runs entirely against the GitHub API. Nothing is checked out and no code from
+# the repository runs, so pull_request_target is safe here: the description is
+# the only PR-controlled input, it is parsed as text, and it is read from the
+# merge event, so an edit after the merge changes nothing.
+#
+# The description is not searched with a regex. A reference counts only when a
+# keyword leads it, directly or through a list:
+#
+#   Fixes #1                 Closes: #2               Supersedes #3 and #4
+#   Resolves #5, #6          Replaces #7, #8, and #9  Fixes #1 & #2
+#   Closes https://github.com/oven-sh/bun/issues/10   Fixes oven-sh/bun#11
+#   Fixes [#12](https://github.com/oven-sh/bun/issues/12)
+#
+# A bare "#1", "see #1", "related to #1", "part of #1", "fix for #1" or
+# "#1's approach" is left alone. So is a keyword that is negated or hedged
+# ("does not fix #1", "partially fixes #1", "may fix #1"), or that is not a
+# verb ("the closed #1", "the rm fix #1"), or whose subject is another
+# reference ("#100 supersedes #1", "reverts #100, which fixed #1"). Text in
+# code spans, fenced or indented code blocks, blockquotes, HTML comments and
+# strikethrough is skipped.
+#
+# test/internal/close-linked-issues.test.ts runs the script below against a
+# fake API.
+
+permissions:
+  contents: read
+
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Merged PR whose description to read"
+        required: true
+        type: string
+      dry_run:
+        description: "Print what would be closed without closing anything"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  close-linked-issues:
+    if: >
+      github.repository == 'oven-sh/bun' &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Close linked issues and pull requests
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const KEYWORDS = new Set([
+              "close", "closes", "closed",
+              "fix", "fixes", "fixed",
+              "resolve", "resolves", "resolved",
+              "supersede", "supersedes", "superseded",
+              "replace", "replaces", "replaced",
+            ]);
+
+            // A hedge: the PR may or may not close the reference ("may fix #1",
+            // "partially fixes #1", "hopefully this fixes #1", "could this fix #1?").
+            const HEDGES = new Set([
+              "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "perhaps", "hopefully",
+              "likely", "unlikely", "partially", "partly", "partial",
+            ]);
+
+            // A clause that starts with one of these is a condition or a time, not a
+            // statement about this PR: "once we fix #1", "if this fixes #1".
+            const SUBORDINATORS = new Set(["if", "whether", "when", "whenever", "once", "until", "unless", "before", "after"]);
+
+            // A keyword led by one of these does not state that the PR closes
+            // anything: a negation ("does not fix #1"), a hedge, a subordinator ("if
+            // `bun install` fixes #1", where the look-back skips the removed span), or
+            // a determiner or preposition that makes the keyword an adjective ("the
+            // closed #1", "a comment on closed #1").
+            const DISQUALIFIERS = new Set([
+              "not", "never", "neither", "nor", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't",
+              "isn't", "wasn't", "hasn't", "haven't", "hadn't", "wouldn't", "couldn't", "shouldn't", "mightn't", "mustn't",
+              ...HEDGES,
+              ...SUBORDINATORS,
+              "the", "a", "an", "of", "on", "in", "by", "from", "with", "for", "than",
+            ]);
+
+            // The base forms are nouns as often as verbs ("the rm fix #1"). They
+            // count only where a noun cannot stand: at the start of a sentence or
+            // line ("Fix #1"), or after one of these words ("will fix #1", "and fix
+            // #1"). "to" is not one of them: an infinitive says nothing about what
+            // the PR does ("unable to fix #1", "how to fix #1", "decided not to close #1").
+            const BASE_FORMS = new Set(["close", "fix", "resolve", "supersede", "replace"]);
+            const VERB_MARKERS = new Set(["will", "shall", "should", "does", "do", "did", "and", "we", "they", "i"]);
+
+            const DETERMINERS = new Set(["this", "that", "the", "a", "an"]);
+
+            // Words that can sit between the deciding word and the keyword without
+            // changing the reading: adverbs ("may also fix", "will fully fix"), the
+            // auxiliaries of the perfect ("would have fixed", "#100 has fixed") and the
+            // word that stands in for a removed span ("#100 ~~also~~ fixes #1", see
+            // placeholder()).
+            const INTERVENING = new Set([
+              "also", "fully", "completely", "entirely", "actually", "really", "yet", "directly", "properly",
+              "have", "has", "had",
+              "code",
+            ]);
+
+            // Tokens: { kind: "word", text } (lowercased), { kind: "ref", repository, number, attached }
+            // (repository is "owner/repo" lowercased or null for a bare "#1"; attached means the
+            // number runs into a word, "#1's"), { kind: "punct", text } (one character),
+            // { kind: "newline" } (one line break) and { kind: "break" } (a blank line).
+
+            // Every issue or pull request that `body` says the PR closes, in order
+            // of appearance: { repository, number, keyword }. Duplicates, the PR
+            // itself and other repositories are not filtered here.
+            function findLinkedReferences(body, repository) {
+              const self = repository.toLowerCase();
+              const tokens = tokenize(stripNonProse(body));
+              const found = [];
+              let i = 0;
+              while (i < tokens.length) {
+                const token = tokens[i];
+                if (token.kind !== "word" || !KEYWORDS.has(token.text) || !isClosingStatement(tokens, i, token.text)) {
+                  i++;
+                  continue;
+                }
+                let j = i + 1;
+                if (isPunct(tokens[j], ":")) j++;
+                let ref = readReference(tokens, j);
+                if (ref === null) {
+                  i++;
+                  continue;
+                }
+                for (;;) {
+                  found.push({ repository: ref.token.repository ?? self, number: ref.token.number, keyword: token.text });
+                  j = ref.end;
+                  // "#1, #2", "#1 and #2", "#1, and #2", "#1 & #2", "**#1** and #2". A
+                  // line break may sit next to a separator ("#1,\n#2", "#1\nand #2"), but
+                  // a break alone does not continue the list: "Fixes #1\n#2" is one
+                  // reference.
+                  let k = skipEmphasis(tokens, j);
+                  let separator = false;
+                  if (isPunct(tokens[k], ",")) {
+                    k++;
+                    separator = true;
+                  }
+                  if (tokens[k]?.kind === "newline") k++;
+                  if (isWord(tokens[k], "and") || isPunct(tokens[k], "&")) {
+                    k++;
+                    separator = true;
+                  }
+                  if (!separator) break;
+                  if (tokens[k]?.kind === "newline") k++;
+                  ref = readReference(tokens, k);
+                  if (ref === null) break;
+                }
+                i = j;
+              }
+              return found;
+            }
+
+            // Whether the keyword at `index` states that the PR closes what follows.
+            // Decided by the words before it, on this line or wrapped from the one
+            // before.
+            function isClosingStatement(tokens, index, keyword) {
+              let k = skipInterveningBack(tokens, index - 1);
+              // "#100 supersedes #1": another pull request is the subject. A line
+              // break ends that reading: "Fixes #1\nFixes #2" is two statements.
+              if (endsWithReference(tokens, k)) return false;
+              const lineStart = tokens[k]?.kind === "newline";
+              if (lineStart) {
+                const e = skipEmphasisBack(tokens, k - 1);
+                const w = skipInterveningBack(tokens, e);
+                // "#100 has\nfixed #1": a reference reached through a skipped word is the
+                // subject. "**#100**\nfixes #1" is two statements, like "#100\nfixes #1".
+                if (w < e && endsWithReference(tokens, w)) return false;
+                k = w;
+              }
+              const before = tokens[k];
+              if (before === undefined || before.kind !== "word") return true;
+              if (isRelativeToReference(tokens, k)) return false;
+              if (DISQUALIFIERS.has(before.text)) return false;
+              let p = skipBack(tokens, k - 1);
+              // "If this PR fixes #1": the subject may be a determiner and a noun.
+              if (tokens[p]?.kind === "word" && DETERMINERS.has(tokens[p].text)) p = skipBack(tokens, p - 1);
+              // "Hopefully, this fixes #1".
+              if (isPunct(tokens[p], ",")) p = skipBack(tokens, p - 1);
+              const prev = tokens[p];
+              // "once we fix #1", "hopefully this fixes #1", "could this fix #1?".
+              if (prev?.kind === "word" && (SUBORDINATORS.has(prev.text) || HEDGES.has(prev.text))) return false;
+              if (!BASE_FORMS.has(keyword)) return true;
+              // "Fix #1" at the start of a line is a statement, "unable to\nfix #1" is not.
+              return lineStart ? before.text !== "to" : VERB_MARKERS.has(before.text);
+            }
+
+            // "which" or "that" at `k` with a reference as its antecedent: "Reverts
+            // #100, which fixed #1", "Reverts #100 (which fixed #1)", "Reverts #100 --
+            // which fixed #1", "Reverts #100 ~~and #101~~, which fixed #1", also across
+            // a line break.
+            function isRelativeToReference(tokens, k) {
+              const word = tokens[k];
+              if (word.kind !== "word" || (word.text !== "which" && word.text !== "that")) return false;
+              let p = skipInterveningBack(tokens, k - 1);
+              for (;;) {
+                if (endsWithReference(tokens, p)) return true;
+                if (tokens[p]?.kind === "newline" || isSeparator(tokens[p])) {
+                  p = skipInterveningBack(tokens, p - 1);
+                } else if (isPunct(tokens[p], ")") || isPunct(tokens[p], "]")) {
+                  // "Reverts #100 (the old approach), which fixed #1": an aside in brackets.
+                  const opener = openerOf(tokens, p);
+                  if (opener === -1) return false;
+                  p = skipInterveningBack(tokens, opener - 1);
+                } else {
+                  return false;
+                }
+              }
+            }
+
+            // The index of the "(" or "[" that the ")" or "]" at `p` closes, within a
+            // few tokens and the same paragraph, or -1.
+            function openerOf(tokens, p) {
+              const close = tokens[p].text;
+              const open = close === ")" ? "(" : "[";
+              let depth = 0;
+              for (let q = p; q >= 0 && q > p - 20; q--) {
+                if (tokens[q].kind === "break") return -1;
+                if (isPunct(tokens[q], close)) depth++;
+                else if (isPunct(tokens[q], open) && --depth === 0) return q;
+              }
+              return -1;
+            }
+
+            // A comma, an open parenthesis, a semicolon, a colon or a dash (hyphen, en
+            // dash, em dash).
+            function isSeparator(token) {
+              return token !== undefined && token.kind === "punct" && ",(;:-\u2013\u2014".includes(token.text);
+            }
+
+            // Whether a reference ends at `k`: "#100", "(#100)", "**#100**", "<url>",
+            // "[#100](url)" or "[text](issue url)".
+            function endsWithReference(tokens, k) {
+              const p = skipEmphasisBack(tokens, k);
+              const token = tokens[p];
+              if (token === undefined) return false;
+              if (token.kind === "ref") return true;
+              if (isPunct(token, ">")) return tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "<");
+              if (!isPunct(token, ")")) return false;
+              if (tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "(")) return true;
+              if (!isPunct(tokens[p - 2], "(") || !isPunct(tokens[p - 3], "]")) return false;
+              return tokens[p - 4]?.kind === "ref" && isPunct(tokens[p - 5], "[");
+            }
+
+            // Steps back over the words in INTERVENING and over emphasis markers:
+            // "#100 **also** fixes #1", "does not *really* fix #1".
+            function skipInterveningBack(tokens, k) {
+              for (;;) {
+                k = skipEmphasisBack(tokens, k);
+                if (k < 0 || tokens[k].kind !== "word" || !INTERVENING.has(tokens[k].text)) return k;
+                k--;
+              }
+            }
+
+            function skipEmphasisBack(tokens, k) {
+              while (k >= 0 && (isPunct(tokens[k], "*") || isPunct(tokens[k], "_"))) k--;
+              return k;
+            }
+
+            function skipEmphasis(tokens, k) {
+              while (isPunct(tokens[k], "*") || isPunct(tokens[k], "_")) k++;
+              return k;
+            }
+
+            // The same, also past one line break: "If\nthis fixes #1".
+            function skipBack(tokens, k) {
+              k = skipInterveningBack(tokens, k);
+              if (tokens[k]?.kind === "newline") k = skipInterveningBack(tokens, k - 1);
+              return k;
+            }
+
+            function isPunct(token, text) {
+              return token !== undefined && token.kind === "punct" && token.text === text;
+            }
+
+            function isWord(token, text) {
+              return token !== undefined && token.kind === "word" && token.text === text;
+            }
+
+            // A reference token, an autolink `<issue url>`, or a markdown link
+            // `[#1](url)` / `[text](issue url)`, at `index`, after any emphasis markers
+            // ("Fixes **#1**", "**Fixes** #1"): { token, end } or null.
+            function readReference(tokens, index) {
+              index = skipEmphasis(tokens, index);
+              const token = tokens[index];
+              if (token === undefined) return null;
+              if (token.kind === "ref") return token.attached ? null : { token, end: index + 1 };
+              if (isPunct(token, "<")) {
+                const target = tokens[index + 1];
+                if (target?.kind === "ref" && !target.attached && isPunct(tokens[index + 2], ">")) return { token: target, end: index + 3 };
+                return null;
+              }
+              if (!isPunct(token, "[")) return null;
+              let close = index + 1;
+              while (close < tokens.length && close < index + 10 && !isPunct(tokens[close], "]")) {
+                if (tokens[close].kind === "newline" || tokens[close].kind === "break") return null;
+                close++;
+              }
+              if (!isPunct(tokens[close], "]") || !isPunct(tokens[close + 1], "(") || !isPunct(tokens[close + 3], ")")) return null;
+              const target = tokens[close + 2];
+              if (target.kind === "ref" && !target.attached) return { token: target, end: close + 4 };
+              const label = tokens[index + 1];
+              if (close === index + 2 && label.kind === "ref" && !label.attached) return { token: label, end: close + 4 };
+              return null;
+            }
+
+            // Removes fenced and indented code blocks, blockquotes, HTML comments, code
+            // spans and struck-through text.
+            function stripNonProse(body) {
+              let text = removeBlocks(body.replaceAll("\r\n", "\n"));
+              text = removeSpans(text, "`");
+              text = removeSpans(text, "~", 2, true);
+              for (const tag of ["s", "del", "strike"]) text = removeTagged(text, tag);
+              return text;
+            }
+
+            // Blanks fenced code blocks, indented code blocks, blockquotes and HTML
+            // comments in one pass over the lines, so a marker inside one of them opens
+            // nothing else: "<!--" in a fence is code, and "```" in a comment is
+            // comment. A comment that opens a line is an HTML block and runs to "-->"
+            // or to the end, as in CommonMark. A line after a quote line continues the
+            // quote until a blank line or a new block. An indented line opens a code
+            // block unless it continues a paragraph.
+            function removeBlocks(text) {
+              const kept = [];
+              let fence = null;
+              let comment = false;
+              // The open blockquote, see continueQuote(). null outside one.
+              let quote = null;
+              let paragraph = false;
+              let offset = 0;
+              for (const line of text.split("\n")) {
+                // A "<!--" in the middle of a line is a comment only when a "-->" follows
+                // on a later line of the same paragraph.
+                const closesLater = line.includes("<!--") && closesInParagraph(text, offset + line.length);
+                offset += line.length + 1;
+                if (comment) {
+                  const end = line.indexOf("-->");
+                  if (end === -1) {
+                    kept.push("");
+                    continue;
+                  }
+                  // The line that closes the comment is the comment's last line: what
+                  // follows "-->" is text, not a fence, a quote or indented code. Whether
+                  // a paragraph is open is as it was before the comment.
+                  const tail = removeComments(line.slice(end + 3), false, closesLater);
+                  comment = tail.open;
+                  // After an HTML block, a blank line fences the text off from the next
+                  // paragraph, as for the other single-line blocks.
+                  if (paragraph) kept.push(tail.prose);
+                  else kept.push(tail.prose, "");
+                  continue;
+                }
+                const trimmed = line.trim();
+                if (fence !== null) {
+                  // A closing fence has at most three spaces of indentation.
+                  if (!isIndentedCode(line) && closesFence(trimmed, fence)) fence = null;
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                if (trimmed === "") {
+                  quote = null;
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                if (!paragraph && isIndentedCode(line)) {
+                  kept.push("");
+                  continue;
+                }
+                // A fence, a quote marker, a heading, a rule and an HTML block have at
+                // most three spaces of indentation. Indented four columns, each of them
+                // is paragraph text (only a paragraph line gets this far indented).
+                const indented = isIndentedCode(line);
+                if (!indented && isFenceOpening(trimmed)) {
+                  fence = fenceRun(trimmed);
+                  quote = null;
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                if (!indented && trimmed.startsWith(">")) {
+                  const lead = line.length - line.trimStart().length;
+                  quote = continueQuote(quote ?? { paragraph: false, fence: null, comment: false }, trimmed.slice(1), lead);
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                // Only a quoted paragraph continues onto an unmarked line, and an
+                // indented line cannot start a block.
+                if (quote?.paragraph && (indented || !startsBlock(trimmed))) {
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                quote = null;
+                const htmlBlock = !indented && trimmed.startsWith("<!--");
+                if (!indented) {
+                  // A heading, a rule, a setext underline ("===" or "--" under a
+                  // paragraph) or an HTML block is not a paragraph line.
+                  const underline = paragraph && (isRunOf(trimmed, "=") || isRunOf(trimmed, "-"));
+                  paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed) && !htmlBlock;
+                }
+                const { prose, open } = removeComments(line, htmlBlock, closesLater);
+                comment = open;
+                // A heading, a rule, an underline or an HTML block is a block of its
+                // own: a span cannot reach into it or out of it, so blank lines fence it
+                // off from the paragraphs around it.
+                if (indented || paragraph) kept.push(prose);
+                else kept.push("", prose, "");
+              }
+              return kept.join("\n");
+            }
+
+            // Whether a "-->" follows the line that ends at `from`, before the paragraph
+            // ends: at a blank line, or at a line that starts a block (a fence, a quote,
+            // a heading, a rule, a list item, an HTML block or a setext underline).
+            function closesInParagraph(text, from) {
+              let at = from;
+              while (at < text.length) {
+                const end = text.indexOf("\n", at + 1);
+                const line = text.slice(at + 1, end === -1 ? text.length : end);
+                const trimmed = line.trim();
+                if (trimmed === "") return false;
+                if (!isIndentedCode(line)) {
+                  const underline = isRunOf(trimmed, "=") || isRunOf(trimmed, "-");
+                  if (underline || isFenceOpening(trimmed) || trimmed.startsWith(">") || startsBlock(trimmed)) return false;
+                }
+                if (line.includes("-->")) return true;
+                if (end === -1) return false;
+                at = end;
+              }
+              return false;
+            }
+
+            // The quote's state after one more quoted line, `inner` being the text after
+            // ">": { paragraph, fence, comment }, whether the quote's last leaf is a
+            // paragraph, and the fence or comment open inside it. Only a quoted paragraph
+            // continues onto the next unmarked line. After a quoted heading (ATX, or a
+            // setext underline under a quoted paragraph), rule or empty quote, and
+            // inside a quoted fence or comment, the next unmarked line is outside. As
+            // at the top level, a fence or a comment has at most three columns of
+            // indentation after the marker's own space, and an indented line continues
+            // whatever came before it.
+            function continueQuote(quote, inner, lead) {
+              const { indent, content } = quoteIndent(inner, lead);
+              const quoted = content.trim();
+              const indented = indent >= 5;
+              if (quote.comment) return { paragraph: false, fence: null, comment: !quoted.includes("-->") };
+              if (quote.fence !== null) {
+                const closes = !indented && closesFence(quoted, quote.fence);
+                return { paragraph: false, fence: closes ? null : quote.fence, comment: false };
+              }
+              if (indented) return quote;
+              if (isFenceOpening(quoted)) return { paragraph: false, fence: fenceRun(quoted), comment: false };
+              if (quoted.startsWith("<!--")) return { paragraph: false, fence: null, comment: quoted.indexOf("-->", 2) === -1 };
+              const underline = quote.paragraph && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
+              const paragraph = quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted);
+              return { paragraph, fence: null, comment: false };
+            }
+
+            // The whitespace after ">" in columns, with tab stops of four counted from
+            // the start of the line (`lead` spaces come before the ">"), and the text
+            // after it. The marker's own space is one of the columns: ">\tfoo" has
+            // three, two of which indent "foo".
+            function quoteIndent(inner, lead) {
+              const start = lead + 1;
+              let column = start;
+              let i = 0;
+              for (; i < inner.length; i++) {
+                if (inner[i] === " ") column++;
+                else if (inner[i] === "\t") column += 4 - (column % 4);
+                else break;
+              }
+              return { indent: column - start, content: inner.slice(i) };
+            }
+
+            // Removes the HTML comments that start on `line`: { prose, open }, where
+            // `open` means the last comment does not end on the line. A "<!--" inside a
+            // code span is code ("Handles `<!--`. Fixes #1"), so a line with "<!--"
+            // loses its spans here, and only such a line: a span can cross a line
+            // break, and the pass over the whole text pairs those. A "<!--" that no
+            // "-->" closes is text, unless the line is an HTML block (`block`), which
+            // runs to the end as in CommonMark. A line that holds only comments becomes "".
+            function removeComments(line, block, closesLater) {
+              if (!line.includes("<!--")) return { prose: line, open: false };
+              const spanless = removeSpans(line, "`");
+              let out = "";
+              let text = false;
+              let open = false;
+              let i = 0;
+              while (i < spanless.length) {
+                const start = spanless.indexOf("<!--", i);
+                const between = spanless.slice(i, start === -1 ? spanless.length : start);
+                if (between.trim() !== "") text = true;
+                out += between;
+                if (start === -1) break;
+                // "<!-->" and "<!--->" are complete comments.
+                const end = spanless.indexOf("-->", start + 2);
+                if (end === -1 && !block && !closesLater) {
+                  out += spanless.slice(start);
+                  text = true;
+                  break;
+                }
+                out += placeholder(spanless, start - 1, end === -1 ? spanless.length : end + 3);
+                if (end === -1) {
+                  open = true;
+                  break;
+                }
+                i = end + 3;
+              }
+              return { prose: text ? out : "", open };
+            }
+
+            // Three or more backticks or tildes. A backtick fence's info string cannot
+            // hold a backtick: "```bun test```" is a code span.
+            function isFenceOpening(trimmed) {
+              const opening = fenceRun(trimmed);
+              return opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
+            }
+
+            function fenceRun(trimmed) {
+              return leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
+            }
+
+            // A run of the fence's character at least as long as the fence, and nothing else.
+            function closesFence(trimmed, fence) {
+              return trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0]);
+            }
+
+            // Four columns of indentation: four spaces, or a tab within the first four.
+            function isIndentedCode(line) {
+              let n = 0;
+              while (line[n] === " ") n++;
+              return n >= 4 || line[n] === "\t";
+            }
+
+            // A heading, a list item, a thematic break or an HTML comment ends a
+            // blockquote's lazy continuation. The list marker needs text after it
+            // ("#100" and "**bold**" are words, a bare "-" is an empty item), and an
+            // ordered item interrupts only when it starts at 1, as in CommonMark.
+            function startsBlock(trimmed) {
+              if (isThematicBreak(trimmed) || trimmed.startsWith("<!--")) return true;
+              const c = trimmed[0];
+              if (c === "-" || c === "*" || c === "+") return isSpaceOrTab(trimmed[1]);
+              if (c === "#") return isHeading(trimmed);
+              return c === "1" && (trimmed[1] === "." || trimmed[1] === ")") && isSpaceOrTab(trimmed[2]);
+            }
+
+            function isHeading(trimmed) {
+              const run = leadingRun(trimmed, "#");
+              return run.length >= 1 && run.length <= 6 && isGap(trimmed[run.length]);
+            }
+
+            // "---", "* * *", "___": three or more of one marker, spaces allowed between.
+            function isThematicBreak(trimmed) {
+              const marker = trimmed[0];
+              if (marker !== "-" && marker !== "*" && marker !== "_") return false;
+              let count = 0;
+              for (const c of trimmed) {
+                if (c === marker) count++;
+                else if (c !== " " && c !== "\t") return false;
+              }
+              return count >= 3;
+            }
+
+            function isGap(c) {
+              return c === undefined || isSpaceOrTab(c);
+            }
+
+            function isSpaceOrTab(c) {
+              return c === " " || c === "\t";
+            }
+
+            function leadingRun(text, char) {
+              let n = 0;
+              while (text[n] === char) n++;
+              return text.slice(0, n);
+            }
+
+            function isRunOf(text, char) {
+              return leadingRun(text, char).length === text.length;
+            }
+
+            // The index of `tag` ("<s" or "</s") in `text` from `from`, in any case and
+            // followed by ">" or whitespace, so "<s" does not match "<section>". Only the
+            // candidate is lowercased: lowercasing the whole text can change its length
+            // ("İ" becomes two code units), and the indexes would no longer match.
+            function indexOfTag(text, tag, from) {
+              let at = text.indexOf("<", from);
+              while (at !== -1) {
+                const next = text[at + tag.length];
+                if (text.slice(at, at + tag.length).toLowerCase() === tag && (next === ">" || isSpace(next ?? "x"))) {
+                  return at;
+                }
+                at = text.indexOf("<", at + 1);
+              }
+              return -1;
+            }
+
+            // Removes "<tag ...>...</tag>" within a paragraph, for the HTML spellings of
+            // strikethrough: <s>, <del>, <strike>, with or without attributes.
+            function removeTagged(text, tag) {
+              let out = "";
+              let i = 0;
+              while (i < text.length) {
+                const start = indexOfTag(text, `<${tag}`, i);
+                const startEnd = start === -1 ? -1 : text.indexOf(">", start);
+                if (startEnd === -1) {
+                  out += text.slice(i);
+                  break;
+                }
+                const end = indexOfTag(text, `</${tag}`, startEnd + 1);
+                const endEnd = end === -1 ? -1 : text.indexOf(">", end);
+                if (endEnd === -1 || end >= nextBlankLine(text, start)) {
+                  out += text.slice(i, startEnd + 1);
+                  i = startEnd + 1;
+                  continue;
+                }
+                out += text.slice(i, start) + placeholder(text, start - 1, endEnd + 1);
+                i = endEnd + 1;
+              }
+              return out;
+            }
+
+            // Removes the text between a run of `marker` and the next run of the same
+            // length in the same paragraph: `code spans` for "`", ~~struck-through
+            // text~~ for "~" with `runLength` 2 (GitHub renders a single tilde as
+            // text). With `flanking`, the opening run must touch the text after it and
+            // the closing run the text before it, so "~~1.2 to ~~1.3" strikes nothing.
+            // A run with no closing run stays as it is.
+            function removeSpans(text, marker, runLength, flanking = false) {
+              let out = "";
+              let i = 0;
+              while (i < text.length) {
+                if (text[i] !== marker) {
+                  out += text[i];
+                  i++;
+                  continue;
+                }
+                const opening = leadingRun(text.slice(i), marker);
+                const limit = nextBlankLine(text, i);
+                let close = -1;
+                const opens =
+                  (runLength === undefined || opening.length === runLength) &&
+                  (!flanking || !isSpace(text[i + opening.length] ?? " "));
+                let from = opens ? i + opening.length : limit;
+                while (from < limit) {
+                  const at = text.indexOf(opening, from);
+                  if (at === -1 || at >= limit) break;
+                  const run = leadingRun(text.slice(at), marker);
+                  if (run.length === opening.length && (!flanking || !isSpace(text[at - 1]))) {
+                    close = at;
+                    break;
+                  }
+                  from = at + run.length;
+                }
+                if (close === -1) {
+                  out += opening;
+                  i += opening.length;
+                  continue;
+                }
+                out += placeholder(text, i - 1, close + opening.length);
+                i = close + opening.length;
+              }
+              return out;
+            }
+
+            // What replaces a removed span or comment. A space would read as a word
+            // boundary to the later passes: "~~Fixes #1 `x`~~" (or a comment in place
+            // of the span) needs its closing run to touch text, and a line that was
+            // only a code span is not blank. A word keeps the sentence whole, and the
+            // look-back skips it (INTERVENING): "the `rm` fix #1" still shows its
+            // determiner and "#100 ~~also~~ fixes #1" its subject. A space is added
+            // only next to a word character.
+            function placeholder(text, before, after) {
+              const left = before >= 0 && isWordChar(text[before]) ? " " : "";
+              const right = after < text.length && isWordChar(text[after]) ? " " : "";
+              return `${left}code${right}`;
+            }
+
+            // The index of the first blank line after `from`, or the end of the text.
+            function nextBlankLine(text, from) {
+              let at = text.indexOf("\n", from);
+              while (at !== -1) {
+                let j = at + 1;
+                while (j < text.length && (text[j] === " " || text[j] === "\t")) j++;
+                if (j === text.length || text[j] === "\n") return at;
+                at = text.indexOf("\n", j);
+              }
+              return text.length;
+            }
+
+            function tokenize(text) {
+              const tokens = [];
+              let i = 0;
+              while (i < text.length) {
+                if (isSpace(text[i])) {
+                  let newlines = 0;
+                  while (i < text.length && isSpace(text[i])) {
+                    if (text[i] === "\n") newlines++;
+                    i++;
+                  }
+                  if (newlines >= 2) tokens.push({ kind: "break" });
+                  else if (newlines === 1) tokens.push({ kind: "newline" });
+                  continue;
+                }
+                let end = i + 1;
+                while (end < text.length && !isSpace(text[end])) end++;
+                tokenizeChunk(text.slice(i, end), tokens);
+                i = end;
+              }
+              return tokens;
+            }
+
+            // Splits one whitespace-free chunk into words, references and punctuation.
+            function tokenizeChunk(chunk, tokens) {
+              let i = 0;
+              let afterWord = false;
+              while (i < chunk.length) {
+                const c = chunk[i];
+                if (isLetter(c) || isDigit(c)) {
+                  const url = readUrl(chunk, i);
+                  if (url !== null) {
+                    tokens.push(url.token);
+                    i = url.end;
+                    afterWord = true;
+                    continue;
+                  }
+                  let end = i + 1;
+                  while (end < chunk.length && isWordChar(chunk[end])) end++;
+                  while (end > i + 1 && isTrailingPunct(chunk[end - 1])) end--;
+                  const word = chunk.slice(i, end);
+                  if (chunk[end] === "#" && isOwnerRepo(word)) {
+                    const number = readNumber(chunk, end + 1);
+                    if (number !== null) {
+                      tokens.push({ kind: "ref", repository: word.toLowerCase(), number: number.value, attached: isAttached(chunk, number.end) });
+                      i = number.end;
+                      afterWord = true;
+                      continue;
+                    }
+                  }
+                  tokens.push({ kind: "word", text: word.toLowerCase().replaceAll("\u2019", "'") });
+                  i = end;
+                  afterWord = true;
+                  continue;
+                }
+                if (c === "#" && !afterWord) {
+                  const number = readNumber(chunk, i + 1);
+                  if (number !== null) {
+                    tokens.push({ kind: "ref", repository: null, number: number.value, attached: isAttached(chunk, number.end) });
+                    i = number.end;
+                    afterWord = true;
+                    continue;
+                  }
+                }
+                tokens.push({ kind: "punct", text: c });
+                i++;
+                afterWord = false;
+              }
+            }
+
+            // An http(s) URL at `start` runs to the end of the chunk, minus trailing
+            // punctuation. A GitHub issue or pull request URL is a reference. Any
+            // other URL is one opaque word.
+            function readUrl(chunk, start) {
+              const lower = chunk.slice(start).toLowerCase();
+              let p;
+              if (lower.startsWith("https://")) p = "https://".length;
+              else if (lower.startsWith("http://")) p = "http://".length;
+              else return null;
+              let end = chunk.length;
+              while (end > start + p && isTrailingPunct(chunk[end - 1])) end--;
+              const url = chunk.slice(start, end);
+              const ref = parseGitHubUrl(url.slice(p));
+              return { token: ref ?? { kind: "word", text: url }, end };
+            }
+
+            // [www.]github.com/owner/repo/(issues|pull)/N[#fragment|?query|/more]
+            function parseGitHubUrl(afterScheme) {
+              let path = afterScheme;
+              if (path.toLowerCase().startsWith("www.")) path = path.slice("www.".length);
+              if (!path.toLowerCase().startsWith("github.com/")) return null;
+              const segments = path.slice("github.com/".length).split("/");
+              if (segments.length < 4) return null;
+              const [owner, repo, kind, last] = segments;
+              if (!isOwnerRepo(`${owner}/${repo}`)) return null;
+              if (kind !== "issues" && kind !== "pull") return null;
+              const number = readNumber(last, 0);
+              if (number === null) return null;
+              const after = last[number.end];
+              if (after !== undefined && after !== "#" && after !== "?") return null;
+              return { kind: "ref", repository: `${owner}/${repo}`.toLowerCase(), number: number.value, attached: false };
+            }
+
+            function readNumber(text, start) {
+              let end = start;
+              while (end < text.length && isDigit(text[end])) end++;
+              if (end === start || end - start > 9) return null;
+              const value = Number(text.slice(start, end));
+              return value > 0 ? { value, end } : null;
+            }
+
+            // "#1's", "#1abc", "#1_foo": the number is part of a longer word, not a
+            // reference. Underscores followed by nothing or by punctuation close
+            // emphasis instead: "__Fixes #1__".
+            function isAttached(chunk, index) {
+              let j = index;
+              while (chunk[j] === "_") j++;
+              const c = chunk[j];
+              return c !== undefined && (isLetter(c) || isDigit(c) || (j === index && (c === "'" || c === "\u2019")));
+            }
+
+            function isOwnerRepo(text) {
+              const parts = text.split("/");
+              return parts.length === 2 && parts.every(part => part.length > 0 && [...part].every(isNameChar));
+            }
+
+            function isLetter(c) {
+              return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
+            }
+
+            function isDigit(c) {
+              return c >= "0" && c <= "9";
+            }
+
+            function isNameChar(c) {
+              return isLetter(c) || isDigit(c) || c === "-" || c === "_" || c === ".";
+            }
+
+            function isWordChar(c) {
+              return isNameChar(c) || c === "/" || c === "'" || c === "\u2019";
+            }
+
+            function isTrailingPunct(c) {
+              return ".,;:!?)]'\"*>-/\u2019".includes(c);
+            }
+
+            function isSpace(c) {
+              return c.trim() === "";
+            }
+
+            const { owner, repo } = context.repo;
+            const repository = `${owner}/${repo}`;
+            const inputs = context.payload.inputs ?? {};
+            const event = context.payload.pull_request;
+            const prNumber = event?.number ?? Number(inputs.pr_number);
+            const dryRun = String(inputs.dry_run ?? "false") === "true";
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`not a pull request number: ${inputs.pr_number}`);
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (!pr.merged) {
+              core.info(`#${prNumber}: not merged, nothing to do`);
+              return;
+            }
+            const defaultBranch = pr.base.repo.default_branch;
+            if (pr.base.ref !== defaultBranch) {
+              core.info(`#${prNumber}: merged into ${pr.base.ref}, not ${defaultBranch}, nothing to do`);
+              return;
+            }
+
+            // The description as it was when the PR was merged. Only a manual run
+            // reads the current one.
+            const body = (event ? event.body : pr.body) ?? "";
+            const seen = new Set();
+            const targets = [];
+            for (const ref of findLinkedReferences(body, repository)) {
+              if (ref.repository !== repository.toLowerCase()) {
+                core.info(`${ref.repository}#${ref.number}: another repository, skipping`);
+                continue;
+              }
+              if (ref.number === prNumber || seen.has(ref.number)) continue;
+              seen.add(ref.number);
+              targets.push(ref);
+            }
+            if (targets.length === 0) {
+              core.info(`#${prNumber}: no references to close`);
+              return;
+            }
+            core.info(`#${prNumber}: ${targets.map(ref => `#${ref.number}`).join(", ")}${dryRun ? " (dry run)" : ""}`);
+
+            let failed = 0;
+            for (const ref of targets) {
+              let issue;
+              try {
+                ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number: ref.number }));
+              } catch (error) {
+                // 410: deleted by an admin.
+                if (error.status === 404 || error.status === 410) {
+                  core.info(`#${ref.number}: does not exist, skipping`);
+                  continue;
+                }
+                failed++;
+                core.error(`#${ref.number}: ${error.message}`);
+                continue;
+              }
+              if (issue.state !== "open") {
+                core.info(`#${ref.number}: already closed, skipping`);
+                continue;
+              }
+              const isPull = issue.pull_request !== undefined;
+              const what = isPull ? "pull request" : "issue";
+              if (dryRun) {
+                core.info(`#${ref.number}: would close ${what} (${ref.keyword} in #${prNumber})`);
+                continue;
+              }
+              try {
+                if (isPull) {
+                  await github.rest.pulls.update({ owner, repo, pull_number: ref.number, state: "closed" });
+                } else {
+                  await github.rest.issues.update({ owner, repo, issue_number: ref.number, state: "closed", state_reason: "completed" });
+                }
+              } catch (error) {
+                failed++;
+                core.error(`#${ref.number}: ${error.message}`);
+                continue;
+              }
+              core.info(`#${ref.number}: closed ${what} (${ref.keyword} in #${prNumber})`);
+              const comment = isPull ? `Superseded by #${prNumber}.` : `Closed as completed by #${prNumber}.`;
+              try {
+                await github.rest.issues.createComment({ owner, repo, issue_number: ref.number, body: comment });
+              } catch (error) {
+                core.warning(`#${ref.number}: closed, but the comment failed: ${error.message}`);
+              }
+            }
+            if (failed > 0) core.setFailed(`${failed} of ${targets.length} references could not be closed`);

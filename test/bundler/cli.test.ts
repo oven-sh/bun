@@ -799,6 +799,73 @@ describe.concurrent("--no-bundle with --outdir", () => {
   });
 });
 
+test.concurrent("bun build names every input that maps to a shared output path", async () => {
+  using dir = tempDir("bundle-outdir-collision", {
+    "a.ts": `export const a = 1;\n`,
+    "b.ts": `export const b = 2;\n`,
+    "c.ts": `export const c = 3;\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./a.ts", "./b.ts", "./c.ts", "--outdir=dist", "--entry-naming=same.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+    "error: Multiple files share the same output path
+      ./same.js:
+        from input a.ts
+        from input b.ts
+        from input c.ts
+
+
+    note: entry naming is './same.js', consider adding '[hash]' to make filenames unique"
+  `);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun build widens [hash] names that would otherwise collide", async () => {
+  // 40 entry points under `[hash1]` naming cannot all differ in one character
+  // (the alphabet has 32), so some names widen to 2+; none collide. The
+  // chunks use a different width so that their names sort between the
+  // entries' without hiding the entries' collisions from each other.
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 40; i++) files[`e${i}.ts`] = `import("./s${i % 20}.js"); export const v = ${i};\n`;
+  for (let i = 0; i < 20; i++) files[`s${i}.js`] = `export const s = ${i};\n`;
+  using dir = tempDir("bundle-hash-widen", files);
+  const entries = Object.keys(files).filter(f => f.startsWith("e"));
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      ...entries,
+      "--splitting",
+      "--outdir=dist",
+      "--entry-naming=[hash1].[ext]",
+      "--chunk-naming=c[hash3].[ext]",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const names = fs.readdirSync(path.join(String(dir), "dist")).sort();
+  // Entries print 1–3 characters, chunks `c` + 3 or more.
+  const entryNames = names.filter(n => /^[0-9a-z]{1,3}\.js$/.test(n));
+  expect(entryNames.length).toBe(40);
+  expect(names.length - entryNames.length).toBeGreaterThanOrEqual(20);
+  expect(names.every(n => /^c?[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
+  expect(entryNames.some(n => n.length > "x.js".length)).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });
@@ -910,5 +977,43 @@ describe.concurrent("modules that fail to print", () => {
     expect(stderr).toContain("styles.module.css");
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("diagnostic markup", () => {
+  // Two composed classes from different files set the same property. The
+  // diagnostic names the property and the class, and the message template
+  // marks both names bold.
+  const composesConflict = {
+    "a.module.css": '.foo {\n  composes: bar from "./b.module.css";\n  color: red;\n}\n',
+    "b.module.css": ".bar {\n  color: blue;\n}\n",
+  };
+
+  test("css composes conflict renders the bold names as ANSI when colors are on", async () => {
+    using dir = tempDir("build-css-composes-color", composesConflict);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of \x1b[1mcolor\x1b[0m in the class \x1b[1mfoo\x1b[0m is undefined.");
+  });
+
+  test("css composes conflict strips the markup when colors are off", async () => {
+    using dir = tempDir("build-css-composes-plain", composesConflict);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of color in the class foo is undefined.");
+    expect(stderr).not.toContain("<b>");
+    expect(stderr).not.toContain("\x1b[");
   });
 });

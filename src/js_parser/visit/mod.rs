@@ -407,6 +407,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                let tracked_before = self.imports_to_convert_from_dynamic_import.len();
+
                 // `const|let|var <binding> = await import("str")` — record which
                 // exports of the importee are observed so the linker can drop
                 // the rest from its namespace. The statement is left as written.
@@ -446,7 +448,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.note_tracked_namespace_use(namespace_ref);
                                 // Another `var` declaration is the same variable.
-                                if kind != LocalKind::KVar && !is_export {
+                                // A `{...rest}` copy lacks the names bound beside it.
+                                if kind != LocalKind::KVar
+                                    && !is_export
+                                    && !self
+                                        .dynamic_import_copied_locals
+                                        .contains_key(&namespace_ref)
+                                {
                                     self.note_destructured_locals(obj.properties());
                                 }
                             }
@@ -567,6 +575,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         _ => {}
                     }
+                }
+
+                // One of the blocks above tracked this declarator. A read of
+                // its locals that runs before it throws, so that read must
+                // not see an export.
+                if self.imports_to_convert_from_dynamic_import.len() != tracked_before
+                    && self.can_read_local_before_init(kind, decl.binding.loc)
+                {
+                    self.watch_early_reads(decl.binding);
                 }
 
                 if IS_POSSIBLY_DECL_TO_REMOVE {

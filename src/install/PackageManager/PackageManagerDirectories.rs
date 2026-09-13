@@ -420,31 +420,19 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
-// The printers below, `ExtractTarball` (index symlinks), `GitRunner` (bare
-// clones), `PackageManifestMap` (`.npm` manifests), the isolated installer
-// (`links/`), `StandaloneModuleGraph` (`bun-<os>-<arch>-v*` binaries) and
-// `RuntimeTranspilerCache` (`@t@`) all write into the cache root.
-// `CacheEntryKind::from_name` is the one reader of that layout.
-
-/// What a top-level cache directory entry (or an entry of a `@scope`
-/// directory) is, judged by its name. `bun pm cache prune` removes `Package`
-/// entries and cleans `Index` entries; everything else is left alone.
+/// What a cache root entry (or an entry of a `@scope` directory) is, by name.
+/// Every writer into the cache root is listed next to its variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheEntryKind {
-    /// An extracted package: `<name>@<version>[@@<host>][@@@<N>][_patch_hash=<x>]`
-    /// (`cached_npm_package_folder_name_print`), `@G@<sha>` (`cached_git_folder_name_print`),
-    /// `@GH@<resolved>@@@<N>` (`cached_github_folder_name_print`) or
-    /// `@T@<hash>@@@<N>` (`cached_tarball_folder_name_print`).
+    /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
     Package,
-    /// `@<scope>`: holds the `Package` and `Index` entries of scoped packages.
+    /// `@<scope>`: holds scoped `Package` and `Index` entries.
     Scope,
-    /// `<name>`: holds one symlink (junction on Windows) per cached version,
-    /// `<version>[@@@<N>]` -> the `Package` directory (`ExtractTarball::extract`).
+    /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
     Index,
-    /// Not a package: `links/` (the global store), `<hex>.git` (bare clones),
-    /// `@t@` (the runtime transpiler cache), `.<hex>-<n>.<name>` (extraction
-    /// staging) and any non-directory (`<hex>.npm` manifests, `bun-<os>-<arch>-v*`
-    /// binaries for `bun build --compile --target`).
+    /// `links/` (isolated installer), `<hex>.git` (`GitRunner`), `@t@`
+    /// (`RuntimeTranspilerCache`), `.<tmp>` staging, and non-directories
+    /// (`.npm` manifests, `bun-<os>-<arch>-v*` from `StandaloneModuleGraph`).
     Other,
 }
 

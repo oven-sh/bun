@@ -1,8 +1,6 @@
-//! `bun pm cache prune`: remove cache entries whose directory mtime is older
-//! than `--max-age` days. Bun never touches an entry after extraction, so the
-//! mtime is the download time, not the last use. `CacheEntryKind` (next to
-//! the cache folder name printers in `bun_install`) says which entries are
-//! packages.
+//! `bun pm cache prune`: remove `CacheEntryKind::Package` directories whose
+//! mtime (the extraction time, bun never touches them later) is older than
+//! `--max-age` days.
 
 use bstr::BStr;
 use bun_core::{Output, ZBox, fmt as bun_fmt};
@@ -74,8 +72,7 @@ struct Prune {
 }
 
 impl Prune {
-    /// `prefix` is the display path of `dir` relative to the cache root
-    /// (empty for the root, `@scope/` for a scope directory).
+    /// `prefix` is `dir` relative to the cache root: `` or `@scope/`.
     fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) {
         let Some(entries) = read_entries(dir, prefix) else {
             self.failed += 1;
@@ -128,9 +125,7 @@ impl Prune {
         }
     }
 
-    /// Remove every symlink (junction on Windows) in `index` whose target is
-    /// gone. The index entries point at package directories, so this runs
-    /// after the package pass of the same directory.
+    /// Remove the index links whose `Package` directory is gone.
     fn remove_dangling_links(&mut self, index: &Dir, prefix: &[u8]) {
         let Some(entries) = read_entries(index, prefix) else {
             self.failed += 1;
@@ -211,7 +206,6 @@ impl PmCachePruneCommand {
         };
 
         // An empty `BUN_INSTALL_CACHE_DIR` resolves to the working directory.
-        // Compare the opened directory, not the path, so a symlink is caught too.
         if let (Ok(cache_st), Ok(cwd_st)) = (
             bun_sys::fstat(cache_dir.fd()),
             bun_sys::stat(bun_core::zstr!(".")),

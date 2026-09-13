@@ -127,6 +127,16 @@ describe("path.resolve", () => {
     }
   });
 
+  test.skipIf(isWindows)("preserves a lone surrogate in the win32 cwd shortcut", () => {
+    const originalCwd = process.cwd;
+    process.cwd = () => "/virtual/\ud800";
+    try {
+      expect(path.win32.resolve()).toBe("\\virtual\\\ud800");
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
   test("does not hold path scratch across a reentrant process.cwd", () => {
     const originalCwd = process.cwd;
     let calls = 0;

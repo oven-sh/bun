@@ -3539,13 +3539,13 @@ fn resolve(
                 return Ok(value);
                 #[cfg(not(windows))]
                 {
-                    let mut cwd = bytes.slice().to_vec();
+                    let mut cwd = js_string_to_wtf8(global_object, value)?.into_vec();
                     for byte in &mut cwd {
                         if *byte == CHAR_FORWARD_SLASH {
                             *byte = CHAR_BACKWARD_SLASH;
                         }
                     }
-                    return create_js_string_t::<u8>(global_object, &cwd);
+                    return create_wtf8_path_string(global_object, &cwd);
                 }
             }
             cached_cwd = Some(js_string_to_wtf8(global_object, value)?);

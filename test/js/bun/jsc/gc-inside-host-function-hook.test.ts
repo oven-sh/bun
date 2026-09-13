@@ -16,11 +16,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // The child runs with BUN_JSC_zeroExecutableMemoryOnFree, which fills freed JIT
 // code with zeroes. Without it the outcome depends on whether a dead stack slot
 // still holds the caller's CodeBlock pointer, which varies by build.
-test(
-  "a collection inside an inspect hook keeps the code of a hot Bun.inspect caller",
-  async () => {
-    using dir = tempDir("gc-inside-inspect-hook", {
-      "hot-inspect-fixture.js": String.raw`
+test("a collection inside an inspect hook keeps the code of a hot Bun.inspect caller", async () => {
+  using dir = tempDir("gc-inside-inspect-hook", {
+    "hot-inspect-fixture.js": String.raw`
         "use strict";
         const util = require("util");
         let armed = false;
@@ -46,26 +44,24 @@ test(
         armed = true;
         console.log("result", hot(obj));
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "hot-inspect-fixture.js"],
-      cwd: String(dir),
-      env: {
-        ...bunEnv,
-        // Reach the DFG and the FTL in a few hundred calls, on this thread.
-        BUN_JSC_thresholdForJITAfterWarmUp: "1",
-        BUN_JSC_thresholdForOptimizeAfterWarmUp: "20",
-        BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "100",
-        BUN_JSC_useConcurrentJIT: "false",
-        BUN_JSC_zeroExecutableMemoryOnFree: "1",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("result x\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "hot-inspect-fixture.js"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      // Reach the DFG and the FTL in a few hundred calls, on this thread.
+      BUN_JSC_thresholdForJITAfterWarmUp: "1",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "20",
+      BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "100",
+      BUN_JSC_useConcurrentJIT: "false",
+      BUN_JSC_zeroExecutableMemoryOnFree: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("result x\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 60_000);

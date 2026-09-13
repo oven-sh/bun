@@ -2032,15 +2032,17 @@ test("parentPort.unref() lets a listening worker exit", async () => {
 
 test("clearing process.exitCode restores a worker's natural zero exit", async () => {
   const worker = new Worker(
-    `const { parentPort } = require("node:worker_threads");
+    `const assert = require("node:assert/strict");
+     const { parentPort } = require("node:worker_threads");
      process.exitCode = 23;
      process.exitCode = undefined;
-     parentPort.postMessage({ exitCode: process.exitCode });`,
+     assert.strictEqual(process.exitCode, undefined);
+     parentPort.postMessage("cleared");`,
     { eval: true },
   );
   const message = once(worker, "message");
   const exited = once(worker, "exit");
-  expect(await message).toEqual([{ exitCode: undefined }]);
+  expect(await message).toEqual(["cleared"]);
   expect(await exited).toEqual([0]);
 });
 

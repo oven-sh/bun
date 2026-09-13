@@ -233,7 +233,7 @@ impl Space {
                 return Ok(Space::Minified);
             }
             let written = str.trunc(Self::MAX_STR_LEN);
-            if !(0..written.length()).all(|i| is_xml_space(written.char_at(i))) {
+            if !(0..written.length()).all(|i| xml::is_whitespace(u32::from(written.char_at(i)))) {
                 return Err(global.throw(format_args!(
                     "XML.stringify: a 'space' string can only contain XML whitespace (space, tab, newline, carriage return)"
                 )));
@@ -246,11 +246,6 @@ impl Space {
     fn is_pretty(&self) -> bool {
         !matches!(self, Space::Minified)
     }
-}
-
-/// `S` (XML 1.0 §2.3 [3]).
-fn is_xml_space(unit: u16) -> bool {
-    matches!(unit, 0x20 | 0x09 | 0x0A | 0x0D)
 }
 
 /// How a JS value is written as element content or an attribute value.

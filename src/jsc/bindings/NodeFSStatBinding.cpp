@@ -15,6 +15,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSBigIntInlines.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -211,6 +212,17 @@ static const Identifier& identifier(JSC::VM& vm, DateFieldType dateField)
     ASSERT_NOT_REACHED();
 }
 
+// Not toBigInt64(): it wraps a value outside the int64 range, which then reads as a valid date.
+static double bigIntToDouble(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue bigInt = value.toBigInt(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    return JSBigInt::toNumber(bigInt).asNumber();
+}
+
 template<DateFieldType field, bool isBigInt>
 inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName)
 {
@@ -230,7 +242,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    double internalNumber = isBigInt ? value.toBigInt64(globalObject) : value.toNumber(globalObject);
+    double internalNumber = isBigInt ? bigIntToDouble(globalObject, value) : value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);

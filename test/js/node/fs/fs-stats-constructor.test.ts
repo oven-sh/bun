@@ -122,6 +122,11 @@ describe("BigIntStats constructor", () => {
       birthtimeMs: -9_223_372_036_854n,
     });
     expect(stats.atime).toEqual(new Date(1_180_591_620_717_411));
+
+    // A *Ms value outside the int64 range is outside the Date range too. The getter must not wrap it into a valid date.
+    const wide = construct(...fields, 2n ** 64n * 1_000_000n, -(2n ** 64n) * 1_000_000n, 0n, 0n);
+    expect({ atimeMs: wide.atimeMs, mtimeMs: wide.mtimeMs }).toEqual({ atimeMs: 2n ** 64n, mtimeMs: -(2n ** 64n) });
+    expect({ atime: wide.atime.getTime(), mtime: wide.mtime.getTime() }).toEqual({ atime: NaN, mtime: NaN });
   });
 
   test.each(constructors)("%s throws a TypeError if a *Ns argument does not convert to a BigInt", (_, construct) => {

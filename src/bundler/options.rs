@@ -581,7 +581,6 @@ pub fn get_loader_and_virtual_source<'a>(
     })
 }
 
-#[cfg(test)]
 const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".jsx", Loader::Jsx),
     (b".json", Loader::Json),
@@ -608,8 +607,11 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".markdown", Loader::Md),
 ];
 
-#[cfg(all(windows, test))]
+#[cfg(windows)]
 const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh)];
+
+#[cfg(not(windows))]
+const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[];
 
 /// File-extension → default [`Loader`] map.
 ///
@@ -682,6 +684,16 @@ impl DefaultLoaders {
     #[inline]
     pub fn contains_key(&self, ext: &[u8]) -> bool {
         self.get(ext).is_some()
+    }
+
+    /// Every extension → loader pair, for callers that enumerate rather than
+    /// look up. The length-gated `get` above cannot be iterated, so this walks
+    /// the canonical tables the `default_loaders_match_table` test checks it
+    /// against.
+    pub fn entries(&self) -> impl Iterator<Item = &'static (&'static [u8], Loader)> {
+        DEFAULT_LOADERS_POSIX
+            .iter()
+            .chain(DEFAULT_LOADERS_WIN32_EXTRA)
     }
 }
 

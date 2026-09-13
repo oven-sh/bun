@@ -19,8 +19,7 @@ void GlobalScope::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    // JSC's own Error.captureStackTrace writes `fn@url:line:col` text. It skips
-    // Error.prepareStackTrace and source maps. Every realm, node:vm contexts too, gets Bun's.
+    // Overrides JSC's built-in Error.captureStackTrace. In GlobalScope so that node:vm contexts get it too.
     errorConstructor()->putDirectNativeFunction(vm, this, vm.propertyNames->captureStackTrace, 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 
     m_encodeIntoObjectStructure.initLater(

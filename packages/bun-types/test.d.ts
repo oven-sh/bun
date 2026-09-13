@@ -1599,7 +1599,6 @@ declare module "bun:test" {
      * @example
      * expect(true).toBeBoolean();
      * expect(false).toBeBoolean();
-     * expect(new Boolean(true)).toBeBoolean();
      * expect(null).not.toBeBoolean();
      * expect(0).not.toBeBoolean();
      */

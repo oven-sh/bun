@@ -1019,6 +1019,48 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
   expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
 });
 
+test("Error.stackTraceLimit assignments keep applying after the assignment site gets hot", async () => {
+  // Runs in a fresh process so that the JIT state of each assignment site starts cold.
+  const src = `
+    // try/finally keeps each call out of tail position, so every helper stays on the stack.
+    function f3() { return new Error("L").stack.split("\\n").length - 1; }
+    function f2() { try { return f3(); } finally {} }
+    function f1() { try { return f2(); } finally {} }
+    function f0() { try { return f1(); } finally {} }
+
+    function store(n) { Error.stackTraceLimit = n; }
+    const key = "stackTraceLimit";
+    function storeByVal(n) { Error[key] = n; }
+    // The load gives the optimizing JIT a proven structure for the base of the store.
+    function loadThenStore(n) { const previous = Error.stackTraceLimit; Error.stackTraceLimit = n; return previous; }
+
+    const failures = [];
+    for (const site of [store, storeByVal, loadThenStore]) {
+      for (let i = 0; i < 3000; i++) {
+        const want = 1 + (i % 3);
+        site(want);
+        // Creating an Error is slow in debug builds. Check the first iterations, then a sample.
+        if (i >= 64 && i % 199 !== 0) continue;
+        const got = f0();
+        if (got !== want) {
+          failures.push({ site: site.name, iteration: i, assigned: want, readback: Error.stackTraceLimit, frames: got });
+          break;
+        }
+      }
+    }
+    process.stdout.write(JSON.stringify(failures));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    // Without compiler threads each site reaches the optimizing JIT at a fixed iteration.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("[]");
+  expect(exitCode).toBe(0);
+});
+
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
   // Runs in its own process: which dispatch path delivers the message (and therefore
   // which frames are on the stack under the listener) depends on prior event-loop state.

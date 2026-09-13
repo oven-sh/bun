@@ -5,14 +5,10 @@
 
 namespace WebCore {
 
-// What a method does with a `this` that is not a JSEventEmitter and has no JSEventEmitter in `this._events`.
+// For a `this` that is not a JSEventEmitter and has none in `this._events`:
 enum class DefineEvents : bool {
-    // Run on a new, empty emitter and leave `this` alone. For the methods that only read
-    // `this._events` in Node (listenerCount, emit, removeListener, ...).
-    No,
-    // Store the new emitter as `this._events`. For the methods that assign to `this` in Node
-    // (the addListener family, setMaxListeners).
-    Yes,
+    No, // run on a new emitter and leave `this` alone (the methods that only read `this._events` in Node)
+    Yes, // store the new emitter as `this._events` (the methods that assign to `this` in Node)
 };
 
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue, DefineEvents);

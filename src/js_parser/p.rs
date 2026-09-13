@@ -307,6 +307,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
+    /// A `new.target` outside every function and class element, which module code rejects.
+    pub(crate) has_top_level_new_target: bool,
+
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -2009,6 +2012,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn is_deoptimized_common_js(&self) -> bool {
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
+    }
+
+    /// Module-scope code reads `new.target` or an `arguments` that nothing
+    /// declares. In a CommonJS file those are the ones of the function that
+    /// wraps the file. Module code has neither.
+    pub(crate) fn reads_wrapper_arguments_or_new_target(&self) -> bool {
+        self.has_top_level_new_target
+            || self
+                .module_scope()
+                .members
+                .get(b"arguments")
+                .is_some_and(|member| {
+                    let symbol = &self.symbols[member.ref_.inner_index() as usize];
+                    symbol.kind == js_ast::symbol::Kind::Unbound && symbol.use_count_estimate > 0
+                })
     }
 
     pub(crate) fn record_usage(&mut self, ref_: Ref) {
@@ -9810,6 +9828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
+            has_top_level_new_target: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

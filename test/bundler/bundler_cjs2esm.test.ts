@@ -2404,4 +2404,114 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+  // `arguments` and `new.target` at the module scope of a CommonJS file are
+  // those of the function that wraps the file. An arrow function and a
+  // computed class key read them from the enclosing scope. Module code has
+  // neither, so these files keep their `__commonJS` wrapper.
+  itBundled("cjs2esm/TopLevelArgumentsKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./default-import.cjs";
+        import { first } from "./named-import.cjs";
+        import { type } from "./typeof.cjs";
+        import { read } from "./arrow.cjs";
+        console.log(lib.first === lib, first, type, read());
+      `,
+      "/default-import.cjs": /* js */ `
+        exports.first = arguments[0];
+      `,
+      "/named-import.cjs": /* js */ `
+        exports.first = typeof arguments[0];
+      `,
+      "/typeof.cjs": /* js */ `
+        module.exports.type = typeof arguments;
+      `,
+      "/arrow.cjs": /* js */ `
+        exports.read = () => arguments.length > 0;
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/default-import.cjs", "/named-import.cjs", "/typeof.cjs", "/arrow.cjs"],
+    },
+    run: {
+      stdout: "true object object true",
+    },
+  });
+  itBundled("cjs2esm/TopLevelNewTargetKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./default-import.cjs";
+        import { type } from "./named-import.cjs";
+        import { read } from "./arrow.cjs";
+        import { Keyed } from "./class-key.cjs";
+        console.log(lib.type, type, read(), Keyed.undefined);
+      `,
+      "/default-import.cjs": /* js */ `
+        exports.type = typeof new.target;
+      `,
+      "/named-import.cjs": /* js */ `
+        exports.type = typeof new.target;
+      `,
+      "/arrow.cjs": /* js */ `
+        exports.read = () => typeof new.target;
+      `,
+      "/class-key.cjs": /* js */ `
+        exports.Keyed = class { static [typeof new.target] = "key"; };
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/default-import.cjs", "/named-import.cjs", "/arrow.cjs", "/class-key.cjs"],
+    },
+    run: {
+      stdout: "undefined undefined undefined key",
+    },
+  });
+  // A function has its own `arguments` and `new.target`, and a class field
+  // initializer has its own `new.target`. The bundler removes the dead
+  // `arguments`. This file is still lifted.
+  itBundled("cjs2esm/ArgumentsAndNewTargetOfAFunctionAreStillLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { count, Target, Field } from "./lib.cjs";
+        console.log(count(1, 2), new Target().own, new Field().type);
+      `,
+      "/lib.cjs": /* js */ `
+        if (false) console.log(arguments);
+        exports.count = function () { return (() => arguments.length)(); };
+        exports.Target = function Target() { this.own = new.target === Target; };
+        exports.Field = class { type = typeof new.target; };
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "2 true undefined",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingTopLevelArgumentsOrNewTargetKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "react";
+        import { value as other } from "scheduler";
+        console.log(value, other);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log(typeof arguments);
+        module.exports = require('./main');
+      `,
+      "/node_modules/react/main.js": /* js */ `
+        exports.value = "react";
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        console.log(typeof new.target);
+        module.exports = require('./main');
+      `,
+      "/node_modules/scheduler/main.js": /* js */ `
+        exports.value = "scheduler";
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js", "/node_modules/scheduler/index.js"] },
+    run: {
+      stdout: "object\nundefined\nreact scheduler",
+    },
+  });
 });

@@ -2665,6 +2665,9 @@ fn os_entropy(bytes: &mut [u8]) {
                 if err == libc::EINTR {
                     continue;
                 }
+                if err == libc::ENOSYS {
+                    return dev_urandom(&mut bytes[filled..]);
+                }
                 panic!("getrandom failed: errno {err}");
             }
             filled += rc as usize;
@@ -2696,6 +2699,46 @@ fn os_entropy(bytes: &mut [u8]) {
             }
         }
     }
+}
+
+/// Linux older than 3.17 has no getrandom(2) and answers ENOSYS. Read the same
+/// pool through /dev/urandom, as BoringSSL does (`crypto/rand/urandom.cc`).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn dev_urandom(bytes: &mut [u8]) {
+    let fd = loop {
+        // SAFETY: the path is a NUL-terminated literal.
+        let fd = unsafe { libc::open(c"/dev/urandom".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if fd >= 0 {
+            break fd;
+        }
+        let err = crate::ffi::errno();
+        if err != libc::EINTR {
+            panic!("getrandom is not available and /dev/urandom failed to open: errno {err}");
+        }
+    };
+    let mut filled = 0usize;
+    while filled < bytes.len() {
+        // SAFETY: writes at most len-filled bytes into the slice.
+        let rc = unsafe {
+            libc::read(
+                fd,
+                bytes.as_mut_ptr().add(filled).cast(),
+                bytes.len() - filled,
+            )
+        };
+        if rc > 0 {
+            filled += rc as usize;
+        } else if rc == 0 {
+            panic!("/dev/urandom returned EOF");
+        } else {
+            let err = crate::ffi::errno();
+            if err != libc::EINTR {
+                panic!("/dev/urandom read failed: errno {err}");
+            }
+        }
+    }
+    // SAFETY: `fd` came from the open above and nothing else holds it.
+    unsafe { libc::close(fd) };
 }
 
 // ── self_exe_path ─────────────────────────────────────────────────────────

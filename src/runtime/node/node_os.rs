@@ -1,6 +1,6 @@
-use core::ffi::c_int;
 #[cfg(not(windows))]
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_void};
+use core::ffi::{c_int, c_long, c_uint};
 
 use bun_core;
 use bun_core::String as BunString;
@@ -433,11 +433,15 @@ mod _impl {
 
     #[cfg(target_os = "freebsd")]
     fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut ncpu: c_uint = 0;
-        bun_sys::posix::sysctl_read(c"hw.ncpu", &mut ncpu).map_err(|_| OsError::Any)?;
-        if ncpu == 0 {
-            return Err(OsError::Any);
-        }
+        let (ncpu, times_buf) = freebsd_cp_times(
+            |name| {
+                let mut value: c_uint = 0;
+                bun_sys::posix::sysctl_read(name, &mut value)
+                    .ok()
+                    .map(|()| value)
+            },
+            |name, buf| bun_sys::posix::sysctl_read_slice(name, buf).is_ok(),
+        )?;
 
         let mut model_buf = [0u8; 512];
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
@@ -448,16 +452,6 @@ mod _impl {
 
         let mut speed_mhz: c_uint = 0;
         let _ = bun_sys::posix::sysctl_read(c"hw.clockrate", &mut speed_mhz);
-
-        const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
-        // kern.cp_times writes kern.smp.maxid + 1 blocks, one per CPU id, and fails with ENOMEM
-        // on a shorter buffer. hw.ncpu is below that count when CPUs are disabled at boot.
-        let mut maxid: c_uint = 0;
-        let _ = bun_sys::posix::sysctl_read(c"kern.smp.maxid", &mut maxid);
-        let blocks = (maxid as usize + 1).max(ncpu as usize);
-        let mut times_buf: Vec<core::ffi::c_long> = vec![0; blocks * CPU_STATES];
-        bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
-            .map_err(|_| OsError::Any)?;
 
         // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
@@ -486,6 +480,76 @@ mod _impl {
             i += 1;
         }
         Ok(values)
+    }
+
+    const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
+
+    /// hw.ncpu and the kern.cp_times counters: `CPU_STATES` longs for each CPU id. The two reads
+    /// are parameters because no CI lane runs FreeBSD: `freebsdCpTimes` in
+    /// `bun:internal-for-testing` runs this against a table on every platform.
+    fn freebsd_cp_times(
+        read_uint: impl Fn(&core::ffi::CStr) -> Option<c_uint>,
+        read_longs: impl Fn(&core::ffi::CStr, &mut [c_long]) -> bool,
+    ) -> Result<(c_uint, Vec<c_long>), OsError> {
+        let ncpu = read_uint(c"hw.ncpu").ok_or(OsError::Any)?;
+        if ncpu == 0 {
+            return Err(OsError::Any);
+        }
+        // kern.cp_times writes kern.smp.maxid + 1 blocks, one per CPU id, and fails with ENOMEM
+        // on a shorter buffer. hw.ncpu is below that count when CPUs are disabled at boot.
+        let maxid = read_uint(c"kern.smp.maxid").unwrap_or(0);
+        let blocks = (maxid as usize + 1).max(ncpu as usize);
+        let mut times: Vec<c_long> = vec![0; blocks * CPU_STATES];
+        if !read_longs(c"kern.cp_times", &mut times) {
+            return Err(OsError::Any);
+        }
+        Ok((ncpu, times))
+    }
+
+    /// `freebsdCpTimes(table)` in `bun:internal-for-testing`: the counters that
+    /// `cpus_impl_freebsd` uses, with the sysctl values taken from `table`. The kern.cp_times
+    /// read fails when the buffer is shorter than the array, as the kernel does with ENOMEM.
+    /// `null` when a read fails.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_freebsd_cp_times(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let table = frame.argument(0);
+        let ncpu = table.get_optional_int::<c_uint>(global, "hw.ncpu")?;
+        let maxid = table.get_optional_int::<c_uint>(global, "kern.smp.maxid")?;
+        let mut cp_times: Vec<c_long> = Vec::new();
+        if let Some(array) = table.get(global, "kern.cp_times")? {
+            let mut iter = array.array_iterator(global)?;
+            while let Some(value) = iter.next()? {
+                cp_times.push(c_long::from(value.coerce::<i32>(global)?));
+            }
+        }
+
+        let Ok((ncpu, times)) = freebsd_cp_times(
+            |name| match name.to_bytes() {
+                b"hw.ncpu" => ncpu,
+                b"kern.smp.maxid" => maxid,
+                _ => None,
+            },
+            |_, buf| {
+                if buf.len() < cp_times.len() {
+                    return false;
+                }
+                buf[..cp_times.len()].copy_from_slice(&cp_times);
+                true
+            },
+        ) else {
+            return Ok(JSValue::NULL);
+        };
+
+        let used = &times[..ncpu as usize * CPU_STATES];
+        let result = JSValue::create_empty_array(global, used.len())?;
+        for (i, &ticks) in used.iter().enumerate() {
+            let index = u32::try_from(i).expect("int cast");
+            result.put_index(global, index, JSValue::js_number(ticks as f64))?;
+        }
+        Ok(result)
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]

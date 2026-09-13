@@ -1,3 +1,4 @@
+import { freebsdCpTimes } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
@@ -141,6 +142,46 @@ it("cpus", () => {
     expect(typeof cpu.times.sys === "number").toBe(true);
     expect(typeof cpu.times.user === "number").toBe(true);
   }
+});
+
+// freebsdCpTimes(table) is the kern.cp_times read of os.cpus() on FreeBSD, with the sysctl values
+// taken from `table`. The kernel has one block of 5 counters for each CPU id up to kern.smp.maxid,
+// and it fails a read into a shorter buffer. The tables are from FreeBSD 14.3 with 4 vCPUs.
+describe("cpus on FreeBSD", () => {
+  const cpu0 = [16, 0, 120, 13, 1065];
+  const cpu1 = [11, 0, 45, 3, 1155];
+  const cpu2 = [13, 0, 150, 4, 1047];
+  const cpu3 = [18, 0, 166, 1, 731];
+  const absent = [0, 0, 0, 0, 0];
+
+  it.each([
+    [
+      "the default boot",
+      { "hw.ncpu": 4, "kern.smp.maxid": 3, "kern.cp_times": [...cpu0, ...cpu1, ...cpu2, ...cpu3] },
+      [...cpu0, ...cpu1, ...cpu2, ...cpu3],
+    ],
+    [
+      'a boot with hint.lapic.1.disabled="1"',
+      { "hw.ncpu": 3, "kern.smp.maxid": 3, "kern.cp_times": [...cpu0, ...cpu1, ...cpu2, ...absent] },
+      [...cpu0, ...cpu1, ...cpu2],
+    ],
+    [
+      'a boot with kern.smp.disabled="1"',
+      { "hw.ncpu": 1, "kern.smp.maxid": 3, "kern.cp_times": [...cpu0, ...absent, ...absent, ...absent] },
+      cpu0,
+    ],
+    [
+      "a kern.smp.maxid that cannot be read",
+      { "hw.ncpu": 4, "kern.cp_times": [...cpu0, ...cpu1, ...cpu2, ...cpu3] },
+      [...cpu0, ...cpu1, ...cpu2, ...cpu3],
+    ],
+  ])("reads the counters of the CPUs in use after %s", (_, table, counters) => {
+    expect(freebsdCpTimes(table)).toEqual(counters);
+  });
+
+  it("fails when the kernel has more blocks than kern.smp.maxid + 1", () => {
+    expect(freebsdCpTimes({ "hw.ncpu": 1, "kern.smp.maxid": 0, "kern.cp_times": [...cpu0, ...absent] })).toBeNull();
+  });
 });
 
 it("networkInterfaces", () => {

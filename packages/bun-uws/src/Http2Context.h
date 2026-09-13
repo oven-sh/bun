@@ -1586,7 +1586,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));
             continue;
         }
-        if (rc != 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
+        /* lshpack decodes a zero-length literal name successfully. */
+        if (rc != 0 || x.name_len == 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
         decoded += lsxpack_header_get_dec_size(&x);
         fields++;
         /* Past the 431 thresholds we keep decoding only to keep HPACK state in

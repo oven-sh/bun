@@ -210,8 +210,7 @@ impl<'a> InternalState<'a> {
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
         if self.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            return matches!(self.chunked_decoder._state, 4 | 5);
+            return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }

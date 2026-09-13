@@ -161,12 +161,10 @@ JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* glo
     auto* functionTemplate = callee->functionTemplate();
     JSC::JSObject* newTarget = JSC::asObject(callFrame->newTarget());
 
-    // Same choice as V8's JSFunction::GetDerivedMap: for an API function the
-    // fallback is Object.prototype of new.target's realm, not callee.prototype.
     JSC::JSValue prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
     if (!prototype.isObject()) {
-        // The realm can be a node:vm context, so use it only as a JSC::JSGlobalObject.
+        // V8's JSFunction::GetDerivedMap uses Object.prototype of new.target's realm here, not callee.prototype.
         JSC::JSGlobalObject* realm = JSC::getFunctionRealm(globalObject, newTarget);
         RETURN_IF_EXCEPTION(scope, {});
         prototype = realm->objectPrototype();

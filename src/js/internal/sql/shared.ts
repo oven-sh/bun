@@ -956,8 +956,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     let frame = AsyncContextFrame.current();
-    if (frame !== undefined && frame.graph !== undefined) {
-      while (frame.storage !== frame.graph) frame = frame.prev;
+    const graph = frame?.graph;
+    if (graph !== undefined) {
+      while (frame.storage !== graph) frame = frame.prev;
       this.ownerGraphFrame = frame;
     }
     this.callbackAsyncContext =

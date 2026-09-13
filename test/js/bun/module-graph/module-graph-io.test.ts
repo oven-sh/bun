@@ -265,7 +265,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         const bump = () => { events++; };
         fs.watch(import.meta.dir + "/watched.txt", bump);
         fs.watchFile(import.meta.dir + "/watched.txt", { interval: 1 }, bump);
-        AbortSignal.timeout(20).addEventListener("abort", () => { aborted++; });
+        export const armTimeout = () => AbortSignal.timeout(1).addEventListener("abort", () => { aborted++; });
         export const counts = () => ({ events, aborted });
       `,
     });
@@ -277,16 +277,17 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       return app.counts().events > 0;
     });
 
+    // Armed and disposed in the same turn of the loop: it cannot have fired yet.
+    graph.run(() => app.armTimeout());
     graph.dispose();
 
     const stopped = app.counts();
-    expect(stopped.aborted).toBe(0);
     // A host timeout armed for the same delay, after the graph's, fires later than it would have.
-    const hostSignal = AbortSignal.timeout(20);
+    const hostSignal = AbortSignal.timeout(1);
     writeFileSync(join(dir, "watched.txt"), String(++writes));
     await new Promise(resolve => hostSignal.addEventListener("abort", resolve));
     await hostTimerTurns();
-    expect(app.counts()).toEqual(stopped);
+    expect(app.counts()).toEqual({ ...stopped, aborted: 0 });
   });
 
   test("listeners of what the graph made run in the graph's context", async () => {

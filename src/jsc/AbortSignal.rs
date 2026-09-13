@@ -308,7 +308,7 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
-            context: graph_context.map_or(jsc_vm.root_context().id(), |context| context.id()),
+            context: graph_context.unwrap_or_else(|| jsc_vm.root_context()).id(),
         }));
         if let Some(context) = graph_context {
             context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);

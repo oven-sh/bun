@@ -124,11 +124,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
-    /// Appends the package that an extract produced and queues its dependencies,
-    /// unless a package with its name and resolution exists. The lookups before
-    /// the download miss that package when no extract gave the dependency a
-    /// package name yet, and when a `github:` ref is on the commit of another
-    /// ref: the commit comes from the tarball.
+    /// Appends `package` and queues its dependencies, or reuses the package with its name and resolution.
     fn append_extracted_package(
         &mut self,
         mut package: Package,
@@ -141,18 +137,13 @@ impl PackageManager {
         {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
-            // `bun update` fetched a git package of the lockfile again. A git ref
-            // can move, so the dependencies of that package resolve again and
-            // nested refs follow their branch. Any other install keeps what the
-            // lockfile pins, and a package that this install appended has its
-            // dependencies queued already.
-            let updated = self.to_update
-                && existing_id < self.lockfile.loaded_package_count
-                && matches!(
-                    existing.resolution.tag,
-                    ResolutionTag::Git | ResolutionTag::Github
-                );
-            if !updated {
+            let from_lockfile = existing_id < self.lockfile.loaded_package_count;
+            let is_git = matches!(
+                existing.resolution.tag,
+                ResolutionTag::Git | ResolutionTag::Github
+            );
+            // A nested git ref can move, so `bun update` resolves the dependencies again.
+            if !(self.to_update && from_lockfile && is_git) {
                 return existing;
             }
             existing.dependencies = package.dependencies;
@@ -163,8 +154,7 @@ impl PackageManager {
             self.lockfile.packages.set(existing_id as usize, existing);
             package = existing;
         } else {
-            // Store the tarball integrity hash so the lockfile can pin the
-            // exact content downloaded from the remote server.
+            // The lockfile pins the content that the server sent.
             if data.integrity.tag.is_supported() {
                 package.meta.integrity = data.integrity;
             }

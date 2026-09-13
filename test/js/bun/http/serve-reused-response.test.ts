@@ -57,30 +57,42 @@ describe("returning a Response with an already-used body", () => {
       expect(await third.text()).toBe("handled");
       expect(third.status).toBe(500);
 
-      expect(errors).toEqual([alreadyUsedError, alreadyUsedError]);
+      // HEAD reports the status GET reports (RFC 9110 §9.3.2), not an empty 200.
+      const head = await fetch(server.url, { method: "HEAD" });
+      expect(await head.text()).toBe("");
+      expect(head.status).toBe(500);
+
+      expect(errors).toEqual([alreadyUsedError, alreadyUsedError, alreadyUsedError]);
     },
   );
 
-  it("returning a Response whose body was consumed before returning calls the error handler", async () => {
-    const errors: unknown[] = [];
-    await using server = serve({
-      port: 0,
-      async fetch() {
-        const response = new Response("consumed before returning");
-        await response.text();
-        return response;
-      },
-      error(err: any) {
-        errors.push({ code: err.code, name: err.constructor.name, message: err.message });
-        return new Response("handled", { status: 500 });
-      },
-    });
+  it.each(["GET", "HEAD"])(
+    "returning a Response whose body was consumed before returning calls the error handler (%s)",
+    async method => {
+      const errors: unknown[] = [];
+      await using server = serve({
+        port: 0,
+        async fetch() {
+          // A Content-Length left on the used Response must not frame a HEAD 200 either.
+          const response = new Response("consumed before returning", { headers: { "Content-Length": "24" } });
+          await response.text();
+          return response;
+        },
+        error(err: any) {
+          errors.push({ code: err.code, name: err.constructor.name, message: err.message });
+          return new Response("handled", { status: 500 });
+        },
+      });
 
-    const response = await fetch(server.url);
-    expect(await response.text()).toBe("handled");
-    expect(response.status).toBe(500);
-    expect(errors).toEqual([alreadyUsedError]);
-  });
+      const response = await fetch(server.url, { method });
+      expect(await response.text()).toBe(method === "HEAD" ? "" : "handled");
+      expect({ status: response.status, contentLength: response.headers.get("Content-Length") }).toEqual({
+        status: 500,
+        contentLength: "7",
+      });
+      expect(errors).toEqual([alreadyUsedError]);
+    },
+  );
 
   it("a Response that is not reused keeps working", async () => {
     const error = jest.fn();

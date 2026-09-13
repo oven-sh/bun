@@ -821,12 +821,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             Ref::NONE
         };
-        let mut base_ref: Option<Ref> = None;
-        if has_decorators && let Some(extends) = class.extends {
-            let base = p.declared_temp(b"_base");
-            class.extends = Some(p.assign_to(base, extends, extends.loc));
-            base_ref = Some(base);
-        }
 
         let mut members = BumpVec::<Property>::with_capacity_in(class.properties.len() + 4, bump);
         let mut key_effects = BumpVec::<Expr>::new_in(bump);
@@ -977,8 +971,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     next_initializer[group] += 1;
                 }
                 private_lowered_map.insert(private_index, info);
-                let effects =
-                    p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
+                let effects = p.storage_init_effects(
+                    storage,
+                    prop.initializer,
+                    FieldName::Key(name_expr),
+                    initializer_index,
+                    loc,
+                );
                 if is_static {
                     members.push(p.make_static_block(&effects, loc));
                 } else {
@@ -1039,8 +1038,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     initializer_index = Some((init_ref, next_initializer[group]));
                     next_initializer[group] += 1;
                 }
-                let effects =
-                    p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
+                let field_name = if is_constant_key(&name_expr) {
+                    FieldName::Key(name_expr)
+                } else {
+                    FieldName::Computed(name_expr)
+                };
+                let effects = p.storage_init_effects(
+                    storage,
+                    prop.initializer,
+                    field_name,
+                    initializer_index,
+                    loc,
+                );
                 if is_static {
                     members.push(p.make_static_block(&effects, loc));
                 } else {
@@ -1058,10 +1067,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
                 field_name = FieldName::Key(p.new_expr(E::EString::init(name), loc));
             } else {
-                // Only a field that may carry effects has to name its function itself.
+                // Only a field that is decorated or may carry effects has to
+                // name its function itself.
                 let names_function = !is_method
-                    && !is_static
-                    && (!instance_effects.is_empty() || first_instance_host.is_none())
+                    && (dec_ref.is_some()
+                        || !is_static
+                            && (!instance_effects.is_empty() || first_instance_host.is_none()))
                     && prop
                         .initializer
                         .is_some_and(|value| value.is_anonymous_named());
@@ -1089,6 +1100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         init_ref,
                         next_initializer[group],
                         prop.initializer,
+                        field_name,
                         loc,
                     );
                     next_initializer[group] += 1;
@@ -1166,11 +1178,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         leading.extend_from_slice(&static_brands);
         let mut class_decorators_result: Option<ClassDecorators> = None;
         if has_decorators {
-            let base = match base_ref {
-                Some(base) => p.use_ref(base, loc),
-                None => p.new_expr(E::Undefined {}, loc),
+            // The metadata of a derived class inherits from that of the class it
+            // extends, which `__decoratorStart` reads off the prototype of `this`.
+            let undefined = p.new_expr(E::Undefined {}, loc);
+            let start = if class.extends.is_some() {
+                let this = p.new_expr(E::This {}, loc);
+                p.call_rt(loc, b"__decoratorStart", &[undefined, this])
+            } else {
+                p.call_rt(loc, b"__decoratorStart", &[undefined])
             };
-            let start = p.call_rt(loc, b"__decoratorStart", &[base]);
             leading.push(p.assign_to(init_ref, start, loc));
             let has_static_method_decorators = !decorate[0].is_empty();
             for group in &decorate {
@@ -1394,17 +1410,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         prop.flags.insert(Flags::Property::IsComputed);
     }
 
-    /// The initializer of a field that is about to go behind a comma. There an
-    /// anonymous function or class is not named by the field any more.
+    /// The initializer of a field that is about to go behind a comma.
     fn hosted_initializer(
         &mut self,
         initializer: Option<Expr>,
         field_name: FieldName,
         loc: bun_ast::Loc,
     ) -> Expr {
-        let Some(value) = initializer else {
-            return self.new_expr(E::Undefined {}, loc);
-        };
+        match initializer {
+            Some(value) => self.named_by_field(value, field_name),
+            None => self.new_expr(E::Undefined {}, loc),
+        }
+    }
+
+    /// `value` for a place where the field no longer names it: behind a comma
+    /// or as a call argument, an anonymous function or class stays anonymous.
+    fn named_by_field(&mut self, value: Expr, field_name: FieldName) -> Expr {
         if !value.is_anonymous_named() {
             return value;
         }
@@ -1457,13 +1478,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         init_ref: Ref,
         index: usize,
         initializer: Option<Expr>,
+        field_name: FieldName,
         loc: bun_ast::Loc,
     ) -> DecoratedInitializer {
         let mut args = BumpVec::<Expr>::with_capacity_in(4, self.arena);
         args.push(self.use_ref(init_ref, loc));
         args.push(self.new_expr(E::Number::new(((4 + 2 * index) << 1) as f64), loc));
         args.push(self.new_expr(E::This {}, loc));
-        args.extend(initializer);
+        args.extend(initializer.map(|value| self.named_by_field(value, field_name)));
         let value = self.call_runtime(loc, b"__runInitializers", ExprNodeList::from_bump_vec(args));
         let this = self.new_expr(E::This {}, loc);
         let extra = self.run_initializers(init_ref, (((5 + 2 * index) << 1) | 1) as f64, this, loc);
@@ -1476,19 +1498,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         storage: Ref,
         initializer: Option<Expr>,
+        field_name: FieldName,
         decorated: Option<(Ref, usize)>,
         loc: bun_ast::Loc,
     ) -> BumpVec<'a, Expr> {
         let mut effects = BumpVec::<Expr>::with_capacity_in(2, self.arena);
         let (value, extra) = match decorated {
             Some((init_ref, index)) => {
-                let decorated = self.decorated_initializer(init_ref, index, initializer, loc);
+                let decorated =
+                    self.decorated_initializer(init_ref, index, initializer, field_name, loc);
                 (decorated.value, Some(decorated.extra))
             }
-            None => (
-                initializer.unwrap_or_else(|| self.new_expr(E::Undefined {}, loc)),
-                None,
-            ),
+            None => (self.hosted_initializer(initializer, field_name, loc), None),
         };
         let this = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage, loc);

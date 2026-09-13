@@ -1584,6 +1584,94 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a decorated field or an accessor names the function it is initialized with", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const k = "dyn", sym = Symbol("desc");
+        class A {
+          @dec f = () => {}; @dec static g = function () {}; @dec h = class {};
+          @dec static [k] = () => {}; @dec [sym] = function () {}; @dec 123 = class {}; @dec "q r" = () => {}; @dec ["__proto__"] = function () {};
+          @dec own = class { static name() {} }; @dec named = function keep() {};
+          @dec #p = () => {}; @dec static #sp = class {};
+          accessor a1 = () => {}; @dec accessor a2 = function () {}; static accessor a3 = class {}; @dec static accessor [k + "2"] = () => {};
+          accessor #a4 = () => {}; @dec accessor #a5 = () => {}; @dec static accessor #a6 = class {};
+          privateNames() { return [this.#p.name, A.#sp.name, this.#a4.name, this.#a5.name, A.#a6.name] }
+        }
+        const a = new A();
+        console.log(JSON.stringify([a.f.name, A.g.name, a.h.name, A[k].name, a[sym].name, a[123].name, a["q r"].name, a["__proto__"].name, typeof a.own.name, a.named.name]));
+        console.log(JSON.stringify([a.privateNames(), a.a1.name, a.a2.name, A.a3.name, A[k + "2"].name, Object.getPrototypeOf(a) === A.prototype]));
+        // The \`init\` functions of the decorators get the function already named.
+        const seen = [];
+        const init = (v, ctx) => { const f = (x) => (seen.push(x.name), x); return ctx.kind === "accessor" ? { init: f } : f };
+        class B { @init f = () => {}; @init static g = class {}; @init accessor h = function () {}; @init #p = () => {}; }
+        new B();
+        console.log(JSON.stringify(seen));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["f","g","h","dyn","[desc]","123","q r","__proto__","function","keep"]\n' +
+          '[["#p","#sp","#a4","#a5","#a6"],"a1","a2","a3","dyn2",true]\n' +
+          '["g","f","h","#p"]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an anonymous class or function in the extends clause stays anonymous", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => { if (ctx.kind !== "class") ctx.metadata[ctx.name] = true };
+        const base = (C) => Object.getPrototypeOf(C);
+        const metadata = Symbol.metadata ?? Symbol.for("Symbol.metadata");
+        class A extends class {} { @dec m() {} }
+        class B extends (function () {}) { @dec m() {} }
+        class C extends class Named {} { @dec m() {} }
+        class D extends class { static name() {} } { @dec m() {} }
+        class E extends class { @dec x() {} } { @dec m() {} }
+        const F = class extends class {} { @dec m() {} };
+        @dec class G extends class {} {}
+        class H extends class { accessor y = 1 } { accessor x = 2 }
+        console.log(JSON.stringify([A, B, C, D, E, F, G, H].map(K => base(K).name)));
+        // The metadata of the class still inherits from the metadata of what it extends.
+        class Nul extends null { @dec static s() {} }
+        class Top { @dec t() {} }
+        console.log(JSON.stringify([
+          Object.getPrototypeOf(E[metadata]) === base(E)[metadata], Object.keys(E[metadata]), E[metadata].x,
+          Object.getPrototypeOf(Nul[metadata]), Object.getPrototypeOf(Top[metadata]),
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["","","Named",null,"","","",""]\n[true,["m"],true,null,null]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a class decorator leaves a static member called name alone", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        const dec = (v, ctx) => {};
+        const see = (v, ctx) => { seen.push(typeof v.name + ":" + ctx.name) };
+        @see class A { static name() { return "method" } }
+        const B = @see class { static name() { return "method" } };
+        @see class C { static get name() { return "getter" } }
+        @dec class D { static accessor name = "accessor" }
+        @dec class E { @dec static accessor name = "decorated accessor" }
+        @dec class F { static ["na" + "me"]() { return "computed" } }
+        @dec class G { static name = 1 }
+        // Without such a member the class keeps its name, or gets the one its context gives it.
+        @see class H {}
+        const I = @see class {};
+        const J = @see class Inner {};
+        console.log(JSON.stringify([A.name(), B.name(), C.name, D.name, E.name, F.name(), G.name, H.name, I.name, J.name]));
+        console.log(JSON.stringify([A, C, H, I].map(K => Object.getOwnPropertyDescriptor(K, "name")).map(d => [typeof (d.value ?? d.get), d.writable, d.enumerable, d.configurable])));
+        console.log(seen.join(" "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["method","method","getter","accessor","decorated accessor","computed",1,"H","I","Inner"]\n' +
+          '[["function",true,false,true],["function",null,false,true],["string",false,false,true],["string",false,false,true]]\n' +
+          "function:A function:B string:C string:H string:I string:Inner\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent(
       "a class with no key for its decorator lists: private names, extends and the inner name",
       async () => {
@@ -2391,6 +2479,31 @@ const extraSections = `
   const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
   out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
 }
+
+// Names are the ones the class would have without decorators: of the function
+// a decorated field or an accessor is initialized with, of an anonymous class
+// in the extends clause, and of a class with a static member called \`name\`.
+{
+  const none = (value, ctx) => {};
+  class N1 {
+    @none f = () => {};
+    @none static g = function () {};
+    @none accessor h = class {};
+    accessor i = () => {};
+    @none #p = () => {};
+    p() { return this.#p.name; }
+  }
+  class N2 extends class {} { @none m() {} }
+  class N3 extends (function () {}) { accessor a = 1; }
+  @none class N4 { static name() { return "N4.name"; } }
+  const N5 = @none class { static get name() { return "N5.name"; } };
+  const n1 = new N1();
+  out.names = [
+    [n1.f.name, N1.g.name, n1.h.name, n1.i.name, n1.p()],
+    [Object.getPrototypeOf(N2).name, Object.getPrototypeOf(N3).name],
+    [N4.name(), N5.name],
+  ];
+}
 `;
 
 const extraExpected = {
@@ -2434,6 +2547,11 @@ const extraExpected = {
   accessorKeys: [11, 2, 3, 4],
   issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
   accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
+  names: [
+    ["f", "g", "h", "i", "#p"],
+    ["", ""],
+    ["N4.name", "N5.name"],
+  ],
 };
 
 function buildFixture() {

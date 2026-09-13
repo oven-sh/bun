@@ -294,6 +294,7 @@ void readableStreamClearSourceBarriers(JSReadableStream*); // userJS: no — Rea
 // Bun helper used by every consumer teardown: closes the stream iff its state still allows
 // it. Callers: BunStreamConsumers.cpp, BunStreamSource.cpp, JSDirectStreamController.cpp.
 void readableStreamCloseIfPossible(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+bool readableStreamReadRequestsFull(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 void readableStreamAddReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
 void readableStreamAddReadIntoRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadIntoRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
 void readableStreamFulfillReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue chunk, bool done); // userJS: yes (read-request dispatch) — ReadableStreamOperations.cpp

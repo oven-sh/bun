@@ -766,6 +766,12 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     // Re-entrant pull while a pull is already running.
     if (m_deferClose == -1)
         return jsUndefined();
+    // A read that the request deque would refuse must not run pull(): a close or flush that
+    // pull() defers would be lost with the read.
+    if (!readRequestQueued && m_pendingRead && readableStreamReadRequestsFull(stream)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
 
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;

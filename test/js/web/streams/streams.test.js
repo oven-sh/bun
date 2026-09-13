@@ -3400,9 +3400,34 @@ describe("script-sized stream containers throw when they cannot grow", () => {
     });
   });
 
+  // A direct stream runs pull() for each read. A read that the deque refuses must not run it,
+  // or a close() that pull() defers is lost. The first read is the controller's own pending
+  // read, so one more read than MAX_PENDING_READS is accepted.
+  test.concurrent("a direct stream's reader.read()", async () => {
+    const result = await runInSubprocess(`
+      let pulls = 0;
+      let controller;
+      const stream = new ReadableStream({ type: "direct", pull(c) { pulls++; controller = c; } });
+      const reader = stream.getReader();
+      const reads = [];
+      for (let i = 0; i < ${MAX_PENDING_READS} + 100; i++) reads.push(reader.read().then(r => r.done, describeError));
+      await Promise.resolve();
+      controller.close();
+      const outcomes = await Promise.all(reads);
+      const count = outcome => outcomes.filter(o => o === outcome).length;
+      console.log(JSON.stringify({ pulls, done: count(true), refused: count("${outOfMemory}") }));
+    `);
+    expect(result).toEqual({
+      stdout: { pulls: MAX_PENDING_READS + 1, done: MAX_PENDING_READS + 1, refused: 99 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A byte queue entry is 24 bytes, and the capacity is a power of two with one slot empty.
+  const MAX_BYTE_CHUNKS = 2 ** Math.floor(Math.log2(LIMIT_BYTES / 24)) - 1;
+
   test.concurrent("ReadableByteStreamController.enqueue()", async () => {
-    // A byte queue entry is 24 bytes, and the capacity is a power of two with one slot empty.
-    const MAX_BYTE_CHUNKS = 2 ** Math.floor(Math.log2(LIMIT_BYTES / 24)) - 1;
     const result = await runInSubprocess(`
       let controller;
       const stream = new ReadableStream({ type: "bytes", start(c) { controller = c; } });
@@ -3421,6 +3446,40 @@ describe("script-sized stream containers throw when they cannot grow", () => {
       stdout: { queued: MAX_BYTE_CHUNKS, enqueueError: outOfMemory, readError: outOfMemory },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // A tee gives every chunk to both branches. When a branch that nothing reads cannot queue the
+  // next chunk, the tee ends as it does when a clone fails: both branches error and the source
+  // is canceled with the error.
+  describe.each([
+    ["default", "", "sent++", MAX_QUEUED],
+    ["byte", `type: "bytes",`, "new Uint8Array(1)", MAX_BYTE_CHUNKS],
+  ])("tee() of a %s stream with an unread branch", (_, type, chunk, maxQueued) => {
+    test.concurrent("errors both branches and cancels the source", async () => {
+      const result = await runInSubprocess(`
+        let sent = 0;
+        let cancelReason = null;
+        const source = new ReadableStream({
+          ${type}
+          pull(c) { c.enqueue(${chunk}); },
+          cancel(reason) { cancelReason = describeError(reason); },
+        });
+        const [unread, read] = source.tee();
+        const reader = read.getReader();
+        let reads = 0;
+        let readError = null;
+        for (; readError === null && reads <= ${maxQueued}; reads++) {
+          readError = await reader.read().then(() => null, describeError);
+        }
+        const unreadError = await unread.getReader().read().then(() => null, describeError);
+        console.log(JSON.stringify({ reads: reads - 1, readError, unreadError, cancelReason }));
+      `);
+      expect(result).toEqual({
+        stdout: { reads: maxQueued, readError: outOfMemory, unreadError: outOfMemory, cancelReason: outOfMemory },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

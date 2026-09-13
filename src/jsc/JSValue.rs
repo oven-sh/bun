@@ -280,8 +280,6 @@ impl JSValue {
     pub fn is_object(self) -> bool {
         self.is_cell() && self.js_type().is_object()
     }
-    /// JSType-byte check, NOT ECMA-262 `IsArray` (`Array.isArray`). A `Proxy` of an array
-    /// returns `false` here but `true` from [`Self::is_array_including_proxy`].
     #[inline]
     pub fn is_array(self) -> bool {
         self.is_cell() && self.js_type().is_array()

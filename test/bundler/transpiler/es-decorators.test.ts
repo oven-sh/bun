@@ -1393,6 +1393,99 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("new.target stays undefined in the initializer of the last instance field", async () => {
+      // No later field can carry the initializer of a lowered member here.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class A { x = 0; @dec #p = typeof new.target; get p() { return this.#p } }
+        class B { x = 0; accessor p = typeof new.target; }
+        class C { @dec accessor p = typeof new.target; }
+        class D { @dec accessor #p = typeof new.target; get p() { return this.#p } }
+        class E extends Object { accessor p = typeof new.target; constructor() { super(); } }
+        console.log(JSON.stringify([A, B, C, D, E].map(K => new K().p)));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["undefined","undefined","undefined","undefined","undefined"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a decorated #private field stays a native field", async () => {
+      // Every update and assignment form works on it, and context.access reaches it.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let access, staticAccess;
+        const grab = (value, ctx) => { if (ctx.static) staticAccess = ctx.access; else access = ctx.access; };
+        class A {
+          @grab #x = 1;
+          @grab static #s = "s";
+          run() {
+            this.#x++;
+            this.#x += 2;
+            this.#x ??= 100;
+            [this.#x] = [this.#x * 2];
+            ({ a: this.#x = 3 } = { a: this.#x + 1 });
+            for (this.#x of [this.#x + 1]) {}
+            A.#s += "!";
+            return [this?.#x, A.#s];
+          }
+        }
+        const a = new A();
+        const ran = a.run();
+        access.set(a, access.get(a) + 1);
+        const misses = [() => access.get({}), () => access.set({}, 1), () => access.has(1), () => staticAccess.get(a)].map((f) => {
+          try { return f(); } catch (e) { return e.constructor.name; }
+        });
+        console.log(JSON.stringify([ran, access.get(a), access.has(a), access.has({}), staticAccess.get(A), staticAccess.has(a), misses]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '[[10,"s!"],11,true,false,"s!",false,["TypeError","TypeError","TypeError","TypeError"]]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an undecorated accessor is a #private field, a getter and a setter", async () => {
+      using dir = tempDir("es-dec-accessor-shape", {
+        "test.js": `export class A { accessor x = 1; static accessor y = 2; #x = 3; }`,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["build", "--no-bundle", "test.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout.replace(/\s+/g, " ").trim()).toBe(
+        "export class A { get x() { return this.#x2; } set x(v) { this.#x2 = v; } #x2 = 1; " +
+          "static get y() { return this.#y; } static set y(v) { this.#y = v; } static #y = 2; #x = 3; }",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the #private names of accessor storage are minified like the others", async () => {
+      using dir = tempDir("es-dec-accessor-minify", {
+        "entry.js": `
+          const dec = (v, ctx) => {};
+          class Outer {
+            #a = "outer";
+            static make() {
+              return class {
+                #b = "b"; #c = "c"; #d = "d";
+                accessor a = "first";
+                accessor a = "second";
+                @dec accessor e = "e";
+                @dec accessor #f = "f";
+                @dec #g = "g";
+                static accessor s = "s";
+                read(o) { this.#g += "!"; return [this.a, o.#a, this.#b, this.#c, this.#d, this.e, this.#f, this.#g, this.constructor.s]; }
+              };
+            }
+          }
+          console.log(JSON.stringify(new (Outer.make())().read(new Outer())));
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "--target=bun", "--minify", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('["second","outer","b","c","d","e","f","g!","s"]\n');
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("super resolves from the class as written when a class decorator replaces it", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
@@ -2391,6 +2484,69 @@ const extraSections = `
   const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
   out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
 }
+
+// No instance field follows the member, so nothing can carry its initializer:
+// it is still a field initializer. \`new.target\` is undefined, a constructor
+// parameter does not shadow what it names, and it runs when \`super()\`
+// returns, wherever that call is written. So do the extra initializers.
+{
+  const v = "outer";
+  const seen = [];
+  const see = (tag, target, value) => (seen.push(tag + ":" + typeof target + ":" + value), value);
+  const extra = (value, ctx) => { ctx.addInitializer(function () { seen.push("extra " + String(ctx.name) + ":" + (this instanceof Base3)); }); };
+  class Base3 {}
+  const classes = [
+    class { x = 0; accessor p = see("accessor", new.target, v); constructor(v) {} },
+    class { accessor p = see("only accessor", new.target, v); },
+    class { x = 0; @dec #p = see("#field", new.target, v); constructor(v) {} },
+    class extends Base3 { @extra accessor p = see("decorated accessor", new.target, v); constructor(v) { const made = super(); } },
+    class extends Base3 { @extra accessor #p = see("decorated #accessor", new.target, v); constructor(v) { if (v) { super(); } else { super(); } } },
+    class extends Base3 { @extra p = see("decorated field", new.target, v); constructor(v) { (() => super())(); } },
+    class extends Base3 { @extra m() {} constructor(v) { void super(); seen.push("body"); } },
+    class extends Base3 { @extra p = see("never", new.target, v); constructor(v) { return { made: v }; } },
+  ];
+  for (const C of classes) {
+    try { new C("parameter"); } catch (e) { seen.push(e.constructor.name); }
+  }
+  out.lastInstanceField = seen;
+}
+
+// The function or class an accessor is initialized with has the name of the
+// accessor, not the name of the storage behind it.
+{
+  const k = "dyn", sym = Symbol("desc");
+  class FN {
+    accessor a = () => {};
+    static accessor b = class {};
+    accessor [k] = function () {};
+    accessor [sym] = () => {};
+    accessor "q r" = () => {};
+    accessor c = function named() {};
+    accessor d = (() => () => {})();
+  }
+  const fn = new FN();
+  out.accessorFunctionNames = [fn.a.name, FN.b.name, fn[k].name, fn[sym].name, fn["q r"].name, fn.c.name, fn.d.name];
+}
+
+// The \`#private\` names the lowering adds for accessor storage differ from
+// the names the class declares, from each other, and from a name of an
+// enclosing class that the body refers to.
+{
+  class Outer2 {
+    #x = "outer";
+    static make() {
+      return class {
+        accessor x = "first";
+        #x2 = "x2";
+        accessor x = "second";
+        @dec accessor #y = "y";
+        #_y = "_y";
+        read(o) { return [this.x, o.#x, this.#x2, this.#y, this.#_y]; }
+      };
+    }
+  }
+  out.addedPrivateNames = new (Outer2.make())().read(new Outer2());
+}
 `;
 
 const extraExpected = {
@@ -2434,6 +2590,21 @@ const extraExpected = {
   accessorKeys: [11, 2, 3, 4],
   issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
   accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
+  lastInstanceField: [
+    "accessor:undefined:outer",
+    "only accessor:undefined:outer",
+    "#field:undefined:outer",
+    "decorated accessor:undefined:outer",
+    "extra p:true",
+    "decorated #accessor:undefined:outer",
+    "extra #p:true",
+    "decorated field:undefined:outer",
+    "extra p:true",
+    "extra m:true",
+    "body",
+  ],
+  accessorFunctionNames: ["a", "b", "dyn", "[desc]", "q r", "named", ""],
+  addedPrivateNames: ["second", "outer", "x2", "y", "_y"],
 };
 
 function buildFixture() {

@@ -1541,7 +1541,11 @@ describe("Bun.unsafe.ModuleGraph — constructor / method contract", () => {
       own: Object.keys(new ModuleGraphClass()),
       proto: Object.getOwnPropertyNames(ModuleGraphClass.prototype).sort(),
       mainModuleIsGetter: typeof Object.getOwnPropertyDescriptor(ModuleGraphClass.prototype, "mainModule")?.get,
-    }).toEqual({ own: [], proto: ["constructor", "dispose", "import", "mainModule", "run"], mainModuleIsGetter: "function" });
+    }).toEqual({
+      own: [],
+      proto: ["constructor", "dispose", "import", "mainModule", "run"],
+      mainModuleIsGetter: "function",
+    });
   });
   test("re-entrancy: onExit/onError callbacks may create graphs, import, and dispose the calling graph", async () => {
     const d = fixture({

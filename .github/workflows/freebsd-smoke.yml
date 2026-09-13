@@ -63,7 +63,9 @@ jobs:
             echo "=== eval ==="
             $BUN -e 'console.log("hello from", process.platform, process.arch)'
             echo "=== os ==="
-            $BUN -e 'const os=require("os"); console.log(os.type(), os.release(), os.cpus().length, "cpus")'
+            sysctl hw.ncpu kern.smp.maxid
+            # os.cpus().length alone does not call the native cpus(). A read of an entry does.
+            $BUN -e 'const os=require("os"), cpus=os.cpus(); console.log(os.type(), os.release(), cpus[0].model, cpus[0].speed, cpus[0].times, cpus.length, "cpus")'
             echo "=== fs ==="
             $BUN -e 'require("fs").writeFileSync("/tmp/x","ok"); console.log(require("fs").readFileSync("/tmp/x","utf8"))'
             echo "=== http ==="

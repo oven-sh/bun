@@ -450,7 +450,12 @@ mod _impl {
         let _ = bun_sys::posix::sysctl_read(c"hw.clockrate", &mut speed_mhz);
 
         const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
-        let mut times_buf: Vec<core::ffi::c_long> = vec![0; ncpu as usize * CPU_STATES];
+        // kern.cp_times writes kern.smp.maxid + 1 blocks, one per CPU id, and fails with ENOMEM
+        // on a shorter buffer. hw.ncpu is below that count when CPUs are disabled at boot.
+        let mut maxid: c_uint = 0;
+        let _ = bun_sys::posix::sysctl_read(c"kern.smp.maxid", &mut maxid);
+        let blocks = (maxid as usize + 1).max(ncpu as usize);
+        let mut times_buf: Vec<core::ffi::c_long> = vec![0; blocks * CPU_STATES];
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 

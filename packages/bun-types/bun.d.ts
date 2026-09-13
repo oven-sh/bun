@@ -3305,16 +3305,21 @@ declare module "bun" {
      * - `"none"` - No source maps are generated
      * - `"linked"` - A separate `*.ext.map` file is generated alongside each
      *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
-     *   file to link the two. Requires `outdir` to be set.
+     *   file to link the two.
      * - `"inline"` - an inline source map is appended to the output file.
-     * - `"external"` - Generate a separate source map file for each input file.
+     * - `"external"` - Generate a separate source map file for each output file.
      *   No `//# sourceMappingURL` comment is added to the output file.
      *
-     * `true` and `false` are aliases for `"inline"` and `"none"`, respectively.
+     * `true` is an alias for `"linked"` when `outdir` is set, and for `"inline"`
+     * when it is not. `false` is an alias for `"none"`.
+     *
+     * Without `outdir`, `"linked"` and `"external"` maps are not written to
+     * disk. Each map is a separate {@link BuildArtifact} in `outputs` with
+     * `kind: "sourcemap"`, and is also the `sourcemap` property of the
+     * artifact it belongs to.
      *
      * @default "none"
      *
-     * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
@@ -3450,6 +3455,9 @@ declare module "bun" {
 
     /**
      * Add a banner to the bundled code such as "use client";
+     *
+     * The banner is added to every JavaScript output (entry points and
+     * chunks). CSS and HTML outputs do not get it.
      */
     banner?: string;
 
@@ -3457,6 +3465,9 @@ declare module "bun" {
      * Add a footer to the bundled code such as a comment block like
      *
      * `// made with bun!`
+     *
+     * The footer is added to every JavaScript output (entry points and
+     * chunks). CSS and HTML outputs do not get it.
      */
     footer?: string;
 

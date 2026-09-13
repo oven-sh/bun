@@ -491,18 +491,44 @@ describe("execArgv preloads", () => {
   });
 
   describe.each([
-    ["require", "--require", ["require"]],
-    ["import", "--import", null],
-  ])("%s preload", (_name, flag, expected) => {
+    ["require in CommonJS", "--require", null, ["require"]],
+    ["import in CommonJS", "--import", null, null],
+    ["import in ES module", "--import", "module", ["import"]],
+    ["import in TypeScript ES module", "--import", "module-typescript", ["import"]],
+  ])("%s eval preload", (_name, flag, inputType, expected) => {
     test("applies eval worker semantics", async () => {
       const module = flag === "--require" ? requirePreload : importPreload;
-      const worker = new Worker(
-        `require("node:worker_threads").parentPort.postMessage(globalThis.execArgvPreloads ?? null)`,
-        { eval: true, execArgv: [flag, module] },
-      );
+      const source = inputType
+        ? `import { parentPort } from "node:worker_threads"; const preloads${inputType === "module-typescript" ? ": string[] | null" : ""} = globalThis.execArgvPreloads ?? null; parentPort.postMessage(preloads)`
+        : `require("node:worker_threads").parentPort.postMessage(globalThis.execArgvPreloads ?? null)`;
+      const worker = new Worker(source, {
+        eval: true,
+        execArgv: [...(inputType ? [`--input-type=${inputType}`] : []), flag, module],
+      });
       const [message] = await once(worker, "message");
       expect(message).toEqual(expected);
       await worker.terminate();
+    });
+  });
+
+  describe.each(["module", "module-typescript"])("%s input type", inputType => {
+    test("inherits import preloads for eval workers", async () => {
+      const source = `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          'import { parentPort } from "node:worker_threads"; const preloads${inputType === "module-typescript" ? ": string[] | null" : ""} = globalThis.execArgvPreloads ?? null; parentPort.postMessage(preloads)',
+          { eval: true },
+        );
+        worker.on("message", message => console.log(JSON.stringify(message)));
+      `;
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "--input-type", inputType, "--import", importPreload, "-e", source],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["import"]\n', stderr: "", exitCode: 0 });
     });
   });
 

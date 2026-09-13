@@ -139,6 +139,7 @@ static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execA
     Vector<String> bunPreloads;
     Vector<String> requirePreloads;
     Vector<String> importPreloads;
+    bool evalAsModule = false;
 
     for (size_t i = 0; i < execArgv.size(); i++) {
         const String& argument = execArgv[i];
@@ -173,7 +174,20 @@ static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execA
             continue;
         }
 
-        if (isNodeWorkerBooleanExecArgv(flag)) {
+        if (flag == "--input-type"_s) {
+            String value;
+            if (hasInlineValue) {
+                value = argument.substring(equals + 1);
+                if (value.isEmpty())
+                    return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+            } else if (i + 1 < execArgv.size() && !execArgv[i + 1].startsWith("-"_s)) {
+                value = execArgv[++i];
+            } else {
+                return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
+            }
+            evalAsModule = value == "module"_s || value == "module-typescript"_s;
+            continue;
+        } else if (isNodeWorkerBooleanExecArgv(flag)) {
             continue;
         } else if (isNodeWorkerValueExecArgv(flag)) {
             if (hasInlineValue) {
@@ -200,6 +214,8 @@ static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execA
     outputPreloads.appendVector(WTF::move(requirePreloads));
     evalPreloadCount = outputPreloads.size();
     outputPreloads.appendVector(WTF::move(importPreloads));
+    if (evalAsModule)
+        evalPreloadCount = outputPreloads.size();
     return std::nullopt;
 }
 

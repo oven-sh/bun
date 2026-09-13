@@ -287,6 +287,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
+    // Node uses this to choose CommonJS or ESM for eval/stdin. Bun's eval
+    // loader already accepts either syntax; retaining the option lets eval
+    // Workers inherit the matching preload semantics.
+    parse_param!("--input-type <STR>"),
     parse_param!(
         "--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)"
     ),
@@ -1030,6 +1034,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .chain(preloads2.iter())
                     .map(|preload| Box::<[u8]>::from(*preload)),
             );
+            if args
+                .option(b"--input-type")
+                .is_some_and(|value| value == b"module" || value == b"module-typescript")
+            {
+                ctx.worker_eval_preloads
+                    .extend(preloads3.iter().map(|preload| Box::<[u8]>::from(*preload)));
+            }
 
             let total_preloads = ctx.preloads.len()
                 + preloads.len()

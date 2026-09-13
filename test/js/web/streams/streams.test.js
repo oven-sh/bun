@@ -3140,6 +3140,110 @@ describe("text consumers reject strings over the string allocation limit", () =>
   });
 });
 
+// Script grows a stream queue by one entry per enqueue() or write(). A queue that cannot grow
+// must throw a catchable out-of-memory error, never abort the process. The real bound needs
+// 67 million entries (1.1 GB). The child runs with a 64 KiB synthetic allocation limit, which
+// brings it down to a few thousand.
+describe("script-sized stream containers throw when they cannot grow", () => {
+  const LIMIT_BYTES = 64 * 1024;
+  // A queue entry is 16 bytes. The queue's capacity is a power of two, one slot stays empty,
+  // and one slot is kept for the WritableStream close sentinel.
+  const MAX_QUEUED = LIMIT_BYTES / 16 - 2;
+  const outOfMemory = "RangeError: Out of memory";
+
+  const runInSubprocess = async source => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const describeError = e => e.name + ": " + e.message;\n${source}`],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+  };
+
+  test.concurrent("ReadableStreamDefaultController.enqueue()", async () => {
+    const result = await runInSubprocess(`
+      let controller;
+      const stream = new ReadableStream({ start(c) { controller = c; } }, { highWaterMark: Infinity });
+      let queued = 0;
+      let enqueueError = null;
+      try {
+        for (; queued < ${MAX_QUEUED} + 100; queued++) controller.enqueue(queued);
+      } catch (e) {
+        enqueueError = describeError(e);
+      }
+      // An enqueue that throws errors the stream, as the spec says.
+      const readError = await stream.getReader().read().then(() => null, describeError);
+      console.log(JSON.stringify({ queued, enqueueError, readError }));
+    `);
+    expect(result).toEqual({
+      stdout: { queued: MAX_QUEUED, enqueueError: outOfMemory, readError: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("TransformStreamDefaultController.enqueue()", async () => {
+    const result = await runInSubprocess(`
+      let controller;
+      const { readable } = new TransformStream({ start(c) { controller = c; } });
+      let queued = 0;
+      let enqueueError = null;
+      try {
+        for (; queued < ${MAX_QUEUED} + 100; queued++) controller.enqueue(queued);
+      } catch (e) {
+        enqueueError = describeError(e);
+      }
+      const readError = await readable.getReader().read().then(() => null, describeError);
+      console.log(JSON.stringify({ queued, enqueueError, readError }));
+    `);
+    expect(result).toEqual({
+      stdout: { queued: MAX_QUEUED, enqueueError: outOfMemory, readError: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("WritableStreamDefaultWriter.write()", async () => {
+    const result = await runInSubprocess(`
+      // start() settles in a microtask, so every write in a synchronous loop waits in the queue.
+      const fill = (writer, count) => {
+        const writes = [];
+        for (let i = 0; i < count; i++) writes.push(writer.write(i).then(() => null, describeError));
+        return writes;
+      };
+      const outcomes = async writes => [...new Set(await Promise.all(writes))];
+
+      // A queue that is exactly full still takes the close sentinel, then drains.
+      let fullSinkWrites = 0;
+      const full = new WritableStream({ write() { fullSinkWrites++; } }).getWriter();
+      const fullWrites = fill(full, ${MAX_QUEUED});
+      const fullCloseError = await full.close().then(() => null, describeError);
+      const fullOutcomes = await outcomes(fullWrites);
+
+      // One write more than fits errors the stream: every pending write rejects, and no chunk
+      // reaches the sink.
+      let overSinkWrites = 0;
+      const over = new WritableStream({ write() { overSinkWrites++; } }).getWriter();
+      const overOutcomes = await outcomes(fill(over, ${MAX_QUEUED} + 1));
+
+      console.log(JSON.stringify({ fullSinkWrites, fullCloseError, fullOutcomes, overSinkWrites, overOutcomes }));
+    `);
+    expect(result).toEqual({
+      stdout: {
+        fullSinkWrites: MAX_QUEUED,
+        fullCloseError: null,
+        fullOutcomes: [null],
+        overSinkWrites: 0,
+        overOutcomes: [outOfMemory],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the
 // destination and aborts the pipe's signal must not touch the released writer afterwards.
 // https://github.com/oven-sh/bun/pull/33193

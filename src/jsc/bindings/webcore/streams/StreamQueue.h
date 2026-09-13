@@ -27,6 +27,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "VectorSizeLimit.h"
 
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
@@ -36,6 +37,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <bit>
 #include <wtf/Deque.h>
 #include <wtf/Locker.h>
 #include <wtf/MathExtras.h>
@@ -122,9 +124,10 @@ public:
     StreamQueue() = default;
 
     // spec: EnqueueValueWithSize(container, value, size). Throws RangeError if `size` is not
-    // a non-negative finite number. The size was computed by the CALLER's size algorithm —
-    // this op runs no user JS. The throw (a GC allocation) happens BEFORE this takes the
-    // owner's cell lock; only the queue mutation runs under it. (ValueWithSize only.)
+    // a non-negative finite number, or if the queue is full (see maxEntryCount). The size was
+    // computed by the CALLER's size algorithm — this op runs no user JS. The throw (a GC
+    // allocation) happens BEFORE this takes the owner's cell lock; only the queue mutation
+    // runs under it. (ValueWithSize only.)
     void enqueueValueWithSize(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, JSC::JSValue value, double size)
     {
         auto& vm = JSC::getVM(globalObject);
@@ -132,6 +135,13 @@ public:
         // spec step 2-3: ! IsNonNegativeNumber(size) and size !== +Infinity.
         if (!(size >= 0) || std::isinf(size)) {
             JSC::throwRangeError(globalObject, scope, "The queuing strategy's chunk size must be a non-negative, finite number"_s);
+            return;
+        }
+        // Script adds one entry per cheap call, and Deque::append CRASH()es when it cannot grow.
+        // The close sentinel (an empty value) must always fit and a queue takes at most one, so
+        // values stop one slot early.
+        if (value && m_queue.size() + 1 >= maxEntryCount()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(globalObject, scope);
             return;
         }
         WTF::Locker locker { owner->cellLock() };
@@ -211,6 +221,13 @@ public:
     }
 
 private:
+    // The most entries m_queue can hold. A Deque's capacity is a power of two no larger than
+    // a Vector's, and one slot stays empty to tell a full ring from an empty one.
+    static size_t maxEntryCount()
+    {
+        return std::max<size_t>(std::bit_floor(Bun::maxVectorSize<Entry>()), 1) - 1;
+    }
+
     static void analyzeEntry(JSC::JSCell* from, JSC::HeapAnalyzer& analyzer, ValueWithSize& entry, uint32_t i)
     {
         JSC::JSValue v = entry.value.get();

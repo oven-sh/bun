@@ -126,6 +126,21 @@ pub(crate) fn find_imported_parts_in_js_order(
         }
     }
 
+    // With code splitting a shared chunk holds no entry point, and the sort
+    // above can start the walk inside an import cycle at the file that the
+    // unbundled program runs last. Walk the static imports from each entry
+    // point that loads this chunk first, in entry point order: the chunk's
+    // files then print in the order the first of those entry points runs
+    // them. The sorted list only adds the files that walk does not reach.
+    let mut entry_roots: Vec<IndexInt> = Vec::new();
+    if this.graph.code_splitting {
+        let entry_sources = this.graph.entry_points.items_source_index();
+        let mut iter = chunk.entry_bits().iterator::<true, true>();
+        while let Some(entry_index) = iter.next() {
+            entry_roots.push(entry_sources[entry_index]);
+        }
+    }
+
     part_ranges_shared.clear();
     parts_prefix_shared.clear();
 
@@ -163,10 +178,18 @@ pub(crate) fn find_imported_parts_in_js_order(
         };
 
         match (with_code_splitting, with_scb) {
-            (true, true) => run_visits::<true, true>(&mut visitor, &chunk_order_array),
-            (true, false) => run_visits::<true, false>(&mut visitor, &chunk_order_array),
-            (false, true) => run_visits::<false, true>(&mut visitor, &chunk_order_array),
-            (false, false) => run_visits::<false, false>(&mut visitor, &chunk_order_array),
+            (true, true) => {
+                run_visits::<true, true>(&mut visitor, &entry_roots, &chunk_order_array)
+            }
+            (true, false) => {
+                run_visits::<true, false>(&mut visitor, &entry_roots, &chunk_order_array)
+            }
+            (false, true) => {
+                run_visits::<false, true>(&mut visitor, &entry_roots, &chunk_order_array)
+            }
+            (false, false) => {
+                run_visits::<false, false>(&mut visitor, &entry_roots, &chunk_order_array)
+            }
         }
 
         let mut parts_in_chunk_order: Vec<PartRange> =
@@ -199,9 +222,13 @@ pub(crate) fn find_imported_parts_in_js_order(
 #[inline]
 fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
     visitor: &mut FindImportedPartsVisitor<'_, '_>,
+    entry_roots: &[IndexInt],
     chunk_order_array: &[Order],
 ) {
     visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value());
+    for &source_index in entry_roots {
+        visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(source_index);
+    }
     for order in chunk_order_array {
         visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(order.source_index);
     }

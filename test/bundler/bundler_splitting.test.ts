@@ -1490,6 +1490,64 @@ describe("bundler", () => {
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
+  // A shared chunk holds both sides of an import cycle but not their importer.
+  // The chunk must run `search.js` before `filesystem.js`, as every importer
+  // does, so that `filesystem.js` sees `FileSystemSearch.node`.
+  // https://github.com/oven-sh/bun/issues/42632
+  itBundled("splitting/SharedChunkKeepsImportCycleOrder", {
+    files: {
+      "/e1.js": /* js */ `
+        import "./svc.js"
+      `,
+      "/e2.js": /* js */ `
+        import { run } from "./lazy.js"
+        run()
+      `,
+      "/svc.js": /* js */ `
+        import { FileSystem } from "./filesystem.js"
+        import { FileSystemSearch } from "./fs/search.js"
+        console.log("svc:", JSON.stringify(FileSystem.node), JSON.stringify(FileSystemSearch.node))
+      `,
+      "/lazy.js": /* js */ `
+        import { FileSystem } from "./filesystem.js"
+        import { FileSystemSearch } from "./fs/search.js"
+        export function run() {
+          console.log("lazy:", JSON.stringify(FileSystem.node), JSON.stringify(FileSystemSearch.node))
+        }
+      `,
+      "/filesystem.js": /* js */ `
+        export * as FileSystem from "./filesystem.js"
+        import { FileSystemSearch } from "./fs/search.js"
+        export const node = { name: "FileSystem", deps: [FileSystemSearch.node] }
+      `,
+      "/fs/search.js": /* js */ `
+        export * as FileSystemSearch from "./search.js"
+        import { FileSystem } from "../filesystem.js"
+        export function use() { return FileSystem.node }
+        export const node = { name: "FileSystemSearch", deps: [] }
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const shared = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes('name: "FileSystem"'))!;
+      const code = api.readFile("/out/" + shared);
+      expect(code.indexOf('name: "FileSystemSearch"')).toBeLessThan(code.indexOf('name: "FileSystem",'));
+    },
+    run: [
+      {
+        file: "/out/e1.js",
+        stdout: 'svc: {"name":"FileSystem","deps":[{"name":"FileSystemSearch","deps":[]}]} {"name":"FileSystemSearch","deps":[]}',
+      },
+      {
+        file: "/out/e2.js",
+        stdout: 'lazy: {"name":"FileSystem","deps":[{"name":"FileSystemSearch","deps":[]}]} {"name":"FileSystemSearch","deps":[]}',
+      },
+    ],
+  });
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {

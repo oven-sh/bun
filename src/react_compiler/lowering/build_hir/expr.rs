@@ -1089,12 +1089,11 @@ fn lower_update(
 
             // Intentional deviation: upstream returns the temporary that holds
             // the load of `o.p`. In a nested function no pass names it, so
-            // codegen prints `o.p` again after the store and `const id = o.p++`
+            // codegen prints `o.p` again after the store: `const id = o.p++`
             // gets the new value (facebook/react#35205).
-            // `(o.p = (old = o.p) + 1, old)` keeps the update in its place among
-            // the other operands. facebook/react#36737 runs
-            // PromoteUsedTemporaries on outlined functions only. Remove this
-            // when upstream fixes every nested function.
+            // `(o.p = (old = o.p) + 1, old)` keeps the update in place among the
+            // other operands. Remove this when upstream fixes nested functions
+            // (facebook/react#36737 covers the outlined ones only).
             if !prefix && value_is_used && builder.is_nested_function() {
                 let old_value = builder.declare_temporary_at_entry(member_loc);
                 return lower_in_sequence_block(builder, loc, |builder| {
@@ -1144,9 +1143,7 @@ fn lower_update(
 
 /// Lowers `o.p = o.p + 1` (or `- 1`) and returns the value loaded and the
 /// value stored. With `old_value`, the sum reads the value loaded through an
-/// assignment to that local: `o.p = (old = o.p) + 1`. Nothing becomes a
-/// statement between the load and the store, so no pass has a temporary of
-/// the object or the key to promote in between.
+/// assignment to that local: `o.p = (old = o.p) + 1`.
 fn lower_member_update(
     builder: &mut HirBuilder,
     member: &Expr,

@@ -607,8 +607,17 @@ impl IntermediateOutput {
         dst
     }
 
-    /// The CSS printer writes every placeholder inside a double-quoted string,
-    /// so the path that replaces one in a CSS chunk is escaped for that string.
+    /// `path` with Windows separators turned into `/`, copied into `buf`. The
+    /// source is reachable only through `&Graph` / `&[Chunk]`, so it is never
+    /// normalized in place.
+    fn to_posix_separators<'b>(buf: &'b mut [u8], path: &[u8]) -> &'b [u8] {
+        let dst = &mut buf[..path.len()];
+        dst.copy_from_slice(path);
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+        dst
+    }
+
+    /// In a CSS chunk every placeholder is printed inside a double-quoted string.
     fn css_string_escaped_len(path: &[u8]) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         let _ = bun_css::css_parser::serializer::serialize_string_contents(path, &mut counter);
@@ -869,15 +878,8 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Same `\` → `/` normalization as the write pass, so the
-                            // escaped length below matches what is written.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
+                            let file_path =
+                                Self::to_posix_separators(&mut file_path_buf[..], file_path);
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
@@ -1070,18 +1072,8 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
+                            let file_path =
+                                Self::to_posix_separators(&mut file_path_buf[..], file_path);
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {

@@ -48,16 +48,8 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
-
-    JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSECDHClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto* functionGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(globalObject, newTarget.getObject()));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSECDHClassStructure.get(functionGlobalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSECDHClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue curveValue = callFrame->argument(0);
 

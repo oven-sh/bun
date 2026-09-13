@@ -4701,3 +4701,17 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
+
+JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if ((globalObject->*classStructure).constructor(globalObject) == newTarget) [[likely]]
+        return (globalObject->*classStructure).get(globalObject);
+
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The realm of newTarget can be a node:vm context, which is not a Zig::GlobalObject.
+    auto* newTargetGlobalObject = defaultGlobalObject(JSC::getFunctionRealm(lexicalGlobalObject, newTarget.getObject()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget.getObject(), (newTargetGlobalObject->*classStructure).get(newTargetGlobalObject)));
+}

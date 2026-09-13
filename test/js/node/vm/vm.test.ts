@@ -353,6 +353,173 @@ describe("Script", () => {
       expect(e.stack).not.toMatch(/^t\.vm:1\n/);
     }
   });
+
+  describe("new Script() and Script#runIn*Context() read disjoint sets of options", () => {
+    // As in Node's lib/vm.js. The constructor reads filename, lineOffset and columnOffset (plus cachedData,
+    // produceCachedData and importModuleDynamically). The run methods parse their options with
+    // getRunInContextArgs(), which reads timeout, displayErrors and breakOnSigint, in that order.
+    // The vm.runIn*Context() functions hand one options object to both.
+    const constructorOptions = ["filename", "lineOffset", "columnOffset"];
+    const runOptions = ["timeout", "displayErrors", "breakOnSigint"];
+    // Values that the parser which owns the key rejects.
+    const invalidValues: Record<string, unknown[]> = {
+      filename: [1, null, true, {}, Symbol("filename")],
+      lineOffset: ["x", null, {}, 1.5, NaN, 2 ** 32],
+      columnOffset: ["x", null, {}, 1.5, NaN, 2 ** 32],
+      timeout: ["x", null, {}, 0, -1, NaN],
+      displayErrors: [1, null, "x", {}],
+      breakOnSigint: [1, null, "x", {}],
+    };
+    const oneInvalidValueFor = (keys: string[]) => Object.fromEntries(keys.map(key => [key, invalidValues[key][0]]));
+
+    const context = createContext({});
+    type EntryPoint = (code: string, options: any) => unknown;
+    // Runs the script without run options, so only the constructor sees `options`.
+    const construct: EntryPoint = (code, options) => new Script(code, options).runInThisContext();
+    // Only the run method sees `options`.
+    const runMethods: Record<string, (code: string, options: any, constructorOptions?: any) => unknown> = {
+      "Script#runInThisContext()": (code, options, constructorOptions) =>
+        new Script(code, constructorOptions).runInThisContext(options),
+      "Script#runInContext()": (code, options, constructorOptions) =>
+        new Script(code, constructorOptions).runInContext(context, options),
+      "Script#runInNewContext()": (code, options, constructorOptions) =>
+        new Script(code, constructorOptions).runInNewContext({}, options),
+    };
+    const vmFunctions: Record<string, EntryPoint> = {
+      "vm.runInThisContext()": (code, options) => runInThisContext(code, options),
+      "vm.runInContext()": (code, options) => runInContext(code, context, options),
+      "vm.runInNewContext()": (code, options) => runInNewContext(code, {}, options),
+    };
+
+    // "returned <value>", "<code> <option>" for a Node-style error, the error name otherwise.
+    const outcome = (fn: () => unknown) => {
+      try {
+        return `returned ${String(fn())}`;
+      } catch (e: any) {
+        return e.code ? `${e.code} ${e.message.match(/"(options\.\w+)"/)?.[1] ?? e.message}` : e.name;
+      }
+    };
+    const rejectionOf = (key: string) => new RegExp(`^ERR_(INVALID_ARG_TYPE|OUT_OF_RANGE) options\\.${key}$`);
+    // An options object whose accessors record each read of `keys`.
+    function recordReads(keys: string[]) {
+      const reads: string[] = [];
+      const options = {};
+      for (const key of keys) {
+        Object.defineProperty(options, key, {
+          enumerable: true,
+          get() {
+            reads.push(key);
+            return undefined;
+          },
+        });
+      }
+      return { options, reads };
+    }
+
+    test("each one reads its own options, once, in Node's order", () => {
+      const readsOf = (run: EntryPoint) => {
+        const { options, reads } = recordReads([...constructorOptions, ...runOptions]);
+        expect(run("1", options)).toBe(1);
+        return reads;
+      };
+      expect({
+        "new Script()": readsOf(construct),
+        "Script#runInThisContext()": readsOf(runMethods["Script#runInThisContext()"]),
+        "Script#runInContext()": readsOf(runMethods["Script#runInContext()"]),
+        "Script#runInNewContext()": readsOf(runMethods["Script#runInNewContext()"]),
+        "vm.runInThisContext()": readsOf(vmFunctions["vm.runInThisContext()"]),
+      }).toEqual({
+        "new Script()": constructorOptions,
+        "Script#runInThisContext()": runOptions,
+        "Script#runInContext()": runOptions,
+        "Script#runInNewContext()": runOptions,
+        "vm.runInThisContext()": [...constructorOptions, ...runOptions],
+      });
+    });
+
+    test.each(runOptions)("new Script() constructs the script whatever options.%s is", key => {
+      const values = invalidValues[key];
+      expect(values.map(value => outcome(() => construct("1", { [key]: value })))).toEqual(
+        values.map(() => "returned 1"),
+      );
+    });
+
+    describe.each(Object.entries(runMethods))("%s", (_, run) => {
+      test.each(constructorOptions)("runs the script whatever options.%s is", key => {
+        const values = invalidValues[key];
+        expect(values.map(value => outcome(() => run("1", { [key]: value })))).toEqual(values.map(() => "returned 1"));
+      });
+
+      test("ignores valid constructor options too", () => {
+        const options = { filename: "run.js", lineOffset: 10, columnOffset: 10 };
+        const stack = run("new Error().stack", options, { filename: "constructed.js" });
+        expect(stack).toContain("at constructed.js:1:");
+        expect(stack).not.toContain("run.js");
+      });
+
+      test("rejects an invalid run option, and ignores the invalid constructor options next to it", () => {
+        const ignored = oneInvalidValueFor(constructorOptions);
+        for (const key of runOptions) {
+          for (const value of invalidValues[key]) {
+            expect(outcome(() => run("1", { ...ignored, [key]: value }))).toMatch(rejectionOf(key));
+          }
+        }
+      });
+    });
+
+    describe.each(Object.entries(vmFunctions))("%s", (_, run) => {
+      test("rejects an invalid run option", () => {
+        for (const key of runOptions) {
+          for (const value of invalidValues[key]) {
+            expect(outcome(() => run("1", { [key]: value }))).toMatch(rejectionOf(key));
+          }
+        }
+      });
+
+      test("reports what the constructor finds before an invalid run option", () => {
+        const invalidRunOptions = oneInvalidValueFor(runOptions);
+        expect({
+          syntaxError: outcome(() => run("%%", invalidRunOptions)),
+          produceCachedData: outcome(() => run("1", { ...invalidRunOptions, produceCachedData: "y" })),
+          cachedData: outcome(() => run("1", { ...invalidRunOptions, cachedData: 1 })),
+          importModuleDynamically: outcome(() => run("1", { ...invalidRunOptions, importModuleDynamically: 1 })),
+        }).toEqual({
+          syntaxError: "SyntaxError",
+          produceCachedData: "ERR_INVALID_ARG_TYPE options.produceCachedData",
+          cachedData: "ERR_INVALID_ARG_TYPE options.cachedData",
+          importModuleDynamically: "ERR_INVALID_ARG_TYPE options.importModuleDynamically",
+        });
+      });
+    });
+
+    test.each(Object.entries({ "new Script()": construct, ...vmFunctions }))(
+      "%s rejects an invalid constructor option, whatever the run options next to it are",
+      (_, run) => {
+        const invalidRunOptions = oneInvalidValueFor(runOptions);
+        for (const key of constructorOptions) {
+          for (const value of invalidValues[key]) {
+            expect(outcome(() => run("1", { ...invalidRunOptions, [key]: value }))).toMatch(rejectionOf(key));
+          }
+        }
+      },
+    );
+
+    test.each(Object.entries({ ...runMethods, ...vmFunctions }))(
+      "%s checks timeout, then displayErrors, then breakOnSigint",
+      (_, run) => {
+        expect([
+          outcome(() => run("1", { breakOnSigint: 1, displayErrors: 1, timeout: "x" })),
+          outcome(() => run("1", { breakOnSigint: 1, displayErrors: 1 })),
+          outcome(() => run("1", { breakOnSigint: 1 })),
+        ]).toEqual([
+          "ERR_INVALID_ARG_TYPE options.timeout",
+          "ERR_INVALID_ARG_TYPE options.displayErrors",
+          "ERR_INVALID_ARG_TYPE options.breakOnSigint",
+        ]);
+      },
+    );
+  });
+
   test("throws SyntaxError at construction like Node", () => {
     // Node's vm.Script parses eagerly; the REPL depends on this.
     expect(() => new Script("function {")).toThrow(SyntaxError);

@@ -11,7 +11,6 @@ namespace Bun {
 class ScriptOptions : public BaseVMOptions {
 public:
     WTF::Vector<uint8_t> cachedData;
-    std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
@@ -105,13 +104,15 @@ private:
     void finishCreation(JSC::VM&);
 };
 
-class RunningScriptOptions : public BaseVMOptions {
+// Options of one Script#runIn*Context() call, parsed like Node's getRunInContextArgs:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L165-L194
+// Disjoint from ScriptOptions, as in Node. A run never reads filename, lineOffset or columnOffset, so this is
+// not a BaseVMOptions. `new Script()` never reads timeout, displayErrors or breakOnSigint.
+class RunningScriptOptions {
 public:
     bool displayErrors = true;
     std::optional<int64_t> timeout = std::nullopt;
     bool breakOnSigint = false;
-
-    using BaseVMOptions::BaseVMOptions;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
 };

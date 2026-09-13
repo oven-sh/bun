@@ -1915,26 +1915,6 @@ bool BaseVMOptions::validateCachedData(JSC::JSGlobalObject* globalObject, JSC::V
     return false;
 }
 
-bool BaseVMOptions::validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>& outTimeout)
-{
-    JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
-    RETURN_IF_EXCEPTION(scope, false);
-    if (timeoutOpt && !timeoutOpt.isUndefined()) {
-        if (!timeoutOpt.isNumber()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "number"_s, timeoutOpt);
-            return false;
-        }
-
-        ssize_t timeoutValue;
-        V::validateInteger(scope, globalObject, timeoutOpt, "options.timeout"_s, jsNumber(1), jsNumber(std::numeric_limits<int64_t>().max()), &timeoutValue);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        outTimeout = timeoutValue;
-        return true;
-    }
-    return false;
-}
-
 bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
 {
     if (importer) {

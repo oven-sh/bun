@@ -7,6 +7,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_ptr::RefPtr;
 use bun_threading::{Mutex, UnboundedQueue};
+use bun_url::URL;
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -19,6 +20,14 @@ use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h
 // .visible) are split into two scope names.
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
+
+#[inline]
+fn is_supported_proxy_protocol(proxy: &URL<'_>) -> bool {
+    proxy.href.is_empty()
+        || proxy.protocol.is_empty()
+        || proxy.has_http_like_protocol()
+        || proxy.is_socks()
+}
 
 /// SSL context cache keyed by interned SSLConfig pointer.
 /// Since configs are interned via `ssl_config::global_registry`, pointer
@@ -480,8 +489,8 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return ctx.connect(client, url.hostname, url.get_port_auto());
+                if is_supported_proxy_protocol(&url) {
+                    return ctx.connect(client, url.hostname, url.get_proxy_port_auto());
                 }
                 return Err(crate::Error::UnsupportedProxyProtocol);
             }
@@ -962,6 +971,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
+                client.socks = None;
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));

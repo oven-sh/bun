@@ -270,3 +270,33 @@ console.log("Hello %%i %i", 5, 6);
 
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
+
+// enumerable: false properties are hidden, matching Node (issue #8316)
+const explicitEnumerable = { a: 1, b: 2 };
+Object.defineProperty(explicitEnumerable, "b", { enumerable: false });
+console.log(explicitEnumerable);
+
+// same check, through the sorted/ordered property-walk path
+// (Bun.inspect({ sorted: true }), console.table, and the test runner's
+// toEqual/snapshot diff printer all go through this separate code path)
+console.log(Bun.inspect(explicitEnumerable, { sorted: true }));
+
+// same check, forced onto the generic/slow property-walk path, a getter
+const nonEnumerableWithGetter = {
+  a: 1,
+  get c() {
+    return 3;
+  },
+};
+Object.defineProperty(nonEnumerableWithGetter, "b", { value: 2, enumerable: false });
+console.log(nonEnumerableWithGetter);
+
+// an own non-enumerable property shadowing a same-named enumerable
+// prototype property must hide the name entirely, not leak the
+// prototype's value through the fast path's prototype recursion
+function ShadowBase() {}
+ShadowBase.prototype.x = "from prototype";
+const shadowed = new ShadowBase();
+shadowed.y = 1;
+Object.defineProperty(shadowed, "x", { value: "own hidden", enumerable: false });
+console.log(shadowed);

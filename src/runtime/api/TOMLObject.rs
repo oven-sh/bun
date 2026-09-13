@@ -73,7 +73,7 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     let unwrapped = value.unwrap_boxed_primitive(global)?;
     if !unwrapped.is_object()
-        || unwrapped.is_array()
+        || unwrapped.is_array_including_proxy(global)?
         || unwrapped.is_date()
         || temporal_object_type(unwrapped).is_some()
     {
@@ -177,7 +177,7 @@ impl Stringifier {
         if value.is_undefined() || value.is_symbol() || value.is_function() {
             return Ok(Layout::Skip);
         }
-        if value.is_array() {
+        if value.is_array_including_proxy(global)? {
             // An array becomes [[key]] sections when it is non-empty and
             // every element is a plain object; otherwise it is inline.
             let mut iter = value.array_iterator(global)?;
@@ -187,7 +187,7 @@ impl Stringifier {
             while let Some(item) = iter.next()? {
                 let item = item.unwrap_boxed_primitive(global)?;
                 if !item.is_object()
-                    || item.is_array()
+                    || item.is_array_including_proxy(global)?
                     || item.is_date()
                     || item.is_function()
                     || temporal_object_type(item).is_some()
@@ -279,7 +279,7 @@ impl Stringifier {
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
                         if !item.is_object()
-                            || item.is_array()
+                            || item.is_array_including_proxy(global)?
                             || item.is_date()
                             || item.is_function()
                             || temporal_object_type(item).is_some()
@@ -351,7 +351,7 @@ impl Stringifier {
             return self.append_temporal(global, value, temporal_type);
         }
 
-        if value.is_array() {
+        if value.is_array_including_proxy(global)? {
             self.mark_visiting(global, value)?;
             self.builder.append_lchar(b'[');
             let mut iter = value.array_iterator(global)?;

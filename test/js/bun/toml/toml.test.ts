@@ -916,6 +916,65 @@ describe("TOML.stringify", () => {
     );
   });
 
+  // Array.isArray and JSON.stringify look through a Proxy (ECMA-262 IsArray).
+  describe("a Proxy of an array", () => {
+    test("is an array, not a table with index keys", () => {
+      const proxy = new Proxy([1, 2, [3]], {});
+      expect(Array.isArray(proxy)).toBe(true);
+
+      expect(TOML.stringify({ a: proxy })).toBe("a = [1, 2, [3]]\n");
+      expect(TOML.parse(TOML.stringify({ a: proxy }))).toEqual({ a: [1, 2, [3]] });
+      expect(TOML.stringify({ a: new Proxy([], {}) })).toBe("a = []\n");
+      // A Proxy of a Proxy, and a Proxy inside an array and inside an inline table.
+      expect(TOML.stringify({ a: new Proxy(new Proxy([1], {}), {}) })).toBe("a = [1]\n");
+      expect(TOML.stringify({ a: [new Proxy([1], {})] })).toBe("a = [[1]]\n");
+      expect(TOML.stringify({ a: [1, { b: new Proxy([2, 3], {}) }] })).toBe("a = [1, { b = [2, 3] }]\n");
+    });
+
+    test("of tables becomes [[sections]]", () => {
+      expect(TOML.stringify({ points: new Proxy([{ x: 1 }, { x: 2 }], {}) })).toBe(
+        "[[points]]\nx = 1\n\n[[points]]\nx = 2\n",
+      );
+      expect(TOML.stringify({ t: { arr: new Proxy([{ q: new Proxy([1, 2], {}) }], {}) } })).toBe(
+        "[[t.arr]]\nq = [1, 2]\n",
+      );
+      expect(TOML.stringify({ a: new Proxy([1, { b: 2 }], {}) })).toBe("a = [1, { b = 2 }]\n");
+    });
+
+    test("gets the errors of an array", () => {
+      expect(stringifyError(new Proxy([1, 2], {})).message).toBe(
+        "TOML.stringify expects an object at the top level (a TOML document is a table)",
+      );
+      expect(stringifyError({ list: new Proxy([1, null], {}) }).message).toBe("TOML cannot represent null in an array");
+      const target: unknown[] = [];
+      const cycle = new Proxy(target, {});
+      target.push(cycle);
+      expect(stringifyError({ a: cycle }).message).toBe("Converting circular structure to TOML");
+    });
+
+    test("reads its length and its items through the get trap, like JSON.stringify", () => {
+      // "length" and every item exist only in the get trap.
+      const virtual = new Proxy([] as string[], {
+        get(target, key, receiver) {
+          if (key === "length") return 2;
+          if (key === "0") return "x";
+          if (key === "1") return "y";
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(JSON.stringify(virtual)).toBe('["x","y"]');
+      expect(TOML.stringify({ a: virtual })).toBe('a = ["x", "y"]\n');
+    });
+
+    test("throws a TypeError when it is revoked", () => {
+      const { proxy, revoke } = Proxy.revocable([1], {});
+      revoke();
+      expect(() => JSON.stringify(proxy)).toThrow(TypeError);
+      expect(stringifyError({ a: proxy })).toBeInstanceOf(TypeError);
+      expect(stringifyError(proxy)).toBeInstanceOf(TypeError);
+    });
+  });
+
   test("stringify is GC-safe under stress", () => {
     // Unique keys each iteration force fresh WTF strings through the
     // header-path bookkeeping; a refcount imbalance there crashes under GC.

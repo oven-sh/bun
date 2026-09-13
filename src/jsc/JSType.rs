@@ -746,6 +746,8 @@ impl JSType {
         )
     }
 
+    /// NOT ECMA-262 `IsArray`: a `Proxy` of an array is [`JSType::ProxyObject`]. See
+    /// `JSValue::is_array_including_proxy`.
     #[inline]
     pub fn is_array(self) -> bool {
         matches!(self, JSType::Array | JSType::DerivedArray)

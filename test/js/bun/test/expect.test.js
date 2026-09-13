@@ -4237,6 +4237,10 @@ describe("expect()", () => {
       expect(new Number(5)).not.toEqual(expect.not.any(Number));
       expect(new String("s")).not.toEqual(expect.not.any(String));
 
+      // any(Object) is `typeof other === "object"`: null matches, a function does not
+      expect(null).not.toEqual(expect.not.any(Object));
+      expect(() => {}).toEqual(expect.not.any(Object));
+
       // nested inside object matching
       expect({ a: 1 }).toEqual({ a: expect.not.any(String) });
       expect({ a: 1 }).not.toEqual({ a: expect.not.any(Number) });

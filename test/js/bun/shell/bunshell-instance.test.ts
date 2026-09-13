@@ -53,13 +53,13 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+// $.env() sets the default that $`cmd`.env() sets for one command, so both take the same values: any object.
 describe("$.env() argument validation", () => {
-  // `undefined` is not in this list: it restores process.env.
-  const notObjects = [5, 0, NaN, 1n, "str", "", true, false, null, Symbol("env")];
   const error = expect.objectContaining({ name: "TypeError", message: "env must be an object or undefined" });
 
-  for (const value of notObjects) {
-    test(`new $.Shell().env(${Bun.inspect(value)}) throws and keeps the previous env`, async () => {
+  // `undefined` is not in this list: it restores process.env.
+  describe.each([5, 0, NaN, 1n, "str", "", true, false, null, Symbol("env")])("%p is not an object", value => {
+    test("new $.Shell().env() throws and keeps the previous env", async () => {
       const $$ = new $.Shell();
       $$.env({ BUN: "bun" });
 
@@ -67,33 +67,33 @@ describe("$.env() argument validation", () => {
       expect(() => $$.env(value)).toThrow(error);
       expect(await $$`echo $BUN`.text()).toBe("bun\n");
     });
-  }
 
-  test("the global $ rejects the same values", () => {
-    for (const value of notObjects) {
+    test("$.env() throws", () => {
       // @ts-expect-error
       expect(() => $.env(value)).toThrow(error);
-    }
-  });
+    });
 
-  // $.env() sets the default that $`cmd`.env() sets for one command, so both take the same values.
-  // A block body keeps expect() from waiting on the returned ShellPromise, which never starts.
-  test("accepts what $`cmd`.env() accepts: any object", () => {
-    const $$ = new $.Shell();
-    for (const value of [{}, Object.create(null), [], new Map(), () => {}]) {
-      expect(() => {
-        $$`true`.env(value);
-      }).not.toThrow();
-      expect(() => {
-        $$.env(value);
-      }).not.toThrow();
-    }
-    for (const value of notObjects) {
+    test("$`cmd`.env() throws", () => {
+      // A block body keeps expect() from waiting on the returned ShellPromise, which never starts.
       expect(() => {
         // @ts-expect-error
-        $$`true`.env(value);
+        $`true`.env(value);
       }).toThrow("env must be an object");
-    }
+    });
+  });
+
+  // Each value is in its own array, because describe.each() spreads an array row into arguments.
+  describe.each([[{}], [Object.create(null)], [[]], [new Map()], [() => {}]])("%p is an object", value => {
+    test("new $.Shell().env() accepts it", () => {
+      const $$ = new $.Shell();
+      expect(() => $$.env(value)).not.toThrow();
+    });
+
+    test("$`cmd`.env() accepts it", () => {
+      expect(() => {
+        $`true`.env(value);
+      }).not.toThrow();
+    });
   });
 });
 

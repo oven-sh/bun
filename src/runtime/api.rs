@@ -65,10 +65,10 @@ pub mod markdown_object;
 pub mod native_promise_context;
 #[path = "api/output_file_jsc.rs"]
 pub mod output_file_jsc;
-#[path = "api/standalone_graph_jsc.rs"]
-pub mod standalone_graph_jsc;
 #[path = "api/PprofObject.rs"]
 pub mod pprof_object;
+#[path = "api/standalone_graph_jsc.rs"]
+pub mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]

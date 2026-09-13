@@ -232,30 +232,15 @@ impl BinaryExpressionVisitor {
                         }
                         _ => SideEffects::simplify_unused_expr(p, e_.left),
                     };
-                    if let Some(simplified_left) = simplified_left {
-                        if simplified_left.is_empty() {
-                            if e_.right.is_anonymous_named() {
-                                e_.left = Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                };
-                            } else {
-                                return e_.right;
-                            }
-                        } else {
-                            e_.left = simplified_left;
-                        }
-                    } else {
-                        if (is_call_target && e_.right.has_value_for_this_in_call())
-                            || e_.right.is_anonymous_named()
-                        {
+                    match simplified_left.filter(|left| !left.is_empty()) {
+                        Some(simplified_left) => e_.left = simplified_left,
+                        None if e_.right.needs_comma_when_unwrapped(is_call_target) => {
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
                                 loc: e_.left.loc,
                             };
-                        } else {
-                            return e_.right;
                         }
+                        None => return e_.right,
                     }
                 }
             }
@@ -363,7 +348,7 @@ impl BinaryExpressionVisitor {
                 {
                     if !null_or_undefined.value {
                         // "(class {} ?? 0)" => "(0, class {})"
-                        if e_.left.is_anonymous_named() {
+                        if e_.left.needs_comma_when_unwrapped(is_call_target) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,
@@ -378,9 +363,7 @@ impl BinaryExpressionVisitor {
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
                         // "(null ?? class {})" => "(0, class {})"
-                        if (is_call_target && e_.right.has_value_for_this_in_call())
-                            || e_.right.is_anonymous_named()
-                        {
+                        if e_.right.needs_comma_when_unwrapped(is_call_target) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: ExprData::ENumber(E::Number::new(0.0)),
@@ -398,7 +381,7 @@ impl BinaryExpressionVisitor {
                 if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
                     if side_effects.value {
                         // "(class {} || 0)" => "(0, class {})"
-                        if e_.left.is_anonymous_named() {
+                        if e_.left.needs_comma_when_unwrapped(is_call_target) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,
@@ -413,9 +396,7 @@ impl BinaryExpressionVisitor {
                         // "(0 || this.fn)" => "this.fn"
                         // "(0 || this.fn)()" => "(0, this.fn)()"
                         // "(0 || class {})" => "(0, class {})"
-                        if (is_call_target && e_.right.has_value_for_this_in_call())
-                            || e_.right.is_anonymous_named()
-                        {
+                        if e_.right.needs_comma_when_unwrapped(is_call_target) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,
@@ -438,9 +419,7 @@ impl BinaryExpressionVisitor {
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
                         // "(1 && class {})" => "(0, class {})"
-                        if (is_call_target && e_.right.has_value_for_this_in_call())
-                            || e_.right.is_anonymous_named()
-                        {
+                        if e_.right.needs_comma_when_unwrapped(is_call_target) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,

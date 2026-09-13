@@ -4406,6 +4406,46 @@ console.log(foo, array);
       expectPrinted("(0, func())", "func()");
     });
 
+    it("keeps `(0, value)` where a fold would let a binding name an anonymous function or class", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
+      // `x = (0, () => {})` leaves the arrow unnamed. `x = () => {}` names it "x".
+      expectPrinted("x = (0, () => {})", "x = (0, () => {})");
+      expectPrinted("x = (0, async () => {})", "x = (0, async () => {})");
+      expectPrinted("x = (0, function() {})", "x = (0, function() {})");
+      expectPrinted("x = (0, class {})", "x = (0, class {\n})");
+      expectPrinted("x = (void 0, () => {})", "x = (0, () => {})");
+      expectPrinted("x = (0, (0, () => {}))", "x = (0, () => {})");
+      expectPrinted("x = { f: (0, () => {}) }", "x = { f: (0, () => {}) }");
+
+      // Every fold that returns one operand emits the same form.
+      expectPrinted("x = [() => {}][0]", "x = (0, () => {})");
+      expectPrinted("x = [0, () => {}][1]", "x = (0, () => {})");
+      expectPrinted("x = true && function() {}", "x = (0, function() {})");
+      expectPrinted("x = false || function() {}", "x = (0, function() {})");
+      expectPrinted("x = null ?? function() {}", "x = (0, function() {})");
+      expectPrinted("x = (function() {}) || 0", "x = (0, function() {})");
+      expectPrinted("x = (() => {}) ?? 0", "x = (0, () => {})");
+      expectPrinted("x = true ? function() {} : 0", "x = (0, function() {})");
+      expectPrinted("x = false ? 0 : function() {}", "x = (0, function() {})");
+      expectPrinted("x = [] ? class {} : 0", "x = (0, class {\n})");
+      expectPrinted("x = ({}).y ??= class {}", "x = {}.y ??= class {\n}");
+
+      // A value that has a name of its own is still unwrapped.
+      expectPrinted("x = (0, function f() {})", "x = function f() {}");
+      expectPrinted("x = (0, class C {})", "x = class C {\n}");
+      expectPrinted("x = [function f() {}][0]", "x = function f() {}");
+      expectPrinted("x = ({}).y ??= class C {}", "x = class C {\n}");
+
+      // A call target is never named.
+      expectPrinted("x = (0, function() {})()", "x = function() {}()");
+      expectPrinted("x = (0, () => y)()", "x = (() => y)()");
+      expectPrinted("x = (true && function() {})()", "x = function() {}()");
+      expectPrinted("x = (true ? function() {} : 0)()", "x = function() {}()");
+    });
+
     it("constant folding", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

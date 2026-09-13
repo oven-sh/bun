@@ -1265,6 +1265,18 @@ impl Expr {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
     }
 
+    /// Whether a fold that unwraps `(0, value)`, `true && value` or `[value][0]`
+    /// must still emit `(0, value)`: a bare call target gains a `this`, and
+    /// anywhere else a binding could name an anonymous function or class.
+    #[inline]
+    pub fn needs_comma_when_unwrapped(&self, is_call_target: bool) -> bool {
+        if is_call_target {
+            self.has_value_for_this_in_call()
+        } else {
+            self.is_anonymous_named()
+        }
+    }
+
     /// The given "expr" argument should be the operand of a "!" prefix operator
     /// (i.e. the "x" in "!x"). This returns a simplified expression for the
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.

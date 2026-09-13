@@ -1080,9 +1080,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if inlined.can_be_inlined_from_property_access() {
                                 // "[obj.m][0]()" => "(0, obj.m)()"
                                 // "[class {}][0]" => "(0, class {})"
-                                *e = if (is_call_target && inlined.has_value_for_this_in_call())
-                                    || inlined.is_anonymous_named()
-                                {
+                                *e = if inlined.needs_comma_when_unwrapped(is_call_target) {
                                     p.new_expr(E::Number::new(0.0), expr.loc)
                                         .join_with_comma(inlined)
                                 } else {
@@ -1503,8 +1501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
             // "(1 ? class {} : 2)" => "(0, class {})"
-            let needs_comma_wrap = (is_call_target && e_.yes.has_value_for_this_in_call())
-                || e_.yes.is_anonymous_named();
+            let needs_comma_wrap = e_.yes.needs_comma_when_unwrapped(is_call_target);
 
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                 *e = SideEffects::simplify_unused_expr(p, e_.test)
@@ -1536,8 +1533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(0 ? 1 : this.fn)" => "this.fn"
             // "(0 ? 1 : this.fn)()" => "(0, this.fn)()"
             // "(0 ? 1 : class {})" => "(0, class {})"
-            let needs_comma_wrap = (is_call_target && e_.no.has_value_for_this_in_call())
-                || e_.no.is_anonymous_named();
+            let needs_comma_wrap = e_.no.needs_comma_when_unwrapped(is_call_target);
 
             // "(a, false) ? b : c" => "a, c"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {

@@ -2089,6 +2089,72 @@ const extraSections = `
   out.privateUpdates = U.run(new U());
 }
 
+// https://github.com/oven-sh/bun/issues/31910: a decorated \`#private\` member
+// is read through a helper call. An optional chain through it still stops at
+// a nullish link, evaluates each link once and calls with the receiver the
+// chain names. The expected values are what node prints for the same classes
+// without the decorators.
+{
+  let n = 0;
+  const tick = (v) => (n++, v);
+  const attempt = (fn) => { try { return fn(); } catch (e) { return e.constructor.name; } };
+  const cb = function (a) { return this.id + a; };
+  class OB { static make() { return this; } }
+  class OC {
+    @dec #f = { v: "f", me() { return this.v; }, none: undefined };
+    @dec #m(a) { return this.id + a; }
+    @dec get #g() { return this.id + "g"; }
+    @dec accessor #a = "a";
+    @dec #cb;
+    @dec static #sm(a) { return { OC, a }; }
+    id = "i";
+    x = this;
+    constructor(cb) { this.#cb = cb; }
+    get() { return this; }
+    call(a) { return this.#cb?.(a); }
+    static viaDefault(o, v = tick(o)?.#g) { return v; }
+    static cases(o, box) {
+      return [
+        () => o?.#f.v,
+        () => o?.#g,
+        () => o?.#a,
+        () => o?.#m(1),
+        () => o?.x.#m(2),
+        () => o?.x?.x.#g,
+        () => o?.["x"].#f?.v,
+        () => box?.OC.#sm(3).a,
+        () => o?.#m?.(4),
+        () => o?.x.#m?.(5),
+        () => o?.#f.me?.(),
+        () => o?.#f.none?.(),
+        () => o?.#cb?.(6),
+        () => (o?.#f.me)(),
+        () => o?.get?.().#g,
+        () => o?.get().#f.me(),
+        () => tick(o)?.#m(tick(7)),
+        () => typeof o?.#f,
+        () => [delete o?.#f.v, o?.#f.v],
+      ].map(attempt);
+    }
+  }
+  out.privateOptionalChains = {
+    nullish: OC.cases(undefined, null),
+    present: OC.cases(new OC(cb), { OC }),
+    callbacks: attempt(() => [new OC().call(8), new OC(cb).call(9)]),
+    defaults: attempt(() => [OC.viaDefault(null), OC.viaDefault(new OC())]),
+    outsideFunctions: attempt(() => {
+      class OS extends OB {
+        @dec static #sf = { v: "sf" };
+        static onNull = tick(null)?.#sf.v;
+        static onSelf = tick(this)?.#sf.v;
+        static viaSuper = [super.make?.().#sf.v, super.none?.().#sf.v];
+      }
+      return [OS.onNull, OS.onSelf, OS.viaSuper];
+    }),
+    ticks: n,
+  };
+}
+
 // \`super\`, \`this\` and nested scopes in the static code of a decorated
 // class. The expected values are what node prints for the same class without
 // the decorator.
@@ -2408,6 +2474,22 @@ const extraExpected = {
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
+  privateOptionalChains: {
+    // prettier-ignore
+    nullish: [
+      null, null, null, null, null, null, null, null, null, null, null, null, null,
+      "TypeError", null, null, null, "undefined", [true, null],
+    ],
+    // prettier-ignore
+    present: [
+      "f", "ig", "a", "i1", "i2", "ig", "f", 3, "i4", "i5", "f", null, "i6",
+      "f", "ig", "f", "i7", "object", [true, null],
+    ],
+    callbacks: [null, "i9"],
+    defaults: [null, "ig"],
+    outsideFunctions: [null, "sf", ["sf", null]],
+    ticks: 7,
+  },
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],
   staticScopesAsync: 1,

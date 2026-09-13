@@ -124,6 +124,40 @@ fn insert_after_super<'a>(
     func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
 }
 
+/// The `?.` state and the target of a link of an optional chain.
+fn optional_chain_link(expr: &Expr) -> Option<(js_ast::OptionalChain, Expr)> {
+    match &expr.data {
+        js_ast::ExprData::EDot(e) => e.optional_chain.map(|chain| (chain, e.target)),
+        js_ast::ExprData::EIndex(e) => e.optional_chain.map(|chain| (chain, e.target)),
+        js_ast::ExprData::ECall(e) => e.optional_chain.map(|chain| (chain, e.target)),
+        _ => None,
+    }
+}
+
+fn set_target(access: Expr, target: Expr) {
+    match access.data {
+        js_ast::ExprData::EDot(mut e) => e.target = target,
+        js_ast::ExprData::EIndex(mut e) => e.target = target,
+        js_ast::ExprData::ECall(mut e) => e.target = target,
+        _ => {}
+    }
+}
+
+/// The receiver of `receiver.#name` and how `#name` was lowered, if it was.
+fn lowered_private_access(
+    expr: &Expr,
+    map: &PrivateLoweredMap,
+) -> Option<(Expr, PrivateLoweredInfo)> {
+    if let js_ast::ExprData::EIndex(e) = &expr.data
+        && let js_ast::ExprData::EPrivateIdentifier(private) = &e.index.data
+    {
+        return map
+            .get(&private.ref_.inner_index())
+            .map(|info| (e.target, *info));
+    }
+    None
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -271,8 +305,240 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `value` where it is evaluated, and a second read of the result. Only an
+    /// identifier or `this` can be written twice; anything else goes through a
+    /// temporary, so it runs once and a chain like `o.#m().#m().#m()` is not
+    /// printed 2^n times.
+    fn capture_for_reuse(&mut self, value: Expr, l: bun_ast::Loc) -> (Expr, Expr) {
+        match &value.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                let ref_ = id.ref_;
+                (value, self.use_ref(ref_, value.loc))
+            }
+            js_ast::ExprData::EThis(_) => (value, self.new_expr(E::This {}, value.loc)),
+            _ => {
+                let temp = self.declared_temp(b"_obj");
+                (self.assign_to(temp, value, l), self.use_ref(temp, l))
+            }
+        }
+    }
+
+    /// Turns `call` into `callee.call(this_arg, ...args)`.
+    fn call_with_this(
+        &mut self,
+        mut call: js_ast::StoreRef<E::Call>,
+        callee: Expr,
+        this_arg: Expr,
+        map: &PrivateLoweredMap,
+    ) {
+        let l = callee.loc;
+        let bump = self.arena;
+        let target = self.new_expr(
+            E::Dot {
+                target: callee,
+                name: b"call".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        );
+        let args = call.args.slice_mut();
+        let mut new_args = BumpVec::with_capacity_in(1 + args.len(), bump);
+        new_args.push(this_arg);
+        for arg in args.iter_mut() {
+            self.rewrite_private_accesses_in_expr(arg, map);
+            new_args.push(*arg);
+        }
+        call.target = target;
+        call.args = ExprNodeList::from_bump_vec(new_args);
+        call.optional_chain = None;
+    }
+
+    /// The callee of `callee?.()` as the value to test and call, and the
+    /// `this` of that call.
+    fn optional_callee_and_this(
+        &mut self,
+        mut callee: Expr,
+        map: &PrivateLoweredMap,
+    ) -> (Expr, Option<Expr>) {
+        let mut receiver = match callee.data {
+            js_ast::ExprData::EDot(e) => e.target,
+            js_ast::ExprData::EIndex(mut e) => {
+                let mut index = e.index;
+                self.rewrite_private_accesses_in_expr(&mut index, map);
+                e.index = index;
+                e.target
+            }
+            _ => {
+                self.rewrite_private_accesses_in_expr(&mut callee, map);
+                return (callee, None);
+            }
+        };
+        if matches!(receiver.data, js_ast::ExprData::ESuper(_)) {
+            return (callee, Some(self.new_expr(E::This {}, callee.loc)));
+        }
+        self.rewrite_private_accesses_in_expr(&mut receiver, map);
+        let (receiver, this_arg) = self.capture_for_reuse(receiver, callee.loc);
+        set_target(callee, receiver);
+        (callee, Some(this_arg))
+    }
+
+    /// Rewrites the optional chain that ends in `expr`. A read of a lowered
+    /// `#private` name is a helper call, which cannot sit behind a `?.`: the
+    /// chain it is in becomes `base == null ? void 0 : rest`. Returns `None`
+    /// for a chain that stays as written. `want_this` asks for the receiver of
+    /// the chain's last member access: `o?.a.#m?.()` calls `#m` on `o.a`.
+    /// `force` lowers a chain without such a read, because the lowered `?.()`
+    /// it is the callee of needs that receiver: `o?.get?.().#f`.
+    fn rewrite_private_accesses_in_optional_chain(
+        &mut self,
+        expr: &mut Expr,
+        map: &PrivateLoweredMap,
+        force: bool,
+        want_this: bool,
+    ) -> Option<Option<Expr>> {
+        let loc = expr.loc;
+        let mut links = BumpVec::<Expr>::new_in(self.arena);
+        let mut lowered = force;
+        let mut base = *expr;
+        let mut next = optional_chain_link(&base);
+        while let Some((chain, target)) = next {
+            lowered |= lowered_private_access(&base, map).is_some();
+            links.push(base);
+            base = target;
+            next = match chain {
+                js_ast::OptionalChain::Start => None,
+                js_ast::OptionalChain::Continuation => optional_chain_link(&base),
+            };
+        }
+        let start = *links.last()?;
+
+        let mut call_this = None;
+        if !matches!(start.data, js_ast::ExprData::ECall(_)) {
+            self.rewrite_private_accesses_in_expr(&mut base, map);
+        } else if optional_chain_link(&base).is_some() {
+            if let Some(this_arg) =
+                self.rewrite_private_accesses_in_optional_chain(&mut base, map, lowered, true)
+            {
+                lowered = true;
+                call_this = this_arg;
+            }
+        } else if let Some((mut receiver, info)) = lowered_private_access(&base, map) {
+            self.rewrite_private_accesses_in_expr(&mut receiver, map);
+            let (receiver, this_arg) = self.capture_for_reuse(receiver, loc);
+            base = self.private_get_expr(receiver, &info, base.loc);
+            call_this = Some(this_arg);
+            lowered = true;
+        } else if lowered {
+            (base, call_this) = self.optional_callee_and_this(base, map);
+        } else {
+            self.rewrite_private_accesses_in_expr(&mut base, map);
+        }
+
+        if !lowered {
+            set_target(start, base);
+            for link in &links {
+                match link.data {
+                    js_ast::ExprData::EIndex(mut e) => {
+                        let mut index = e.index;
+                        self.rewrite_private_accesses_in_expr(&mut index, map);
+                        e.index = index;
+                    }
+                    js_ast::ExprData::ECall(mut e) => {
+                        for arg in e.args.slice_mut() {
+                            self.rewrite_private_accesses_in_expr(arg, map);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return None;
+        }
+
+        let (tested, mut value) = self.capture_for_reuse(base, loc);
+        let mut last_this = None;
+        let mut i = links.len();
+        while i > 0 {
+            i -= 1;
+            let link = links[i];
+            let private = lowered_private_access(&link, map);
+            if let Some((_, info)) = private
+                && i > 0
+                && let js_ast::ExprData::ECall(call) = links[i - 1].data
+            {
+                let (receiver, this_arg) = self.capture_for_reuse(value, loc);
+                let callee = self.private_get_expr(receiver, &info, link.loc);
+                self.call_with_this(call, callee, this_arg, map);
+                i -= 1;
+                value = links[i];
+                continue;
+            }
+            if i == 0 && want_this && !matches!(link.data, js_ast::ExprData::ECall(_)) {
+                let (receiver, this_arg) = self.capture_for_reuse(value, loc);
+                value = receiver;
+                last_this = Some(this_arg);
+            }
+            if let Some((_, info)) = private {
+                value = self.private_get_expr(value, &info, link.loc);
+                continue;
+            }
+            match link.data {
+                js_ast::ExprData::EDot(mut e) => {
+                    e.target = value;
+                    e.optional_chain = None;
+                }
+                js_ast::ExprData::EIndex(mut e) => {
+                    let mut index = e.index;
+                    self.rewrite_private_accesses_in_expr(&mut index, map);
+                    e.index = index;
+                    e.target = value;
+                    e.optional_chain = None;
+                }
+                js_ast::ExprData::ECall(mut e) => {
+                    if i + 1 == links.len()
+                        && let Some(this_arg) = call_this
+                    {
+                        self.call_with_this(e, value, this_arg, map);
+                    } else {
+                        e.target = value;
+                        e.optional_chain = None;
+                        for arg in e.args.slice_mut() {
+                            self.rewrite_private_accesses_in_expr(arg, map);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            value = link;
+        }
+
+        let null = self.new_expr(E::Null {}, loc);
+        let test = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinLooseEq,
+                left: tested,
+                right: null,
+            },
+            loc,
+        );
+        let undefined = self.new_expr(E::Undefined {}, loc);
+        *expr = self.new_expr(
+            E::If {
+                test,
+                yes: undefined,
+                no: value,
+            },
+            loc,
+        );
+        Some(last_this)
+    }
+
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
         let expr_loc = expr.loc;
+        if optional_chain_link(expr).is_some() {
+            self.rewrite_private_accesses_in_optional_chain(expr, map, false, false);
+            return;
+        }
         match &mut expr.data {
             js_ast::ExprData::EIndex(e) => {
                 let mut tgt = e.target;
@@ -323,64 +589,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e.right = r;
             }
             js_ast::ExprData::ECall(e) => {
-                if let js_ast::ExprData::EIndex(tgt_idx) = &mut e.target.data {
-                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &tgt_idx.index.data {
-                        if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
-                            let mut obj_expr = tgt_idx.target;
-                            self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
-                            // references the receiver twice. Only identifiers and `this` can
-                            // be repeated safely; any other receiver is captured in a
-                            // temporary so its side effects run once and nested private
-                            // calls don't duplicate the whole subtree (the duplication is
-                            // exponential in the length of a chain like `o.#m().#m().#m()`).
-                            let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
-                                    let obj_ref = id.ref_;
-                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
-                                }
-                                js_ast::ExprData::EThis(_) => {
-                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
-                                }
-                                _ => {
-                                    let tmp_ref = self.declared_temp(b"_obj");
-                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
-                                    let read = self.use_ref(tmp_ref, expr_loc);
-                                    (write, read)
-                                }
-                            };
-                            let private_access = self.private_get_expr(get_obj, &info, expr_loc);
-                            let call_target = self.new_expr(
-                                E::Dot {
-                                    target: private_access,
-                                    name: b"call".into(),
-                                    name_loc: expr_loc,
-                                    ..Default::default()
-                                },
-                                expr_loc,
-                            );
-                            let bump = self.arena;
-                            let orig_args = e.args.slice_mut();
-                            let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
-                            new_args.push(this_arg);
-                            for arg in orig_args.iter_mut() {
-                                self.rewrite_private_accesses_in_expr(arg, map);
-                                new_args.push(*arg);
-                            }
-                            e.target = call_target;
-                            e.args = ExprNodeList::from_bump_vec(new_args);
-                            return;
-                        }
-                    }
+                if let Some((mut receiver, info)) = lowered_private_access(&e.target, map) {
+                    self.rewrite_private_accesses_in_expr(&mut receiver, map);
+                    let (receiver, this_arg) = self.capture_for_reuse(receiver, expr_loc);
+                    let callee = self.private_get_expr(receiver, &info, expr_loc);
+                    self.call_with_this(*e, callee, this_arg, map);
+                    return;
                 }
                 let mut t = e.target;
-                self.rewrite_private_accesses_in_expr(&mut t, map);
+                // `(o?.#f.m)()` calls `m` on `o.#f`.
+                let this_arg = if optional_chain_link(&t).is_some() {
+                    self.rewrite_private_accesses_in_optional_chain(&mut t, map, false, true)
+                        .flatten()
+                } else {
+                    self.rewrite_private_accesses_in_expr(&mut t, map);
+                    None
+                };
+                if let Some(this_arg) = this_arg {
+                    self.call_with_this(*e, t, this_arg, map);
+                    return;
+                }
                 e.target = t;
                 for arg in e.args.slice_mut() {
                     self.rewrite_private_accesses_in_expr(arg, map);
                 }
             }
-            js_ast::ExprData::EUnary(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
+            js_ast::ExprData::EUnary(e) => {
+                let mut unary = *e;
+                let mut value = unary.value;
+                if unary.op == js_ast::OpCode::UnDelete && optional_chain_link(&value).is_some() {
+                    // `delete` stays on the access, and a chain that stops is `true`.
+                    if self
+                        .rewrite_private_accesses_in_optional_chain(&mut value, map, false, false)
+                        .is_some()
+                        && let js_ast::ExprData::EIf(mut stopped) = value.data
+                    {
+                        unary.value = stopped.no;
+                        stopped.yes = self.new_expr(E::Boolean { value: true }, expr_loc);
+                        stopped.no = *expr;
+                        *expr = value;
+                    }
+                    return;
+                }
+                self.rewrite_private_accesses_in_expr(&mut value, map);
+                unary.value = value;
+            }
             js_ast::ExprData::EDot(e) => self.rewrite_private_accesses_in_expr(&mut e.target, map),
             js_ast::ExprData::ESpread(e) => {
                 self.rewrite_private_accesses_in_expr(&mut e.value, map)

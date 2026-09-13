@@ -474,11 +474,32 @@ pub mod js_bundler {
         }
     }
 
+    /// The bundle target of a `target` option, and the compile target when it is `bun-<target>`.
+    fn parse_target(
+        global_this: &JSGlobalObject,
+        target: &[u8],
+    ) -> JsResult<(Target, Option<CompileTarget>)> {
+        if target.starts_with(b"bun-") {
+            return Ok((
+                Target::Bun,
+                Some(compile_target_from_slice(global_this, target)?),
+            ));
+        }
+        match options::TARGET_MAP.get(target) {
+            Some(t) => Ok((*t, None)),
+            None => Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {}",
+                bstr::BStr::new(target)
+            ))),
+        }
+    }
+
     impl Config {
+        /// `target` is `config.target` as it was before the plugins' `setup()` ran: a plugin can change the config object.
         pub fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
-            plugins: &mut Option<*mut Plugin>,
+            target: Option<&[u8]>,
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
@@ -486,131 +507,16 @@ pub mod js_bundler {
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
             this.define.dupe_keys = true;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
-            // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
-            let mut plugins = scopeguard::guard(plugins, |p| {
-                if let Some(pl) = p.take() {
-                    Plugin::destroy(pl);
-                }
-            });
 
             let mut did_set_target = false;
-            if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
-                if slice.slice().starts_with(b"bun-") {
-                    this.compile = Some(CompileOptions {
-                        compile_target: compile_target_from_slice(global_this, slice.slice())?,
-                        ..Default::default()
-                    });
-                    this.target = Target::Bun;
-                    did_set_target = true;
-                } else {
-                    this.target = match options::TARGET_MAP.get(slice.slice()) {
-                        Some(t) => *t,
-                        None => {
-                            return Err(global_this.throw_invalid_arguments(
-                                format_args!(
-                                    "Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {}",
-                                    bstr::BStr::new(slice.slice())
-                                ),
-                            ));
-                        }
-                    };
-                    did_set_target = true;
-                }
-                drop(slice);
-            }
-
-            // Plugins must be resolved first as they are allowed to mutate the config JSValue
-            if let Some(array) = config.get_array(global_this, "plugins")? {
-                let length = array.get_length(global_this)?;
-                let mut iter = array.array_iterator(global_this)?;
-                let mut onstart_promise_array = JSValue::UNDEFINED;
-                let mut i: usize = 0;
-                while let Some(plugin) = iter.next()? {
-                    if !plugin.is_object() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to be an object"
-                        )));
-                    }
-
-                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
-                        if slice.slice().is_empty() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "Expected plugin to have a non-empty name"
-                            )));
-                        }
-                        drop(slice);
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a name"
-                        )));
-                    }
-
-                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a setup() function"
-                        )));
-                    };
-
-                    let bun_plugins: *mut Plugin = match **plugins {
-                        Some(p) => p,
-                        None => {
-                            let p = Plugin::create(
-                                global_this,
-                                match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
-                                },
-                            );
-                            **plugins = Some(p);
-                            p
-                        }
-                    };
-
-                    let is_last = i == (length as usize).saturating_sub(1);
-                    // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
-                        (*bun_plugins).add_plugin(
-                            function,
-                            config,
-                            onstart_promise_array,
-                            is_last,
-                            false,
-                        )?
-                    };
-
-                    if !plugin_result.is_empty_or_undefined_or_null() {
-                        if let Some(promise) = plugin_result.as_any_promise() {
-                            promise.set_handled(global_this.vm());
-                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this
-                                .bun_vm()
-                                .as_mut()
-                                .wait_for_promise(promise)
-                                .map_err(|stopped| stopped.throw(global_this))?;
-                            match promise
-                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
-                            {
-                                jsc::PromiseResult::Pending => {
-                                    unreachable!("wait_for_promise returned Ok")
-                                }
-                                jsc::PromiseResult::Fulfilled(val) => {
-                                    plugin_result = val;
-                                }
-                                jsc::PromiseResult::Rejected(err) => {
-                                    return Err(global_this.throw_value(err));
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(err) = plugin_result.to_error() {
-                        return Err(global_this.throw_value(err));
-                    }
-
-                    onstart_promise_array = plugin_result;
-                    i += 1;
-                }
+            if let Some(target) = target {
+                let (target, compile_target) = parse_target(global_this, target)?;
+                this.target = target;
+                this.compile = compile_target.map(|compile_target| CompileOptions {
+                    compile_target,
+                    ..Default::default()
+                });
+                did_set_target = true;
             }
 
             if let Some(macros_flag) = config.get_boolean_loose(global_this, "macros")? {
@@ -1372,7 +1278,6 @@ pub mod js_bundler {
                 }
             }
 
-            scopeguard::ScopeGuard::into_inner(plugins);
             Ok(this)
         }
     }
@@ -1430,22 +1335,227 @@ pub mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
-        let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
+        let config = arguments[0];
+        // Read before any `setup()` runs: it picks the plugin target, and a plugin can change the config object.
+        let target = config.get_optional_slice(global_this, b"target")?;
+        let plugin_target = match target.as_deref() {
+            Some(target) => match parse_target(global_this, target)?.0 {
+                Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
+                Target::Node => jsc::BunPluginTarget::Node,
+                _ => jsc::BunPluginTarget::Browser,
+            },
+            None => jsc::BunPluginTarget::Browser,
+        };
+        let (plugins, plugin_count) = match config.get_array(global_this, "plugins")? {
+            Some(plugins) => (plugins, plugins.get_length(global_this)? as u32),
+            None => (JSValue::UNDEFINED, 0),
+        };
 
-        // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
-        // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
-        // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
-        // cannot depend on those).
-        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+        let mut build = PendingBuild {
             config,
-            plugins.and_then(core::ptr::NonNull::new),
-            global_this,
-        );
-        completion.promise = jsc::JSPromiseStrong::init(global_this);
-        let promise = completion.promise.value();
-        completion.schedule();
-        Ok(promise)
+            plugins,
+            target,
+            promise: jsc::JSPromise::create(global_this).to_js(),
+            plugin: (plugin_count > 0).then(|| Plugin::create_unrooted(global_this, plugin_target)),
+            next_plugin: 0,
+            plugin_count,
+        };
+        if let Some(setup_promise) = build.advance(global_this, JSValue::UNDEFINED)? {
+            build.park(global_this, setup_promise)?;
+        }
+        Ok(build.promise)
+    }
+
+    /// One `Bun.build()` call until its bundle is scheduled. It roots nothing: see `park`.
+    struct PendingBuild {
+        config: JSValue,
+        /// `config.plugins`, read once so that a getter does not run again on resume. `undefined` without plugins.
+        plugins: JSValue,
+        /// `config.target` as `build` read it.
+        target: Option<Utf8Bytes<'static>>,
+        /// The promise that `Bun.build()` returned.
+        promise: JSValue,
+        /// Not `protect()`ed until the bundle owns it. `Some` when there are plugins.
+        plugin: Option<core::ptr::NonNull<Plugin>>,
+        next_plugin: u32,
+        plugin_count: u32,
+    }
+
+    impl PendingBuild {
+        /// Runs each `setup()` that is left, then schedules the bundle. `Some` is a `setup()` promise that is still pending.
+        fn advance(
+            &mut self,
+            global_this: &JSGlobalObject,
+            mut setup_result: JSValue,
+        ) -> JsResult<Option<JSValue>> {
+            loop {
+                if let Some(promise) = setup_result.as_any_promise() {
+                    promise.set_handled(global_this.vm());
+                    match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                        jsc::PromiseResult::Pending => return Ok(Some(setup_result)),
+                        jsc::PromiseResult::Fulfilled(value) => setup_result = value,
+                        jsc::PromiseResult::Rejected(err) => {
+                            return Err(global_this.throw_value(err));
+                        }
+                    }
+                }
+                if let Some(err) = setup_result.to_error() {
+                    return Err(global_this.throw_value(err));
+                }
+                if self.next_plugin == self.plugin_count {
+                    break;
+                }
+                setup_result = self.run_next_setup(global_this, setup_result)?;
+            }
+
+            let config = Config::from_js(global_this, self.config, self.target.as_deref())?;
+            if let Some(plugin) = self.plugin {
+                // Balanced by `Plugin::destroy` when the completion task drops.
+                JSValue::from_cell(plugin.as_ptr()).protect();
+            }
+            // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
+            // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
+            // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
+            // cannot depend on those).
+            let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+                config,
+                self.plugin,
+                global_this,
+            );
+            completion.promise = jsc::JSPromiseStrong::from_value(self.promise, global_this);
+            completion.schedule();
+            Ok(None)
+        }
+
+        /// Calls the next plugin's `setup()`. Returns the `onStart()` promises so far, or a promise for them.
+        fn run_next_setup(
+            &mut self,
+            global_this: &JSGlobalObject,
+            onstart_promise_array: JSValue,
+        ) -> JsResult<JSValue> {
+            let index = self.next_plugin;
+            self.next_plugin += 1;
+            let plugin = self.plugins.get_index(global_this, index)?;
+            if !plugin.is_object() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected plugin to be an object")));
+            }
+
+            if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
+                if slice.slice().is_empty() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected plugin to have a non-empty name"
+                    )));
+                }
+                drop(slice);
+            } else {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected plugin to have a name")));
+            }
+
+            let Some(function) = plugin.get_function(global_this, b"setup")? else {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected plugin to have a setup() function"
+                )));
+            };
+
+            let bun_plugins = self.plugin.expect("plugin_count > 0 without a plugin cell");
+            let is_last = self.next_plugin == self.plugin_count;
+            Plugin::opaque_mut(bun_plugins.as_ptr()).add_plugin(
+                function,
+                self.config,
+                onstart_promise_array,
+                is_last,
+                false,
+            )
+        }
+
+        /// Continues from a reaction on `setup_promise`. Only its context array holds these values, so they are collected with the promise.
+        fn park(&self, global_this: &JSGlobalObject, setup_promise: JSValue) -> JsResult<()> {
+            let context = jsc::JSArray::create(
+                global_this,
+                &[
+                    self.config,
+                    self.plugins,
+                    match &self.target {
+                        Some(target) => bun_string_jsc::create_utf8_for_js(global_this, target)?,
+                        None => JSValue::UNDEFINED,
+                    },
+                    self.promise,
+                    self.plugin.map_or(JSValue::UNDEFINED, |plugin| {
+                        JSValue::from_cell(plugin.as_ptr())
+                    }),
+                    JSValue::js_number_from_uint64(self.next_plugin.into()),
+                    JSValue::js_number_from_uint64(self.plugin_count.into()),
+                ],
+            )?;
+            setup_promise.then_with_value(
+                global_this,
+                context,
+                Bun__JSBundler__onPluginSetupResolve,
+                Bun__JSBundler__onPluginSetupReject,
+            );
+            Ok(())
+        }
+
+        /// The inverse of `park`, for the reaction.
+        fn unpark(global_this: &JSGlobalObject, context: JSValue) -> JsResult<Self> {
+            let target = context.get_index(global_this, 2)?;
+            let plugin = context.get_index(global_this, 4)?;
+            Ok(Self {
+                config: context.get_index(global_this, 0)?,
+                plugins: context.get_index(global_this, 1)?,
+                target: if target.is_undefined() {
+                    None
+                } else {
+                    Some(target.to_utf8(global_this)?)
+                },
+                promise: context.get_index(global_this, 3)?,
+                plugin: plugin
+                    .get_object()
+                    .and_then(|cell| core::ptr::NonNull::new(cell.cast::<Plugin>())),
+                next_plugin: context.get_index(global_this, 5)?.to_u32(),
+                plugin_count: context.get_index(global_this, 6)?.to_u32(),
+            })
+        }
+
+        fn reject(&self, global_this: &JSGlobalObject, reason: JsResult<JSValue>) -> JsResult<()> {
+            let promise = self
+                .promise
+                .as_promise()
+                .expect("Bun.build() returned a promise");
+            jsc::JSPromise::opaque_mut(promise).reject(global_this, reason)
+        }
+    }
+
+    bun_jsc::jsc_promise_handler!(
+        pub fn Bun__JSBundler__onPluginSetupResolve => on_plugin_setup_resolve
+    );
+    bun_jsc::jsc_promise_handler!(
+        pub fn Bun__JSBundler__onPluginSetupReject => on_plugin_setup_reject
+    );
+
+    fn on_plugin_setup_resolve(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [setup_result, context] = callframe.arguments_as_array::<2>();
+        let mut build = PendingBuild::unpark(global_this, context)?;
+        match build.advance(global_this, setup_result) {
+            Ok(None) => {}
+            Ok(Some(setup_promise)) => build.park(global_this, setup_promise)?,
+            Err(err) => build.reject(global_this, Err(err))?,
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    fn on_plugin_setup_reject(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [reason, context] = callframe.arguments_as_array::<2>();
+        PendingBuild::unpark(global_this, context)?.reject(global_this, Ok(reason))?;
+        Ok(JSValue::UNDEFINED)
     }
 
     /// `Bun.build(config)`
@@ -1720,6 +1830,11 @@ pub mod js_bundler {
     /// added as an extension trait rather than an inherent `impl`.
     pub trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
+        /// `create` without the `protect()`: the caller keeps the cell reachable, and protects it before `destroy` can own it.
+        fn create_unrooted(
+            global: &JSGlobalObject,
+            target: jsc::BunPluginTarget,
+        ) -> core::ptr::NonNull<Plugin>;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1756,10 +1871,18 @@ pub mod js_bundler {
 
     impl PluginJscExt for Plugin {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
-            jsc::mark_binding();
-            let plugin = JSBundlerPlugin__create(global, target);
+            let plugin = Self::create_unrooted(global, target).as_ptr();
             JSValue::from_cell(plugin).protect();
             plugin
+        }
+
+        fn create_unrooted(
+            global: &JSGlobalObject,
+            target: jsc::BunPluginTarget,
+        ) -> core::ptr::NonNull<Plugin> {
+            jsc::mark_binding();
+            core::ptr::NonNull::new(JSBundlerPlugin__create(global, target))
+                .expect("JSBundlerPlugin__create returned null")
         }
 
         fn run_on_end_callbacks(

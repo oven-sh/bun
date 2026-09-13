@@ -651,7 +651,19 @@ JSValue fetchCommonJSModule(
     ErrorableResolvedSource resValue;
     ErrorableResolvedSource* res = &resValue;
 
-    BunString specifier = Bun::toString(specifierWtfString);
+    String fileURLPath = specifierWtfString;
+    bool preservePathDelimiters = false;
+    if (specifierWtfString.startsWith("file://"_s)) {
+        auto url = WTF::URL(specifierWtfString);
+        if (url.isValid() && !url.isEmpty()) {
+            auto path = url.fileSystemPath();
+            if (path.find('?') != WTF::notFound) {
+                fileURLPath = path;
+                preservePathDelimiters = true;
+            }
+        }
+    }
+    BunString specifier = Bun::toString(fileURLPath);
 
     bool wasModuleMock = false;
 
@@ -801,7 +813,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, preservePathDelimiters, scope);
 }
 
 template<bool isExtension>
@@ -817,9 +829,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope)
 {
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType, false);
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType, preservePathDelimiters);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
@@ -911,6 +924,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<true>(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope);
 template JSValue fetchCommonJSModuleNonBuiltin<false>(
     void* bunVM,
@@ -924,6 +938,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope);
 
 extern "C" bool isBunTest;

@@ -249,6 +249,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         return true;
     }
 
+    JSValue requireMapKey = this->m_id.get();
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
         globalObject,
@@ -263,7 +264,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
-        bool wasRemoved = globalObject->requireMap()->remove(globalObject, this->filename());
+        bool wasRemoved = globalObject->requireMap()->remove(globalObject, requireMapKey);
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(wasRemoved);
 
@@ -915,13 +916,28 @@ JSCommonJSModule* JSCommonJSModule::create(
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto key = requireMapKey->value(globalObject);
+    WTF::String key = requireMapKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto index = key->reverseFind(PLATFORM_SEP, moduleKeyPathLength(key));
+    auto filenameString = key;
+    bool decodedFileURLKey = false;
+    if (key.startsWith("file://"_s)) {
+        auto url = WTF::URL(key);
+        if (url.isValid() && !url.isEmpty()) {
+            auto path = url.fileSystemPath();
+            if (path.find('?') != WTF::notFound) {
+                filenameString = path;
+                decodedFileURLKey = true;
+            }
+        }
+    }
+    auto* filename = filenameString == key ? requireMapKey : jsString(vm, filenameString);
+    auto index = filenameString.reverseFind(
+        PLATFORM_SEP,
+        decodedFileURLKey ? filenameString.length() : moduleKeyPathLength(filenameString));
 
     JSString* dirname;
     if (index != WTF::notFound) {
-        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);
@@ -930,7 +946,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     auto* out = JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
-        requireMapKey, requireMapKey, dirname, SourceCode());
+        requireMapKey, filename, dirname, SourceCode());
 
     out->putDirect(
         vm,
@@ -1586,7 +1602,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
-                                globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+                                globalObject->requireMap()->remove(globalObject, keyValue);
                                 RETURN_IF_EXCEPTION(scope, {});
 
                                 scope.throwException(globalObject, exception);

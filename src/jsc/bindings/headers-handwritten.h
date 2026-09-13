@@ -360,6 +360,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 BunString toStringView(WTF::StringView view);
 
 WTF::String moduleKeyFromFileURL(const WTF::URL&);
+WTF::String resolvedModuleKeyFromFileURL(const WTF::URL&, const WTF::String&);
 }
 
 typedef struct {

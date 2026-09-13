@@ -1107,14 +1107,9 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let mut query_string = BunString::EMPTY;
 
     let decoded_specifier;
-    let file_url_bytes;
-    let mut file_url_suffix = &[][..];
+    let mut file_url_suffix = BunString::EMPTY;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
-        file_url_bytes = specifier.to_utf8();
-        let bytes = file_url_bytes.slice();
-        if let Some(index) = bun_core::strings::index_of_any(bytes, b"?#") {
-            file_url_suffix = &bytes[index..];
-        }
+        file_url_suffix = bun_url::suffix_from_file_url(specifier);
         decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {
@@ -1141,13 +1136,12 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}", result_value);
-        if file_url_suffix.starts_with(b"#") {
-            let _ = arraylist.write_all(b"?");
-        }
         if file_url_suffix.is_empty() {
             let _ = write!(&mut arraylist, "{}", query_string);
+        } else if file_url_suffix.starts_with_ascii(b"#") {
+            let _ = write!(&mut arraylist, "?{}", file_url_suffix);
         } else {
-            let _ = arraylist.write_all(file_url_suffix);
+            let _ = write!(&mut arraylist, "{}", file_url_suffix);
         }
 
         return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(

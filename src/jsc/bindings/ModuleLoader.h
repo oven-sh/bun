@@ -115,6 +115,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope);
 
 JSValue resolveAndFetchBuiltinModule(

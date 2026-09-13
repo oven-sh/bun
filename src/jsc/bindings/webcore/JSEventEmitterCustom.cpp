@@ -65,8 +65,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     if (defineEvents == DefineEvents::Yes) {
-        // Node: `this._events = ...`, which throws when `this` rejects the property: a frozen
-        // object, a Proxy trap, a WebAssembly GC reference.
+        // Like Node's `this._events = ...`, `this` gets to reject the property (frozen, Proxy, WebAssembly GC reference).
         thisObject->createDataProperty(lexicalGlobalObject, name, result, true);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
     }

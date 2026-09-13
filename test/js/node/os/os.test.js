@@ -143,6 +143,37 @@ it("cpus", () => {
   }
 });
 
+// kern.cp_times is in kernel ticks. Node (libuv) scales it by 1000 / CLK_TCK to milliseconds.
+it.skipIf(process.platform !== "freebsd")("cpus times are in milliseconds on FreeBSD", () => {
+  const readCpTimes = () =>
+    Bun.spawnSync(["sysctl", "-n", "kern.cp_times"])
+      .stdout.toString()
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+  const clkTck = Number(Bun.spawnSync(["getconf", "CLK_TCK"]).stdout.toString().trim());
+  expect(clkTck).toBeGreaterThan(0);
+  const mult = Math.floor(1000 / clkTck);
+
+  const before = readCpTimes();
+  const cpus = os.cpus();
+  const after = readCpTimes();
+
+  // One block of 5 counters per CPU id: user, nice, sys, intr, idle.
+  expect(before.length).toBeGreaterThanOrEqual(cpus.length * 5);
+  // The idle counter of CPU 0 has advanced since boot, so a scale of 1 fails the lower bound below.
+  expect(before[4]).toBeGreaterThan(0);
+  const fields = ["user", "nice", "sys", "irq", "idle"];
+  for (let i = 0; i < cpus.length; i++) {
+    for (let j = 0; j < fields.length; j++) {
+      const lo = before[i * 5 + j] * mult;
+      // A counter read from another CPU can lag by a few ticks, so allow one second above the after read.
+      const hi = (after[i * 5 + j] + clkTck) * mult;
+      expect(cpus[i].times[fields[j]]).toBeWithin(lo, hi + 1);
+    }
+  }
+});
+
 it("networkInterfaces", () => {
   const networkInterfaces = os.networkInterfaces();
 

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import os from "node:os";
 
 describe("URLSearchParams", () => {
   it("does not crash when calling .toJSON() on a URLSearchParams object with a large number of properties", () => {
@@ -305,4 +308,137 @@ it(".has second argument", () => {
   expect(params.has("a", 3)).toBe(false);
   expect(params.has("b", 3)).toBe(true);
   expect(params.has("b", 4)).toBe(false);
+});
+
+// toString() percent-encodes, so its result can be longer than a string can be (2 ** 31 - 1 characters) when every name and
+// value fits. That used to abort the process. It throws the RangeError that JSC throws for a string that is too long.
+describe("params that do not fit in a string when serialized", () => {
+  const MiB = 1024 * 1024;
+  const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  // A string of one character. The default is U+00E9.
+  const repeated = (count: number, character = "\u00e9") => Buffer.alloc(count, character, "latin1").toString("latin1");
+  // U+00E9 is one character, and "%C3%A9" is six: 1.2 M characters when serialized.
+  const tooLong = repeated(200_000);
+
+  // 1 MiB stands in for 2 ** 31 - 1. The limit is process-wide, so each test puts it back.
+  function withStringLimit(limit: number, fn: () => void) {
+    const previous = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      fn();
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+    }
+  }
+
+  // The error, or the length of what was returned. Never the value: under the limit the test runner cannot print it.
+  function outcome(fn: () => { length: number } | undefined | void) {
+    try {
+      return fn()?.length;
+    } catch (e: any) {
+      return { name: e.name, message: e.message };
+    }
+  }
+
+  it("toString() throws a RangeError", () => {
+    withStringLimit(MiB, () => {
+      const params = new URLSearchParams();
+      params.set("a", tooLong);
+      const twoByteValue = Buffer.alloc(2 * 5_000, "\u4e2d", "utf16le").toString("utf16le");
+      const manyPairs = new URLSearchParams(Array.from({ length: 30 }, (_, i) => ["k" + i, twoByteValue]));
+      expect({
+        toString: outcome(() => params.toString()),
+        string: outcome(() => String(params)),
+        template: outcome(() => `${params}`),
+        concatenation: outcome(() => params + ""),
+        twoByteStrings: outcome(() => manyPairs.toString()),
+        size: params.size,
+        value: params.get("a") === tooLong,
+      }).toEqual({
+        toString: outOfMemory,
+        string: outOfMemory,
+        template: outOfMemory,
+        concatenation: outOfMemory,
+        twoByteStrings: outOfMemory,
+        size: 1,
+        value: true,
+      });
+    });
+  });
+
+  it("toString() returns a string of exactly the limit", () => {
+    withStringLimit(MiB, () => {
+      const params = new URLSearchParams();
+      params.set("a", repeated(MiB - 2, "x"));
+      const atTheLimit = outcome(() => params.toString());
+      params.set("a", repeated(MiB - 1, "x"));
+      const oneMore = outcome(() => params.toString());
+      params.set("a", repeated(100_000));
+      const encoded = params.toString();
+      expect({
+        atTheLimit,
+        oneMore,
+        encodedLength: encoded.length,
+        encodedStart: encoded.slice(0, 14),
+        roundTrip: new URLSearchParams(encoded).get("a") === repeated(100_000),
+      }).toEqual({
+        atTheLimit: MiB,
+        oneMore: outOfMemory,
+        encodedLength: 2 + 600_000,
+        encodedStart: "a=%C3%A9%C3%A9",
+        roundTrip: true,
+      });
+    });
+  });
+
+  it("a Response or Request body made from the params throws a RangeError", () => {
+    withStringLimit(MiB, () => {
+      const params = new URLSearchParams();
+      params.set("a", tooLong);
+      expect({
+        response: outcome(() => void new Response(params)),
+        request: outcome(() => void new Request("http://example.com/", { method: "POST", body: params })),
+      }).toEqual({ response: outOfMemory, request: outOfMemory });
+    });
+  });
+
+  // A string of 2 ** 30 Latin-1 characters used to abort even when all of them are ASCII and the result fits. The child
+  // commits about 6 GB, and a debug or ASAN build needs minutes for it.
+  const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+  test.skipIf(isDebug || isASAN || memory < 16 * 1024 ** 3)(
+    "at the real limit",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const outcome = fn => { try { return fn()?.length; } catch (e) { return e.name + ": " + e.message; } };
+          const params = new URLSearchParams();
+          params.set("a", Buffer.alloc(2 ** 29, 0xe9).toString("latin1"));
+          const encoded = outcome(() => params.toString());
+          const response = outcome(() => void new Response(params));
+          params.set("a", Buffer.alloc(2 ** 30, "x").toString("latin1"));
+          const ascii = outcome(() => params.toString());
+          console.log(JSON.stringify({ encoded, response, ascii }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout:
+          JSON.stringify({
+            encoded: "RangeError: Out of memory",
+            response: "RangeError: Out of memory",
+            ascii: 2 + 2 ** 30,
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
 });

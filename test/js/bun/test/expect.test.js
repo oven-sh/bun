@@ -997,6 +997,30 @@ describe("expect()", () => {
     }
   });
 
+  test("toThrow(string) compares the UTF-16 code units of the message", async () => {
+    const thrower = (/** @type {string} */ message) => () => {
+      throw new Error(message);
+    };
+    // "🙂" is the surrogate pair \ud83d \ude42.
+    expect(thrower("🙂x")).toThrow("\ud83d");
+    expect(thrower("🙂x")).toThrow("\ude42x");
+    expect(thrower("🙂x")).not.toThrow("\ud83dx");
+    // An unpaired surrogate equals itself. It does not equal U+FFFD or another unpaired surrogate.
+    expect(thrower("a\ud83db")).toThrow("\ud83d");
+    expect(thrower("a\ud83db")).not.toThrow("\ud83e");
+    expect(thrower("a\ud83db")).not.toThrow("\ufffd");
+    expect(thrower("a\ufffdb")).not.toThrow("\ud83d");
+    expect(() => expect(thrower("a\ud83db")).toThrow("\ud83e")).toThrow("toThrow");
+    expect(() => expect(thrower("🙂x")).not.toThrow("\ud83d")).toThrow("toThrow");
+    // A slice of a 16-bit string keeps the 16-bit storage.
+    expect(thrower("du café au lait")).toThrow("🙂café".slice(2));
+    expect(thrower("🙂 du café".slice(2))).toThrow("café");
+    expect(thrower("café")).not.toThrow("🙂");
+
+    await expect(Promise.reject(new Error("🙂x"))).rejects.toThrow("\ud83d");
+    await expect(Promise.reject(new Error("a\ud83db"))).rejects.not.toThrow("\ud83e");
+  });
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";
@@ -2620,6 +2644,36 @@ describe("expect()", () => {
     ],
   ])("expect(%p).not.toContainEqual(%p)", (value, expected) => {
     expect(value).not.toContainEqual(expected);
+  });
+
+  test("toContain() and toContainEqual() compare the UTF-16 code units of a string", () => {
+    // "🙂" is the surrogate pair \ud83d \ude42.
+    expect("🙂x").toContain("\ud83d");
+    expect("🙂x").toContain("\ude42x");
+    expect("🙂x").not.toContain("\ud83dx");
+    // An unpaired surrogate equals itself. It does not equal U+FFFD or another unpaired surrogate.
+    expect("a\ud83db").toContain("\ud83d");
+    expect("a\ud83db").not.toContain("\ud83e");
+    expect("a\ud83db").not.toContain("\ufffd");
+    expect("a\ufffdb").not.toContain("\ud83d");
+    // A slice of a 16-bit string keeps the 16-bit storage.
+    expect("du café au lait").toContain("🙂café".slice(2));
+    expect("🙂 du café".slice(2)).toContain("café");
+    expect("café").not.toContain("🙂");
+
+    // toContainEqual() spreads the string into code points. An unpaired surrogate is one code point.
+    expect("a\ud83db").toContainEqual("\ud83d");
+    expect("a\ud83db").not.toContainEqual("\ud83e");
+    expect("a\ud83db").not.toContainEqual("\ufffd");
+    expect("a\ufffdb").not.toContainEqual("\ud83d");
+    expect("🙂x").toContainEqual("🙂");
+    expect("🙂x").not.toContainEqual("\ud83d");
+    expect("🙂x").not.toContainEqual("\ude42");
+    expect("\ud83d🙂").toContainEqual("\ud83d");
+    expect("🙂\ude42").toContainEqual("\ude42");
+    expect("🙂 café".slice(2)).toContainEqual("é");
+    expect("café").toContainEqual("🙂é!".slice(2, 3));
+    expect("café").not.toContainEqual("🙂");
   });
 
   test("toContainKey", () => {

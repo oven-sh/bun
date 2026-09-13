@@ -2958,15 +2958,11 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 });
 
 // https://github.com/oven-sh/bun/issues/32087
-// The writev fast path under test is compiled only on POSIX (`#[cfg(unix)]` in
-// write_or_end_buffered); on Windows how much data a send accepts is machine
-// dependent, so the "data is buffered natively" precondition cannot be
-// constructed reliably there.
+// The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
+// accepts is machine dependent, so the buffered precondition cannot be built there.
 describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
-  // Byte-counting sink. Counts received bytes per fill value by scanning runs
-  // with indexOf so multi-MB streams stay cheap to verify in debug builds.
-  // STALL_ON_ACCEPT=1 blocks the event loop on accept so nothing is read
-  // while the client writes, keeping the kernel buffers full.
+  // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
+  // accept so the kernel buffers stay full while the client writes.
   const serverFixture = /* js */ `
     import net from "node:net";
     const KNOWN = [0x61, 0x69, 0x73]; // 'a', 'i', 's'
@@ -3017,16 +3013,9 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
     });
   `;
 
-  // Drives the native buffered-write path the same way net.ts's own stream
-  // machinery does: Socket.prototype._write -> handle.$write, bypassing the
-  // Writable serialization so two writes reach the native layer while data is
-  // still buffered. writeDirect returns true iff the _write callback fired
-  // synchronously (kernel took the whole chunk); false means bytes are now
-  // buffered natively. The final write's callback is resolved only once the
-  // native buffer has fully drained (net.ts retries it on every drain event
-  // and fires it when the buffer empties), so we can end() without racing the
-  // flush: net.ts's _final half-closes via shutdown(), which discards any
-  // still-buffered bytes.
+  // Calls Socket.prototype._write directly so a second write reaches the native
+  // layer while data is still buffered. A _write callback that does not fire
+  // synchronously means the chunk is now buffered natively.
   const clientFixture = /* js */ `
     import net from "node:net";
     const phase = process.argv[2]; // "loss" | "dup"
@@ -3044,9 +3033,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       let sawPartial = false;
       let finalChunk;
       if (phase === "loss") {
-        // Build a native remainder far larger than the kernel can accept in
-        // one writev; the follow-up write's writev then always stops inside
-        // the old buffered data (written < buffered.len).
+        // A remainder far larger than one writev can take, so the next writev
+        // stops inside the old buffered data (written < buffered.len).
         for (let attempt = 0; attempt < 8 && !sawPartial; attempt++) {
           const A = Buffer.alloc(16 * 1024 * 1024, 0x61);
           sawPartial = !writeDirect(A);
@@ -3061,10 +3049,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
           sawPartial = !writeDirect(C);
           sent.a += C.length;
         }
-        // ...then block the event loop (so the native flush cannot run) while
-        // the peer drains the kernel buffers, so the next writev accepts all
-        // of the buffered remainder plus a prefix of the new chunk
-        // (written > buffered.len).
+        // ...then block the loop while the peer drains, so the next writev takes
+        // the whole remainder plus a prefix of the new chunk (written > buffered.len).
         if (sawPartial) Bun.sleepSync(1500);
         finalChunk = Buffer.alloc(32 * 1024 * 1024, 0x69);
         sent.i = finalChunk.length;
@@ -3074,12 +3060,11 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         sock.destroy();
         process.exit(3);
       }
-      // This write lands on the buffered path (the bug site). Its callback
-      // fires only once the whole native buffer has flushed to the peer.
+      // The bug site. The callback fires once the native buffer has drained,
+      // and end() must wait for that: _final calls shutdown(), which discards buffered bytes.
       const { promise: flushed, resolve } = Promise.withResolvers();
       sock._write(finalChunk, "buffer", () => resolve());
-      // bytesWritten is flushed + still-buffered bytes, captured before the
-      // flush so it reflects everything handed to the native layer.
+      // bytesWritten counts flushed plus still-buffered bytes.
       sent.bw = sock.bytesWritten;
       flushed.then(() => {
         console.log(JSON.stringify(sent));
@@ -3106,11 +3091,9 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
     if (buf.length) yield buf;
   }
 
-  // "loss": after a partial writev that stops inside the previously buffered
-  // data, the unsent new chunk must be kept (not dropped).
-  // "dup": after a partial writev that consumes all previously buffered data
-  // plus a prefix of the new chunk, the bytes that hit the wire must not be
-  // buffered (and resent) again.
+  // "loss": the writev stops inside the old buffered data, the new chunk must be kept.
+  // "dup": the writev consumes the old data plus a prefix of the new chunk,
+  // that prefix must not be resent.
   describe.each(["loss", "dup"] as const)("%s", phase => {
     it("a partial writev keeps exactly the unsent suffix", async () => {
       using dir = tempDir("writev-remainder", {

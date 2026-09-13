@@ -2644,6 +2644,19 @@ describe("expect()", () => {
 
     expect([1, 2, 3]).toContainAllKeys(["0", "1", "2"]);
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
+
+    if (isBun) {
+      // jest-extended compares with equals(), so the number 1 does not match the key "1" there.
+      expect({ 1: "hello", b: "world" }).toContainAllKeys([1, "b"]);
+      expect({ 1: "hello", 2.5: "world" }).toContainAllKeys([2.5, 1]);
+      expect([1, 2, 3]).toContainAllKeys([0, 1, 2]);
+      expect({ 1: "hello", b: "world" }).not.toContainAllKeys([2, "b"]);
+      expect({ 1: "hello", 2: "world" }).not.toContainAllKeys([1, 1]);
+      expect(() => expect({ 1: "hello", b: "world" }).not.toContainAllKeys([1, "b"])).toThrow(
+        "Expected to not contain all keys",
+      );
+    }
+    expect({ a: "hello", b: "world" }).toContainAllKeys([expect.any(String), "a"]);
   });
 
   test("toContainAnyKeys", () => {

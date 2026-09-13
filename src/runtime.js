@@ -342,6 +342,17 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
+// `import sheet from "./x.css" with { type: "css" }` in browser builds. Globals
+// go through `globalThis` so bundling does not reserve their names.
+export var __cssModule = css => {
+  var sheet = new globalThis.CSSStyleSheet();
+  sheet.replaceSync(css);
+  return sheet;
+};
+
+// Resolves a chunk-relative asset `url()` in that CSS against the chunk.
+export var __cssUrl = (url, base) => new globalThis.URL(url, base).href;
+
 export var __promiseAll = args => Promise.all(args);
 
 // React Compiler memo-cache slot sentinels.

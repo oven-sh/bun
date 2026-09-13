@@ -1474,7 +1474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(loader) = state.import_loader {
-                self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
+                self.set_import_record_loader(import_record_index, loader);
             }
 
             self.import_records.items_mut()[import_record_index as usize]
@@ -4561,6 +4561,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.s(stmt, loc))
     }
 
+    /// Applies the loader of a `with { type: "..." }` import attribute to the
+    /// import record. `type: "css"` also marks the record as a CSS module script.
+    pub(crate) fn set_import_record_loader(
+        &mut self,
+        import_record_index: u32,
+        loader: options::Loader,
+    ) {
+        let record = &mut self.import_records.items_mut()[import_record_index as usize];
+        record.loader = Some(loader);
+        if loader == options::Loader::Css {
+            record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT);
+        }
+    }
+
     #[cold]
     fn validate_and_set_import_type(
         &mut self,
@@ -4568,8 +4584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut S::Import,
     ) -> Result<(), crate::Error> {
         if let Some(loader) = path.loader {
-            self.import_records.items_mut()[stmt.import_record_index as usize].loader =
-                Some(loader);
+            self.set_import_record_loader(stmt.import_record_index, loader);
 
             if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
@@ -4585,7 +4600,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break;
                     }
                 }
-            } else if loader == options::Loader::File || loader == options::Loader::Text {
+            } else if loader == options::Loader::File
+                || loader == options::Loader::Text
+                || loader == options::Loader::Css
+            {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.

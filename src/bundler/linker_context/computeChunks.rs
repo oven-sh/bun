@@ -138,7 +138,11 @@ pub(crate) fn compute_chunks(
             }
         }
 
-        if css_asts[source_index as usize].is_some() {
+        // `import()` of a CSS module script loads its JS stub: a JS chunk.
+        let is_dynamic_css_module_script = this.css_module_scripts.contains(&source_index)
+            && this.graph.files.items_entry_point_kind()[source_index as usize]
+                == crate::EntryPoint::Kind::DynamicImport;
+        if css_asts[source_index as usize].is_some() && !is_dynamic_css_module_script {
             // SAFETY: see `this_ptr` note above — the helper only reads from
             // `this.graph` columns disjoint from the slices we hold here.
             let order = find_imported_files_in_css_order(
@@ -317,11 +321,12 @@ pub(crate) fn compute_chunks(
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                if css_reprs[source_index.get() as usize].is_none() {
+                if crate::linker_context_mod::is_chunked_as_js(
+                    css_reprs,
+                    &this.css_module_scripts,
+                    source_index.get(),
+                ) {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
-                    if css_reprs[source_index.get() as usize].is_some() {
-                        continue;
-                    }
 
                     if this.graph.code_splitting {
                         if !contributes_code.is_set(source_index.get() as usize) {

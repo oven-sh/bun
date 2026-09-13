@@ -85,3 +85,14 @@ declare module "*" with { type: "html" } {
   var contents: import("bun").HTMLBundle;
   export = contents;
 }
+
+declare module "*" with { type: "css" } {
+  /**
+   * A CSS module script. Bundled for the browser, this is a constructed
+   * `CSSStyleSheet` with the file's CSS, ready for `adoptedStyleSheets` of a
+   * document or shadow root. `bun run` and the `bun` and `node` targets have
+   * no `CSSStyleSheet`, so there the value is an empty object.
+   */
+  var sheet: typeof globalThis extends { CSSStyleSheet: { prototype: infer Sheet } } ? Sheet : object;
+  export = sheet;
+}

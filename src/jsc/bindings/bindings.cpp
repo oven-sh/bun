@@ -1131,8 +1131,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             bool sameStructure = o2Structure->id() == o1Structure->id();
             // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
             MarkedArgumentBuffer pairs;
-            // Keys with an asymmetric matcher on one side and no own property on the other.
-            // Read with get() after the walks, as Jest does (undefined or an inherited value).
+            // matcher on one side, no own property on the other: read with get() after the walks
             Vector<Identifier, 4> matcherOnlyKeys;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

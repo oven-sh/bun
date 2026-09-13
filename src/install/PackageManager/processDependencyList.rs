@@ -124,6 +124,66 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
+    /// Appends the package that an extract produced and queues its dependencies,
+    /// unless a package with its name and resolution exists. The lookups before
+    /// the download miss that package when no extract gave the dependency a
+    /// package name yet, and when a `github:` ref is on the commit of another
+    /// ref: the commit comes from the tarball.
+    fn append_extracted_package(
+        &mut self,
+        mut package: Package,
+        data: &ExtractData,
+        package_id: &mut PackageID,
+    ) -> Package {
+        if let Some(existing_id) =
+            self.lockfile
+                .get_package_id(package.name_hash, None, &package.resolution)
+        {
+            *package_id = existing_id;
+            let mut existing = *self.lockfile.packages.get(existing_id as usize);
+            // `bun update` fetched a git package of the lockfile again. A git ref
+            // can move, so the dependencies of that package resolve again and
+            // nested refs follow their branch. Any other install keeps what the
+            // lockfile pins, and a package that this install appended has its
+            // dependencies queued already.
+            let updated = self.to_update
+                && existing_id < self.lockfile.loaded_package_count
+                && matches!(
+                    existing.resolution.tag,
+                    ResolutionTag::Git | ResolutionTag::Github
+                );
+            if !updated {
+                return existing;
+            }
+            existing.dependencies = package.dependencies;
+            existing.resolutions = package.resolutions;
+            if data.integrity.tag.is_supported() {
+                existing.meta.integrity = data.integrity;
+            }
+            self.lockfile.packages.set(existing_id as usize, existing);
+            package = existing;
+        } else {
+            // Store the tarball integrity hash so the lockfile can pin the
+            // exact content downloaded from the remote server.
+            if data.integrity.tag.is_supported() {
+                package.meta.integrity = data.integrity;
+            }
+            package = self.lockfile.append_package(&package).expect("unreachable");
+            *package_id = package.meta.id;
+        }
+
+        if package.dependencies.len > 0 {
+            bun_core::handle_oom(
+                self.lockfile
+                    .scratch
+                    .dependency_list_queue
+                    .write_item(package.dependencies),
+            );
+        }
+
+        package
+    }
+
     /// Returns true if we need to drain dependencies
     pub(crate) fn process_extracted_tarball_package(
         &mut self,
@@ -135,7 +195,7 @@ impl PackageManager {
     ) -> Option<Package> {
         match resolution.tag {
             ResolutionTag::Git | ResolutionTag::Github => {
-                let mut package = 'package: {
+                let package = 'package: {
                     let mut resolver = GitResolver {
                         resolved: &data.resolved,
                         resolution,
@@ -214,25 +274,7 @@ impl PackageManager {
                     pkg
                 };
 
-                // Store the tarball integrity hash so the lockfile can pin the
-                // exact content downloaded from the remote (GitHub) server.
-                if data.integrity.tag.is_supported() {
-                    package.meta.integrity = data.integrity;
-                }
-
-                package = self.lockfile.append_package(&package).expect("unreachable");
-                *package_id = package.meta.id;
-
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
-
-                Some(package)
+                Some(self.append_extracted_package(package, data, package_id))
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
@@ -275,23 +317,8 @@ impl PackageManager {
                 };
 
                 package.meta.set_has_install_script(has_scripts);
-                if data.integrity.tag.is_supported() {
-                    package.meta.integrity = data.integrity;
-                }
 
-                package = self.lockfile.append_package(&package).expect("unreachable");
-                *package_id = package.meta.id;
-
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
-
-                Some(package)
+                Some(self.append_extracted_package(package, data, package_id))
             }
             _ => {
                 if !data.json.as_ref().unwrap().buf.is_empty() {

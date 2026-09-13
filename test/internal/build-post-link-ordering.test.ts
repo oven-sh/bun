@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitPostLink } from "../../scripts/build/bun.ts";
+import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -103,6 +103,36 @@ describe("emitPostLink ninja ordering", () => {
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
     expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+  });
+
+  test("the static scans only warn for ASan and debug builds, and fail every other", () => {
+    using dir = tempDir("build-post-link", {});
+    const buildDir = String(dir);
+    const commands = (partial: PartialConfig) => {
+      const cfg = hostConfig(partial, buildDir);
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
+      emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+      const command = (rule: string) => new RegExp(`^rule ${rule}\\n  command = (.*)$`, "m").exec(out)![1]!;
+      return { cfg, verify: command("binary_verify"), duplicates: command("duplicate_symbols") };
+    };
+
+    for (const partial of [{ buildType: "Release" }, { buildType: "Release", assertions: true }] as PartialConfig[]) {
+      const { cfg, verify, duplicates } = commands(partial);
+      expect(binaryChecksWarnOnly(cfg)).toBe(false);
+      expect(verify).not.toContain("--warn-only");
+      expect(duplicates).not.toContain("--warn-only");
+    }
+    for (const partial of [
+      { buildType: "Debug", assertions: true },
+      { buildType: "Release", asan: true, assertions: true },
+    ] as PartialConfig[]) {
+      const { cfg, verify, duplicates } = commands(partial);
+      expect(binaryChecksWarnOnly(cfg)).toBe(true);
+      expect(verify).toContain("verify-binary.ts --warn-only binary ");
+      expect(duplicates).toContain("verify-binary.ts --warn-only duplicates ");
+    }
   });
 
   test("debug smoke_test has no strip dep (nothing to order against)", () => {

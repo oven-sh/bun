@@ -855,6 +855,16 @@ const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
  * binary-expectations.ts says this target should look like. The
  * expectations are serialized now; the scan runs as a validation of the link.
  */
+/**
+ * ASan and debug builds run the static scans but only warn: the expectations
+ * describe the binaries that ship, and these builds are for finding bugs with,
+ * so a difference from them must not cost the binary. Every other
+ * configuration, release builds in CI above all, fails on a finding.
+ */
+export function binaryChecksWarnOnly(cfg: Config): boolean {
+  return cfg.asan || cfg.debug;
+}
+
 function emitBinaryVerify(
   n: Ninja,
   cfg: Config,
@@ -869,7 +879,7 @@ function emitBinaryVerify(
   writeIfChanged(spec, JSON.stringify({ name: exeName, exe, tools, expect: binaryExpectations(cfg) }, null, 2) + "\n");
   const q = (p: string) => quote(p, cfg.windows);
   n.rule("binary_verify", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} binary $spec`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
     description: `check ${exeName} exports, dynamic deps, initializers, hardening`,
   });
   n.build({
@@ -926,7 +936,7 @@ function emitDuplicateSymbolCheck(
   const objdump = cfg.windows ? rustTool("llvm-objdump", cfg.objdump!) : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

@@ -1,6 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
@@ -592,6 +593,8 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
   const closed = { readable: false, errored: false, locked: true, inspect: "closed" };
   const errored = { readable: false, errored: true, locked: true, inspect: "errored" };
 
+  // Only for "error", and for a "close" that can follow an "error". Every other wait uses once(),
+  // which rejects when "error" comes first, so that the wait cannot hang.
   const event = (emitter, name) => new Promise(resolve => emitter.once(name, resolve));
 
   // The native path returns a plain Readable. The reader-based adapter is a ReadableFromWeb.
@@ -658,10 +661,10 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     const node = fromWebNative(web);
     const chunks = [];
     node.on("data", chunk => chunks.push(chunk));
-    await event(node, "data");
+    await once(node, "data");
     expect(state(web)).toEqual(readable);
     release();
-    await event(node, "end");
+    await once(node, "end");
     expect(Buffer.concat(chunks).toString()).toBe("first last");
     expect(state(web)).toEqual(closed);
   });
@@ -672,18 +675,18 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     "destroy() before the first read": node => node.destroy(),
     "destroy(error) before the first read": node => node.destroy(new Error("consumer gone")),
     "destroy() after a chunk": async node => {
-      await event(node, "data");
+      await once(node, "data");
       node.destroy();
     },
     "destroy(error) after a chunk": async node => {
-      await event(node, "data");
+      await once(node, "data");
       node.destroy(new Error("consumer gone"));
     },
     "a break out of for await": async node => {
       for await (const _ of node) break;
     },
     "its abort signal": async (node, abort) => {
-      await event(node, "data");
+      await once(node, "data");
       abort.abort();
     },
   };
@@ -724,7 +727,7 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     const node = fromWebNative(web);
     const outcome = Promise.race([event(node, "error"), event(node, "end").then(() => "end")]);
     // Paused: the Readable stops at its highWaterMark, so the source has not ended yet.
-    await event(node, "readable");
+    await once(node, "readable");
     abort.abort();
     node.resume();
     expect((await outcome).name).toBe("AbortError");
@@ -749,7 +752,7 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     const web = response.body;
     const node = fromWebNative(web);
     const outcome = Promise.race([event(node, "error"), event(node, "end").then(() => "end")]);
-    expect(String(await event(node, "data"))).toBe("first ");
+    expect(String((await once(node, "data"))[0])).toBe("first ");
     const reason = new Error("stop the download");
     abort.abort(reason);
     expect(await outcome).toBe(reason);
@@ -787,7 +790,7 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     const web = (await fetch(`http://127.0.0.1:${upstream.port}/`)).body;
     const node = fromWebNative(web);
     const failed = event(node, "error");
-    expect(String(await event(node, "data"))).toBe("first ");
+    expect(String((await once(node, "data"))[0])).toBe("first ");
     for (const connection of connections) connection.end();
     const error = await failed;
     expect(error.code).toBe("ECONNRESET");

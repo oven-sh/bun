@@ -216,6 +216,15 @@ bitflags::bitflags! {
 /// not a correctness invariant.
 const N_HTTP_METHODS: usize = 36;
 
+bun_jsc::impl_abort_handle_owner!(
+    [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
+    abort_handle,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
+        unsafe { (*this).stop(true) }
+    }
+);
+
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
     pub(crate) listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
@@ -269,6 +278,8 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
+    /// Armed while listening: the server stops with the context that started it.
+    pub(crate) abort_handle: jsc::AbortHandle,
     pub(crate) request_pool:
         *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
@@ -1654,11 +1665,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
-                core::ptr::from_ref(self),
-            )));
-        }
+        self.abort_handle.leave();
 
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener.take() {
@@ -2102,11 +2109,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         server.notify_inspector_server_stopped();
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
-                this.cast_const(),
-            )));
-        }
+        server.abort_handle.leave();
 
         if Self::HAS_H3 {
             if let Some(h3a) = server.h3_app.take() {
@@ -2169,6 +2172,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             active_connection_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
+            abort_handle: jsc::AbortHandle::for_owner::<Self>(),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
             // ~816 KB mux pool; `listen()` materializes it on demand.
@@ -3991,10 +3995,6 @@ impl AnyServer {
 
     pub(crate) fn on_static_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
-    }
-
-    pub(crate) fn stop(&mut self, abrupt: bool) {
-        any_server_dispatch_mut!(self, |s| s.stop(abrupt))
     }
 
     pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {

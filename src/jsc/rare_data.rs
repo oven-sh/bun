@@ -33,9 +33,8 @@ use super::uuid::UUID;
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slot; high tier lazy-inits.
-//   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
-//     concrete types.
+//   - the `bun test --isolate` watcher/server registries → each owner embeds
+//     a `bun_jsc::AbortHandle` armed in its `ScriptExecutionContext`.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.

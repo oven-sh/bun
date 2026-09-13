@@ -129,7 +129,8 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub(crate) url_proxy_buffer: Box<[u8]>,
 
-    pub(crate) signal: Option<AbortSignalRef>,
+    /// The context whose script called `fetch()`, and its `signal` option.
+    pub(crate) abort_handle: jsc::AbortHandle,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
@@ -278,12 +279,20 @@ impl HTTPRequestBody {
     }
 }
 
+jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
+    // SAFETY: trait contract — `this` is live; JS thread.
+    unsafe {
+        match cause {
+            jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
+            jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+        }
+    }
+});
+
 impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
         self.ref_count.assert_no_refs();
-        // JS thread: no longer something the VM must abort at teardown.
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::from(&mut *self)).unregister();
         self.clear_data();
     }
 }
@@ -352,12 +361,9 @@ impl FetchTasklet {
         }
     }
 
-    /// `Some(&AbortSignal)` while we hold a strong ref on the C++-owned
-    /// `WebCore::AbortSignal*` (taken in `queue`, released in
-    /// `clear_abort_signal`).
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
-        self.signal.as_deref()
+        self.abort_handle.signal()
     }
 
     /// True iff an attached AbortSignal has fired.
@@ -494,18 +500,6 @@ impl FetchTasklet {
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
-    }
-
-    /// VM teardown's stop phase (JS thread): abort the transport. The HTTP
-    /// thread then fails the request promptly — started or still queued — and
-    /// hands the tasklet back through its final callback, which teardown
-    /// waits for before the handle closes.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut FetchTasklet) {
-        // SAFETY: fn contract.
-        unsafe { (*this).abort_task() };
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -1262,13 +1256,7 @@ impl FetchTasklet {
     }
 
     fn clear_abort_signal(&mut self) {
-        let Some(signal) = self.signal.take() else {
-            return;
-        };
-        // Order matters: cleanNativeBindings first, then pending_activity_unref
-        // and (dropping `signal`) unref.
-        signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
-        signal.pending_activity_unref();
+        self.abort_handle.unfollow();
     }
 
     fn on_reject(&mut self) -> BodyValueError {
@@ -1868,7 +1856,7 @@ impl FetchTasklet {
             poll_ref: JsCell::new(KeepAlive::default()),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
-            signal: fetch_options.signal,
+            abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
@@ -2055,14 +2043,13 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
-        if let Some(signal) = &fetch_tasklet.signal {
-            signal.pending_activity_ref();
-            signal.add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
+        if let Some(signal) = fetch_options.signal {
+            // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
+            unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
         Ok(fetch_tasklet_ptr)
     }
 
-    #[bun_uws::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
@@ -2314,10 +2301,11 @@ impl FetchTasklet {
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
-        // Out on the HTTP thread from here until its final callback: the VM
-        // aborts it at teardown (registry) and waits for it (the ticket).
+        // Out on the HTTP thread from here until its final callback: its context
+        // aborts it when it stops, and the VM waits for it (the ticket).
         node_ref.http_ticket = Some(global.bun_vm().ticket());
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::new(node).expect("tasklet")).register();
+        // SAFETY: as in `get`.
+        unsafe { jsc::AbortHandle::arm_owner(node, global.bun_vm().current_context()) };
         http::HTTPThread::schedule(batch);
 
         Ok(node)

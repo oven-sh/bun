@@ -281,9 +281,9 @@ pub struct Timeout {
     /// "epoch" is reused.
     pub flags: TimerFlags,
 
-    /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
-    /// file must not fire abort handlers in the new global.
-    pub(crate) generation: u32,
+    /// The context whose script armed the timeout; it does not fire once that
+    /// context is gone (`bun test --isolate`: a prior file's).
+    pub(crate) context: crate::ContextId,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -306,7 +306,7 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
-            generation: VirtualMachine::get().test_isolation_generation,
+            context: VirtualMachine::get().current_context().id(),
         }));
 
         #[cfg(debug_assertions)]
@@ -383,7 +383,7 @@ impl Timeout {
             // file's global; firing now would run them against the new global.
             // (The file swap's `cancel_all_timeout_objects` normally discards
             // such timers before they can come due.)
-            if (*this).generation != (*vm).test_isolation_generation {
+            if !(*vm).is_context_live((*this).context) {
                 Self::discard(this);
                 return;
             }

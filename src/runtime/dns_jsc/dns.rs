@@ -3712,9 +3712,20 @@ pub struct Resolver {
     pub(crate) pending_any_cache_cares: JsCell<AnyPendingCache>,
     pub(crate) pending_addr_cache_cares: JsCell<AddrPendingCache>,
     pub(crate) pending_nameinfo_cache_cares: JsCell<NameInfoPendingCache>,
+
+    /// Armed while a channel is open: a live channel has sockets, timers and
+    /// queries in flight whose callbacks need the context that opened it, which
+    /// closes it (any resolver, not just the VM-global one) if nobody did before.
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
+
+bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ `destroy_channel` has
+    // not run); it may free itself inside, and is not touched after.
+    let _ = unsafe { Resolver::close_channel_for_terminate(this) };
+});
 
 impl Drop for Resolver {
     fn drop(&mut self) {
@@ -4023,6 +4034,7 @@ impl Resolver {
             pending_any_cache_cares: JsCell::new(HiveArray::init()),
             pending_addr_cache_cares: JsCell::new(HiveArray::init()),
             pending_nameinfo_cache_cares: JsCell::new(HiveArray::init()),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<Resolver>(),
         }
     }
 
@@ -5312,11 +5324,9 @@ impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
-        // A live channel has sockets, timers and queries in flight whose
-        // callbacks need this VM: the stop phase closes it (any resolver, not
-        // just the VM-global one) if nobody did before. Unregistered in
-        // `destroy_channel`.
-        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).register();
+        // SAFETY: a resolver with a channel is at its final address (the
+        // channel holds it); it leaves its context in `destroy_channel`.
+        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), self.vm.current_context()) };
     }
 }
 
@@ -5329,7 +5339,7 @@ impl Resolver {
         let Some(channel) = self.channel.take() else {
             return false;
         };
-        crate::jsc_hooks::ActiveHandle::DnsResolver(core::ptr::NonNull::from(self)).unregister();
+        self.abort_handle.leave();
         // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
         unsafe { c_ares::Channel::destroy(channel) };
         true

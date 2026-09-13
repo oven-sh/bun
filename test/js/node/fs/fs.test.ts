@@ -6428,7 +6428,13 @@ const after = name => ({ size: fs.statSync(name).size, json: (() => { try { JSON
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "child.js"],
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath,
+      // On a reflink filesystem (btrfs, XFS) copyFile clones the source and
+      // never reaches the ftruncate. Force the copy loop so the shim fires.
+      BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+    },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

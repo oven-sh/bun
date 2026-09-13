@@ -350,6 +350,8 @@ test("a factory promise that resolves to a non-object is rejected like the synch
 // point reaches the module loader unvalidated. The unfixed runtime segfaults
 // there, so these run in a subprocess.
 for (const [label, factory] of [
+  // An async factory with no return statement.
+  ["undefined", `async () => { await 1; }`],
   ["a number", `() => new Promise(resolve => setTimeout(() => resolve(42), 1))`],
   ["null", `async () => { await Bun.sleep(1); return null; }`],
   ["a string", `async () => { await Bun.sleep(1); return "str"; }`],

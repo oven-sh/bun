@@ -10,6 +10,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "VectorSizeLimit.h"
 
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
@@ -38,6 +39,20 @@ struct BunTextAccumulator {
     double estimatedLength { 0 };
     bool hasString { false };
     bool hasBuffer { false };
+
+    // Moves the flushed rope (when there is one) and then `chunk` into `pieces`. Returns
+    // false when `pieces` cannot grow: script adds a piece per cheap write() call, and
+    // Vector::append CRASH()es there. The caller throws once it has dropped the lock.
+    bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
+    {
+        using Piece = JSC::WriteBarrier<JSC::Unknown>;
+        if (flushedRope) {
+            if (pieces.size() >= Bun::maxVectorSize<Piece>() || !pieces.tryAppend(Piece(vm, owner, flushedRope))) [[unlikely]]
+                return false;
+            rope.clear();
+        }
+        return pieces.size() < Bun::maxVectorSize<Piece>() && pieces.tryAppend(Piece(vm, owner, chunk));
+    }
 
     // Releases everything accumulated. Called as soon as the final result string has
     // been materialized so a long-lived owner (the direct stream's controller) does

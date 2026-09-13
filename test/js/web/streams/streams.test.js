@@ -3140,15 +3140,18 @@ describe("text consumers reject strings over the string allocation limit", () =>
   });
 });
 
-// Script grows a stream queue by one entry per enqueue() or write(). A queue that cannot grow
-// must throw a catchable out-of-memory error, never abort the process. The real bound needs
-// 67 million entries (1.1 GB). The child runs with a 64 KiB synthetic allocation limit, which
-// brings it down to a few thousand.
+// Script grows a stream queue by one entry per enqueue() or write(). A text consumer keeps one
+// slot per binary chunk, and arrayBuffer() and bytes() keep one entry per chunk. A container
+// that cannot grow must throw a catchable out-of-memory error, never abort the process. The
+// real bounds need 67 million entries (1.1 GB) or more. The child runs with a 64 KiB synthetic
+// allocation limit, which brings every bound down to a few thousand.
 describe("script-sized stream containers throw when they cannot grow", () => {
   const LIMIT_BYTES = 64 * 1024;
   // A queue entry is 16 bytes. The queue's capacity is a power of two, one slot stays empty,
   // and one slot is kept for the WritableStream close sentinel.
   const MAX_QUEUED = LIMIT_BYTES / 16 - 2;
+  // A piece is an 8-byte slot.
+  const MAX_PIECES = LIMIT_BYTES / 8;
   const outOfMemory = "RangeError: Out of memory";
 
   const runInSubprocess = async source => {
@@ -3242,6 +3245,81 @@ describe("script-sized stream containers throw when they cannot grow", () => {
       exitCode: 0,
     });
   });
+
+  test.concurrent("a direct stream's controller.write() under text()", async () => {
+    const result = await runInSubprocess(`
+      const chunk = new Uint8Array([97]);
+      let written = 0;
+      let writeError = null;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          try {
+            for (; written < ${MAX_PIECES} + 100; written++) c.write(chunk);
+          } catch (e) {
+            writeError = describeError(e);
+          }
+          c.end();
+        },
+      });
+      // The refused chunk is not stored. The text holds every chunk before it.
+      const text = await stream.text();
+      console.log(JSON.stringify({ written, writeError, length: text.length, allA: /^a*$/.test(text) }));
+    `);
+    expect(result).toEqual({
+      stdout: { written: MAX_PIECES, writeError: outOfMemory, length: MAX_PIECES, allA: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A stream of `total` chunks: `first`, then `rest` again and again. pull() refills in batches,
+  // because the queue itself holds at most MAX_QUEUED chunks here.
+  const batchedStream = `
+    const batchedStream = (total, first, rest) => {
+      let sent = 0;
+      return new ReadableStream({
+        pull(c) {
+          for (let i = 0; i < 1024 && sent < total; i++, sent++) c.enqueue(sent ? rest : first);
+          if (sent === total) c.close();
+        },
+      });
+    };
+  `;
+
+  test.concurrent("Bun.readableStreamToText() over binary chunks", async () => {
+    const result = await runInSubprocess(`
+      ${batchedStream}
+      const chunk = new Uint8Array([97]);
+      const consume = total => Bun.readableStreamToText(batchedStream(total, chunk, chunk)).then(text => text.length, describeError);
+      console.log(JSON.stringify({ fits: await consume(${MAX_PIECES}), tooMany: await consume(${MAX_PIECES} + 1) }));
+    `);
+    expect(result).toEqual({
+      stdout: { fits: MAX_PIECES, tooMany: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A string chunk takes arrayBuffer() and bytes() off the all-binary path. The mixed path
+  // keeps a 16-byte entry per chunk.
+  test.concurrent.each(["readableStreamToArrayBuffer", "readableStreamToBytes"])(
+    "Bun.%s() over string and binary chunks",
+    async consumer => {
+      const MAX_CHUNKS = LIMIT_BYTES / 16;
+      const result = await runInSubprocess(`
+        ${batchedStream}
+        const chunk = new Uint8Array([97]);
+        const consume = total => Bun.${consumer}(batchedStream(total, "a", chunk)).then(bytes => bytes.byteLength, describeError);
+        console.log(JSON.stringify({ fits: await consume(${MAX_CHUNKS}), tooMany: await consume(${MAX_CHUNKS} + 1) }));
+      `);
+      expect(result).toEqual({
+        stdout: { fits: MAX_CHUNKS, tooMany: outOfMemory },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the

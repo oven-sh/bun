@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 test("dynamic import derives the loader from the MIME type", async () => {
   const url = [
@@ -57,6 +58,47 @@ test.each([
 test("an absent MIME type keeps Bun's permissive JavaScript loader", async () => {
   const ns = await import("data:,export default 2.5;");
   expect(ns.default).toBe(2.5);
+});
+
+test.each(["text/plain", "TEXT/PLAIN"])("%s uses the same runtime and bundled loader", async mime => {
+  const url = `data:${mime},export default 1.5;`;
+  expect((await import(url)).default).toBe(1.5);
+
+  using dir = tempDir("import-data-url-text-parity", {
+    "entry.js": `export { default } from ${JSON.stringify(url)};`,
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+  expect(result.success).toBe(true);
+  const outputPath = join(String(dir), "out.mjs");
+  await Bun.write(outputPath, result.outputs[0]);
+  const ns = await import(pathToFileURL(outputPath).href);
+  expect(ns.default).toBe(1.5);
+});
+
+test("Bun.build preserves an explicit loader for a data: module", async () => {
+  using dir = tempDir("import-data-url-explicit-loader", {
+    "entry.js": [`import value from "data:text/plain,hello" with { type: "text" };`, "export default value;"].join(
+      "\n",
+    ),
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+  expect(result.success).toBe(true);
+  const bundled = await result.outputs[0].text();
+  expect(bundled).not.toContain("data:text/plain");
+  const outputPath = join(String(dir), "out.mjs");
+  await Bun.write(outputPath, bundled);
+  const ns = await import(pathToFileURL(outputPath).href);
+  expect(ns.default).toBe("hello");
+});
+
+test("Bun.build keeps an omitted-MIME data: module external", async () => {
+  const url = "data:,export default 2.5;";
+  using dir = tempDir("import-data-url-omitted-mime", {
+    "entry.js": `export { default } from ${JSON.stringify(url)};`,
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+  expect(result.success).toBe(true);
+  expect(await result.outputs[0].text()).toContain(JSON.stringify(url));
 });
 
 test("base64 JavaScript payloads still load", async () => {

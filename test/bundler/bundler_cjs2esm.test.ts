@@ -2331,7 +2331,8 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  // The module.exports of "react" here is another module's exports object.
+  // `module.exports = require("./b")` hands out the object of "./b", so each
+  // lifted file behind a wrapped one keeps its wrapper too.
   itBundled("cjs2esm/DefaultImportHeldAsValueOfModuleExportsEqualsRequire", {
     files: {
       "/entry.js": /* js */ `
@@ -2341,7 +2342,11 @@ describe("bundler", () => {
         console.log(React.version, version, Object.isFrozen(React), React.createElement("a"));
       `,
       "/node_modules/react/index.js": /* js */ `
-        console.log('side effect');
+        console.log('index');
+        module.exports = require('./mid');
+      `,
+      "/node_modules/react/mid.js": /* js */ `
+        console.log('mid');
         module.exports = require('./main');
       `,
       "/node_modules/react/main.js": /* js */ `
@@ -2351,8 +2356,12 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
+    onAfterBundle(api) {
+      // no namespace object stands in for a `module.exports` of the chain
+      api.expectFile("/out.js").not.toContain("__exportCjs");
+    },
     run: {
-      stdout: "side effect\n19.0.0 19.0.0 true <a>",
+      stdout: "index\nmid\n19.0.0 19.0.0 true <a>",
     },
   });
   // Reads, calls and writes of a property, and a destructuring declaration,

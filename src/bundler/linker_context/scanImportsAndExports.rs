@@ -85,23 +85,21 @@ fn keep_commonjs_wrapper_of_lifted_file(
     import_records: &[ImportRecordList<'_>],
 ) {
     let mut pending = vec![root];
+    let mut visited: Vec<usize> = Vec::new();
     while let Some(file) = pending.pop() {
-        let is_wrapped =
-            exports_kind[file] == ExportsKind::Cjs && flags[file].wrap == WrapKind::Cjs;
-        exports_kind[file] = ExportsKind::Cjs;
-        flags[file].wrap = WrapKind::Cjs;
-        // Another path can wrap `root` and leave the files behind it lifted.
-        if is_wrapped && file != root {
+        if visited.contains(&file) {
             continue;
         }
+        visited.push(file);
+        exports_kind[file] = ExportsKind::Cjs;
+        flags[file].wrap = WrapKind::Cjs;
         // A lifted file's export star was `module.exports = require("./b")`: the object of "./b".
         for &star in export_star_import_records[file].iter() {
             if let Some(record) = import_records[file].as_slice().get(star as usize)
                 && record.source_index.is_valid()
             {
                 let target = record.source_index.get() as usize;
-                if target != root
-                    && target < ast_flags.len()
+                if target < ast_flags.len()
                     && ast_flags[target].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                 {
                     pending.push(target);

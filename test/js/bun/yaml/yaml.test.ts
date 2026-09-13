@@ -2796,6 +2796,72 @@ config:
       expect(YAML.stringify({ a: 1 }, null, new String("") as any)).toEqual(YAML.stringify({ a: 1 }, null, ""));
     });
 
+    // Only spaces can indent YAML, so a string `space` counts as its length and none of its characters are written.
+    describe("space parameter with a string", () => {
+      const value = {
+        order: { item: ["Tea", "Mug"], paid: null },
+        records: [
+          { name: "a", tags: ["x", "y"] },
+          { name: "b", nested: { deep: [1, [2, 3]] } },
+        ],
+      };
+
+      test.each([
+        ["\t", 1],
+        ["x", 1],
+        ["#", 1],
+        // a digit string counts as its length too, not as its value
+        ["4", 1],
+        ["- ", 2],
+        [" \t", 2],
+        ["\n\n\n", 3],
+        ["é✓", 2],
+        // one astral character is two UTF-16 code units, as in `.length`
+        ["😀", 2],
+        ["\t\t\t\t\t\t\t\t\t\t", 10],
+        ["0123456789abcdef", 10],
+      ])("%j indents like %d", (space, width) => {
+        const text = YAML.stringify(value, null, space);
+        expect(text).toBe(YAML.stringify(value, null, width));
+        expect(YAML.parse(text)).toEqual(value);
+      });
+
+      test("a tab, the JSON.stringify habit, gives one space for each level", () => {
+        const text = YAML.stringify({ order: { item: ["Tea", "Mug"], paid: null } }, null, "\t");
+        // This test is about indentation, so each line is compared without its trailing whitespace.
+        expect(text.split("\n").map(line => line.trimEnd())).toEqual([
+          "order:",
+          " item:",
+          "  - Tea",
+          "  - Mug",
+          " paid: null",
+        ]);
+      });
+
+      test("a string of spaces indents by that many spaces, at most 10", () => {
+        for (let width = 1; width <= 12; width++) {
+          const spaces = Buffer.alloc(width, " ").toString();
+          expect(YAML.stringify(value, null, spaces)).toBe(YAML.stringify(value, null, Math.min(width, 10)));
+        }
+      });
+
+      test("the empty string gives flow style", () => {
+        expect(YAML.stringify({ a: { b: [1] } }, null, "")).toBe("{a: {b: [1]}}");
+        expect(YAML.stringify({ a: { b: [1] } }, null, new String("") as any)).toBe("{a: {b: [1]}}");
+      });
+
+      test("a boxed String and a concatenated string count as their length", () => {
+        class Indent extends String {}
+        let concatenated = "";
+        for (const part of ["\t", "-", "#"]) concatenated += part;
+
+        const expected = YAML.stringify(value, null, 3);
+        expect(YAML.stringify(value, null, new String("\t-#") as any)).toBe(expected);
+        expect(YAML.stringify(value, null, new Indent("\t-#") as any)).toBe(expected);
+        expect(YAML.stringify(value, null, concatenated)).toBe(expected);
+      });
+    });
+
     test("all-undefined properties produces empty object", () => {
       expect(YAML.stringify({ a: undefined, b: undefined }, null, 2)).toBe("{}");
       expect(YAML.stringify({ a: () => {}, b: () => {} }, null, 2)).toBe("{}");

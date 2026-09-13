@@ -1631,6 +1631,130 @@ describe("bundler", () => {
     },
   });
 
+  // With `let x` kept, it can sit inside the memo block of another scope: here
+  // between `const r = {}` and the last mutation of `r`. Only a read of `x`
+  // from a later scope hoisted the `let` out of that block. A store alone left
+  // it inside, and the store then printed outside the block:
+  // `ReferenceError: x is not defined`.
+  //
+  // With a reactive value (`x = p.n`) the store is a dependency of the memo
+  // block that reads it, under a promoted name. Codegen inlined the store into
+  // that block all the same: `if ($[2] !== t0)` with no `t0` declared.
+  itBundled("react-compiler/DeadStoreAfterTheScopeOfItsDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const props = { bad: "{bad", n: 7, call() {} };
+        const lines = [];
+        for (const [name, form] of Object.entries(forms)) {
+          try {
+            lines.push(name + "=" + JSON.stringify(form(props).p));
+          } catch (e) {
+            lines.push(name + " threw " + e);
+          }
+        }
+        console.log(lines.join("\\n"));
+      `,
+      "/forms.jsx": /* jsx */ `
+        const Stub = () => null;
+
+        export function Prop(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = 5)} />;
+        }
+        // The one read of \`x\` folds to 5.
+        export function FoldedRead(p) {
+          const r = {};
+          let x = 0;
+          r.a = 1;
+          return <Stub r={r} v={[(x = 5), x]} />;
+        }
+        export function Argument(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          p.call((x = 5));
+          return <Stub r={r} />;
+        }
+        export function Handler(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            x = 1;
+          }
+          return <Stub r={r} />;
+        }
+        // \`q\` holds \`r\`, so the declaration sits in two nested scopes.
+        export function Nested(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = 5)} />;
+        }
+        export function PropFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = p.n)} />;
+        }
+        export function ArrayFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n)]} />;
+        }
+        export function NestedFromProps(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = p.n)} />;
+        }
+        // The declaration is above the scope of \`r\`. Only the promoted store
+        // was wrong here.
+        export function DeclaredAbove(p) {
+          let x = 0;
+          const r = {};
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n), x++]} />;
+        }
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        Argument={"r":{"a":1}}
+        ArrayFromProps={"r":{"a":1},"v":[7]}
+        DeclaredAbove={"r":{"a":1},"v":[7,7]}
+        FoldedRead={"r":{"a":1},"v":[5,5]}
+        Handler={"r":{"a":1}}
+        Nested={"r":{"a":1},"q":{"b":{"a":1}},"v":5}
+        NestedFromProps={"r":{"a":1},"q":{"b":{"a":1}},"v":7}
+        Prop={"r":{"a":1},"v":5}
+        PropFromProps={"r":{"a":1},"v":7}
+      `,
+    },
+    onAfterBundle(api) {
+      // Every form compiled. Each `let x` declared inside the scope of `r`
+      // sits before its memo block, and each promoted store is a statement.
+      const out = api.readFile("/out.js");
+      expect(out.match(/let (q, )?r, x;/g)).toHaveLength(8);
+      expect(out).not.toMatch(/let x;\s*r\.a = 1;/);
+      expect(out.match(/const t\d = x = p\.n;/g)).toHaveLength(4);
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

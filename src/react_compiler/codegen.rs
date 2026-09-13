@@ -1598,22 +1598,15 @@ fn emit_store(
                 },
                 stmt_loc,
             );
-            if let Some(ref lvalue_place) = instr.lvalue {
-                let is_store_context = matches!(
-                    &instr.value,
-                    ReactiveValue::Instruction(InstructionValue::StoreContext { .. })
-                );
-                if !is_store_context {
-                    let ident = &cx.env.identifiers[lvalue_place.identifier.0 as usize];
-                    cx.temp.insert(ident.declaration_id, Some(expr));
+            if instr.lvalue.is_some() {
+                // Not in upstream, which inlines the value of every StoreLocal
+                // into its reads. A promoted one (`const t0 = x = p.n`) is read by
+                // name from a later memo block, so it has to be a statement.
+                let stmt = codegen_instruction(cx, instr, expr)?;
+                if matches!(stmt.data, StmtData::SEmpty(_)) {
                     return Ok(None);
-                } else {
-                    let stmt = codegen_instruction(cx, instr, expr)?;
-                    if matches!(stmt.data, StmtData::SEmpty(_)) {
-                        return Ok(None);
-                    }
-                    return Ok(Some(stmt));
                 }
+                return Ok(Some(stmt));
             }
             Ok(Some(expr_stmt(expr, stmt_loc)))
         }

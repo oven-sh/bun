@@ -230,7 +230,7 @@ declare function $esmNamespaceForCjs(key: string): any | undefined;
 declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];
 declare function $esmRegistryHasEvaluated(key: string): boolean;
-declare function $esmLoadSync(key: string): any;
+declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
 declare function $headers(): TODO;
@@ -258,7 +258,7 @@ declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmI
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
-declare function $requireESM(path: string): any;
+declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;

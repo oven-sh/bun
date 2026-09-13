@@ -141,6 +141,7 @@
 #include "JSSQLStatement.h"
 #include "sqlite/NodeSqlite.h"
 #include "JSStringDecoder.h"
+#include "ModuleGraph.h"
 #include "JSTextEncoder.h"
 #include "streams/JSTextEncoderStream.h"
 #include "streams/JSTextDecoderStream.h"
@@ -841,7 +842,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
 
-    auto* loader = globalObject->moduleLoader();
+    // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
+    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequire(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
@@ -1138,12 +1142,12 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
+        // Whose rejection this is (a Bun.unsafe.ModuleGraph's or the global object's) is
+        // decided now, while the rejecting code is on the stack, and travels with it.
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj, promise));
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
-            return unhandledPromise.get() == promise;
-        });
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
         if (removed) break;
         // handleRejectedPromises() drains the list into a local buffer before
         // running any handler. A handler may .catch() a later still-queued
@@ -2228,6 +2232,9 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSModuleGraphClassStructure), [](LazyClassStructure::Initializer& init) {
+             Bun::initJSModuleGraphClassStructure(init);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStringDecoderClassStructure), [](LazyClassStructure::Initializer& init) {
              auto* prototype = JSStringDecoderPrototype::create(
                  init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
@@ -2683,6 +2690,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    m_moduleGraphRegistry.initLater(
+        [](const Initializer<JSWeakMap>& init) {
+            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+        });
 
     this->initGeneratedLazyClasses();
 
@@ -2910,7 +2921,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmRegistryHasEvaluated, 1, functionEsmRegistryHasEvaluated },
-        { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
+        { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3301,7 +3312,45 @@ RefPtr<Performance> GlobalObject::performance()
     return m_performance;
 }
 
-extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
+
+void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
+{
+    WTF::Locker locker { owner->cellLock() };
+    m_entries.append({});
+    m_entries.last().promise.set(vm, owner, promise);
+    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
+}
+
+bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
+{
+    WTF::Locker locker { owner->cellLock() };
+    return m_entries.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
+}
+
+void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
+{
+    WTF::Locker locker { owner->cellLock() };
+    promises.ensureCapacity(promises.size() + m_entries.size());
+    rejectionOwners.ensureCapacity(rejectionOwners.size() + m_entries.size());
+    for (Entry& entry : m_entries) {
+        if (entry.promise.get().isCell()) {
+            promises.append(entry.promise.get());
+            rejectionOwners.append(entry.rejectionOwner.get());
+        }
+    }
+    m_entries.clear();
+}
+
+template<typename Visitor>
+void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
+{
+    WTF::Locker locker { owner->cellLock() };
+    for (auto& entry : m_entries) {
+        visitor.append(entry.promise);
+        visitor.append(entry.rejectionOwner);
+    }
+}
 
 void GlobalObject::handleRejectedPromises()
 {
@@ -3315,8 +3364,9 @@ void GlobalObject::handleRejectedPromises()
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
         // RejectedPromiseTracker use.
         JSC::MarkedArgumentBuffer promises;
-        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
-        RELEASE_ASSERT(!promises.hasOverflowed());
+        JSC::MarkedArgumentBuffer rejectionOwners;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, rejectionOwners);
+        RELEASE_ASSERT(!promises.hasOverflowed() && !rejectionOwners.hasOverflowed());
         // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
         // can tell "still pending" apart from "already notified". Linked as a
         // stack so a re-entrant handleRejectedPromises() (a handler that ticks
@@ -3329,7 +3379,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            Bun__handleRejectedPromise(this, promise);
+            Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;
@@ -3589,6 +3639,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return result;
         }
     }
+
+    // import() from code of a disposed Bun.unsafe.ModuleGraph rejects rather than
+    // loading into the graph's (dropped) registry.
+    if (Bun::throwIfModuleGraphDisposed(globalObject, scope, loader))
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
     JSC::Identifier resolvedIdentifier;
 
@@ -4206,7 +4261,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    return Zig::ImportMetaObject::create(globalObject, key);
+    return Zig::ImportMetaObject::create(globalObject, key, Bun::moduleGraphForLoader(globalObject, loader));
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
@@ -4238,6 +4293,13 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
+    // Nothing evaluates in a disposed Bun.unsafe.ModuleGraph (a late top-level-await
+    // completion, a deferred namespace touched later): its modules throw instead.
+    if (Bun::isDisposedModuleGraphLoader(lexicalGlobalObject, moduleLoader)) {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader);
+        return {};
+    }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
@@ -4255,6 +4317,9 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.unsafe.ModuleGraph.
+    if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
+        return {};
     noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);

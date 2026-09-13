@@ -19,6 +19,8 @@ class AbstractModuleRecord;
 
 namespace Bun {
 
+class JSModuleGraph;
+
 using namespace JSC;
 
 // What `require("module").wrapper` reports and every CommonJS module body is wrapped in unless that is overridden.
@@ -74,8 +76,15 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
+    // The Bun.unsafe.ModuleGraph whose instances of ES modules this module's require()
+    // returns (the requirer behind a graph module's import.meta.require); null: the
+    // global object's.
+    JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // require() resolved this entry of the require cache to an ES module: `exports` is
+    // (from) its namespace in the global object's loader.
+    bool esModule { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -98,7 +107,7 @@ public:
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
         JSValue filename,
-        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode, JSModuleGraph* = nullptr);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -110,7 +119,9 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
+    // `moduleGraph`: see m_moduleGraph.
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* moduleGraph = nullptr);
+    JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,
@@ -141,11 +152,12 @@ public:
 
     bool hasEvaluated = false;
 
-    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
+    JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname, JSModuleGraph* moduleGraph)
         : Base(vm, structure)
         , m_id(id, JSC::WriteBarrierEarlyInit)
         , m_filename(filename, JSC::WriteBarrierEarlyInit)
         , m_dirname(dirname, JSC::WriteBarrierEarlyInit)
+        , m_moduleGraph(moduleGraph, JSC::WriteBarrierEarlyInit)
     {
     }
 };

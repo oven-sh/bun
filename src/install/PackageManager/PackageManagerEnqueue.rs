@@ -2924,8 +2924,7 @@ fn get_or_put_resolved_package(
                     }
                 }
 
-                // Several packages can declare the same folder. They share one package,
-                // as they do after a bun.lock reload (`append_package_dedupe`).
+                // See if another declarer already loaded this folder package in-memory
                 if let Some(existing_id) = this.lockfile.get_package_id(
                     name_hash,
                     None,

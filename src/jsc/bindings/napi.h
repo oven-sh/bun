@@ -532,13 +532,6 @@ public:
 
         BoundFinalizer() = default;
 
-        BoundFinalizer(const Bun::NapiFinalizer& finalizer, void* data)
-            : callback(finalizer.callback())
-            , hint(finalizer.hint())
-            , data(data)
-        {
-        }
-
         BoundFinalizer(napi_finalize callback, void* hint, void* data)
             : callback(callback)
             , hint(hint)

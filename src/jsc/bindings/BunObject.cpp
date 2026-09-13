@@ -637,7 +637,6 @@ static JSValue constructJSONLObject(VM& vm, JSObject* bunObject)
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
-    JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
     JSFunction* peekFunction = JSFunction::create(vm, globalObject, peekPeekCodeGenerator(vm), globalObject->globalScope());
     JSFunction* peekStatus = JSFunction::create(vm, globalObject, peekPeekStatusCodeGenerator(vm), globalObject->globalScope());
     peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
@@ -646,7 +645,6 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
-extern "C" double Bun__readOriginTimerStart(void*);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -49,7 +49,6 @@
 #include "JavaScriptCore/JSIteratorPrototype.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSWeakMap.h"
@@ -95,7 +94,6 @@
 #include "JSBuffer.h"
 #include "streams/JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
-#include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
 #include "JSDOMConvertBase.h"
@@ -202,7 +200,6 @@
 #include "JSAsymmetricKeyObjectPrototype.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
-#include "webcore/JSMIMEParams.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
@@ -248,9 +245,7 @@ using JSModuleRecord = JSC::JSModuleRecord;
 using Identifier = JSC::Identifier;
 using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
-using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
-// #include <iostream>
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
@@ -305,9 +300,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
-            // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
-            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
             // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
@@ -547,7 +540,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     }
 
     globalObject->setConsole(console_client);
-    globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -676,7 +668,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     }
 
     globalObject->setConsole(console_client);
-    globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -707,7 +698,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         oldGlobal->clearModuleRegistry();
         scope.assertNoExceptionExceptTermination();
     }
-    oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
     return globalObject;
@@ -945,9 +935,6 @@ String GlobalObject::defaultAgentClusterID()
 
 String GlobalObject::agentClusterID() const
 {
-    // TODO: workers
-    // if (is<SharedWorkerGlobalScope>(scriptExecutionContext()))
-    //     return makeString(WProcess::identifier().toUInt64(), "-sharedworker");
     return defaultAgentClusterID();
 }
 
@@ -1088,7 +1075,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope->m_context = m_scriptExecutionContext;
 }
@@ -1102,7 +1088,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope->m_context = m_scriptExecutionContext;
 }
@@ -1614,7 +1599,6 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
 #define JSC_TYPED_ARRAY_FACTORY(type) \
     case Type##type:                  \
         RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTF::move(buffer), offset, length)));
-#undef JSC_TYPED_ARRAY_CHECK
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_FACTORY)
     case NotTypedArray:
     case TypeDataView:

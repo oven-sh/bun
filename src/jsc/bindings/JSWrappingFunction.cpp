@@ -28,12 +28,10 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     ASSERT(wrappedFn != nullptr);
 
     auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::emptyString() : symbolName->toWTFString();
-    auto name = Identifier::fromString(vm, nameStr);
     // Pass callHostFunctionAsConstructor so `new` on the wrapper throws a
     // TypeError instead of jumping to a null native constructor.
     NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nameStr);
 
-    // Structure* structure = globalObject->FFIFunctionStructure();
     Structure* structure = JSWrappingFunction::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSWrappingFunction* function = new (NotNull, allocateCell<JSWrappingFunction>(vm)) JSWrappingFunction(vm, executable, globalObject, structure, wrappedFn);
     ASSERT(function->structure()->globalObject());

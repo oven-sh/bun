@@ -51,7 +51,6 @@
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -67,12 +66,10 @@
 
 #include "../modules/ObjectModule.h"
 
-#include <JavaScriptCore/JSSourceCode.h>
 #include "napi_external.h"
 #include "wtf/Assertions.h"
 #include "wtf/Compiler.h"
 #include "wtf/NakedPtr.h"
-#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include "wtf/text/ASCIIFastPath.h"

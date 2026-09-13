@@ -54,15 +54,10 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
 
     ErrorHandlingScope errorScope(lexicalGlobalObject->vm());
 
-    // auto callStack = Inspector::createScriptCallStackFromException(lexicalGlobalObject, exception);
     (void)scope.tryClearException();
     vm.clearLastException();
 
     auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
-    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    // }
 
     int lineNumber = 0;
     int columnNumber = 0;

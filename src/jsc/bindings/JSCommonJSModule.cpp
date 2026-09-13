@@ -65,13 +65,11 @@
 #include "ModuleLoader.h"
 #include <JavaScriptCore/JSMap.h>
 
-#include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
@@ -774,7 +772,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String dirnameString = dirnameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
         uncheckedDowncast<Zig::GlobalObject>(globalObject),
@@ -1465,8 +1462,6 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;
         if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
             sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
         } else {
             sourceStringWithoutWrapper = sourceString;

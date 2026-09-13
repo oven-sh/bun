@@ -11,7 +11,6 @@ class Local;
 class Value;
 class Data;
 
-static constexpr int kInternalFieldsInWeakCallback = 2;
 static constexpr int kEmbedderFieldsInWeakCallback = 2;
 
 template<typename T>

@@ -130,7 +130,6 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
-    JSC::MarkedArgumentBuffer argList;
     JSValue result = JSC::profiledCall(
         globalObject,
         ProfilingReason::Other,

@@ -41,8 +41,6 @@ namespace WebCore {
 class ScriptExecutionContext;
 
 template<typename> class ExceptionOr;
-class HTMLElement;
-class HTMLFormElement;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {

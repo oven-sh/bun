@@ -432,7 +432,6 @@ Assert.prototype.notStrictEqual = function notStrictEqual(actual, expected, mess
  * @returns {void}
  */
 Assert.prototype.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
-  // emitExperimentalWarning("assert.partialDeepStrictEqual");
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }

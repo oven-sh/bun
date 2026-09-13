@@ -16,7 +16,6 @@ ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasSideEffect)
 ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasNoSideEffect)
 ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasSideEffectToReceiver)
 
-using JSC::JSCell;
 using JSC::JSValue;
 using JSC::Structure;
 

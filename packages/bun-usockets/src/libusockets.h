@@ -709,7 +709,6 @@ struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
-LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
@@ -720,10 +719,8 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
-struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 /* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
 size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);

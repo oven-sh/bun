@@ -51,7 +51,6 @@ export function serialize(message, handle, options) {
 export function parseHandle(target, serialized, fd) {
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
   const net = require("node:net");
-  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();

@@ -316,7 +316,6 @@ type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}`
 declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
 declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
 declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
 declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
 
 declare interface UnderlyingSource {
@@ -553,7 +552,6 @@ interface Map<K, V> {
 
 interface ObjectConstructor {
   $defineProperty: typeof Object.defineProperty;
-  $defineProperties: typeof Object.defineProperties;
 }
 
 /** gets a property on an object */

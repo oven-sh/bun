@@ -211,8 +211,6 @@ void JSSubtleCrypto::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, SubtleCrypto>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSSubtleCrypto::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

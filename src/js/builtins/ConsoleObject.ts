@@ -555,7 +555,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         process.emitWarning(`Label '${label}' already exists for console.time()`);
         return;
       }
-      // trace(kTraceBegin, kTraceConsoleCategory, `time::${label}`, 0);
       this._times.set(label, process.hrtime());
     },
 
@@ -563,7 +562,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       // Coerces everything other than Symbol to a string
       label = `${label}`;
       const found = timeLogImpl(this, "timeEnd", label);
-      // trace(kTraceEnd, kTraceConsoleCategory, `time::${label}`, 0);
       if (found) {
         this._times.delete(label);
       }
@@ -573,7 +571,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       // Coerces everything other than Symbol to a string
       label = `${label}`;
       timeLogImpl(this, "timeLog", label, data);
-      // trace(kTraceInstant, kTraceConsoleCategory, `time::${label}`, 0);
     },
 
     trace: function trace(...args) {
@@ -612,7 +609,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (count === undefined) count = 1;
       else count++;
       counts.set(label, count);
-      // trace(kTraceCount, kTraceConsoleCategory, `count::${label}`, 0, count);
       this.log(`${label}: ${count}`);
     },
 
@@ -623,7 +619,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         process.emitWarning(`Count for '${label}' does not exist`);
         return;
       }
-      // trace(kTraceCount, kTraceConsoleCategory, `count::${label}`, 0, 0);
       counts.delete(`${label}`);
     },
 

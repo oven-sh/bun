@@ -1136,8 +1136,6 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
     }
 }
 
-void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }
-
 /* ───── client ─────
  *
  * lsquic only installs its own SSL_CTX_set_custom_verify when ea_get_ssl_ctx

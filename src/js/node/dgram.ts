@@ -427,7 +427,6 @@ function Socket(type, listener) {
   const handle = newHandle(type, lookup);
   handle[kOwnerSymbol] = this;
 
-  // this[async_id_symbol] = handle.getAsyncId();
   this.type = type;
 
   if (typeof listener === "function") this.on("message", listener);
@@ -1503,7 +1502,6 @@ function stopReceiving(socket) {
 
   if (!state.receiving) return;
 
-  // state.handle.recvStop();
   state.receiving = false;
 }
 

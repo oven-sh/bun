@@ -271,7 +271,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     JSC::gcProtect(global);
 
     global->setConsole(console);
-    global->isThreadLocalDefaultGlobalObject = true;
 
     vm.heap.disableStopIfNecessaryTimer();
 

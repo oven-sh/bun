@@ -14,7 +14,6 @@ using namespace JSC;
 enum class DSASigEnc {
     DER,
     P1363,
-    Invalid,
 };
 
 // ML-DSA / ML-KEM parameter sets, as provided by BoringSSL's EVP_PKEY
@@ -45,7 +44,6 @@ namespace StringBytes {
 EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);
 };
 
-// void CheckThrow(JSC::JSGlobalObject* globalObject, SignBase::Error error);
 JSC::JSValue unsignedBigIntToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue bigIntValue, ASCIILiteral name);
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue);
 std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue);
@@ -95,18 +93,7 @@ public:
         return reinterpret_cast<const T*>(data_);
     }
 
-    template<typename T = void>
-    operator ncrypto::Buffer<const T>() const
-    {
-        return ncrypto::Buffer<const T> {
-            .data = data<T>(),
-            .len = size(),
-        };
-    }
-
     inline size_t size() const { return size_; }
-
-    inline bool empty() const { return size_ == 0; }
 
     inline operator bool() const { return data_ != nullptr; }
 

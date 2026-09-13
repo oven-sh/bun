@@ -146,7 +146,6 @@ extern "C" BunString Bun__Node__getRedirectWarnings();
 extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
-extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill();
 extern "C" int32_t bun_stdio_tty[3];
 
@@ -843,7 +842,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
-extern "C" double Bun__readOriginTimerStart(void*);
 extern "C" void Bun__VirtualMachine__exitDuringUncaughtException(void*);
 
 // https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/api/hooks.cc#L49

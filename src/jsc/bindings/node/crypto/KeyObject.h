@@ -32,7 +32,6 @@ public:
 
     enum class KeyEncodingContext {
         Input,
-        Export,
         Generate,
     };
 
@@ -104,7 +103,6 @@ public:
     void getRsaKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
     void getDsaKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
     void getEcKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* result);
-    // void getDhKeyDetails(JSC::JSGlobalObject* , JSC::ThrowScope& , JSC::JSObject* result);
 
     JSC::JSValue asymmetricKeyType(JSC::JSGlobalObject*);
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);

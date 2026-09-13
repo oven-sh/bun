@@ -114,7 +114,6 @@ JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     // _store = { _validated: 0 }
     JSObject* storeObject = JSC::constructEmptyObject(globalObject);
-    auto validatedIdent = JSC::Identifier::fromString(vm, "validated"_s);
     storeObject->putDirect(vm, builtinNames.validatedPublicName(), jsNumber(0), 0);
     ptr->putDirect(vm, builtinNames._storePublicName(), storeObject, 0);
 
@@ -172,7 +171,6 @@ public:
     }
 
     DECLARE_INFO;
-    // DECLARE_EXPORT_INFO;
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

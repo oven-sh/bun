@@ -26,13 +26,6 @@ public:
 
     DECLARE_INFO;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
 private:
     JSNodeHTTPServerSocketPrototype(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

@@ -8,7 +8,6 @@ class Dequeue<T> {
   constructor() {
     this._head = 0;
     this._tail = 0;
-    // this._capacity = 0;
     this._capacityMask = 0x3;
     this._list = $newArrayWithSize(4);
   }

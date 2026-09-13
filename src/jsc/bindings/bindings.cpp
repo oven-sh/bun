@@ -217,15 +217,7 @@ using namespace WebCore;
 typedef uint8_t ExpectFlags;
 
 // Note: keep this in sync with Flags in src/runtime/test_runner/expect.rs
-// clang disable unused warning
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-variable"
-
-static constexpr int FLAG_PROMISE_RESOLVES = (1 << 0);
-static constexpr int FLAG_PROMISE_REJECTS = (1 << 1);
 static constexpr int FLAG_NOT = (1 << 2);
-
-#pragma clang diagnostic pop
 
 extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue leftValue);
 
@@ -3225,8 +3217,6 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
     return deepEqualsWrapperImpl<true, false, true, true>(JSValue0, JSValue1, globalObject);
 }
 
-#undef IMPL_DEEP_EQUALS_WRAPPER
-
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
 {
     JSValue obj = JSValue::decode(JSValue0);
@@ -4084,7 +4074,6 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSLockHolder lock(vm);
-    // JSC::DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Bun__Feature__heap_snapshot += 1;

@@ -505,10 +505,6 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
     return ls->next;
 }
 
-LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) {
-    return us_poll_fd(&ls->s.p);
-}
-
 int us_listen_socket_port(struct us_listen_socket_t *ls) {
     return us_socket_local_port(&ls->s);
 }

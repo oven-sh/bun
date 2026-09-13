@@ -51,7 +51,6 @@ public:
     String filename;
     OrdinalNumber lineOffset = OrdinalNumber::fromZeroBasedInt(0);
     OrdinalNumber columnOffset = OrdinalNumber::fromZeroBasedInt(0);
-    bool failed = false;
     bool filenameProvided = false;
 
     BaseVMOptions() = default;

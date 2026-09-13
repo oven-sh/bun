@@ -1636,22 +1636,37 @@ int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
   }
   if (extra && sk_X509_num(extra) > 0) {
     ab = BIO_new(BIO_s_mem());
-    if (ab) {
-      for (size_t i = 0; i < sk_X509_num(extra); i++) {
-        PEM_write_bio_X509(ab, sk_X509_value(extra, i));
+    if (!ab) {
+      *err_reason = "parse";
+      goto done;
+    }
+    for (size_t i = 0; i < sk_X509_num(extra); i++) {
+      if (!PEM_write_bio_X509(ab, sk_X509_value(extra, i))) {
+        *err_reason = "cert";
+        goto done;
       }
-      pem_from_bio(ab, out_ca, out_ca_len);
+    }
+    if (!pem_from_bio(ab, out_ca, out_ca_len)) {
+      *err_reason = "parse";
+      goto done;
     }
   }
   ok = 1;
 done:
   if (!ok) {
+    if (*out_key) OPENSSL_cleanse(*out_key, *out_key_len);
     free(*out_key);
     free(*out_cert);
     free(*out_ca);
     *out_key = *out_cert = *out_ca = NULL;
+    *out_key_len = *out_cert_len = *out_ca_len = 0;
   }
-  if (kb) BIO_free(kb);
+  if (kb) {
+    char *key_mem = NULL;
+    long key_mem_len = BIO_get_mem_data(kb, &key_mem);
+    if (key_mem && key_mem_len > 0) OPENSSL_cleanse(key_mem, (size_t)key_mem_len);
+    BIO_free(kb);
+  }
   if (cb) BIO_free(cb);
   if (ab) BIO_free(ab);
   if (pkey) EVP_PKEY_free(pkey);

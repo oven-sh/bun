@@ -36,6 +36,174 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 }
 
 describe.concurrent("fetch-tls", () => {
+  describe("PKCS#12 client credentials", () => {
+    const fixtures = join(import.meta.dir, "../../node/test/fixtures/keys");
+    const key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+    const cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+    const ca = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+    const pfxPath = join(fixtures, "agent1.pfx");
+    const secondPfx = readFileSync(join(fixtures, "agent6.pfx"));
+    const unencryptedPfx = readFileSync(join(fixtures, "ec.pfx"));
+    const unencryptedCert = readFileSync(join(fixtures, "ec-cert.pem"), "utf8");
+
+    async function fetchWithPfx(pfx: NonNullable<Bun.TLSOptions["pfx"]>, passphrase = "sample") {
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert, ca, requestCert: true, rejectUnauthorized: true },
+        fetch() {
+          return new Response("mTLS-ok");
+        },
+      });
+
+      return await fetch(server.url, {
+        keepalive: false,
+        tls: { pfx, passphrase, ca, serverName: "agent1" },
+      });
+    }
+
+    async function startPeerNameServer() {
+      const sockets = new Set<tls.TLSSocket>();
+      let connectionCount = 0;
+      const server = tls.createServer({ key, cert, ca, requestCert: true, rejectUnauthorized: true }, socket => {
+        connectionCount++;
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
+        const peerCommonName = socket.getPeerCertificate().subject?.CN ?? "";
+        let pending = "";
+        socket.on("data", chunk => {
+          pending += chunk.toString();
+          let headerEnd;
+          while ((headerEnd = pending.indexOf("\r\n\r\n")) !== -1) {
+            pending = pending.slice(headerEnd + 4);
+            socket.write(
+              `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(peerCommonName)}\r\nConnection: keep-alive\r\n\r\n${peerCommonName}`,
+            );
+          }
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("expected a TCP server address");
+
+      return {
+        url: `https://127.0.0.1:${address.port}/`,
+        connectionCount: () => connectionCount,
+        async close() {
+          const closed = new Promise<void>(resolve => server.close(() => resolve()));
+          for (const socket of sockets) socket.destroy();
+          await closed;
+        },
+      };
+    }
+
+    it.each([
+      ["Buffer", () => readFileSync(pfxPath)],
+      ["Uint8Array", () => new Uint8Array(readFileSync(pfxPath))],
+      ["ArrayBuffer", () => Uint8Array.from(readFileSync(pfxPath)).buffer],
+      ["BunFile", () => Bun.file(pfxPath)],
+      ["array", () => [readFileSync(pfxPath)]],
+    ])("authenticates with an encrypted PFX from a %s", async (_name, getPfx) => {
+      const response = await fetchWithPfx(getPfx());
+      expect(await response.text()).toBe("mTLS-ok");
+      expect(response.status).toBe(200);
+    });
+
+    it.each([
+      ["an omitted", undefined],
+      ["an empty", ""],
+    ])("authenticates with an unencrypted PFX and %s passphrase", async (_name, passphrase) => {
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert, ca: unencryptedCert, requestCert: true, rejectUnauthorized: true },
+        fetch() {
+          return new Response("mTLS-ok");
+        },
+      });
+
+      const response = await fetch(server.url, {
+        keepalive: false,
+        tls: { pfx: unencryptedPfx, passphrase, ca, serverName: "agent1" },
+      });
+      expect(await response.text()).toBe("mTLS-ok");
+      expect(response.status).toBe(200);
+    });
+
+    it("isolates and reuses pooled connections by PFX client identity", async () => {
+      const server = await startPeerNameServer();
+      try {
+        for (let i = 0; i < 3; i++) {
+          const first = await fetch(server.url, {
+            tls: { pfx: readFileSync(pfxPath), passphrase: "sample", ca, serverName: "agent1" },
+          });
+          expect(await first.text()).toBe("agent1");
+          expect(first.status).toBe(200);
+
+          const second = await fetch(server.url, {
+            tls: { pfx: secondPfx, passphrase: "sample", ca, serverName: "agent1" },
+          });
+          expect(await second.text()).toBe("Ádám Lippai");
+          expect(second.status).toBe(200);
+        }
+        expect(server.connectionCount()).toBe(2);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it("loads multiple PFX identities pair-wise with their certificate chains", async () => {
+      const server = await startPeerNameServer();
+      try {
+        const response = await fetch(server.url, {
+          tls: {
+            pfx: [readFileSync(pfxPath), secondPfx],
+            passphrase: "sample",
+            ca,
+            serverName: "agent1",
+          },
+        });
+        expect(await response.text()).toBe("Ádám Lippai");
+        expect(response.status).toBe(200);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it("rejects a wrong PFX passphrase with an actionable error", async () => {
+      await expect(fetchWithPfx(readFileSync(pfxPath), "wrong-passphrase")).rejects.toThrow(
+        "PFX MAC verification failed - is the passphrase correct?",
+      );
+    });
+
+    it("rejects empty PFX data", async () => {
+      await expect(fetchWithPfx(Buffer.alloc(0), "")).rejects.toThrow("TLSOptions.pfx is an empty file");
+      await expect(fetchWithPfx([], "")).rejects.toThrow("TLSOptions.pfx is an empty file");
+    });
+
+    it("rejects string PFX data", async () => {
+      await expect(
+        fetch("https://127.0.0.1/", { tls: { pfx: "client.p12" } as unknown as Bun.TLSOptions }),
+      ).rejects.toThrow("TLSOptions.pfx must be an ArrayBufferView, ArrayBuffer, BunFile, or an array of those");
+    });
+
+    it.each([
+      ["non-empty", readFileSync(pfxPath)],
+      ["empty", []],
+    ])("rejects ambiguous %s PFX and PEM client credentials", async (_name, pfx) => {
+      await expect(
+        fetch("https://127.0.0.1/", {
+          tls: { pfx, passphrase: "sample", key, cert },
+        }),
+      ).rejects.toThrow(
+        "TLSOptions.pfx cannot be combined with TLSOptions.key, TLSOptions.cert, TLSOptions.keyFile, or TLSOptions.certFile",
+      );
+    });
+  });
+
   it("drops a caller-supplied Host header on a cross-origin redirect and never verifies TLS against it", async () => {
     // The redirect target records the Host header it actually receives.
     const receivedHostHeaders: (string | null)[] = [];

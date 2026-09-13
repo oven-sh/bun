@@ -127,6 +127,156 @@ test("node-fetch gives a fetched response without a body an empty stream", async
   expect(new Response(null, { status: 204 }).clone().body).toBeNull();
 });
 
+// Starts `body` with `start` and resolves with what it emits until "close".
+function eventsUntilClose(body, start) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  body.on("end", () => events.push("end"));
+  body.on("error", error => events.push(error));
+  body.on("close", () => {
+    events.push("close");
+    resolve(events);
+  });
+  start();
+  return promise;
+}
+
+// Serves "first ", then "second" once `secondChunk` resolves.
+function serveTwoChunks(secondChunk) {
+  return Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode("first "));
+            await secondChunk;
+            controller.enqueue(new TextEncoder().encode("second"));
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+}
+
+const bodyActions = [
+  ["resume", ["end", "close"]],
+  ["destroy", ["close"]],
+];
+
+// A body method reads the web stream under `res.body` and keeps it locked. Nothing is
+// left for the node stream, so it ends, as the already-read stream of node-fetch does.
+test.each(["arrayBuffer", "blob", "buffer", "bytes", "formData", "json", "text"])(
+  "node-fetch body stream ends without an error after %s() consumed the response",
+  async method => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/formData") {
+          return new Response("a=1", { headers: { "content-type": "application/x-www-form-urlencoded" } });
+        }
+        return Response.json({ a: 1 });
+      },
+    });
+    const url = new URL(method, server.url);
+
+    for (const [action, expected] of bodyActions) {
+      const res = await fetch2(url);
+      const body = res.body;
+      await res[method]();
+      expect(await eventsUntilClose(body, () => body[action]())).toEqual(expected);
+    }
+    {
+      // `body` is read for the first time after the body method.
+      const res = await fetch2(url);
+      await res[method]();
+      expect(await Array.fromAsync(res.body)).toEqual([]);
+    }
+  },
+);
+
+test.each(bodyActions)(
+  "node-fetch body.%s() leaves a body method that is still reading alone",
+  async (action, expected) => {
+    const secondChunk = Promise.withResolvers();
+    using server = serveTwoChunks(secondChunk.promise);
+
+    const res = await fetch2(server.url);
+    const body = res.body;
+    const text = res.text();
+    const events = await eventsUntilClose(body, () => body[action]());
+    secondChunk.resolve();
+    expect({ events, text: await text }).toEqual({ events: expected, text: "first second" });
+  },
+);
+
+// A body method that rejects still took the stream.
+test.each(bodyActions)(
+  "node-fetch body.%s() after an aborted text() does not emit an error",
+  async (action, expected) => {
+    const secondChunk = Promise.withResolvers();
+    using server = serveTwoChunks(secondChunk.promise);
+    const controller = new AbortController();
+
+    const res = await fetch2(server.url, { signal: controller.signal });
+    const body = res.body;
+    const text = res.text().then(
+      () => "resolved",
+      error => error.name,
+    );
+    controller.abort();
+    const outcome = await text;
+    const events = await eventsUntilClose(body, () => body[action]());
+    secondChunk.resolve();
+    expect({ outcome, events }).toEqual({ outcome: "AbortError", events: expected });
+  },
+);
+
+test.each(bodyActions)(
+  "node-fetch body.%s() after formData() rejected the content type does not emit an error",
+  async (action, expected) => {
+    using server = Bun.serve({ port: 0, fetch: () => Response.json({ a: 1 }) });
+
+    const res = await fetch2(server.url);
+    const body = res.body;
+    const outcome = await res.formData().then(
+      () => "resolved",
+      error => error.name,
+    );
+    const events = await eventsUntilClose(body, () => body[action]());
+    expect({ outcome, events }).toEqual({ outcome: "TypeError", events: expected });
+  },
+);
+
+// The lock that the node stream takes itself must not end it.
+test("node-fetch body stream delivers every chunk of a streamed response", async () => {
+  const secondChunk = Promise.withResolvers();
+  using server = serveTwoChunks(secondChunk.promise);
+
+  const res = await fetch2(server.url);
+  const chunks = [];
+  for await (const chunk of res.body) {
+    chunks.push(chunk.toString());
+    secondChunk.resolve();
+  }
+  expect(chunks.join("")).toBe("first second");
+});
+
+// clone() moves the body to a new web stream. As in node-fetch, `body` is a new node stream then.
+test("node-fetch body taken before clone() does not break the body after clone()", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("hello world") });
+
+  const res = await fetch2(server.url);
+  const before = res.body;
+  const cloned = res.clone();
+  expect(res.body).not.toBe(before);
+  expect({
+    original: Buffer.concat(await Array.fromAsync(res.body)).toString(),
+    clone: Buffer.concat(await Array.fromAsync(cloned.body)).toString(),
+  }).toEqual({ original: "hello world", clone: "hello world" });
+});
+
 test("node-fetch request body streams properly", async () => {
   let responseResolve;
   const responsePromise = new Promise(resolve => {

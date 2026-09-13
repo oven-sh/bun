@@ -593,7 +593,7 @@ impl GitSubprocess {
     /// Spawns `git <args>` with stdout and stderr captured. On `Ok` the child
     /// may already have exited and freed `this`.
     fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
-        let env = GitEnv::get(this.manager().env_mut());
+        let env = GitEnv::get(&this.manager().process_env);
         let Some(git) = &env.git else {
             this.log_error(format_args!(
                 "\"git\" is not installed (needed for \"{}\")",

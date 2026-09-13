@@ -320,6 +320,11 @@ pub struct PackageManager {
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
+    /// The environment this process started with. `env` above also holds the
+    /// project's `.env*` files, which a cloned repository controls. The git
+    /// children the install spawns and its own proxy / TLS settings read this
+    /// one, so a `.env` cannot set `GIT_SSH_COMMAND` or `HTTPS_PROXY` for them.
+    pub(crate) process_env: dot_env::Loader,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -892,13 +897,17 @@ impl PackageManager {
     }
 
     pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
-        // `env_mut()` yields an unbounded `&'a Loader` (process-lifetime
-        // singleton), so the returned `URL<'_>` borrows for `'static`.
-        self.env_mut().get_http_proxy_for(url)
+        // SAFETY: the manager is a leaked process-lifetime singleton and
+        // `process_env` is never written after `init()`, so the returned
+        // `URL<'_>`, which borrows the proxy value out of it, is valid for
+        // `'static`.
+        let process_env: &'static dot_env::Loader =
+            unsafe { bun_ptr::detach_lifetime_ref(&self.process_env) };
+        process_env.get_http_proxy_for(url)
     }
 
     pub fn tls_reject_unauthorized(&self) -> bool {
-        self.env().get_tls_reject_unauthorized()
+        self.process_env.get_tls_reject_unauthorized()
     }
 
     pub(crate) fn fail_root_resolution(
@@ -1331,6 +1340,14 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // ──────────────────────────────────────────────────────────────────────────
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
+
+/// `PackageManager::process_env`: the process environment with no `.env*` file
+/// merged in.
+fn load_process_env() -> Result<dot_env::Loader, bun_alloc::AllocError> {
+    let mut env = dot_env::Loader::init();
+    env.load_process()?;
+    Ok(env)
+}
 
 fn allocate_package_manager() {
     // Uninitialized memory, abort-on-OOM. The init() functions below write the full struct via
@@ -1899,6 +1916,7 @@ pub fn init(
     };
 
     env.load_process()?;
+    let process_env = load_process_env()?;
     // Copy the listing's basenames out under `entries_mutex`; `.data` must
     // only be probed while the lock is held.
     let env_probe_keys = {
@@ -2056,6 +2074,7 @@ pub fn init(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(process_env, process_env);
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
@@ -2320,7 +2339,7 @@ pub fn init(
             }
 
             // If any HTTP proxy is set, use a diferent limit
-            if env.has_http_proxy() {
+            if mgr_ref.process_env.has_http_proxy() {
                 break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
             }
 
@@ -2443,6 +2462,7 @@ fn init_with_runtime_once(
     };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
+    let process_env = load_process_env()?;
     allocate_package_manager();
     // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
     // freshly allocated, *uninitialized* PackageManager. Do NOT call `get()` /
@@ -2516,6 +2536,7 @@ fn init_with_runtime_once(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(process_env, process_env);
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {

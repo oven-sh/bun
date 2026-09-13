@@ -2701,8 +2701,7 @@ fn os_entropy(bytes: &mut [u8]) {
     }
 }
 
-/// Linux older than 3.17 has no getrandom(2) and answers ENOSYS. Read the same
-/// pool through /dev/urandom, as BoringSSL does (`crypto/rand/urandom.cc`).
+/// getrandom(2) answers ENOSYS on Linux older than 3.17.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn dev_urandom(bytes: &mut [u8]) {
     let fd = loop {

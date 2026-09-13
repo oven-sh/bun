@@ -798,7 +798,23 @@ impl Parser<'_> {
         base: usize,
     ) -> bool {
         let mut pos: usize = 0;
+        // `(url)` / `[ref]` tails of inner images, as `(tail_start, tail_end)`.
+        // Image tails nest like the brackets do, so the innermost pending tail
+        // is always on top.
+        let mut image_tails: Vec<(usize, usize)> = Vec::new();
         while pos < label.len() {
+            while let Some(&(tail_start, tail_end)) = image_tails.last() {
+                if pos < tail_start {
+                    break;
+                }
+                image_tails.pop();
+                if pos < tail_end {
+                    pos = tail_end;
+                }
+            }
+            if pos >= label.len() {
+                break;
+            }
             if label[pos] == b'\\' && pos + 1 < label.len() {
                 pos += 2;
                 continue;
@@ -827,17 +843,21 @@ impl Parser<'_> {
                 }
             }
             if label[pos] == b'[' {
-                // Skip images (![...]) — images are allowed inside links
+                // Images (![...]) are allowed inside links, but a link nested
+                // anywhere in the label (inside a bracket pair that is not a
+                // link, or inside an image's alt text) still closes the outer
+                // opener (cmark deactivates every earlier `[` when a link
+                // forms). So the scan steps into every bracket pair and only
+                // skips the `(url)` / `[ref]` tail of an inner image.
                 let is_inner_image = pos > 0 && label[pos - 1] == b'!';
-                // Try to find matching ] and check for link syntax
                 let inner = self.try_match_bracket_link(label, pos, brackets, base);
-                if inner.is_link && !is_inner_image {
-                    return true;
-                }
-                if inner.link_end > pos {
-                    // Skip past entire construct (including (url) or [ref] for images)
-                    pos = inner.link_end;
-                    continue;
+                if inner.is_link {
+                    if !is_inner_image {
+                        return true;
+                    }
+                    if inner.link_end > inner.label_end + 1 {
+                        image_tails.push((inner.label_end + 1, inner.link_end));
+                    }
                 }
             }
             pos += 1;

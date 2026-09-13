@@ -693,7 +693,10 @@ describe("pathological bracket inputs", () => {
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
           ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
-          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          // The innermost [..](u) is a link, so every outer [ opener is
+          // deactivated: the outer half stays text and the closed half is
+          // one image whose alt flattens the levels in between.
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out === "<p>" + fill(18000, "[![") + '[<img src="u" alt="' + fill(17998, "[") + fill(17998, "](u)") + '" />](u)</p>\\n'],
           ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
           ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
@@ -745,6 +748,34 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html("[ref]: /u\n\n[foo](bar [ref])\n")).toBe('<p>[foo](bar <a href="/u">ref</a>)</p>\n');
     expect(Markdown.html("[ref]: /u\n\n[foo][ref]\n")).toBe('<p><a href="/u">foo</a></p>\n');
     expect(Markdown.html("[ref]: /u\n\n[foo](/x)[ref]\n")).toBe('<p><a href="/x">foo</a><a href="/u">ref</a></p>\n');
+  });
+
+  // A link nested anywhere in the label rejects the outer candidate, not
+  // only a link that is a direct child. The lookahead used to skip whole
+  // non-link bracket pairs and image tails, so a link inside them was
+  // missed and the output had an <a> inside an <a>.
+  test("a link nested inside a bracket pair or an image alt rejects the outer link", () => {
+    expect(Markdown.html("[[x [a](/i) y] z](/u)\n")).toBe('<p>[[x <a href="/i">a</a> y] z](/u)</p>\n');
+    expect(Markdown.html("[x [y [a](/i)] z](/u)\n")).toBe('<p>[x [y <a href="/i">a</a>] z](/u)</p>\n');
+    expect(Markdown.html("[a]: /url\n\n[[x [a] y] z](/u)\n")).toBe('<p>[[x <a href="/url">a</a> y] z](/u)</p>\n');
+    expect(Markdown.html("[![x [a](/i) y](/img) z](/u)\n")).toBe('<p>[<img src="/img" alt="x a y" /> z](/u)</p>\n');
+    expect(Markdown.html("[x ![a ![b [c](/k) d](/j) e](/i) y](/u)\n")).toBe(
+      '<p>[x <img src="/i" alt="a b c d e" /> y](/u)</p>\n',
+    );
+    expect(Markdown.html("*[x [y [a](/i)] z](/u)*\n")).toBe('<p><em>[x [y <a href="/i">a</a>] z](/u)</em></p>\n');
+    expect(Markdown.html("[![[![[![[![](u)](u)](u)](u)\n")).toBe('<p>[![[![[<img src="u" alt="" />](u)</p>\n');
+    // Controls: a bracket pair without a link, and an image, are still
+    // allowed inside a link. Only the image's (url) / [ref] tail is skipped.
+    expect(Markdown.html("[x [y] z](/u)\n")).toBe('<p><a href="/u">x [y] z</a></p>\n');
+    expect(Markdown.html("[x ![a ![b](/j) c](/i) y](/u)\n")).toBe(
+      '<p><a href="/u">x <img src="/i" alt="a b c" /> y</a></p>\n',
+    );
+    expect(Markdown.html("[r]: /u\n\n[x ![a][r] y](/u)\n")).toBe(
+      '<p><a href="/u">x <img src="/u" alt="a" /> y</a></p>\n',
+    );
+    expect(Markdown.html('[x ![a](/i "[b](/c)") y](/u)\n')).toBe(
+      '<p><a href="/u">x <img src="/i" alt="a" title="[b](/c)" /> y</a></p>\n',
+    );
   });
 });
 

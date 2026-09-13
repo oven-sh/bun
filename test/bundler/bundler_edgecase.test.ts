@@ -2914,6 +2914,32 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
   });
+  // The `__esm` wrapper is an arrow function with no function around it. On
+  // entry to such an arrow function JavaScriptCore throws "ReferenceError:
+  // Can't find private variable: PrivateSymbol.newTargetLocal" when a class in
+  // it has `new.target` in a field initializer or a static block. The value
+  // there is always undefined, and the unbundled module runs.
+  itBundled("edgecase/EsmWrapNewTargetInClassFieldInitializer", {
+    files: {
+      "/lazy.js": `
+        export class A {
+          x = typeof new.target;
+          static y = typeof new.target;
+          static { A.z = typeof new.target; }
+        }
+      `,
+      "/entry.js": `
+        const { A } = await import("./lazy.js");
+        console.log(new A().x, A.y, A.z);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    run: { stdout: "undefined undefined undefined" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("__esm");
+    },
+  });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.
   itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {

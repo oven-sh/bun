@@ -3817,6 +3817,51 @@ class Foo {
     );
   });
 
+  it("new.target in a class field initializer or a class static block is undefined", () => {
+    // Both run as a method call. An arrow function takes the value from them.
+    expectPrinted_("class Foo { x = new.target }", "class Foo {\n  x = undefined;\n}");
+    expectPrinted_("class Foo { static x = new.target }", "class Foo {\n  static x = undefined;\n}");
+    expectPrinted_("class Foo { #x = new.target }", "class Foo {\n  #x = undefined;\n}");
+    expectPrinted_("class Foo { static { foo(new.target) } }", "class Foo {\n  static {\n    foo(undefined);\n  }\n}");
+    expectPrinted_("class Foo { x = () => foo(new.target) }", "class Foo {\n  x = () => foo(undefined);\n}");
+    expectPrinted_(
+      "class Foo { static { (() => foo(new.target))() } }",
+      "class Foo {\n  static {\n    (() => foo(undefined))();\n  }\n}",
+    );
+    // The key of a class in a field initializer is part of the field initializer.
+    expectPrinted_(
+      "class Foo { x = class { [new.target] = new.target } }",
+      "class Foo {\n  x = class {\n    [undefined] = undefined;\n  };\n}",
+    );
+
+    // A function has its own new.target.
+    expectPrinted_(
+      "class Foo { x = function() { return new.target } }",
+      "class Foo {\n  x = function() {\n    return new.target;\n  };\n}",
+    );
+    expectPrinted_(
+      "class Foo { x = { m() { return new.target } } }",
+      "class Foo {\n  x = { m() {\n    return new.target;\n  } };\n}",
+    );
+    expectPrinted_(
+      "class Foo { static { function f() { return new.target } } }",
+      "class Foo {\n  static {\n    function f() {\n      return new.target;\n    }\n  }\n}",
+    );
+    expectPrinted_(
+      "class Foo { constructor() { foo(new.target) } m() { foo(new.target) } }",
+      "class Foo {\n  constructor() {\n    foo(new.target);\n  }\n  m() {\n    foo(new.target);\n  }\n}",
+    );
+    // A key and an extends clause belong to the code around the class.
+    expectPrinted_(
+      "function f() { class Foo extends new.target { [new.target] = 1; static [new.target] = 2; [new.target]() {} } }",
+      "function f() {\n  class Foo extends new.target {\n    [new.target] = 1;\n    static [new.target] = 2;\n    [new.target]() {}\n  }\n}",
+    );
+    expectPrinted_(
+      "function f() { class Foo { x = function() { class Bar { [new.target] = new.target } } } }",
+      "function f() {\n  class Foo {\n    x = function() {\n      class Bar {\n        [new.target] = undefined;\n      }\n    };\n  }\n}",
+    );
+  });
+
   it("declarations named eval or arguments, and reserved words, in strict mode", () => {
     expectParseError(
       '"use strict"; var arguments = 1',

@@ -1062,7 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        ..Default::default()
+                        is_new_target_undefined: true,
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
                     let csb = property.class_static_block_mut().unwrap();
@@ -1193,6 +1193,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(val) = property.initializer {
                     let class_body = self.current_scope;
                     self.field_init_class_bodies.push(class_body);
+                    let old_is_new_target_undefined =
+                        self.fn_only_data_visit.is_new_target_undefined;
+                    self.fn_only_data_visit.is_new_target_undefined = true;
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1211,6 +1214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.fn_only_data_visit.is_new_target_undefined = old_is_new_target_undefined;
                     self.field_init_class_bodies.pop();
                 }
 

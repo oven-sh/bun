@@ -2716,7 +2716,7 @@ fn matcher_context_equals(global_this: &JSGlobalObject, callframe: &CallFrame) -
     let args = callframe.arguments();
     if args.len() < 2 {
         return Err(global_this.throw2(
-            "expect.extends matcher: this.util.equals expects at least 2 arguments",
+            "expect.extend matcher: this.equals expects at least 2 arguments",
             (),
         ));
     }

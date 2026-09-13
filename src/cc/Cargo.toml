@@ -6,11 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[[bin]]
-name = "bun-cc"
-path = "main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
+bun_core.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true

@@ -15,12 +15,6 @@ use crate::lexer::Lexer;
 use crate::token::{Loc, PpKind, PpToken, Punct, Res, TokenSource, display_bytes, err};
 use crate::types::Target;
 
-/// How the embedder gives the preprocessor access to files.
-pub trait FileProvider {
-    /// The contents of `path`, or `None` if there is no such file.
-    fn read(&self, path: &str) -> Option<Vec<u8>>;
-}
-
 /// Names of every file that contributed tokens; `Loc::file` indexes it.
 #[derive(Default)]
 pub(crate) struct FileTable {
@@ -29,6 +23,8 @@ pub(crate) struct FileTable {
     pub(crate) warnings: Vec<(Loc, String)>,
     /// `#pragma comment(lib, "name")`, in source order without duplicates.
     pub(crate) libraries: Vec<String>,
+    /// The files read from disk that were not found in a system include directory.
+    pub(crate) read: Vec<String>,
 }
 
 impl FileTable {
@@ -211,9 +207,8 @@ pub(crate) enum SearchDir {
     Builtin,
 }
 
-pub(crate) struct Preprocessor<'a> {
+pub(crate) struct Preprocessor {
     pub(crate) files: Rc<RefCell<FileTable>>,
-    pub(crate) provider: &'a dyn FileProvider,
     pub(crate) target: Target,
     /// Microsoft C: a Windows target with no GNU C version claimed.
     pub(crate) msvc: bool,
@@ -240,20 +235,18 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) now: u64,
 }
 
-impl<'a> Preprocessor<'a> {
+impl Preprocessor {
     pub(crate) fn new(
         files: Rc<RefCell<FileTable>>,
-        provider: &'a dyn FileProvider,
         target: Target,
         search: Vec<SearchDir>,
         base_file: &str,
-    ) -> Preprocessor<'a> {
+    ) -> Preprocessor {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         Preprocessor {
             files,
-            provider,
             target,
             msvc: false,
             macros: BTreeMap::new(),
@@ -943,7 +936,7 @@ fn format_time(now: u64) -> String {
     format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
 }
 
-impl TokenSource for Preprocessor<'_> {
+impl TokenSource for Preprocessor {
     fn next_token(&mut self) -> Res<PpToken> {
         Ok(self.next_expanded()?.tok)
     }

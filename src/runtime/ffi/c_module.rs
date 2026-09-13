@@ -301,30 +301,6 @@ fn is_bir(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && &bytes[..3] == b"BIR" && bytes[3].is_ascii_digit()
 }
 
-/// Reads files for the compiler and remembers each one the program supplied (not the system's headers).
-struct RecordingFiles<'a> {
-    system_include_dirs: &'a [String],
-    read: bun_threading::Guarded<Vec<String>>,
-}
-
-impl bun_cc::FileProvider for RecordingFiles<'_> {
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        let contents = bun_cc::HostFiles.read(path)?;
-        let is_system_header = self
-            .system_include_dirs
-            .iter()
-            .any(|dir| {
-                path.as_bytes()
-                    .strip_prefix(dir.as_bytes())
-                    .is_some_and(|rest| rest.first() == Some(&b'/'))
-            });
-        if !is_system_header {
-            self.read.lock().push(path.to_owned());
-        }
-        Some(contents)
-    }
-}
-
 /// C source -> BIR. `#include "…"` resolves next to `path`; `<…>` searches the compiler's own
 /// headers, `C_INCLUDE_PATH`, then the system's.
 fn compile_to_bir(
@@ -333,53 +309,6 @@ fn compile_to_bir(
     source: &[u8],
     on_file_read: &mut dyn FnMut(&[u8]),
 ) -> JsResult<Vec<u8>> {
-    let target = bun_cc::Target::host();
-    let mut system_include_dirs = bun_cc::default_system_include_dirs(target);
-    // Microsoft's headers: where a developer prompt says, else the newest Visual Studio's and Windows SDK's.
-    #[cfg(windows)]
-    {
-        let text = |value: Option<&'static [u8]>| value.and_then(|value| core::str::from_utf8(value).ok());
-        let roots: Vec<&str> = [
-            text(bun_core::env_var::PROGRAMFILES::platform_get()),
-            text(bun_core::env_var::PROGRAMFILES_X86::platform_get()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        system_include_dirs.extend(bun_cc::msvc_system_include_dirs(
-            text(bun_core::env_var::INCLUDE::platform_get()),
-            &roots,
-        ));
-    }
-    // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
-    if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
-        && let Ok(sdk) = core::str::from_utf8(sdk)
-        && !sdk.is_empty()
-    {
-        system_include_dirs.push(format!("{sdk}/usr/include"));
-    }
-    // What gcc and clang search as `-isystem` directories: ahead of the system's own, so that a
-    // project's copy of a header (its zlib.h, its uv.h) is the one found.
-    if let Some(list) = bun_core::env_var::C_INCLUDE_PATH.get() {
-        let mut searched_first: Vec<String> = Vec::new();
-        for directory in bun_core::strings::split(list, if cfg!(windows) { b";" } else { b":" }) {
-            if let Ok(directory) = core::str::from_utf8(directory)
-                && !directory.is_empty()
-            {
-                searched_first.push(directory.to_owned());
-            }
-        }
-        searched_first.append(&mut system_include_dirs);
-        system_include_dirs = searched_first;
-    }
-    let files = RecordingFiles {
-        system_include_dirs: &system_include_dirs,
-        read: bun_threading::Guarded::new(Vec::new()),
-    };
-    let mut options = bun_cc::CompileOptions::new(target);
-    options.file_provider = &files;
-    options.system_include_dirs = system_include_dirs.clone();
-
     // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
     let Ok(filename) = core::str::from_utf8(path) else {
         return Err(global_this.throw(format_args!(
@@ -387,12 +316,12 @@ fn compile_to_bir(
             BStr::new(path)
         )));
     };
-    let result = bun_cc::compile_many(&[(source, filename)], &options);
-    on_file_read(path);
-    for file in files.read.lock().iter() {
+    let options = bun_cc::CompileOptions::new(bun_cc::Target::host());
+    let compilation = bun_cc::compile_many(&[(source, filename)], &options);
+    for file in &compilation.files_read {
         on_file_read(file.as_bytes());
     }
-    match result {
+    match compilation.result {
         Ok(output) => Ok(output.bir),
         Err(diagnostics) => {
             let mut combined = String::new();
@@ -576,10 +505,10 @@ pub fn run_main_if_any(
             std::ffi::CString::new(&bytes[..end]).expect("no interior NUL")
         })
         .collect();
+    let strings = strings.leak();
     let argc = strings.len();
     let mut argv: Vec<*const core::ffi::c_char> = strings.iter().map(|string| string.as_ptr()).collect();
     argv.push(core::ptr::null());
-    core::mem::forget(strings);
     let argv = argv.leak().as_ptr();
 
     let parameter_count = main.get_length(global_this)?;

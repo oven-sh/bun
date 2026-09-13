@@ -238,7 +238,7 @@ struct ExprParser<'t> {
     dialect: crate::token::Dialect,
 }
 
-impl Preprocessor<'_> {
+impl Preprocessor {
     pub(crate) fn eval_condition(&mut self, line: Vec<PpToken>, loc: Loc) -> Res<bool> {
         if line.is_empty() {
             return err(loc, "#if with no expression");

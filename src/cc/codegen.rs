@@ -103,11 +103,6 @@ struct ModuleGen<'a> {
     data_extern_index: Vec<Option<u32>>,
     /// Compiler runtime functions (`__divti3`, ...) by name.
     runtime_externs: BTreeMap<String, u32>,
-    /// How many local arrays and structures were replaced by their elements.
-    replaced_aggregates: usize,
-    /// How many byte-by-byte reads and writes of an integer became one access.
-    combined_loads: usize,
-    combined_stores: usize,
     /// Data externs that stand for thread-local objects other units define.
     tls_externs: Vec<TlsExtern>,
     /// Anonymous read-only data: string literals and initializer images.
@@ -3541,7 +3536,7 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
     // A function that calls setjmp can be re-entered in the middle by longjmp: every
     // variable then has to be in memory, as if it were volatile.
     let returns_twice = calls_returns_twice(g.m.prog, body);
-    let replaced = if returns_twice || !g.m.prog.replace_aggregates {
+    let replaced = if returns_twice {
         Vec::new()
     } else {
         sroa::promotable_locals(body, tcx)
@@ -3559,7 +3554,6 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
             g.scalar_sets.push(leaves);
             g.locals
                 .push(LocalPlace::Scalars(g.scalar_sets.len() as u32 - 1));
-            g.m.replaced_aggregates += 1;
             continue;
         }
         let by_address = matches!(
@@ -3824,10 +3818,6 @@ pub(crate) struct TlsExtern {
 /// data and tls segments, which the serialized form does not carry.
 pub(crate) struct Unit {
     pub(crate) module: bir::Module,
-    /// How many local arrays and structures became BIR locals, element by element.
-    pub(crate) replaced_aggregates: usize,
-    /// How many byte-by-byte integer reads and writes became one load or store.
-    pub(crate) combined_accesses: (usize, usize),
     pub(crate) objects: Vec<crate::link::DataObject>,
     pub(crate) tls_objects: Vec<crate::link::DataObject>,
     pub(crate) tls_externs: Vec<TlsExtern>,
@@ -3869,9 +3859,6 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         extern_index: vec![None; prog.funcs.len()],
         data_extern_index: vec![None; prog.globals.len()],
         runtime_externs: BTreeMap::new(),
-        replaced_aggregates: 0,
-        combined_loads: 0,
-        combined_stores: 0,
         tls_externs: Vec::new(),
         blobs: Vec::new(),
         blob_ids: BTreeMap::new(),
@@ -4292,8 +4279,6 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
     };
     Ok(Unit {
         module,
-        replaced_aggregates: m.replaced_aggregates,
-        combined_accesses: (m.combined_loads, m.combined_stores),
         objects,
         tls_objects,
         tls_externs: m.tls_externs,

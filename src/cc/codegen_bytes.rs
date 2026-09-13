@@ -269,7 +269,6 @@ impl FnGen<'_, '_> {
                 v = self.b.bin(CBin::ShrU, v, sixteen);
             }
         }
-        self.m.combined_loads += 1;
         Ok(match (self.b.value_ty(v), self.mty(ty)) {
             (Ty::I32, Ty::I64) => self.b.un(UnOp::ZExt32, v),
             _ => v,
@@ -399,7 +398,6 @@ impl FnGen<'_, '_> {
                     }
                 }
                 self.b.effect(Inst::Store(kind, v, base, lowest));
-                self.m.combined_stores += 1;
                 at += bytes;
                 combined = true;
                 break;

@@ -804,8 +804,6 @@ pub(crate) struct Global {
 
 /// A whole translation unit after parsing and semantic analysis.
 pub(crate) struct Program {
-    /// See `CompileOptions::replace_aggregates`.
-    pub(crate) replace_aggregates: bool,
     /// Size of the target's va_list object, for `va_copy`.
     pub(crate) va_list_size: u64,
     pub(crate) tcx: TypeCtx,

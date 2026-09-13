@@ -2,6 +2,8 @@
 
 use std::rc::Rc;
 
+use bun_paths::resolve_path::{self, platform};
+
 use crate::pp::{
     Builtin, Cond, MAX_INCLUDE_DEPTH, Macro, PTok, Preprocessor, SearchDir, eof_token, spelling,
 };
@@ -109,15 +111,9 @@ fn same_file_key(path: &str) -> String {
 }
 
 fn directory_of(path: &str) -> &str {
-    let bytes = path.as_bytes();
-    let mut i = bytes.len();
-    while i > 0 {
-        if bytes[i - 1] == b'/' || bytes[i - 1] == b'\\' {
-            return &path[..i - 1];
-        }
-        i -= 1;
-    }
-    ""
+    let directory = resolve_path::dirname::<platform::Loose>(path.as_bytes());
+    // A prefix of `path` that ends ahead of an ASCII separator.
+    &path[..directory.len()]
 }
 
 fn join(dir: &str, name: &str) -> String {
@@ -128,7 +124,7 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
-impl Preprocessor<'_> {
+impl Preprocessor {
     fn read_frame_token(&mut self) -> Res<Option<PpToken>> {
         let Some(frame) = self.frames.last_mut() else {
             return Ok(None);
@@ -770,7 +766,9 @@ impl Preprocessor<'_> {
 
     // ───────────────────────────── #include ─────────────────────────────
 
-    fn load(&mut self, path: &str) -> Option<Rc<[u8]>> {
+    /// `from_system_directory`: the file is looked for in a directory of the search path (or
+    /// next to a header that came from one), so it is not the program's own.
+    fn load(&mut self, path: &str, from_system_directory: bool) -> Option<Rc<[u8]>> {
         if let Some(cached) = self.file_cache.get(path) {
             return cached.clone();
         }
@@ -779,7 +777,15 @@ impl Preprocessor<'_> {
             .and_then(|p| p.strip_prefix('/'))
         {
             Some(name) => builtin_header(name, self.target).map(|text| Rc::from(text.as_bytes())),
-            None => self.provider.read(path).map(Rc::from),
+            None => {
+                // Windows' headers name each other in any case; its file systems do not care.
+                let any_case = self.target.os == crate::types::Os::Windows && !cfg!(windows);
+                let contents = crate::files::read(path.as_bytes(), any_case);
+                if contents.is_some() && !from_system_directory {
+                    self.files.borrow_mut().read.push(path.to_string());
+                }
+                contents.map(Rc::from)
+            }
         };
         self.file_cache.insert(Rc::from(path), contents.clone());
         contents
@@ -809,11 +815,11 @@ impl Preprocessor<'_> {
         if let (true, Some(at)) = (next, current_at) {
             // Continue after the directory the current file came from.
             start = at + 1;
-        } else if name.starts_with('/') {
-            return self.load(name).map(|_| (name.to_string(), None));
+        } else if bun_paths::is_absolute_loose(name.as_bytes()) {
+            return self.load(name, false).map(|_| (name.to_string(), None));
         } else if !angled {
             let beside = join(directory_of(&current_path), name);
-            if self.load(&beside).is_some() {
+            if self.load(&beside, current_at.is_some()).is_some() {
                 // A header found next to its includer keeps that includer's search position.
                 return Some((
                     beside,
@@ -829,7 +835,7 @@ impl Preprocessor<'_> {
                 continue;
             }
             let candidate = self.search_path(index, name);
-            if self.load(&candidate).is_some() {
+            if self.load(&candidate, true).is_some() {
                 return Some((candidate, Some(index)));
             }
         }
@@ -837,7 +843,7 @@ impl Preprocessor<'_> {
             for index in start..self.search.len() {
                 if matches!(self.search[index], SearchDir::Builtin) {
                     let candidate = self.search_path(index, name);
-                    if self.load(&candidate).is_some() {
+                    if self.load(&candidate, true).is_some() {
                         return Some((candidate, Some(index)));
                     }
                 }
@@ -915,7 +921,7 @@ impl Preprocessor<'_> {
         if self.frames.len() >= MAX_INCLUDE_DEPTH {
             return err(loc, "#include nested too deeply");
         }
-        let Some(source) = self.load(&path) else {
+        let Some(source) = self.load(&path, found_at.is_some()) else {
             return err(loc, format!("'{name}' file not found"));
         };
         self.push_source(&path, source, found_at);

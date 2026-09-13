@@ -159,8 +159,6 @@ pub(crate) struct Parser<S: TokenSource> {
     /// A `cleanup` attribute written among a declarator's pointer qualifiers
     /// (`char *__attribute__((cleanup(f))) p`): it belongs to the variable being declared.
     declarator_cleanup: Option<(Rc<str>, Loc)>,
-    /// See `CompileOptions::replace_aggregates`.
-    replace_aggregates: bool,
     /// Microsoft C: a Windows target with no GNU C version claimed.
     msvc: bool,
     /// See `Attrs::declspec_align`.
@@ -236,7 +234,6 @@ impl<S: TokenSource> Parser<S> {
             declarator_parens: 0,
             pending_cleanups: Vec::new(),
             declarator_cleanup: None,
-            replace_aggregates: true,
             msvc: false,
             declspec_struct_align: None,
         };
@@ -394,12 +391,6 @@ impl<S: TokenSource> Parser<S> {
 
     // ───────────────────────────── translation unit ─────────────────────────────
 
-    /// See `CompileOptions::replace_aggregates`.
-    pub(crate) fn replacing_aggregates(mut self, yes: bool) -> Self {
-        self.replace_aggregates = yes;
-        self
-    }
-
     /// Microsoft C rather than GNU C, where they differ in meaning and not just in spelling.
     pub(crate) fn microsoft_c(mut self, yes: bool) -> Self {
         self.msvc = yes;
@@ -407,7 +398,6 @@ impl<S: TokenSource> Parser<S> {
     }
 
     pub(crate) fn parse_program(mut self) -> Res<Program> {
-        let replace_aggregates = self.replace_aggregates;
         while self.cur.tok != Tok::Eof {
             if self.eat(Punct::Semi)? {
                 continue;
@@ -516,7 +506,6 @@ impl<S: TokenSource> Parser<S> {
             warnings,
             function_aliases: sema.function_aliases,
             asm_blocks: sema.asm_blocks,
-            replace_aggregates,
         })
     }
 
@@ -1027,9 +1016,7 @@ impl<S: TokenSource> Parser<S> {
             address_labels: ctx.address_labels,
             label_vla_paths,
         };
-        if self.replace_aggregates {
-            crate::unroll::unroll_counted_loops(&mut body, &self.sema.tcx);
-        }
+        crate::unroll::unroll_counted_loops(&mut body, &self.sema.tcx);
         self.sema.funcs[id as usize].body = Some(body);
         Ok(())
     }

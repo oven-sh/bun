@@ -4,8 +4,6 @@
 //! token) -> `parser` (tokens -> typed AST, with `sema` deciding types and conversions) ->
 //! `codegen` (typed AST -> `bir::Module`) -> `bir` (binary encoding, validation,
 //! disassembly).
-//!
-//! This crate depends on Rust `std` only so that `bun-cc` links standalone.
 
 mod abi;
 mod asm_stmt;
@@ -15,6 +13,7 @@ mod codegen;
 mod constexpr;
 mod dts;
 mod extended;
+mod files;
 mod init;
 mod lexer;
 mod link;
@@ -24,30 +23,6 @@ mod pp_directive;
 mod pp_expr;
 mod pp_predef;
 mod sema;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod tests_phase13;
-#[cfg(test)]
-mod tests_phase15;
-#[cfg(test)]
-mod tests_phase2;
-#[cfg(test)]
-mod tests_phase3;
-#[cfg(test)]
-mod tests_phase4;
-#[cfg(test)]
-mod tests_phase5;
-#[cfg(test)]
-mod tests_phase5_atomics;
-#[cfg(test)]
-mod tests_phase6;
-#[cfg(test)]
-mod tests_phase6_link;
-#[cfg(test)]
-mod tests_phase7;
-#[cfg(test)]
-mod tests_phase8;
 mod token;
 mod types;
 mod unroll;
@@ -58,9 +33,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-pub use pp::FileProvider;
+pub use files::system_include_dirs;
 use pp::{FileTable, Preprocessor, SearchDir};
-use token::{PpKind, TokenSource};
 pub use types::{Arch, Os, Target};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -96,99 +70,23 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// A [`FileProvider`] with no files: every `#include` of a non-builtin header fails.
-pub struct NoFiles;
-
-impl FileProvider for NoFiles {
-    fn read(&self, _path: &str) -> Option<Vec<u8>> {
-        None
-    }
-}
-
-/// A [`FileProvider`] backed by the host file system.
-pub struct HostFiles;
-
-impl FileProvider for HostFiles {
-    // This crate is std-only by design, so it reads files with std rather than bun_sys.
-    #[allow(clippy::disallowed_methods)]
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        std::fs::read(path).ok()
-    }
-}
-
-/// The host file system read the way Windows reads it: a name that does not exist as spelled
-/// is looked for whatever the case of its letters, and `\\` separates directories too. For
-/// compiling against a copy of the Windows SDK, whose headers name each other that way, on a
-/// file system that tells `Windows.h` from `windows.h`.
-pub struct HostFilesAnyCase;
-
-impl HostFilesAnyCase {
-    #[allow(clippy::disallowed_methods)]
-    fn resolve(path: &std::path::Path) -> Option<std::path::PathBuf> {
-        if path.exists() {
-            return Some(path.to_path_buf());
-        }
-        let name = path.file_name()?.to_str()?;
-        let parent = path.parent()?;
-        let parent = if parent.as_os_str().is_empty() {
-            std::path::PathBuf::from(".")
-        } else {
-            Self::resolve(parent)?
-        };
-        std::fs::read_dir(&parent).ok()?.find_map(|entry| {
-            let entry = entry.ok()?;
-            let spelled = entry.file_name();
-            spelled
-                .to_str()
-                .is_some_and(|s| s.eq_ignore_ascii_case(name))
-                .then(|| parent.join(spelled))
-        })
-    }
-}
-
-impl FileProvider for HostFilesAnyCase {
-    #[allow(clippy::disallowed_methods)]
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        if let Ok(bytes) = std::fs::read(path) {
-            return Some(bytes);
-        }
-        let forward: String = path
-            .chars()
-            .map(|c| if c == '\\' { '/' } else { c })
-            .collect();
-        std::fs::read(Self::resolve(std::path::Path::new(&forward))?).ok()
-    }
-}
-
-pub struct CompileOptions<'a> {
+pub struct CompileOptions {
     pub target: Target,
-    /// `-I`: searched for both `"..."` and `<...>`, before everything else.
-    pub include_dirs: Vec<String>,
-    /// `-isystem` and the platform's default directories, searched after the compiler's
-    /// own headers.
+    /// Searched for `<...>` headers, and for `"..."` ones not found next to their includer, after
+    /// the compiler's own headers.
     pub system_include_dirs: Vec<String>,
-    /// `-D name` / `-D name=value`.
-    pub defines: Vec<(String, Option<String>)>,
-    /// `-U name`, applied after `defines`.
-    pub undefines: Vec<String>,
-    /// `-fgnuc-version=major.minor.patch`: claim to be that GNU C, the way Clang claims
-    /// 4.2.1, by predefining `__GNUC__` and the macros that go with it. Code written for
-    /// GCC then takes its GCC paths (builtins, attributes, `always_inline`).
+    /// Claim to be that GNU C, the way Clang claims 4.2.1, by predefining `__GNUC__` and the
+    /// macros that go with it. Code written for GCC then takes its GCC paths (builtins,
+    /// attributes, `always_inline`).
     pub gnu_version: Option<(u32, u32, u32)>,
-    /// `-fno-replace-aggregates` clears it: local arrays and structures then always live
-    /// in memory, and no loop is unrolled to make them replaceable.
-    pub replace_aggregates: bool,
-    pub file_provider: &'a (dyn FileProvider + Sync),
 }
 
-impl CompileOptions<'_> {
-    pub fn new(target: Target) -> CompileOptions<'static> {
+impl CompileOptions {
+    /// For compiling for `target` with the headers this machine has for it.
+    pub fn new(target: Target) -> CompileOptions {
         CompileOptions {
             target,
-            include_dirs: Vec::new(),
-            system_include_dirs: Vec::new(),
-            defines: Vec::new(),
-            undefines: Vec::new(),
+            system_include_dirs: system_include_dirs(target),
             // Apple's SDK headers are written for a GNU C compatible compiler: without the claim
             // `NAN` is a call to a function that exists only on x86 and `va_list` is `void *`.
             gnu_version: if target.os == Os::MacOs {
@@ -196,152 +94,14 @@ impl CompileOptions<'_> {
             } else {
                 None
             },
-            replace_aggregates: true,
-            file_provider: &NoFiles,
         }
     }
-}
-
-/// Where Microsoft's toolchain keeps the C headers: the compiler's own (Visual Studio), the Universal
-/// C Runtime's and the Windows SDK's. `include` is the `INCLUDE` variable of a developer prompt, which
-/// says exactly; without it the newest of each under `program_files` (the `ProgramFiles` and
-/// `ProgramFiles(x86)` directories) is taken, in the order cl.exe searches them.
-// This crate is std-only by design, so it lists directories and splits strings with std rather than
-// bun_sys / bun_core::strings.
-#[allow(clippy::disallowed_methods)]
-pub fn msvc_system_include_dirs(include: Option<&str>, program_files: &[&str]) -> Vec<String> {
-    let is_dir = |dir: &str| std::path::Path::new(dir).is_dir();
-    if let Some(list) = include {
-        let mut dirs = Vec::new();
-        let mut rest = list;
-        loop {
-            let (dir, after) = match rest.split_once(';') {
-                Some((dir, after)) => (dir, Some(after)),
-                None => (rest, None),
-            };
-            if !dir.is_empty() && is_dir(dir) {
-                dirs.push(dir.to_string());
-            }
-            match after {
-                Some(after) => rest = after,
-                None => break,
-            }
-        }
-        if !dirs.is_empty() {
-            return dirs;
-        }
-    }
-    // The subdirectory of `dir` with the highest dotted version number for a name, for which `wanted` holds.
-    let newest = |dir: &str, wanted: &dyn Fn(&str) -> bool| -> Option<String> {
-        let version = |name: &str| -> Vec<u64> {
-            name.split('.')
-                .map(|part| part.parse().unwrap_or(0))
-                .collect()
-        };
-        let mut best: Option<(Vec<u64>, String)> = None;
-        for entry in std::fs::read_dir(dir).ok()?.flatten() {
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            let path = format!("{dir}\\{name}");
-            if !wanted(&path) {
-                continue;
-            }
-            let key = version(&name);
-            if best.as_ref().is_none_or(|(other, _)| key > *other) {
-                best = Some((key, path));
-            }
-        }
-        best.map(|(_, path)| path)
-    };
-    let mut dirs = Vec::new();
-    // <ProgramFiles>\Microsoft Visual Studio\<year>\<edition>\VC\Tools\MSVC\<version>\include
-    'compiler: for root in program_files {
-        let studio = format!("{root}\\Microsoft Visual Studio");
-        let mut years: Vec<String> = match std::fs::read_dir(&studio) {
-            Ok(entries) => entries
-                .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .collect(),
-            Err(_) => continue,
-        };
-        years.sort();
-        for year in years.iter().rev() {
-            for edition in [
-                "Enterprise",
-                "Professional",
-                "Community",
-                "BuildTools",
-                "Preview",
-            ] {
-                let tools = format!("{studio}\\{year}\\{edition}\\VC\\Tools\\MSVC");
-                if let Some(toolset) = newest(&tools, &|path| {
-                    std::path::Path::new(&format!("{path}\\include\\vcruntime.h")).is_file()
-                }) {
-                    dirs.push(format!("{toolset}\\include"));
-                    break 'compiler;
-                }
-            }
-        }
-    }
-    // <ProgramFiles(x86)>\Windows Kits\10\Include\<version>\{ucrt,shared,um}
-    for root in program_files {
-        let kits = format!("{root}\\Windows Kits\\10\\Include");
-        if let Some(sdk) = newest(&kits, &|path| {
-            std::path::Path::new(&format!("{path}\\ucrt\\stdio.h")).is_file()
-        }) {
-            for part in ["ucrt", "shared", "um"] {
-                let dir = format!("{sdk}\\{part}");
-                if is_dir(&dir) {
-                    dirs.push(dir);
-                }
-            }
-            break;
-        }
-    }
-    dirs
 }
 
 /// A Windows target is compiled as Microsoft C (its predefined macros, its C runtime's own
 /// standard headers, its `inline`) unless a GNU C version is claimed, the way MinGW does.
-fn is_microsoft_c(options: &CompileOptions<'_>) -> bool {
+fn is_microsoft_c(options: &CompileOptions) -> bool {
     options.target.os == Os::Windows && options.gnu_version.is_none()
-}
-
-/// The directories a hosted compiler searches for `<...>` headers on this machine.
-pub fn default_system_include_dirs(target: Target) -> Vec<String> {
-    if target.os == Os::MacOs && cfg!(target_os = "macos") {
-        // The C library's headers are in the SDK, which `xcrun --show-sdk-path` would name; these
-        // are the places it names. (A caller that honours `SDKROOT` adds that one itself.)
-        let roots = [
-            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
-            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
-        ];
-        let mut dirs: Vec<String> = ["/usr/local/include", "/opt/homebrew/include"]
-            .into_iter()
-            .filter(|dir| std::path::Path::new(dir).is_dir())
-            .map(str::to_string)
-            .collect();
-        if let Some(root) = roots
-            .into_iter()
-            .find(|root| std::path::Path::new(&format!("{root}/usr/include/stdio.h")).is_file())
-        {
-            dirs.push(format!("{root}/usr/include"));
-        }
-        return dirs;
-    }
-    if target.os != Os::Linux || !cfg!(target_os = "linux") {
-        return Vec::new();
-    }
-    let multiarch = match target.arch {
-        Arch::X86_64 => "/usr/include/x86_64-linux-gnu",
-        Arch::Aarch64 => "/usr/include/aarch64-linux-gnu",
-    };
-    ["/usr/local/include", multiarch, "/usr/include"]
-        .into_iter()
-        .filter(|dir| std::path::Path::new(dir).is_dir())
-        .map(str::to_string)
-        .collect()
 }
 
 /// Stack for the compiler thread. The parser, code generator and AST destructors recurse
@@ -351,7 +111,7 @@ const COMPILER_STACK_BYTES: usize = 64 << 20;
 
 fn on_compiler_thread<T: Send>(
     filename: &str,
-    work: impl FnOnce() -> Result<T, Vec<Diagnostic>> + Send,
+    work: impl FnOnce() -> T + Send,
 ) -> Result<T, Vec<Diagnostic>> {
     std::thread::scope(|scope| {
         let worker = std::thread::Builder::new()
@@ -368,19 +128,21 @@ fn on_compiler_thread<T: Send>(
             }]
         };
         match worker {
-            Ok(handle) => handle.join().unwrap_or_else(|_| {
-                Err(failed(
-                    "internal compiler error: the compiler panicked".to_string(),
-                ))
-            }),
+            Ok(handle) => handle
+                .join()
+                .map_err(|_| failed("internal compiler error: the compiler panicked".to_string())),
             Err(e) => Err(failed(format!("cannot start the compiler thread: {e}"))),
         }
     })
 }
 
-/// Compiles one C translation unit to a serialized BIR module, with no include path.
-pub fn compile(source: &[u8], filename: &str, target: Target) -> Result<Vec<u8>, Vec<Diagnostic>> {
-    compile_with(source, filename, &CompileOptions::new(target))
+/// What compiling produced.
+pub struct Compilation {
+    /// The module, or what stopped the compiler. At most one error is reported per unit.
+    pub result: Result<Output, Vec<Diagnostic>>,
+    /// Every file read that is not one of the system's headers: the sources and what they
+    /// `#include`, whether or not compiling succeeded.
+    pub files_read: Vec<String>,
 }
 
 /// A successful compilation: the module plus anything the compiler wanted to say.
@@ -392,11 +154,6 @@ pub struct Output {
     /// `#pragma comment(lib, "name")`: the shared libraries to search for the module's
     /// externs, in source order without duplicates. The same list is in the BIR.
     pub libraries: Vec<String>,
-    /// How many local arrays and structures the compiler replaced by their elements (a
-    /// statistic, for `bun-cc --stats`).
-    pub replaced_aggregates: usize,
-    /// How many byte-by-byte reads and writes of an integer became one load, one store.
-    pub combined_accesses: (usize, usize),
 }
 
 /// One translation unit after code generation.
@@ -407,42 +164,20 @@ struct Compiled {
     undefined_tls: Vec<Diagnostic>,
 }
 
-/// Compiles one C translation unit to a serialized BIR module.
-pub fn compile_with(
-    source: &[u8],
-    filename: &str,
-    options: &CompileOptions<'_>,
-) -> Result<Vec<u8>, Vec<Diagnostic>> {
-    compile_with_warnings(source, filename, options).map(|output| output.bir)
+/// Compiles the translation units and links them into one BIR module: a function or object
+/// one unit defines and another declares `extern` is resolved inside the module, `static`
+/// names stay private to their unit, and tentative definitions of one object merge. Defining
+/// a symbol twice is an error.
+pub fn compile_many(units: &[(&[u8], &str)], options: &CompileOptions) -> Compilation {
+    let mut files_read = Vec::new();
+    let result = compile_and_link(units, options, &mut files_read);
+    Compilation { result, files_read }
 }
 
-/// Like [`compile_with`], and also returns the warnings.
-pub fn compile_with_warnings(
-    source: &[u8],
-    filename: &str,
-    options: &CompileOptions<'_>,
-) -> Result<Output, Vec<Diagnostic>> {
-    let compiled = compile_unit(source, filename, options)?;
-    // Nothing else can define what this unit only declares.
-    if !compiled.undefined_tls.is_empty() {
-        return Err(compiled.undefined_tls);
-    }
-    Ok(Output {
-        replaced_aggregates: compiled.unit.replaced_aggregates,
-        combined_accesses: compiled.unit.combined_accesses,
-        libraries: compiled.unit.module.libraries.clone(),
-        bir: compiled.unit.module.encode(),
-        warnings: compiled.warnings,
-    })
-}
-
-/// Compiles several translation units and links them into one BIR module: a function or
-/// object one unit defines and another declares `extern` is resolved inside the module,
-/// `static` names stay private to their unit, and tentative definitions of one object
-/// merge. Defining a symbol twice is an error.
-pub fn compile_many(
+fn compile_and_link(
     units: &[(&[u8], &str)],
-    options: &CompileOptions<'_>,
+    options: &CompileOptions,
+    files_read: &mut Vec<String>,
 ) -> Result<Output, Vec<Diagnostic>> {
     let link_error = |file: &str, message: String| Diagnostic {
         severity: Severity::Error,
@@ -456,16 +191,13 @@ pub fn compile_many(
     let mut undefined_tls = Vec::with_capacity(units.len());
     let names: Vec<String> = units.iter().map(|(_, name)| (*name).to_string()).collect();
     for (source, filename) in units {
-        let one = compile_unit(source, filename, options)?;
+        files_read.push((*filename).to_string());
+        let one = compile_unit(source, filename, options, files_read)?;
         compiled.push(one.unit);
         warnings.extend(one.warnings);
         undefined_tls.push(one.undefined_tls);
     }
     let name_of = |unit: usize| names.get(unit).map_or("<no input>", String::as_str);
-    let replaced_aggregates = compiled.iter().map(|u| u.replaced_aggregates).sum();
-    let combined_accesses = compiled.iter().fold((0, 0), |sum, u| {
-        (sum.0 + u.combined_accesses.0, sum.1 + u.combined_accesses.1)
-    });
     let linked = match link::link(&compiled, &names) {
         Ok(linked) => linked,
         Err(e) => {
@@ -497,8 +229,6 @@ pub fn compile_many(
             }),
     );
     Ok(Output {
-        replaced_aggregates,
-        combined_accesses,
         libraries: linked.module.libraries.clone(),
         bir: linked.module.encode(),
         warnings,
@@ -509,61 +239,74 @@ pub fn compile_many(
 fn compile_unit(
     source: &[u8],
     filename: &str,
-    options: &CompileOptions<'_>,
+    options: &CompileOptions,
+    files_read: &mut Vec<String>,
 ) -> Result<Compiled, Vec<Diagnostic>> {
-    on_compiler_thread(filename, || {
+    let (result, mut read) = on_compiler_thread(filename, || {
         let files = Rc::new(RefCell::new(FileTable::default()));
-        let result = (|| {
-            let tokens = preprocessor(source, filename, options, &files)?;
-            let mut program = parser::Parser::new(tokens, options.target)?
-                .replacing_aggregates(options.replace_aggregates)
-                .microsoft_c(is_microsoft_c(options))
-                .parse_program()?;
-            files.borrow_mut().warnings.append(&mut program.warnings);
-            codegen::generate(&program)
-        })();
-        let mut unit = result.map_err(|e| diagnostic(&files.borrow(), e))?;
-        unit.module.libraries.clone_from(&files.borrow().libraries);
-        if let Err(msg) = bir::validate(&unit.module) {
-            return Err(vec![Diagnostic {
-                severity: Severity::Error,
-                file: filename.to_string(),
-                line: 0,
-                col: 0,
-                message: format!("internal compiler error: generated invalid BIR: {msg}"),
-            }]);
-        }
-        let files = files.borrow();
-        let warnings = files
-            .warnings
-            .iter()
-            .map(|(loc, message)| Diagnostic {
-                severity: Severity::Warning,
-                file: files.name(loc.file).to_string(),
-                line: loc.line,
-                col: loc.col,
-                message: message.clone(),
-            })
-            .collect();
-        let undefined_tls = unit
-            .tls_externs
-            .iter()
-            .map(|t| Diagnostic {
-                severity: Severity::Error,
-                file: files.name(t.loc.file).to_string(),
-                line: t.loc.line,
-                col: t.loc.col,
-                message: format!(
-                    "thread-local variable '{}' is declared but not defined in any translation unit",
-                    t.name
-                ),
-            })
-            .collect();
-        Ok(Compiled {
-            unit,
-            warnings,
-            undefined_tls,
+        let result = compile_unit_with(source, filename, options, &files);
+        let read = std::mem::take(&mut files.borrow_mut().read);
+        (result, read)
+    })?;
+    files_read.append(&mut read);
+    result
+}
+
+fn compile_unit_with(
+    source: &[u8],
+    filename: &str,
+    options: &CompileOptions,
+    files: &Rc<RefCell<FileTable>>,
+) -> Result<Compiled, Vec<Diagnostic>> {
+    let result = (|| {
+        let tokens = preprocessor(source, filename, options, files)?;
+        let mut program = parser::Parser::new(tokens, options.target)?
+            .microsoft_c(is_microsoft_c(options))
+            .parse_program()?;
+        files.borrow_mut().warnings.append(&mut program.warnings);
+        codegen::generate(&program)
+    })();
+    let mut unit = result.map_err(|e| diagnostic(&files.borrow(), e))?;
+    unit.module.libraries.clone_from(&files.borrow().libraries);
+    if let Err(msg) = bir::validate(&unit.module) {
+        return Err(vec![Diagnostic {
+            severity: Severity::Error,
+            file: filename.to_string(),
+            line: 0,
+            col: 0,
+            message: format!("internal compiler error: generated invalid BIR: {msg}"),
+        }]);
+    }
+    let files = files.borrow();
+    let warnings = files
+        .warnings
+        .iter()
+        .map(|(loc, message)| Diagnostic {
+            severity: Severity::Warning,
+            file: files.name(loc.file).to_string(),
+            line: loc.line,
+            col: loc.col,
+            message: message.clone(),
         })
+        .collect();
+    let undefined_tls = unit
+        .tls_externs
+        .iter()
+        .map(|t| Diagnostic {
+            severity: Severity::Error,
+            file: files.name(t.loc.file).to_string(),
+            line: t.loc.line,
+            col: t.loc.col,
+            message: format!(
+                "thread-local variable '{}' is declared but not defined in any translation unit",
+                t.name
+            ),
+        })
+        .collect();
+    Ok(Compiled {
+        unit,
+        warnings,
+        undefined_tls,
     })
 }
 
@@ -573,7 +316,7 @@ fn compile_unit(
 pub fn typescript_declarations(
     source: &[u8],
     filename: &str,
-    options: &CompileOptions<'_>,
+    options: &CompileOptions,
 ) -> Result<String, Vec<Diagnostic>> {
     on_compiler_thread(filename, || {
         let files = Rc::new(RefCell::new(FileTable::default()));
@@ -585,143 +328,32 @@ pub fn typescript_declarations(
             Ok(dts::typescript_declarations(&program))
         })();
         result.map_err(|e| diagnostic(&files.borrow(), e))
-    })
+    })?
 }
 
-/// Runs only the preprocessor and renders the resulting tokens as text (`-E`).
-pub fn preprocess(
+fn preprocessor(
     source: &[u8],
     filename: &str,
-    options: &CompileOptions<'_>,
-) -> Result<String, Vec<Diagnostic>> {
-    on_compiler_thread(filename, || {
-        let files = Rc::new(RefCell::new(FileTable::default()));
-        let result = (|| {
-            let mut pp = preprocessor_for(source, filename, options, &files, false)?;
-            let mut out: Vec<u8> = Vec::new();
-            let mut previous: Option<token::PpToken> = None;
-            loop {
-                let t = pp.next_token()?;
-                if t.kind == PpKind::Eof {
-                    out.push(b'\n');
-                    return Ok(token::display_bytes(&out));
-                }
-                if let Some(prev) = &previous {
-                    if t.at_start_of_line {
-                        out.push(b'\n');
-                    } else if t.has_leading_space || needs_space(prev, &t) {
-                        out.push(b' ');
-                    }
-                }
-                if t.kind == PpKind::Pragma && !t.text.starts_with(b"pack ") {
-                    out.extend_from_slice(b"#pragma ");
-                    out.extend_from_slice(&t.text);
-                } else if t.kind == PpKind::Pragma {
-                    // `pack push 1` is the canonical form of `pack(push, 1)`.
-                    out.extend_from_slice(b"#pragma ");
-                    let mut words: Vec<&[u8]> = Vec::new();
-                    let mut start = 0;
-                    for end in 0..=t.text.len() {
-                        if end == t.text.len() || t.text[end] == b' ' {
-                            words.push(&t.text[start..end]);
-                            start = end + 1;
-                        }
-                    }
-                    let name = words.remove(0);
-                    out.extend_from_slice(name);
-                    out.push(b'(');
-                    let words: Vec<&[u8]> = words
-                        .into_iter()
-                        .filter(|w| *w != b"set" && *w != b"default")
-                        .collect();
-                    out.extend_from_slice(&words.join(&b", "[..]));
-                    out.push(b')');
-                } else {
-                    out.extend_from_slice(pp::spelling(&t));
-                }
-                previous = Some(t);
-            }
-        })();
-        result.map_err(|e| diagnostic(&files.borrow(), e))
-    })
-}
-
-/// Whether printing `b` right after `a` would lex differently than the two tokens.
-fn needs_space(a: &token::PpToken, b: &token::PpToken) -> bool {
-    let wordy = |t: &token::PpToken| {
-        matches!(
-            t.kind,
-            PpKind::Ident | PpKind::Number | PpKind::CharLit | PpKind::StrLit
-        )
-    };
-    let punct = |t: &token::PpToken| matches!(t.kind, PpKind::Punct(_) | PpKind::Other);
-    (wordy(a) && wordy(b))
-        || (punct(a) && punct(b))
-        || (a.kind == PpKind::Number && punct(b))
-        || (punct(a) && b.kind == PpKind::Number)
-}
-
-fn preprocessor<'a>(
-    source: &[u8],
-    filename: &str,
-    options: &'a CompileOptions<'_>,
+    options: &CompileOptions,
     files: &Rc<RefCell<FileTable>>,
-) -> token::Res<Preprocessor<'a>> {
-    preprocessor_for(source, filename, options, files, true)
-}
-
-/// `for_compiling` adds what only the compiler proper wants ahead of the source (the
-/// definitions of Microsoft's intrinsics), which `-E` leaves out of its output.
-fn preprocessor_for<'a>(
-    source: &[u8],
-    filename: &str,
-    options: &'a CompileOptions<'_>,
-    files: &Rc<RefCell<FileTable>>,
-    for_compiling: bool,
-) -> token::Res<Preprocessor<'a>> {
-    let mut search: Vec<SearchDir> = Vec::new();
-    for dir in &options.include_dirs {
-        search.push(SearchDir::Dir(Rc::from(dir.as_str())));
-    }
-    search.push(SearchDir::Builtin);
+) -> token::Res<Preprocessor> {
+    let mut search: Vec<SearchDir> = vec![SearchDir::Builtin];
     for dir in &options.system_include_dirs {
         search.push(SearchDir::Dir(Rc::from(dir.as_str())));
     }
-    let mut pp = Preprocessor::new(
-        Rc::clone(files),
-        options.file_provider,
-        options.target,
-        search,
-        filename,
-    );
+    let mut pp = Preprocessor::new(Rc::clone(files), options.target, search, filename);
     pp.msvc = is_microsoft_c(options);
     pp.define_builtins();
 
-    let mut command_line = String::new();
-    for (name, value) in &options.defines {
-        command_line.push_str("#define ");
-        command_line.push_str(name);
-        command_line.push(' ');
-        command_line.push_str(value.as_deref().unwrap_or("1"));
-        command_line.push('\n');
-    }
-    for name in &options.undefines {
-        command_line.push_str("#undef ");
-        command_line.push_str(name);
-        command_line.push('\n');
-    }
     // Sources are stacked, so the last one pushed is read first.
     pp.push_source(filename, Rc::from(source), None);
-    if options.target.os == Os::Windows && for_compiling {
+    if options.target.os == Os::Windows {
         // What Microsoft's intrinsics do: see `parser_ms.rs`.
         let prelude = format!(
             "#define __BUN_MS(ret, name, params, ...) static __inline __attribute__((__always_inline__, __unused__)) ret __bun_ms_##name params __VA_ARGS__\n{}\n#undef __BUN_MS\n",
             pp_directive::MS_INTRINSICS
         );
         pp.push_source("<intrinsics>", Rc::from(prelude.as_bytes()), None);
-    }
-    if !command_line.is_empty() {
-        pp.push_source("<command line>", Rc::from(command_line.as_bytes()), None);
     }
     pp.push_source(
         "<built-in>",
@@ -741,54 +373,6 @@ fn diagnostic(files: &FileTable, e: token::Error) -> Vec<Diagnostic> {
     }]
 }
 
-/// The operand of `-fgnuc-version=`: `4.2.1`, `9`, `13.2`, or `0` for none.
-pub fn parse_gnu_version(text: &str) -> Option<Option<(u32, u32, u32)>> {
-    let mut parts = [0u32; 3];
-    let mut count = 0;
-    let mut digits = 0;
-    for &b in text.as_bytes() {
-        match b {
-            b'0'..=b'9' if count < 3 => {
-                parts[count] = parts[count]
-                    .checked_mul(10)?
-                    .checked_add(u32::from(b - b'0'))?;
-                digits += 1;
-            }
-            b'.' if digits > 0 && count < 2 => {
-                count += 1;
-                digits = 0;
-            }
-            _ => return None,
-        }
-    }
-    if digits == 0 {
-        return None;
-    }
-    Some((parts[0] != 0).then_some((parts[0], parts[1], parts[2])))
-}
-
-/// The macros predefined for `target`, as `#define` lines.
-pub fn predefined_macros(target: Target) -> String {
-    pp_predef::predefined_macros(target, None)
-}
-
-/// The same when claiming to be GNU C `gnu_version` (see `CompileOptions::gnu_version`).
-pub fn predefined_macros_as_gnu(target: Target, gnu_version: (u32, u32, u32)) -> String {
-    pp_predef::predefined_macros(target, Some(gnu_version))
-}
-
-/// Parses and type-checks `source` without generating code.
-#[cfg(test)]
-pub(crate) fn parse_for_tests(source: &str, target: Target) -> ast::Program {
-    let files = Rc::new(RefCell::new(FileTable::default()));
-    let options = CompileOptions::new(target);
-    let tokens = preprocessor(source.as_bytes(), "test.c", &options, &files).expect("preprocessor");
-    match parser::Parser::new(tokens, target).and_then(parser::Parser::parse_program) {
-        Ok(program) => program,
-        Err(e) => panic!("{}:{}: {}", e.loc.line, e.loc.col, e.msg),
-    }
-}
-
 /// Decodes and checks a serialized BIR module.
 pub fn validate(bir: &[u8]) -> Result<(), String> {
     bir::validate(&bir::Module::decode(bir)?)
@@ -806,37 +390,4 @@ pub fn export_names(bir: &[u8]) -> Result<Vec<String>, String> {
 /// Renders a serialized BIR module as text.
 pub fn disassemble(bir: &[u8]) -> Result<String, String> {
     bir::disassemble(&bir::Module::decode(bir)?)
-}
-
-/// Lists the preprocessing tokens of `source`, one per line, with their spacing flags.
-pub fn dump_tokens(source: &[u8], filename: &str) -> Result<String, Vec<Diagnostic>> {
-    use fmt::Write as _;
-    let mut files = FileTable::default();
-    let file = files.add(filename);
-    let mut lexer = lexer::Lexer::new(Rc::from(source), file);
-    let mut out = String::new();
-    loop {
-        let t = lexer.next_token().map_err(|e| diagnostic(&files, e))?;
-        if t.kind == PpKind::Eof {
-            return Ok(out);
-        }
-        let _ = writeln!(
-            out,
-            "{}:{}: {:?} {}{}{}",
-            t.loc.line,
-            t.loc.col,
-            t.kind,
-            token::display_bytes(pp::spelling(&t)),
-            if t.at_start_of_line {
-                " [start-of-line]"
-            } else {
-                ""
-            },
-            if t.has_leading_space {
-                " [leading-space]"
-            } else {
-                ""
-            },
-        );
-    }
 }

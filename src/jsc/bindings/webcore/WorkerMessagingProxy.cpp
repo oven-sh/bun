@@ -55,6 +55,7 @@ void* WebWorker__create(
     void* parentVM,
     const BunString* name,
     const BunString* url,
+    const BunString* evalSource,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -71,7 +72,10 @@ void* WebWorker__create(
     size_t preloadModulesLen,
     BunString* execArgvPreloadModulesPtr,
     size_t execArgvPreloadModulesLen,
-    size_t execArgvEvalPreloadCount);
+    size_t execArgvEvalPreloadCount,
+    size_t execArgvBunPreloadCount,
+    size_t execArgvRequirePreloadCount,
+    uint8_t execArgvEvalMode);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -153,11 +157,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     BunString errorMessage = BunStringEmpty;
     BunString name = Bun::toString(m_options.name);
     BunString url = Bun::toString(scriptURL);
+    BunString evalSource = Bun::toString(m_options.evalSource);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
         &name,
         &url,
+        &evalSource,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
@@ -174,7 +180,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         preloadModules.size(),
         execArgvPreloadModules.begin(),
         execArgvPreloadModules.size(),
-        m_options.execArgvEvalPreloadCount);
+        m_options.execArgvEvalPreloadCount,
+        m_options.execArgvBunPreloadCount,
+        m_options.execArgvRequirePreloadCount,
+        static_cast<uint8_t>(m_options.execArgvEvalMode));
     m_options.preloadModules.clear();
     m_options.execArgvPreloadModules.clear();
 

@@ -1937,6 +1937,9 @@ impl TestCommand {
         vm.worker_preloads.clone_from(&vm.preload);
         vm.worker_eval_preloads
             .clone_from(&ctx.worker_eval_preloads);
+        vm.worker_preload_require_start = ctx.worker_preload_require_start;
+        vm.worker_preload_require_count = ctx.worker_preload_require_count;
+        vm.worker_eval_mode = ctx.worker_eval_mode;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,

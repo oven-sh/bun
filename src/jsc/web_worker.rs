@@ -46,11 +46,42 @@ use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
+use bun_options_types::context::WorkerEvalMode;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
+
+fn eval_source_has_module_syntax(source_bytes: &[u8]) -> bool {
+    if source_bytes.is_empty() {
+        return false;
+    }
+
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"[worker eval]".as_slice(), source_bytes);
+    let define = bun_js_parser::Define::default();
+    let options = bun_js_parser::ParserOptions::init(
+        bun_js_parser::options::JSX::Pragma::default(),
+        bun_js_parser::options::Loader::Tsx,
+    );
+    let mut parse_log = bun_ast::Log::default();
+    let Ok(parser) = bun_js_parser::Parser::init(options, &mut parse_log, &source, &define, &arena)
+    else {
+        return false;
+    };
+    let Ok(bun_js_parser::Result::Ast(ast)) = parser.parse() else {
+        return false;
+    };
+    matches!(
+        ast.exports_kind,
+        bun_ast::ExportsKind::Esm
+            | bun_ast::ExportsKind::EsmWithDynamicFallback
+            | bun_ast::ExportsKind::EsmWithDynamicFallbackFromCjs
+    )
+}
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct WebWorker {
@@ -84,8 +115,13 @@ pub struct WebWorker {
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    preload_require_start: usize,
+    preload_require_count: usize,
     worker_preloads: Vec<Box<[u8]>>,
     worker_eval_preloads: Vec<Box<[u8]>>,
+    worker_preload_require_start: usize,
+    worker_preload_require_count: usize,
+    worker_eval_mode: WorkerEvalMode,
     name: bun_core::ZBox,
 
     // ---- Cross-thread ----------------------------------------------------------
@@ -287,6 +323,7 @@ impl WebWorker {
         parent: *mut VirtualMachine,
         name_str: &BunString,
         specifier_str: &BunString,
+        eval_source_str: &BunString,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,
@@ -304,6 +341,9 @@ impl WebWorker {
         exec_argv_preload_modules_ptr: *const BunString,
         exec_argv_preload_modules_len: usize,
         exec_argv_eval_preload_count: usize,
+        exec_argv_bun_preload_count: usize,
+        exec_argv_require_preload_count: usize,
+        exec_argv_eval_mode: u8,
     ) -> *mut WebWorker {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
@@ -361,10 +401,19 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
-        let (worker_preloads, worker_eval_preloads) = if inherit_exec_argv {
+        let (
+            worker_preloads,
+            worker_eval_preloads,
+            worker_preload_require_start,
+            worker_preload_require_count,
+            worker_eval_mode,
+        ) = if inherit_exec_argv {
             (
                 parent_ref.worker_preloads.clone(),
                 parent_ref.worker_eval_preloads.clone(),
+                parent_ref.worker_preload_require_start,
+                parent_ref.worker_preload_require_count,
+                parent_ref.worker_eval_mode,
             )
         } else {
             let worker_preloads: Vec<Box<[u8]>> = exec_argv_preload_modules
@@ -373,15 +422,46 @@ impl WebWorker {
                 .collect();
             let worker_eval_preloads =
                 worker_preloads[..exec_argv_eval_preload_count.min(worker_preloads.len())].to_vec();
-            (worker_preloads, worker_eval_preloads)
+            let worker_eval_mode = match exec_argv_eval_mode {
+                x if x == WorkerEvalMode::CommonJS as u8 => WorkerEvalMode::CommonJS,
+                x if x == WorkerEvalMode::Module as u8 => WorkerEvalMode::Module,
+                _ => WorkerEvalMode::Auto,
+            };
+            (
+                worker_preloads,
+                worker_eval_preloads,
+                exec_argv_bun_preload_count,
+                exec_argv_require_preload_count,
+                worker_eval_mode,
+            )
         };
+        let mut preload_require_start = 0;
+        let mut preload_require_count = 0;
         if is_node_worker {
-            let exec_arg_preloads = if eval_mode {
-                &worker_eval_preloads
+            let include_import_preloads = if !eval_mode {
+                true
             } else {
+                match worker_eval_mode {
+                    WorkerEvalMode::Auto => {
+                        worker_preloads.len() > worker_eval_preloads.len()
+                            && eval_source_has_module_syntax(eval_source_str.to_utf8().slice())
+                    }
+                    WorkerEvalMode::CommonJS => false,
+                    WorkerEvalMode::Module => true,
+                }
+            };
+            let exec_arg_preloads = if include_import_preloads {
                 &worker_preloads
+            } else {
+                &worker_eval_preloads
             };
             preloads.splice(0..0, exec_arg_preloads.iter().cloned());
+            preload_require_start = worker_preload_require_start.min(exec_arg_preloads.len());
+            preload_require_count = worker_preload_require_count.min(
+                exec_arg_preloads
+                    .len()
+                    .saturating_sub(preload_require_start),
+            );
         }
         let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
@@ -446,8 +526,13 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            preload_require_start,
+            preload_require_count,
             worker_preloads,
             worker_eval_preloads,
+            worker_preload_require_start,
+            worker_preload_require_count,
+            worker_eval_mode,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -841,6 +926,11 @@ impl WebWorker {
         vm.as_mut()
             .worker_eval_preloads
             .clone_from(&self.worker_eval_preloads);
+        vm.as_mut().preload_require_start = self.preload_require_start;
+        vm.as_mut().preload_require_count = self.preload_require_count;
+        vm.as_mut().worker_preload_require_start = self.worker_preload_require_start;
+        vm.as_mut().worker_preload_require_count = self.worker_preload_require_count;
+        vm.as_mut().worker_eval_mode = self.worker_eval_mode;
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from

@@ -134,12 +134,11 @@ static bool isNodeWorkerDisallowedExecArgv(const String& flag)
         || flag == "--zero-fill-buffers"_s;
 }
 
-static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execArgv, Vector<String>& outputPreloads, size_t& evalPreloadCount)
+static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execArgv, Vector<String>& outputPreloads, size_t& evalPreloadCount, size_t& bunPreloadCount, size_t& requirePreloadCount, WorkerEvalMode& evalMode)
 {
     Vector<String> bunPreloads;
     Vector<String> requirePreloads;
     Vector<String> importPreloads;
-    bool evalAsModule = false;
 
     for (size_t i = 0; i < execArgv.size(); i++) {
         const String& argument = execArgv[i];
@@ -185,7 +184,12 @@ static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execA
             } else {
                 return makeString("Initiated Worker with invalid execArgv flags: "_s, flag, " requires an argument"_s);
             }
-            evalAsModule = value == "module"_s || value == "module-typescript"_s;
+            if (value == "module"_s || value == "module-typescript"_s)
+                evalMode = WorkerEvalMode::Module;
+            else if (value == "commonjs"_s || value == "commonjs-typescript"_s)
+                evalMode = WorkerEvalMode::CommonJS;
+            else
+                evalMode = WorkerEvalMode::Auto;
             continue;
         } else if (isNodeWorkerBooleanExecArgv(flag)) {
             continue;
@@ -210,12 +214,12 @@ static std::optional<String> parseNodeWorkerExecArgv(const Vector<String>& execA
         return makeString("Initiated Worker with invalid execArgv flags: "_s, argument);
     }
 
+    bunPreloadCount = bunPreloads.size();
+    requirePreloadCount = requirePreloads.size();
     outputPreloads.appendVector(WTF::move(bunPreloads));
     outputPreloads.appendVector(WTF::move(requirePreloads));
     evalPreloadCount = outputPreloads.size();
     outputPreloads.appendVector(WTF::move(importPreloads));
-    if (evalAsModule)
-        evalPreloadCount = outputPreloads.size();
     return std::nullopt;
 }
 
@@ -304,7 +308,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // every option has validated (below).
     bool shareEnv = false;
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
+    if (callFrame->argumentCount() >= 3) {
         nodeWorkerObject = callFrame->argument(2);
         options.kind = WorkerOptions::Kind::Node;
     }
@@ -340,6 +344,14 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         RETURN_IF_EXCEPTION(throwScope, {});
         if (eval) {
             options.evalMode = eval.toBoolean(lexicalGlobalObject);
+        }
+
+        if (options.evalMode && options.kind == WorkerOptions::Kind::Node && callFrame->argumentCount() >= 4) {
+            auto evalSource = callFrame->argument(3);
+            if (evalSource.isString()) {
+                options.evalSource = evalSource.toWTFString(lexicalGlobalObject).isolatedCopy();
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
         }
 
         auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s));
@@ -477,7 +489,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
             if (options.kind == WorkerOptions::Kind::Node) {
-                if (auto error = parseNodeWorkerExecArgv(*options.execArgv, options.execArgvPreloadModules, options.execArgvEvalPreloadCount)) {
+                if (auto error = parseNodeWorkerExecArgv(*options.execArgv, options.execArgvPreloadModules, options.execArgvEvalPreloadCount, options.execArgvBunPreloadCount, options.execArgvRequirePreloadCount, options.execArgvEvalMode)) {
                     throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, *error));
                     return encodedJSValue();
                 }

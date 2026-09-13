@@ -830,6 +830,7 @@ class Worker extends EventEmitter {
 
     this.#name = normalizeWorkerName(options.name);
 
+    let evalSource: string | undefined;
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
       // node requires the source to be a string when eval is set, rather than
@@ -840,6 +841,7 @@ class Worker extends EventEmitter {
           options[builtinsGeneratorHatesEval],
           "must be false when 'filename' is not a string",
         );
+      evalSource = filename;
       // eval: the source becomes a blob: URL the worker imports as its entry point.
       // The URL must outlive the worker: revoked on constructor failure (catch below),
       // on exit (#onClose), and via urlRevokeRegistry as a GC safety net.
@@ -926,7 +928,7 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this, evalSource);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).

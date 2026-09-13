@@ -379,6 +379,18 @@ describe("execArgv preloads", () => {
         globalThis.execArgvPreloads ??= [];
         globalThis.execArgvPreloads.push("require");
       `,
+      "node_modules/worker-preload-conditions/package.json": JSON.stringify({
+        name: "worker-preload-conditions",
+        exports: { import: "./import.mjs", require: "./require.cjs" },
+      }),
+      "node_modules/worker-preload-conditions/import.mjs": `
+        globalThis.execArgvPreloads ??= [];
+        globalThis.execArgvPreloads.push("condition-import");
+      `,
+      "node_modules/worker-preload-conditions/require.cjs": `
+        globalThis.execArgvPreloads ??= [];
+        globalThis.execArgvPreloads.push("condition-require");
+      `,
     });
     const root = String(fixtureDir);
     entry = join(root, "entry.mjs");
@@ -467,6 +479,29 @@ describe("execArgv preloads", () => {
     expect(await exited).toBe(0);
   });
 
+  test("resolves require and import preloads with their matching package conditions", async () => {
+    const source = `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(${JSON.stringify(entry)}, {
+        execArgv: ["--require", "worker-preload-conditions", "--import", "worker-preload-conditions"],
+      });
+      worker.on("message", message => console.log(JSON.stringify(message.preloads)));
+    `;
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      cwd: String(fixtureDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '["condition-require","condition-import"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("reports preload failures on the Worker", async () => {
     expect(
       await runPreloadFailureProbe("data:text/javascript,throw%20new%20Error(%22execArgv%20preload%20failed%22)"),
@@ -511,7 +546,11 @@ describe("execArgv preloads", () => {
     });
   });
 
-  describe.each(["module", "module-typescript"])("%s input type", inputType => {
+  describe.each([
+    ["syntax-detected module", null],
+    ["module input type", "module"],
+    ["TypeScript module input type", "module-typescript"],
+  ])("%s", (_name, inputType) => {
     test("inherits import preloads for eval workers", async () => {
       const source = `
         const { Worker } = require("node:worker_threads");
@@ -522,7 +561,7 @@ describe("execArgv preloads", () => {
         worker.on("message", message => console.log(JSON.stringify(message)));
       `;
       const proc = Bun.spawn({
-        cmd: [bunExe(), "--input-type", inputType, "--import", importPreload, "-e", source],
+        cmd: [bunExe(), ...(inputType ? ["--input-type", inputType] : []), "--import", importPreload, "-e", source],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

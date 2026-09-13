@@ -1027,6 +1027,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
+            ctx.worker_preload_require_start = ctx.preloads.len() + preloads.len();
+            ctx.worker_preload_require_count = preloads2.len();
+            ctx.worker_eval_mode = match args.option(b"--input-type") {
+                Some(value) if value == b"commonjs" || value == b"commonjs-typescript" => {
+                    bun_options_types::context::WorkerEvalMode::CommonJS
+                }
+                Some(value) if value == b"module" || value == b"module-typescript" => {
+                    bun_options_types::context::WorkerEvalMode::Module
+                }
+                _ => bun_options_types::context::WorkerEvalMode::Auto,
+            };
             ctx.worker_eval_preloads.clone_from(&ctx.preloads);
             ctx.worker_eval_preloads.extend(
                 preloads
@@ -1034,13 +1045,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .chain(preloads2.iter())
                     .map(|preload| Box::<[u8]>::from(*preload)),
             );
-            if args
-                .option(b"--input-type")
-                .is_some_and(|value| value == b"module" || value == b"module-typescript")
-            {
-                ctx.worker_eval_preloads
-                    .extend(preloads3.iter().map(|preload| Box::<[u8]>::from(*preload)));
-            }
 
             let total_preloads = ctx.preloads.len()
                 + preloads.len()

@@ -137,6 +137,9 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         vm.worker_preloads.clone_from(&ctx.preloads);
         vm.worker_eval_preloads
             .clone_from(&ctx.worker_eval_preloads);
+        vm.worker_preload_require_start = ctx.worker_preload_require_start;
+        vm.worker_preload_require_count = ctx.worker_preload_require_count;
+        vm.worker_eval_mode = ctx.worker_eval_mode;
         vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators

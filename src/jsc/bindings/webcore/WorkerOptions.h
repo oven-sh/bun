@@ -8,6 +8,12 @@
 
 namespace WebCore {
 
+enum class WorkerEvalMode : uint8_t {
+    Auto,
+    CommonJS,
+    Module,
+};
+
 struct WorkerOptions {
     enum class Kind : uint8_t {
         // Created by the global Worker constructor
@@ -42,6 +48,10 @@ struct WorkerOptions {
     // Kept raw so resolution and evaluation happen in the worker VM.
     Vector<String> execArgvPreloadModules;
     size_t execArgvEvalPreloadCount { 0 };
+    size_t execArgvBunPreloadCount { 0 };
+    size_t execArgvRequirePreloadCount { 0 };
+    WorkerEvalMode execArgvEvalMode { WorkerEvalMode::Auto };
+    String evalSource;
 };
 
 } // namespace WebCore

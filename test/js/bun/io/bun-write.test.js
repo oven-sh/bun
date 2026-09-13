@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isGlibc,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -743,6 +744,111 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           stdout: "",
         });
         expect(fs.readFileSync(join(String(dir), "dst.bin"))).toEqual(Buffer.alloc(128 * 1024, 0x41));
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The string and TypedArray fast paths open without O_TRUNC, write, then
+    // cut the old tail with ftruncate(2). When that ftruncate fails on a
+    // regular file, stale bytes stay past the new end, so the promise must
+    // reject. The LD_PRELOAD shim fails ftruncate with ENOSPC for every file
+    // whose name starts with "enospc-" (glibc-only: ELF symbol interposition).
+    it.skipIf(!isGlibc || !(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
+      "rejects when the final ftruncate fails on a regular file (#42598)",
+      async () => {
+        const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+        using dir = tempDir("bun-write-ftruncate-enospc", {
+          "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static int should_fail(int fd) {
+  char link[64], target[4096];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t n = readlink(link, target, sizeof target - 1);
+  if (n < 0) return 0;
+  target[n] = 0;
+  const char *name = strrchr(target, '/');
+  name = name ? name + 1 : target;
+  return strncmp(name, "enospc-", 7) == 0;
+}
+
+int ftruncate(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate");
+  if (should_fail(fd)) { errno = ENOSPC; return -1; }
+  return real(fd, len);
+}
+
+int ftruncate64(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate64");
+  if (should_fail(fd)) { errno = ENOSPC; return -1; }
+  return real(fd, len);
+}
+`,
+          "fixture.mjs": `
+            import fs from "node:fs";
+            import path from "node:path";
+            const longer = JSON.stringify({ status: "shell", pad: Buffer.alloc(507, "x").toString() });
+            const shorter = JSON.stringify({ status: "busy", pad: Buffer.alloc(507, "x").toString() });
+            const outcome = async fn => {
+              try {
+                return await fn();
+              } catch (e) {
+                return { code: e.code, syscall: e.syscall, path: path.basename(e.path) };
+              }
+            };
+            const out = {};
+            await Bun.write("enospc-string.json", longer);
+            out.string = await outcome(() => Bun.write("enospc-string.json", shorter));
+            out.stringSize = fs.statSync("enospc-string.json").size;
+            await Bun.write("enospc-bytes.json", new TextEncoder().encode(longer));
+            out.bytes = await outcome(() => Bun.write("enospc-bytes.json", new TextEncoder().encode(shorter)));
+            out.bytesSize = fs.statSync("enospc-bytes.json").size;
+            await Bun.write("ok.json", longer);
+            out.control = await outcome(() => Bun.write("ok.json", shorter));
+            out.controlSize = fs.statSync("ok.json").size;
+            out.devnull = await outcome(() => Bun.write("/dev/null", shorter));
+            console.log(JSON.stringify(out));
+          `,
+        });
+
+        const shim = join(String(dir), "shim.so");
+        await using ccProc = Bun.spawn({
+          cmd: [cc, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [ccErr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+        if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+        const existing = bunEnv.LD_PRELOAD;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs"],
+          env: { ...bunEnv, LD_PRELOAD: existing ? `${shim}:${existing}` : shim },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+
+        // `longer` is 534 bytes, `shorter` is 533. The failed call leaves the old tail in place.
+        const failed = name => ({ code: "ENOSPC", syscall: "ftruncate", path: name });
+        expect(JSON.parse(stdout)).toEqual({
+          string: failed("enospc-string.json"),
+          stringSize: 534,
+          bytes: failed("enospc-bytes.json"),
+          bytesSize: 534,
+          control: 533,
+          controlSize: 533,
+          devnull: 533,
+        });
         expect(exitCode).toBe(0);
       },
     );

@@ -92,7 +92,7 @@ pub(crate) fn infer_reactive_places(
         .values()
         .any(|block| throws_to_handler(&block.terminal));
     let mut reactive_throws = ReactiveThrows::new(if has_handler {
-        env.next_block_id().0 as usize
+        post_dominators.exit.0 as usize
     } else {
         0
     });

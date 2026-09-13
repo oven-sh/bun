@@ -1335,15 +1335,17 @@ impl Terminal {
             if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
                 return Ok(());
             }
-            let num = value.coerce_f64(global_object)?;
+            let name = match FIELD {
+                TermiosField::Iflag => "inputFlags",
+                TermiosField::Oflag => "outputFlags",
+                TermiosField::Lflag => "localFlags",
+                TermiosField::Cflag => "controlFlags",
+            };
+            let bits = crate::node::validators::validate_uint32(global_object, value, name, false)?
+                as libc::tcflag_t;
             let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
                 return Ok(());
             };
-            let max_val: f64 = libc::tcflag_t::MAX as f64;
-            // Match Zig's `@max(0, @min(num, max_val))`: apply min first so NaN
-            // resolves to max_val (f64::min returns the non-NaN operand), not 0.
-            let clamped = num.min(max_val).max(0.0);
-            let bits = clamped as libc::tcflag_t;
             match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag = bits,
                 TermiosField::Oflag => termios_data.c_oflag = bits,

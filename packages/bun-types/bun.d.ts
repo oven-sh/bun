@@ -8718,7 +8718,10 @@ declare module "bun" {
      * Terminal input flags (c_iflag from termios).
      * Controls input processing behavior like ICRNL, IXON, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     *
+     * Setting is a no-op on a closed terminal and on Windows. Otherwise the value must
+     * be an integer from 0 to 4294967295. A value that is not a number throws a
+     * `TypeError`, and any other number throws a `RangeError`.
      */
     inputFlags: number;
 
@@ -8726,7 +8729,10 @@ declare module "bun" {
      * Terminal output flags (c_oflag from termios).
      * Controls output processing behavior like OPOST, ONLCR, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     *
+     * Setting is a no-op on a closed terminal and on Windows. Otherwise the value must
+     * be an integer from 0 to 4294967295. A value that is not a number throws a
+     * `TypeError`, and any other number throws a `RangeError`.
      */
     outputFlags: number;
 
@@ -8734,7 +8740,12 @@ declare module "bun" {
      * Terminal local flags (c_lflag from termios).
      * Controls local processing like ICANON, ECHO, ISIG, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     *
+     * Setting is a no-op on a closed terminal and on Windows. Otherwise the value must
+     * be an integer from 0 to 4294967295. A value that is not a number throws a
+     * `TypeError`, and any other number throws a `RangeError`.
+     * A bitwise expression that leaves bit 31 set (`NOFLSH` on macOS) is negative in
+     * JavaScript. Convert it with `>>> 0` before you assign it.
      */
     localFlags: number;
 
@@ -8742,7 +8753,12 @@ declare module "bun" {
      * Terminal control flags (c_cflag from termios).
      * Controls hardware characteristics like CSIZE, PARENB, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     *
+     * Setting is a no-op on a closed terminal and on Windows. Otherwise the value must
+     * be an integer from 0 to 4294967295. A value that is not a number throws a
+     * `TypeError`, and any other number throws a `RangeError`.
+     * A bitwise expression that leaves bit 31 set (`CRTSCTS` on Linux) is negative in
+     * JavaScript. Convert it with `>>> 0` before you assign it.
      */
     controlFlags: number;
   }

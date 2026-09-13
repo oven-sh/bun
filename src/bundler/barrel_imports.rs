@@ -317,7 +317,7 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.get_record(rec)
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -530,7 +530,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_record_as(ir, resolved_path_text) {
                 Some(t) => t,
                 None => continue,
             }
@@ -623,7 +623,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_record_as(ir, resolved_path_text) {
                 Some(t) => t,
                 None => continue,
             }

@@ -943,19 +943,10 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
-    /// True iff `import_path` matches a user-supplied `--external` wildcard
-    /// pattern. Does NOT consider `packages = external`; use
-    /// `isExternalPattern` for the combined check.
+    /// `import_path` as written matches a user `--external` file path or pattern.
+    /// Does NOT consider `packages = external`; see `is_external_pattern`.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
-        for pattern in self.opts.external.patterns.iter() {
-            if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
-                && (import_path.starts_with(pattern.prefix.as_ref())
-                    && import_path.ends_with(pattern.suffix.as_ref()))
-            {
-                return true;
-            }
-        }
-        false
+        self.opts.external.matches_specifier(import_path)
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
@@ -1768,10 +1759,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if !kind.is_entry_point()
-                && self.opts.external.abs_paths.count() > 0
-                && self.opts.external.abs_paths.contains(import_path)
-            {
+            if !kind.is_entry_point() && self.opts.external.matches_abs_path(import_path) {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
                 // That way we preserve the literal text in the output and don't generate
@@ -2029,14 +2017,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if !kind.is_entry_point()
-            && self.opts.external.abs_paths.count() > 0
-            && self.opts.external.abs_paths.contains(abs_path)
-        {
-            // If the string literal in the source text is an absolute path and has
-            // been marked as an external module, mark it as *not* an absolute path.
-            // That way we preserve the literal text in the output and don't generate
-            // a relative path from the output directory to that path.
+        if !kind.is_entry_point() && self.opts.external.matches_abs_path(abs_path) {
+            // Hand back the absolute path: the bundler prints it relative to the output.
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" is marked as external by the user",

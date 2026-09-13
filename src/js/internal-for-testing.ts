@@ -74,6 +74,13 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
+// The kern.cp_times read of os.cpus() on FreeBSD, against a table of sysctl values. null when a read fails.
+export const freebsdCpTimes: (table: {
+  "hw.ncpu"?: number;
+  "kern.smp.maxid"?: number;
+  "kern.cp_times"?: number[];
+}) => number[] | null = $newRustFunction("node_os.rs", "jsFreebsdCpTimes", 1);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

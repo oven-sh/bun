@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
-import { readdirSync, Stats, statfsSync, statSync } from "node:fs";
+import { readdirSync, statfsSync, Stats, statSync } from "node:fs";
 import { inspect, isDeepStrictEqual } from "node:util";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):

@@ -19,29 +19,51 @@ use crate::chunk::Content;
 use crate::{Chunk, LinkerContext};
 use std::io::Write as _;
 
+/// The names an entry chunk's `export {}` clause lists beside its cross-chunk exports.
+type ExportNames = [Box<[u8], bun_alloc::AstAlloc>];
+
+fn is_export_name(export_names: &ExportNames, name: &[u8]) -> bool {
+    // Not a binary search: a lifted CommonJS file keeps assignment order.
+    export_names
+        .iter()
+        .any(|export_name| **export_name == *name)
+}
+
 /// The bindings in a deterministic order: chunk by chunk, each chunk's
 /// cross-chunk exports in their (stable-ref sorted) clause order.
-fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
+fn cross_chunk_refs<'a>(
+    chunks: &[Chunk],
+    export_aliases: &'a [crate::js_meta::SortedAndFilteredExportAliases],
+) -> Vec<(Ref, &'a ExportNames)> {
     let mut refs = Vec::new();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
-            refs.extend_from_slice(js.exports_to_other_chunks.keys());
+            let export_names: &ExportNames = if chunk.entry_point.is_entry_point() {
+                &export_aliases[chunk.entry_point.source_index() as usize]
+            } else {
+                &[]
+            };
+            refs.extend(
+                js.exports_to_other_chunks
+                    .keys()
+                    .iter()
+                    .map(|&ref_| (ref_, export_names)),
+            );
         }
     }
     refs
 }
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
-/// every unbound or must-not-be-renamed name in any module scope of the
-/// bundle, and the entry points' own export names. A per-chunk renamer only
-/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
+/// plus every unbound or must-not-be-renamed name in any module scope of the
+/// bundle. A per-chunk renamer only avoids its own chunk's; a bundle-wide
+/// name has to avoid all of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
     let scopes = c.graph.ast.items_module_scope();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
@@ -50,13 +72,6 @@ fn reserved_names(
                     &c.graph.symbols,
                     &mut reserved,
                 );
-            }
-        }
-        // An entry point's own `export {}` names share its export namespace
-        // with the cross-chunk exports it may carry.
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
             }
         }
     }
@@ -76,14 +91,17 @@ pub(crate) fn assign_unminified(
     c: &mut LinkerContext,
     chunks: &[Chunk],
 ) -> Result<(), crate::Error> {
-    let refs = cross_chunk_refs(chunks);
+    let refs = cross_chunk_refs(
+        chunks,
+        c.graph.meta.items_sorted_and_filtered_export_aliases(),
+    );
     if refs.is_empty() {
         return Ok(());
     }
     let mut used = reserved_names(c, chunks)?;
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
-    for ref_ in refs {
+    for (ref_, export_names) in refs {
         let original = c
             .graph
             .symbols
@@ -95,18 +113,21 @@ pub(crate) fn assign_unminified(
         let mut name: &[u8] = &base;
         // `used[base]` remembers the last suffix handed out for `base`, so a
         // run of bindings sharing one name does not re-probe 2, 3, ... each time.
-        if let Some(last) = used.get(&*base).copied() {
-            let mut tries = last.max(1);
+        let last = used.get(&*base).copied();
+        if last.is_some() || is_export_name(export_names, &base) {
+            let mut tries = last.unwrap_or(1).max(1);
             loop {
                 tries += 1;
                 buf.clear();
                 buf.extend_from_slice(&base);
                 write!(&mut buf, "{tries}").expect("Vec<u8> write");
-                if !used.contains_key(buf.as_slice()) {
+                if !used.contains_key(buf.as_slice()) && !is_export_name(export_names, &buf) {
                     break;
                 }
             }
-            used.put(&base, tries)?;
+            if last.is_some() {
+                used.put(&base, tries)?;
+            }
             name = &buf;
         }
         used.put(name, 1)?;
@@ -124,23 +145,20 @@ pub(crate) fn assign_minified(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<(), crate::Error> {
-    let refs = cross_chunk_refs(chunks);
+    let refs = cross_chunk_refs(
+        chunks,
+        c.graph.meta.items_sorted_and_filtered_export_aliases(),
+    );
     if refs.is_empty() {
         return Ok(());
     }
     // Every chunk's renamer already reserved the keywords plus its own module
     // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
     let mut reserved = StringHashMap::<u32>::default();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks.iter() {
         if let ChunkRenamer::Minify(r) = &chunk.renamer {
             for (name, _) in r.reserved_names().iter() {
                 reserved.put(name, 1)?;
-            }
-        }
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
             }
         }
     }
@@ -149,7 +167,7 @@ pub(crate) fn assign_minified(
     // chunk contributes the count of the bindings it declares or imports.
     let mut index_of: bun_collections::HashMap<Ref, u32> = Default::default();
     let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());
-    for (i, &ref_) in refs.iter().enumerate() {
+    for (i, &(ref_, _)) in refs.iter().enumerate() {
         let capital = c
             .graph
             .symbols
@@ -195,11 +213,15 @@ pub(crate) fn assign_minified(
     let mut name: Vec<u8> = Vec::with_capacity(16);
     let mut next: isize = 0;
     c.cross_chunk_names.reserve(refs.len());
-    for &(_, _, ref_, capital) in &order {
+    for &(_, i, ref_, capital) in &order {
+        let export_names = refs[i as usize].1;
         loop {
             minifier.number_to_minified_name(&mut name, next)?;
             next += 1;
-            if reserved.contains_key(name.as_slice()) || (capital && name[0].is_ascii_lowercase()) {
+            if reserved.contains_key(name.as_slice())
+                || (capital && name[0].is_ascii_lowercase())
+                || is_export_name(export_names, &name)
+            {
                 continue;
             }
             break;

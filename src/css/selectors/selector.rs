@@ -10,10 +10,7 @@ use bun_collections::ArrayHashMap;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
-pub use css::PrintErr as _PrintErr;
-pub use css::Printer as _Printer; // re-export alias parity
-
-pub use parser::Component;
+pub(crate) use parser::Component;
 pub use parser::PseudoClass;
 pub use parser::PseudoElement;
 pub use parser::Selector;
@@ -24,19 +21,6 @@ pub use parser::SelectorList;
 /// parser↔selector cycle has a single anchor. This module holds the
 /// `SelectorImpl` type aliases.
 pub use super::impl_;
-pub mod r#impl {
-    use super::*;
-
-    pub mod selectors {
-        use super::*;
-
-        pub mod selector_impl {
-            use super::*;
-
-            pub type VendorPrefix = css::VendorPrefix;
-        }
-    }
-}
 
 pub use super::parser;
 
@@ -111,7 +95,7 @@ pub(crate) fn downlevel_selectors<'bump>(
     necessary_prefixes
 }
 
-pub(crate) fn downlevel_component<'bump>(
+fn downlevel_component<'bump>(
     bump: &'bump Bump,
     component: &mut Component,
     targets: &Targets,
@@ -277,7 +261,7 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-pub fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
+pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
     use Feature as F;
     for selector in selectors {
         for component in selector.components.iter() {
@@ -510,7 +494,7 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool 
 
 /// Determines whether a selector list contains only unused selectors.
 /// A selector is considered unused if it contains a class or id component that exists in the set of unused symbols.
-pub fn is_unused(
+pub(crate) fn is_unused(
     selectors: &[parser::Selector],
     unused_symbols: &ArrayHashMap<Box<[u8]>, ()>,
     symbols: &SymbolList,
@@ -585,7 +569,7 @@ fn is_selector_unused(
 /// Note that we have two serialization modules, one from lightningcss and one from servo.
 ///
 /// This is because it actually uses both implementations. This is confusing.
-pub mod serialize {
+pub(crate) mod serialize {
     use super::*;
 
     pub(crate) fn serialize_selector_list(
@@ -599,7 +583,7 @@ pub mod serialize {
         })
     }
 
-    pub(crate) fn serialize_selector(
+    fn serialize_selector(
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -816,7 +800,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub(crate) fn serialize_component(
+    fn serialize_component(
         component: &parser::Component,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -895,7 +879,7 @@ pub mod serialize {
                         dest.write_str(b":not(")?;
                     }
                     Component::Any { vendor_prefix, .. } => {
-                        let vp = dest.vendor_prefix.or_(*vendor_prefix);
+                        let vp = dest.vendor_prefix.or(*vendor_prefix);
                         if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
@@ -958,13 +942,6 @@ pub mod serialize {
                 serialize_selector(selector, dest, ctx, false)?;
                 dest.write_char(b')')?;
             }
-            // Component::Nth(nth_data) => {
-            //     nth_data.write_start(dest, nth_data.is_function())?;
-            //     if nth_data.is_function() {
-            //         nth_data.write_affine(dest)?;
-            //         dest.write_char(b')')?;
-            //     }
-            // }
             _ => {
                 tocss_servo::to_css_component(component, dest)?;
             }
@@ -972,7 +949,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub(crate) fn serialize_combinator(
+    fn serialize_combinator(
         combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1204,22 +1181,6 @@ pub mod serialize {
             d.write_str(val)
         }
 
-        // switch (pseudo_element.*) {
-        //     // CSS2 pseudo elements support a single colon syntax in addition
-        //     // to the more correct double colon for other pseudo elements.
-        //     // We use that here because it's supported everywhere and is shorter.
-        //     .after => try dest.writeStr(":after"),
-        //     .before => try dest.writeStr(":before"),
-        //     .marker => try dest.writeStr(":first-letter"),
-        //     .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
-        //     .cue => dest.writeStr("::cue"),
-        //     .cue_region => dest.writeStr("::cue-region"),
-        //     .cue_function => |v| {
-        //         dest.writeStr("::cue(");
-        //         try serializeSelector(v.selector, dest, context, false);
-        //         try dest.writeChar(')');
-        //     },
-        // }
         match pseudo_element {
             // CSS2 pseudo elements support a single colon syntax in addition
             // to the more correct double colon for other pseudo elements.
@@ -1294,6 +1255,14 @@ pub mod serialize {
                 part_name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
+            PseudoElement::DetailsContent => dest.write_str(b"::details-content")?,
+            PseudoElement::PickerIcon => dest.write_str(b"::picker-icon")?,
+            PseudoElement::Checkmark => dest.write_str(b"::checkmark")?,
+            PseudoElement::PickerFunction { identifier } => {
+                dest.write_str(b"::picker(")?;
+                identifier.to_css(dest)?;
+                dest.write_char(b')')?;
+            }
             PseudoElement::Custom { name } => {
                 dest.write_str(b"::")?;
                 return dest.serialize_identifier(name);
@@ -1323,7 +1292,7 @@ pub mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
-    pub(crate) fn serialize_nesting(
+    fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,
@@ -1364,10 +1333,10 @@ pub mod serialize {
     }
 }
 
-pub mod tocss_servo {
+pub(crate) mod tocss_servo {
     use super::*;
 
-    pub(crate) fn to_css_selector_list(
+    fn to_css_selector_list(
         selectors: &[parser::Selector],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1386,10 +1355,7 @@ pub mod tocss_servo {
         Ok(())
     }
 
-    pub(crate) fn to_css_selector(
-        selector: &parser::Selector,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
+    fn to_css_selector(selector: &parser::Selector, dest: &mut Printer) -> Result<(), PrintErr> {
         // Compound selectors invert the order of their contents, so we need to
         // undo that during serialization.
         //
@@ -1541,13 +1507,11 @@ pub mod tocss_servo {
             }
             Component::Id(s) => {
                 dest.write_char(b'#')?;
-                let str = dest.lookup_ident_or_ref(*s);
-                dest.write_str(str)?;
+                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
             }
             Component::Class(s) => {
                 dest.write_char(b'.')?;
-                let str = dest.lookup_ident_or_ref(*s);
-                dest.write_str(str)?;
+                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
             }
             Component::LocalName(local_name) => {
                 local_name.to_css(dest)?;
@@ -1674,7 +1638,7 @@ pub mod tocss_servo {
         Ok(())
     }
 
-    pub(crate) fn to_css_combinator(
+    fn to_css_combinator(
         combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1695,7 +1659,7 @@ pub mod tocss_servo {
     }
 }
 
-pub fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
+pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
     if selectors.len() == 1 {
         let first = &selectors[0];
         if !has_type_selector(first) && is_simple(first) {
@@ -1753,7 +1717,7 @@ fn is_simple(selector: &parser::Selector) -> bool {
     !any_is_combinator
 }
 
-pub(crate) struct CombinatorIter<'a> {
+struct CombinatorIter<'a> {
     pub sel: &'a parser::Selector,
     pub i: usize,
 }
@@ -1766,7 +1730,7 @@ impl<'a> CombinatorIter<'a> {
     ///   .rev() // reverses the iterator
     ///   .filter_map(|x| x.as_combinator()) // returns only entries which are combinators
     /// ```
-    pub(crate) fn next(&mut self) -> Option<parser::Combinator> {
+    fn next(&mut self) -> Option<parser::Combinator> {
         while self.i < self.sel.components.len() {
             let idx = self.sel.components.len() - 1 - self.i;
             self.i += 1;
@@ -1779,7 +1743,7 @@ impl<'a> CombinatorIter<'a> {
     }
 }
 
-pub(crate) struct CompoundSelectorIter<'a> {
+struct CompoundSelectorIter<'a> {
     pub sel: &'a parser::Selector,
     pub i: usize,
 }
@@ -1793,7 +1757,7 @@ impl<'a> CompoundSelectorIter<'a> {
     /// ```
     ///
     /// The iterator would return:
-    /// ```
+    /// ```text
     /// First slice:
     ///   [ LocalName("div") ]
     ///
@@ -1812,7 +1776,7 @@ impl<'a> CompoundSelectorIter<'a> {
     ///  .rev() // reverse
     /// ```
     #[inline]
-    pub(crate) fn next(&mut self) -> Option<&'a [parser::Component]> {
+    fn next(&mut self) -> Option<&'a [parser::Component]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`
         let items = self.sel.components.as_slice();
         if self.i < items.len() {

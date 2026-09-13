@@ -21,7 +21,7 @@ pub mod Fs {
 
 #[derive(Default)]
 pub struct ClientEntryPoint {
-    pub source: bun_ast::Source,
+    pub(crate) source: bun_ast::Source,
 }
 
 #[derive(Default)]
@@ -128,7 +128,7 @@ impl ServerEntryPoint {
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
-    pub code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
+    pub(crate) code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
     pub source: bun_ast::Source,
 }
 

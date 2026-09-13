@@ -9,8 +9,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 test("require() of CJS file containing dynamic import of non-existent node: module does not fail at load time", async () => {
   using dir = tempDir("issue-25707", {
     // Simulates turbopack-generated chunks: a CJS module with a factory function
-    // containing import("node:quic") inside a try/catch that is never called
-    // during require().
+    // containing import() of an unknown node: module inside a try/catch that is
+    // never called during require().
     "chunk.js": `
       module.exports = [
         function factory(exports) {
@@ -18,7 +18,7 @@ test("require() of CJS file containing dynamic import of non-existent node: modu
             if ("createSession" in e) {
               let c;
               try {
-                ({QuicEndpoint: c} = await import("node:quic"))
+                ({Thing: c} = await import("node:this_module_does_not_exist"))
               } catch(a) {
                 if (null !== a && "object" == typeof a && "code" in a && "ERR_UNKNOWN_BUILTIN_MODULE" !== a.code)
                   throw a;
@@ -30,7 +30,7 @@ test("require() of CJS file containing dynamic import of non-existent node: modu
       ];
     `,
     "main.js": `
-      // This require() should not fail even though chunk.js contains import("node:quic")
+      // This require() should not fail even though chunk.js dynamic-imports an unknown node: module
       const factories = require("./chunk.js");
       console.log("loaded " + factories.length + " factories");
     `,
@@ -56,8 +56,8 @@ test("require() of CJS file with bare dynamic import of non-existent node: modul
   using dir = tempDir("issue-25707-bare", {
     "lib.js": `
       module.exports = async function() {
-        const { QuicEndpoint } = await import("node:quic");
-        return QuicEndpoint;
+        const { Thing } = await import("node:this_module_does_not_exist");
+        return Thing;
       };
     `,
     "main.js": `
@@ -85,7 +85,7 @@ test("dynamic import of non-existent node: module in CJS rejects at runtime with
     "lib.js": `
       module.exports = async function() {
         try {
-          await import("node:quic");
+          await import("node:this_module_does_not_exist");
           return "resolved";
         } catch (e) {
           return "caught: " + e.code;

@@ -11,8 +11,9 @@
 
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 function countOpenFds(): number {
   // Linux and macOS both expose per-process fd tables here.
@@ -59,60 +60,81 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
   expect(afterExit).toBeLessThan(N / 4);
 });
 
-// Reading `proc.stdin` calls `Writable.toJS` (.pipe arm), which moves the
-// enum's owned `*FileSink` (+1) into the JS wrapper:
-//   src/runtime/api/bun/subprocess/Writable.zig:244-272
-//     this.* = .{ .ignore = {} };
-//     return pipe.toJS(globalThis);              // TRANSFER, no extra ref()
-//     return pipe.toJSWithDestructor(...);       // TRANSFER, no extra ref()
-//
-// The wrapper's finalize() balances that single +1. If the JS-wrapper
-// constructor were to take its OWN +1 (instead of adopting the enum's), the
-// enum's original +1 would be orphaned and every `.stdin` read would leak one
-// native FileSink — observable here via `fileSinkInternals.liveCount()`
-// growing by N regardless of GC.
-// TODO(zig-rust-divergence): Rust port over-refs in the JS-wrapper constructor;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-test.todo(
-  "reading .stdin does not leak a native FileSink per spawn",
-  async () => {
-    const N = 24;
+test("reading .stdin does not leak a native FileSink per spawn", async () => {
+  const N = 24;
 
-    async function once() {
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "-e", ""],
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      // Touch the getter — this is the `Writable.toJS` `.pipe` arm under test.
-      const stdin = proc.stdin;
-      expect(stdin).toBeDefined();
-      await Promise.resolve(stdin!.end()).catch(() => {});
-      await proc.exited;
-    }
+  async function once() {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", ""],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    // Touch the getter — this is the `Writable.toJS` `.pipe` arm under test.
+    const stdin = proc.stdin;
+    expect(stdin).toBeDefined();
+    await Promise.resolve(stdin!.end()).catch(() => {});
+    await proc.exited;
+  }
 
-    // Warm up so any one-off lazy allocations are in the baseline.
-    await once();
+  // Warm up so any one-off lazy allocations are in the baseline.
+  await once();
+  Bun.gc(true);
+  const baseline = fileSinkInternals.liveCount();
+
+  await Promise.all(Array.from({ length: N }, once));
+
+  // Let JS wrappers finalize (their deref is what drops liveCount).
+  for (let i = 0; i < 50; i++) {
     Bun.gc(true);
-    const baseline = fileSinkInternals.liveCount();
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
 
-    for (let i = 0; i < N; i++) await once();
+  const leaked = fileSinkInternals.liveCount() - baseline;
+  // A couple of stragglers whose JS wrappers haven't finalized yet are fine;
+  // a +1-per-iteration native leak would leave `leaked` ≈ N here.
+  expect(leaked).toBeLessThan(N / 4);
+});
 
-    // Let JS wrappers finalize (their deref is what drops liveCount).
-    for (let i = 0; i < 50; i++) {
-      Bun.gc(true);
-      if (fileSinkInternals.liveCount() <= baseline) break;
-      await Bun.sleep(10);
-    }
-
-    const leaked = fileSinkInternals.liveCount() - baseline;
-    // A couple of stragglers whose JS wrappers haven't finalized yet are fine;
-    // a +1-per-iteration native leak would leave `leaked` ≈ N here.
-    expect(leaked).toBeLessThan(N / 4);
+// A Buffer `stdin` (Bun.spawn's, or the shell's `< ${buffer}` redirect, which
+// shares the implementation) is pumped into the child by a native writer that
+// holds a ref on itself while the write is in flight. When the child closed
+// its stdin before the write finished, the failed write (EPIPE) tore the
+// writer down without releasing that ref, leaving a few hundred bytes behind
+// per such spawn: too small for an RSS check, so this relies on LeakSanitizer,
+// i.e. the ASAN lane, and the scenarios run in their own process so that leak
+// detection can be switched on for exactly them. That process also gets memfd
+// disabled, which only matters for the Bun.spawn scenarios: on Linux Bun.spawn
+// otherwise hands a Buffer stdin to the child as a memfd and never creates the
+// writer, while the shell redirect uses the writer on every configuration. Of
+// the two owners it is the shell's stranded writers that LSan reports (it still
+// finds the address of a stranded Bun.spawn one somewhere); the Bun.spawn
+// scenarios run the same teardown under ASAN all the same.
+test.skipIf(!isASAN || isWindows)(
+  "Buffer stdin does not leak its native writer when the child closes stdin or drains it",
+  async () => {
+    using cwd = tempDir("stdin-buffer-writer-leak", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawn-stdin-buffer-writer-leak-fixture.ts")],
+      cwd: String(cwd),
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_MEMFD: "1",
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   },
-  30_000,
+  // LSan symbolizes its report on the debug binary when it does find a leak,
+  // which alone can take far longer than the default timeout.
+  90_000,
 );
 
 // Reading `.stdin` after the child has already exited should still return

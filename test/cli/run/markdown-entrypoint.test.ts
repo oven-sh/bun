@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
+import { join } from "path";
 
 // Tracks exit code from the last runMd() call so individual tests can
 // assert it after snapshotting stdout (giving a readable diff on failure).
@@ -344,4 +346,59 @@ describe("bun <file.md>", () => {
     }
     expect(openers).toBeGreaterThanOrEqual(2);
   });
+
+  test.skipIf(!isPosix || !(isDebug || isASAN))(
+    "prefetched remote images are staged into fresh temp files and never written through a pre-existing entry at the staged path",
+    async () => {
+      const payload = Buffer.alloc(256, "z");
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(payload, { headers: { "content-type": "image/png" } });
+        },
+      });
+      using dir = tempDir("md-remote-img-", {
+        "doc.md": `![img](http://127.0.0.1:${server.port}/img.png)\n`,
+        "tmp/decoy": "keep",
+      });
+      const tmp = join(String(dir), "tmp");
+      const decoy = join(tmp, "decoy");
+      const env = {
+        ...bunEnv,
+        FORCE_COLOR: "1",
+        TERM: "xterm-kitty",
+        KITTY_WINDOW_ID: "1",
+        BUN_DEBUG_HASH_RANDOM_SEED: "42",
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+      };
+
+      async function runOnce() {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "./doc.md"],
+          env,
+          cwd: String(dir),
+          terminal: { cols: 80, rows: 24, data() {} },
+        });
+        const exitCode = await proc.exited;
+        proc.terminal?.close();
+        return exitCode;
+      }
+
+      const firstExit = await runOnce();
+      const staged = readdirSync(tmp).filter(n => n.startsWith("bun-md-"));
+      expect(staged.length).toBe(1);
+      expect(staged[0].endsWith(".png")).toBe(true);
+      expect(readFileSync(join(tmp, staged[0])).equals(payload)).toBe(true);
+      expect(firstExit).toBe(0);
+
+      rmSync(join(tmp, staged[0]));
+      symlinkSync(decoy, join(tmp, staged[0]));
+
+      const secondExit = await runOnce();
+      expect(readFileSync(decoy, "utf8")).toBe("keep");
+      expect(readdirSync(tmp).sort()).toEqual([staged[0], "decoy"].sort());
+      expect(secondExit).toBe(0);
+    },
+  );
 });

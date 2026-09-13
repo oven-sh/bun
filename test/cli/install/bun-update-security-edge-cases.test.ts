@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("bun update security edge cases", () => {
   test("bun update detects vulnerability in updated version that was safe before", async () => {
     // Start with an exact version that's "safe"
-    const dir = tempDirWithFiles("update-new-vuln", {
+    await using dir = tempDir("update-new-vuln", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -91,7 +91,7 @@ module.exports = {
   });
 
   test("bun update <pkg> detects vulnerability in the specific updated package", async () => {
-    const dir = tempDirWithFiles("update-specific-vuln", {
+    await using dir = tempDir("update-specific-vuln", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -159,7 +159,7 @@ module.exports = {
   test("bun update detects newly discovered vulnerability in existing package", async () => {
     // Scenario: A package in lockfile was safe when installed,
     // but a vulnerability was discovered later (without version change)
-    const dir = tempDirWithFiles("update-newly-discovered", {
+    await using dir = tempDir("update-newly-discovered", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -237,7 +237,7 @@ module.exports = {
   test("bun pm scan detects vulnerability in existing transitive dependency after adding package", async () => {
     // Scenario: After adding a new package, running pm scan finds vulnerabilities
     // in existing transitive dependencies
-    const dir = tempDirWithFiles("scan-after-add", {
+    await using dir = tempDir("scan-after-add", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -306,7 +306,7 @@ module.exports = {
 
   test("bun update with version range change exposes vulnerability", async () => {
     // Scenario: package.json is updated to allow newer versions that have vulnerabilities
-    const dir = tempDirWithFiles("update-range-vuln", {
+    await using dir = tempDir("update-range-vuln", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -382,7 +382,7 @@ module.exports = {
 
   test("bun pm scan detects newly discovered vulnerabilities in existing lockfile", async () => {
     // Scenario: Running pm scan with updated vulnerability database finds new issues
-    const dir = tempDirWithFiles("scan-new-vuln-db", {
+    await using dir = tempDir("scan-new-vuln-db", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {

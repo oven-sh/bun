@@ -22,7 +22,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <limits>
 #include <wtf/Locker.h>
 
@@ -30,28 +29,6 @@ namespace Bun {
 namespace WebStreams {
 
 using namespace JSC;
-
-// WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
-// converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue result;
-    JSC::JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = JSC::getCallData(method);
-        ASSERT(callData.type != JSC::CallData::Type::None);
-        result = JSC::call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
 
 // The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only and CrossRealm sources
 // are never created (transferable streams are unimplemented); the switch is total over SourceKind.
@@ -72,28 +49,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        JSC::JSValue result;
-        JSC::JSValue thrown;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto callData = JSC::getCallData(pullMethod);
-            ASSERT(callData.type != JSC::CallData::Type::None);
-            result = JSC::call(globalObject, pullMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
-            if (catchScope.exception()) [[unlikely]]
-                thrown = takeAbruptCompletion(globalObject, catchScope);
-        }
-        if (!thrown.isEmpty()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        if (result.isEmpty()) [[unlikely]]
-            return nullptr;
-        if (!result.isObject()) [[likely]]
-            return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, invokeCallbackReturningPromiseFast(globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         return nullptr;
@@ -105,6 +61,8 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
         RELEASE_AND_RETURN(scope, fromIterablePullAlgorithm(globalObject, controller));
     case SourceKind::Native:
         RELEASE_AND_RETURN(scope, nativeSourcePull(globalObject, controller));
+    case SourceKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodePullAlgorithm(globalObject, controller));
     case SourceKind::ByteTeeBranch:
     case SourceKind::CrossRealm:
         break;
@@ -129,7 +87,7 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::VM& vm, JSC:
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, cancelMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SourceKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -141,6 +99,8 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::VM& vm, JSC:
         RELEASE_AND_RETURN(scope, fromIterableCancelAlgorithm(globalObject, controller, reason));
     case SourceKind::Native:
         RELEASE_AND_RETURN(scope, nativeSourceCancel(globalObject, controller, reason));
+    case SourceKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeCancelAlgorithm(globalObject, controller, reason));
     case SourceKind::ByteTeeBranch:
     case SourceKind::CrossRealm:
         break;
@@ -169,7 +129,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultControllerPrototype>(vm)) JSReadableStreamDefaultControllerPrototype(vm, globalObject, structure);
+        JSReadableStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamDefaultControllerPrototype))) JSReadableStreamDefaultControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -183,7 +143,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -222,9 +182,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototype_inspectCusto
 void JSReadableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamDefaultController::info(), JSReadableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamDefaultController::info(), JSReadableStreamDefaultControllerPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamDefaultControllerPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 template<> const ClassInfo JSReadableStreamDefaultControllerConstructor::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerConstructor) };
@@ -237,11 +197,7 @@ template<> JSValue JSReadableStreamDefaultControllerConstructor::prototypeForStr
 
 template<> void JSReadableStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ReadableStreamDefaultController"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSReadableStreamDefaultController::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "ReadableStreamDefaultController"_s, JSReadableStreamDefaultController::prototype(vm, globalObject));
 }
 
 const ClassInfo JSReadableStreamDefaultController::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultController) };
@@ -273,7 +229,7 @@ void JSReadableStreamDefaultController::destroy(JSCell* cell)
 
 Structure* JSReadableStreamDefaultController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -295,12 +251,7 @@ JSValue JSReadableStreamDefaultController::getConstructor(VM& vm, const JSGlobal
 
 GCClient::IsoSubspace* JSReadableStreamDefaultController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamDefaultController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamDefaultController, m_subspaceForReadableStreamDefaultController));
 }
 
 template<typename Visitor>
@@ -567,6 +518,8 @@ void readableStreamDefaultControllerClearAlgorithms(JSReadableStreamDefaultContr
     controller->m_algorithms.method2.clear();
     controller->m_algorithms.algorithmContext.clear();
     controller->m_strategySizeAlgorithm.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
 }
 
 void readableStreamDefaultControllerClose(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
@@ -596,56 +549,28 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
     } else {
         double chunkSize = 1;
         if (JSObject* sizeAlgorithm = controller->m_strategySizeAlgorithm.get()) {
-            JSValue chunkSizeValue;
-            {
-                // The strategy size() call is interpreted as a completion record: an abrupt
-                // completion errors the controller and is then rethrown.
-                auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                auto callData = JSC::getCallData(sizeAlgorithm);
-                ASSERT(callData.type != JSC::CallData::Type::None);
-                JSC::MarkedArgumentBuffer args;
-                args.append(chunk);
-                if (args.hasOverflowed()) [[unlikely]] {
-                    throwOutOfMemoryError(globalObject, scope);
-                    return;
-                }
-                chunkSizeValue = JSC::call(globalObject, sizeAlgorithm, callData, jsUndefined(), args);
-                if (catchScope.exception()) [[unlikely]] {
-                    JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                    if (thrown.isEmpty()) [[unlikely]]
-                        return;
-                    readableStreamDefaultControllerError(globalObject, controller, thrown);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    throwException(globalObject, scope, thrown);
-                    return;
-                }
-            }
-            // Web IDL: the size callback returns an `unrestricted double` — a full ToNumber
-            // (can run user JS); a throw from it is the same abrupt completion as size() throwing.
-            {
-                auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                chunkSize = chunkSizeValue.toNumber(globalObject);
-                if (catchScope.exception()) [[unlikely]] {
-                    JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                    if (thrown.isEmpty()) [[unlikely]]
-                        return;
-                    readableStreamDefaultControllerError(globalObject, controller, thrown);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    throwException(globalObject, scope, thrown);
-                    return;
-                }
-            }
-        }
-        // EnqueueValueWithSize is interpreted as a completion record: same recovery.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty()) [[unlikely]]
+            auto callData = JSC::getCallData(sizeAlgorithm);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            JSC::MarkedArgumentBuffer args;
+            args.append(chunk);
+            if (args.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
                 return;
-            readableStreamDefaultControllerError(globalObject, controller, thrown);
-            RETURN_IF_EXCEPTION(scope, void());
-            throwException(globalObject, scope, thrown);
+            }
+            JSValue chunkSizeValue = JSC::call(globalObject, sizeAlgorithm, callData, jsUndefined(), args);
+            // Web IDL: the size callback returns an `unrestricted double` — a full ToNumber.
+            if (!scope.exception()) [[likely]]
+                chunkSize = chunkSizeValue.toNumber(globalObject);
+        }
+        if (!scope.exception()) [[likely]]
+            controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+            // Spec steps 4.b / 5.b: "If result is an abrupt completion, perform
+            // ! ReadableStreamDefaultControllerError(controller, result.[[Value]]) and return result."
+            TRY_CLEAR_EXCEPTION(scope, );
+            readableStreamDefaultControllerError(globalObject, controller, exception->value());
+            RETURN_IF_EXCEPTION(scope, );
+            throwException(globalObject, scope, exception);
             return;
         }
     }

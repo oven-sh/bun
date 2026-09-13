@@ -33,11 +33,11 @@
 // bytes round-trip and the final `done` comes from the parent's real
 // `stdin.end()`.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { pathToFileURL } from "node:url";
 
 test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29787)", async () => {
-  const dir = tempDirWithFiles("issue-29787-stdin-race", {
+  await using dir = tempDir("issue-29787-stdin-race", {
     "data.bin": Buffer.alloc(4096, 0x41).toString(),
   });
   const fileUrl = pathToFileURL(`${dir}/data.bin`).href;

@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // Each test has its own tempDirWithFiles and spawns its own processes; nothing is shared.
 test.concurrent("workspace devDependencies should take priority over peerDependencies for resolution", async () => {
-  const dir = tempDirWithFiles("dev-peer-priority", {
+  await using dir = tempDir("dev-peer-priority", {
     "package.json": JSON.stringify({
       name: "test-monorepo",
       version: "1.0.0",
@@ -112,7 +112,7 @@ test.concurrent("workspace devDependencies should take priority over peerDepende
 });
 
 test.concurrent("devDependencies and peerDependencies with different versions should coexist", async () => {
-  const dir = tempDirWithFiles("dev-peer-different-versions", {
+  await using dir = tempDir("dev-peer-different-versions", {
     "package.json": JSON.stringify({
       name: "test-monorepo",
       version: "1.0.0",
@@ -173,7 +173,7 @@ test.concurrent("devDependencies and peerDependencies with different versions sh
 });
 
 test.concurrent("dependency behavior comparison prioritizes devDependencies", async () => {
-  const dir = tempDirWithFiles("behavior-comparison", {
+  await using dir = tempDir("behavior-comparison", {
     "package.json": JSON.stringify({
       name: "test-app",
       version: "1.0.0",
@@ -220,7 +220,7 @@ test.concurrent("dependency behavior comparison prioritizes devDependencies", as
 });
 
 test.concurrent("Next.js monorepo scenario should not make unnecessary network requests", async () => {
-  const dir = tempDirWithFiles("nextjs-monorepo", {
+  await using dir = tempDir("nextjs-monorepo", {
     "package.json": JSON.stringify({
       name: "nextjs-monorepo",
       version: "1.0.0",

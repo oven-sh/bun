@@ -27,7 +27,7 @@ const IS_SET: u32 = 2;
 
 impl ResetEvent {
     /// Const-init in the unset state.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             state: AtomicU32::new(UNSET),
         }
@@ -36,7 +36,7 @@ impl ResetEvent {
     /// Returns whether [`set`](Self::set) has been called. Memory accesses
     /// before `set()` happen-before this returning `true`.
     #[inline]
-    pub fn is_set(&self) -> bool {
+    pub(crate) fn is_set(&self) -> bool {
         // Acquire barrier ensures memory accesses before set() happen before we return true.
         self.state.load(Ordering::Acquire) == IS_SET
     }

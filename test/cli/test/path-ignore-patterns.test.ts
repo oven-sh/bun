@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("pathIgnorePatterns", () => {
   test("bunfig - single pattern string", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = "ignore-me.test.ts"
@@ -36,7 +36,7 @@ test("ignored test", () => {
   });
 
   test("bunfig - array of patterns", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = ["helpers/**", "*.setup.test.ts"]
@@ -76,7 +76,7 @@ test("setup test", () => {
   });
 
   test("bunfig - glob pattern with **", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = "**/integration/**"
@@ -109,7 +109,7 @@ test("integration test", () => {
   });
 
   test("CLI flag - single pattern", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "keep.test.ts": `
 import { test, expect } from "bun:test";
 test("kept test", () => {
@@ -138,7 +138,7 @@ test("skipped test", () => {
   });
 
   test("CLI flag - multiple patterns", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "app.test.ts": `
 import { test, expect } from "bun:test";
 test("app test", () => {
@@ -177,7 +177,7 @@ test("fixture test", () => {
   });
 
   test("bunfig - invalid config type", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = 123
@@ -202,7 +202,7 @@ test("should pass", () => {
   });
 
   test("bunfig - invalid array item", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = ["valid-pattern", 123]
@@ -227,7 +227,7 @@ test("should pass", () => {
   });
 
   test("bunfig - empty array is a no-op", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = []
@@ -253,7 +253,7 @@ test("should pass", () => {
   });
 
   test("CLI flag overrides bunfig", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "bunfig.toml": `
 [test]
 pathIgnorePatterns = "a.test.ts"
@@ -289,7 +289,7 @@ test("b test", () => {
   });
 
   test("bare directory name pattern prunes entire subtree", () => {
-    const dir = tempDirWithFiles("path-ignore", {
+    using dir = tempDir("path-ignore", {
       "root.test.ts": `
 import { test, expect } from "bun:test";
 test("root test", () => {

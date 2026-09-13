@@ -10,15 +10,7 @@ pub const STORE_FILE_DESCRIPTORS: bool = !env::IS_BROWSER;
 
 pub const TRACING: bool = true;
 
-pub const ENABLE_ENTRY_CACHE: bool = true;
-
-// TODO: remove this flag, it should use bun.Output.scoped
-pub const VERBOSE_FS: bool = false;
-
 pub const WATCH_DIRECTORIES: bool = true;
-
-// This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
-pub const ALLOW_JSON_SINGLE_QUOTES: bool = true;
 
 pub const DISABLE_COMPRESSION_IN_HTTP_CLIENT: bool = false;
 
@@ -27,12 +19,6 @@ pub const ENABLE_KEEPALIVE: bool = true;
 pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;
 
 pub const HTTP_BUFFER_POOLING: bool = true;
-
-/// There is, what I think is, a bug in getaddrinfo()
-/// on macOS that specifically impacts localhost and not
-/// other ipv4 hosts. This is a workaround for that.
-/// "localhost" fails to connect.
-pub const HARDCODE_LOCALHOST_TO_127_0_0_1: bool = false;
 
 /// React will issue warnings in development if there are multiple children
 /// without keys and "jsxs" is not used.
@@ -65,13 +51,17 @@ pub const HELP_CATCH_MEMORY_ISSUES: bool = env::ENABLE_ASAN || env::IS_DEBUG;
 ///
 /// However, in the simple case, where you do something like
 ///
-///     exports.foo = 123;
-///     exports.bar = 456;
+/// ```js
+/// exports.foo = 123;
+/// exports.bar = 456;
+/// ```
 ///
 /// We can unwrap it into
 ///
-///    export const foo = 123;
-///    export const bar = 456;
+/// ```js
+/// export const foo = 123;
+/// export const bar = 456;
+/// ```
 ///
 /// 2) You import a CommonJS module using CommonJS.
 ///
@@ -108,7 +98,7 @@ pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
 
-pub(crate) const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
+const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
 
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn is_libdeflate_enabled() -> bool {
@@ -116,14 +106,16 @@ pub fn is_libdeflate_enabled() -> bool {
         return false;
     }
 
-    !feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get()
+    feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() != Some(true)
 }
 
 /// Enable the "app" option in Bun.serve. This option will likely be removed
 /// in favor of HTML loaders and configuring framework options in bunfig.toml
 pub fn bake() -> bool {
     // In canary or if an environment variable is specified.
-    env::IS_CANARY || env::IS_DEBUG || feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get()
+    env::IS_CANARY
+        || env::IS_DEBUG
+        || feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get() == Some(true)
 }
 
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.

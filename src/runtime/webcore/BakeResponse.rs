@@ -5,7 +5,7 @@ use crate::webcore::response::{HeadersRef, Init};
 use bun_core::String as BunString;
 use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
-pub fn fix_dead_code_elimination() {
+pub(crate) fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(
         BakeResponseClass__constructForSSR,
         BakeResponseClass__constructRender
@@ -46,7 +46,7 @@ pub enum SSRKind {
 /// `this` must be a valid heap-allocated `Response` whose ownership is being
 /// transferred to the JS GC. After this call the caller must not free or
 /// dereference `this`.
-pub(crate) unsafe fn to_js_for_ssr(
+unsafe fn to_js_for_ssr(
     this: *mut Response,
     global_object: &JSGlobalObject,
     kind: SSRKind,
@@ -70,16 +70,20 @@ bun_jsc::jsc_host_abi! {
         match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
             Ok(response) => response.cast::<c_void>(),
             Err(JsError::Thrown) => core::ptr::null_mut(),
+            Err(JsError::Terminated) => {
+                // A constructor runs beneath script: rethrow so the caller keeps unwinding.
+                let _ = bun_jsc::Stopped.throw(global_object);
+                core::ptr::null_mut()
+            }
             Err(JsError::OutOfMemory) => {
                 let _ = global_object.throw_out_of_memory();
                 core::ptr::null_mut()
             }
-            Err(JsError::Terminated) => core::ptr::null_mut(),
         }
     }
 }
 
-pub(crate) fn constructor(
+fn constructor(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
     bake_ssr_has_jsx: &mut c_int,
@@ -120,10 +124,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub(crate) fn construct_redirect(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let response = Response::construct_redirect_impl(global_this, callframe)?;
     let response = Box::new(response);
 
@@ -157,10 +158,7 @@ bun_jsc::jsc_host_abi! {
 }
 
 /// This function is only available on JSBakeResponse
-pub(crate) fn construct_render(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 
@@ -189,7 +187,7 @@ pub(crate) fn construct_render(
     }
 
     // Get the path string
-    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
+    let path_str = path_arg.to_bun_string(global_this)?;
 
     // Create a Response with Render body
     let response = Box::new(Response::init(
@@ -203,7 +201,7 @@ pub(crate) fn construct_render(
             ..Default::default()
         },
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
-        BunString::empty(),
+        BunString::EMPTY,
         false,
     ));
 

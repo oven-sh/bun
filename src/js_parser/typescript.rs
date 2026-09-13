@@ -7,7 +7,7 @@ use crate::p::P;
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    pub fn can_follow_type_arguments_in_expression(&mut self) -> bool {
+    pub(crate) fn can_follow_type_arguments_in_expression(&mut self) -> bool {
         let p = self;
         match p.lexer.token {
         // These are the only tokens can legally follow a type argument list. So we
@@ -41,7 +41,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (can_follow_type_arguments_in_expression)
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    pub fn is_ts_arrow_fn_jsx(&mut self) -> crate::CrateResult<bool> {
+    pub(crate) fn is_ts_arrow_fn_jsx(&mut self) -> crate::CrateResult<bool> {
         let p = self;
         // Lexer holds `&mut Log` so it cannot Clone; use the LexerSnapshot POD
         // via `snapshot()`/`restore()`.

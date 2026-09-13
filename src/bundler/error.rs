@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("InvalidRecordKind")]
-    InvalidRecordKind,
     #[error("ModuleNotFound")]
     ModuleNotFound,
     #[error("BuildFailed")]
@@ -104,7 +102,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::InvalidRecordKind => "InvalidRecordKind",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::BuildFailed => "BuildFailed",
             Self::CompilationFailed => "CompilationFailed",

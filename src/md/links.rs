@@ -22,10 +22,10 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
 /// Result of `try_match_bracket_link`.
-pub struct BracketLinkMatch {
-    pub is_link: bool,
-    pub label_end: usize,
-    pub link_end: usize,
+pub(crate) struct BracketLinkMatch {
+    pub(crate) is_link: bool,
+    pub(crate) label_end: usize,
+    pub(crate) link_end: usize,
 }
 
 /// A successfully parsed link/image/wikilink whose opening span has been
@@ -33,16 +33,16 @@ pub struct BracketLinkMatch {
 /// content, performs `leave`, and resumes at `link_end`. Returning this
 /// instead of recursing keeps label nesting iterative (arbitrary depth, no
 /// native stack growth).
-pub struct LabelParse {
-    pub label_start: usize,
-    pub label_end: usize,
-    pub link_end: usize,
-    pub leave: LabelLeave,
+pub(crate) struct LabelParse {
+    pub(crate) label_start: usize,
+    pub(crate) label_end: usize,
+    pub(crate) link_end: usize,
+    pub(crate) leave: LabelLeave,
 }
 
 /// Close action matching the span opened by `enter_label_span` /
 /// `process_wiki_link`.
-pub enum LabelLeave {
+pub(crate) enum LabelLeave {
     /// Inside image alt text: no span was opened.
     AltText,
     Image,
@@ -51,9 +51,9 @@ pub enum LabelLeave {
 }
 
 /// Result of `find_autolink`.
-pub struct Autolink {
-    pub end_pos: usize,
-    pub is_email: bool,
+pub(crate) struct Autolink {
+    pub(crate) end_pos: usize,
+    pub(crate) is_email: bool,
 }
 
 /// Characters that can affect bracket matching: the brackets themselves,
@@ -86,7 +86,7 @@ enum BracketLookup {
 /// the rest of the slice for every opener — that rescan is quadratic on
 /// inputs like `"[".repeat(n)`. The backing vec is recycled through
 /// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
-pub struct BracketMatches {
+pub(crate) struct BracketMatches {
     /// `(open, close)` position of every `[` seen outside code spans, HTML
     /// tags/autolinks and backslash escapes, ordered by `open`.
     /// `close == UNMATCHED` marks an opener with no matching `]`.
@@ -133,7 +133,7 @@ impl Parser<'_> {
     /// same tokenization as the matching scan (code spans, HTML tags,
     /// autolinks and backslash escapes hide brackets). `storage` is the
     /// recycled backing vec from `Parser.bracket_pairs`.
-    pub fn compute_bracket_matches(
+    pub(crate) fn compute_bracket_matches(
         &self,
         content: &[u8],
         mut storage: Vec<(OFF, OFF)>,
@@ -339,7 +339,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn process_link(
+    pub(crate) fn process_link(
         &mut self,
         content: &[u8],
         start: usize,
@@ -599,7 +599,7 @@ impl Parser<'_> {
     /// Try to match a bracket pair starting at `start` and check if it forms a link.
     /// Returns whether it's a link, where the label ends, and the full link end position.
     /// `base` is the offset of `content` within the slice `brackets` was built for.
-    pub fn try_match_bracket_link(
+    pub(crate) fn try_match_bracket_link(
         &mut self,
         content: &[u8],
         start: usize,
@@ -791,7 +791,7 @@ impl Parser<'_> {
     /// Check if a link label contains an inner link construct.
     /// Used to enforce the "links cannot contain other links" rule (CommonMark §6.7).
     /// `base` is the offset of `label` within the slice `brackets` was built for.
-    pub fn label_contains_link(
+    pub(crate) fn label_contains_link(
         &mut self,
         label: &[u8],
         brackets: &BracketMatches,
@@ -846,7 +846,7 @@ impl Parser<'_> {
     }
 
     /// Process wiki link: [[destination]] or [[destination|label]]
-    pub fn process_wiki_link(
+    pub(crate) fn process_wiki_link(
         &mut self,
         content: &[u8],
         start: usize,
@@ -923,7 +923,7 @@ impl Parser<'_> {
         }))
     }
 
-    pub fn find_autolink(&self, content: &[u8], start: usize) -> Option<Autolink> {
+    pub(crate) fn find_autolink(&self, content: &[u8], start: usize) -> Option<Autolink> {
         if start + 1 >= content.len() {
             return None;
         }
@@ -1023,7 +1023,11 @@ impl Parser<'_> {
         None
     }
 
-    pub fn render_autolink(&mut self, url: &[u8], is_email: bool) -> crate::types::JsResult<()> {
+    pub(crate) fn render_autolink(
+        &mut self,
+        url: &[u8],
+        is_email: bool,
+    ) -> crate::types::JsResult<()> {
         self.renderer.enter_span(
             Span::A,
             SpanAttrs {

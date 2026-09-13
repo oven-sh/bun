@@ -1,6 +1,4 @@
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -54,14 +52,18 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
+function closeEmptyBody(controller) {
+  controller.close();
+}
+
 class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
 
   constructor(response, options = {}) {
-    var { body } = response;
-    if (!body) throw new Error("Response body is null");
-    super(options, body);
+    // A response with no body (204, HEAD) still gets a body, as in undici:
+    // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
+    super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;
@@ -192,16 +194,6 @@ async function request(
     throw new Error("Body not allowed for GET or HEAD requests");
   }
 
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    // TODO: Streaming via ReadableStream?
-    let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
-      data += chunk;
-    }
-    inputBody = new TextEncoder().encode(data);
-  }
-
   if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {
     throw new Error("maxRedirections must be a positive number");
   }
@@ -232,7 +224,7 @@ async function request(
     throw new Error(`Request failed with status code ${statusCode}`);
   }
 
-  const body = resp.body ? new BodyReadable(resp) : null;
+  const body = new BodyReadable(resp);
 
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }

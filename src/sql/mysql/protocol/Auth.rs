@@ -13,7 +13,7 @@ use crate::shared::Data;
 
 bun_core::declare_scope!(Auth, hidden);
 
-pub mod mysql_native_password {
+pub(crate) mod mysql_native_password {
     use super::*;
 
     pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> crate::Result<[u8; 20]> {
@@ -104,14 +104,14 @@ pub mod caching_sha2_password {
     // so represent as a transparent u8 newtype rather than a closed Rust enum.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct FastAuthStatus(pub u8);
+    pub struct FastAuthStatus(pub(crate) u8);
 
     impl FastAuthStatus {
         pub const SUCCESS: Self = Self(0x03);
         pub const CONTINUE_AUTH: Self = Self(0x04);
 
         #[inline]
-        pub const fn from_raw(n: u8) -> Self {
+        pub(crate) const fn from_raw(n: u8) -> Self {
             Self(n)
         }
     }
@@ -125,14 +125,14 @@ pub mod caching_sha2_password {
     #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
-        pub data: Data,
+        pub(crate) data: Data,
     }
 
     impl Response {
         // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
         // needed here.
 
-        pub fn decode_internal<Context: ReaderContext>(
+        pub(crate) fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> crate::Result<()> {
@@ -173,7 +173,7 @@ pub mod caching_sha2_password {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        pub fn write_internal<Context: WriterContext>(
+        pub(crate) fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> crate::Result<()> {
@@ -308,7 +308,7 @@ pub mod caching_sha2_password {
     impl PublicKeyResponse {
         // `Data`'s own Drop frees `self.data`.
 
-        pub fn decode_internal<Context: ReaderContext>(
+        pub(crate) fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
         ) -> crate::Result<()> {
@@ -331,7 +331,7 @@ pub mod caching_sha2_password {
     pub struct PublicKeyRequest;
 
     impl PublicKeyRequest {
-        pub fn write_internal<Context: WriterContext>(
+        pub(crate) fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
         ) -> crate::Result<()> {

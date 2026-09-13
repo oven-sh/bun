@@ -11,11 +11,6 @@
 
 namespace WebCore {
 
-struct CookieStoreGetOptions {
-    String name {};
-    String url {};
-};
-
 struct CookieStoreDeleteOptions {
     String name {};
     String domain {};
@@ -31,7 +26,6 @@ public:
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    Vector<KeyValuePair<String, String>> getAll() const;
     Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
 
     bool has(const String& name) const;
@@ -62,7 +56,6 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
     void removeInternal(const String& name);

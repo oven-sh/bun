@@ -4,29 +4,25 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
 // `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
 // names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
-// but `init` does an explicit `as i64`/`as $Int` truncate so either shape works.
+// but `init` widens each field with `as i64` so either shape works.
 #[cfg(unix)]
 pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
 pub(crate) type RawStatFS = bun_sys::StatFS;
 
-// The field integer type is i64 ("big") or i32 ("small"). Stable Rust const
-// generics cannot select a field type from a `const BIG: bool`, so we generate
-// the two concrete instantiations with a small macro. The two exported aliases
-// (`StatFSSmall`, `StatFSBig`) are the only call sites.
 macro_rules! define_statfs_type {
-    ($name:ident, $Int:ty, big = $big:expr) => {
+    ($name:ident, big = $big:expr) => {
         #[allow(non_snake_case)]
         pub struct $name {
             // Common fields between Linux and macOS
-            pub _fstype: $Int,
-            pub _bsize: $Int,
-            pub _frsize: $Int,
-            pub _blocks: $Int,
-            pub _bfree: $Int,
-            pub _bavail: $Int,
-            pub _files: $Int,
-            pub _ffree: $Int,
+            pub _fstype: i64,
+            pub _bsize: i64,
+            pub _frsize: i64,
+            pub _blocks: i64,
+            pub _bfree: i64,
+            pub _bavail: i64,
+            pub _files: i64,
+            pub _ffree: i64,
         }
 
         impl $name {
@@ -39,28 +35,28 @@ macro_rules! define_statfs_type {
                     return bun_jsc::from_js_host_call(global, || {
                         Bun__createJSBigIntStatFSObject(
                             global,
-                            self._fstype as i64,
-                            self._bsize as i64,
-                            self._frsize as i64,
-                            self._blocks as i64,
-                            self._bfree as i64,
-                            self._bavail as i64,
-                            self._files as i64,
-                            self._ffree as i64,
+                            self._fstype,
+                            self._bsize,
+                            self._frsize,
+                            self._blocks,
+                            self._bfree,
+                            self._bavail,
+                            self._files,
+                            self._ffree,
                         )
                     });
                 }
 
                 Ok(Bun__createJSStatFSObject(
                     global,
-                    self._fstype as i64,
-                    self._bsize as i64,
-                    self._frsize as i64,
-                    self._blocks as i64,
-                    self._bfree as i64,
-                    self._bavail as i64,
-                    self._files as i64,
-                    self._ffree as i64,
+                    self._fstype,
+                    self._bsize,
+                    self._frsize,
+                    self._blocks,
+                    self._bfree,
+                    self._bavail,
+                    self._files,
+                    self._ffree,
                 ))
             }
 
@@ -90,18 +86,17 @@ macro_rules! define_statfs_type {
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
-                // Platform field types vary (u32/i64/u64); widen with `as i64`
-                // (lossless for the in-range values statfs reports), then `as $Int`
-                // truncates (intentional wrap).
+                // Platform field types vary (u32/i64/u64); `as i64` is lossless
+                // for the in-range values statfs reports.
                 Self {
-                    _fstype: (fstype_ as i64) as $Int,
-                    _bsize: (bsize_ as i64) as $Int,
-                    _frsize: (frsize_ as i64) as $Int,
-                    _blocks: (blocks_ as i64) as $Int,
-                    _bfree: (bfree_ as i64) as $Int,
-                    _bavail: (bavail_ as i64) as $Int,
-                    _files: (files_ as i64) as $Int,
-                    _ffree: (ffree_ as i64) as $Int,
+                    _fstype: fstype_ as i64,
+                    _bsize: bsize_ as i64,
+                    _frsize: frsize_ as i64,
+                    _blocks: blocks_ as i64,
+                    _bfree: bfree_ as i64,
+                    _bavail: bavail_ as i64,
+                    _files: files_ as i64,
+                    _ffree: ffree_ as i64,
                 }
             }
         }
@@ -134,8 +129,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-define_statfs_type!(StatFSSmall, i32, big = false);
-define_statfs_type!(StatFSBig, i64, big = true);
+define_statfs_type!(StatFSSmall, big = false);
+define_statfs_type!(StatFSBig, big = true);
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub enum StatFS {
@@ -145,7 +140,7 @@ pub enum StatFS {
 
 impl StatFS {
     #[inline]
-    pub fn init(stat_: &RawStatFS, big: bool) -> StatFS {
+    pub(crate) fn init(stat_: &RawStatFS, big: bool) -> StatFS {
         if big {
             StatFS::Big(StatFSBig::init(stat_))
         } else {
@@ -153,7 +148,7 @@ impl StatFS {
         }
     }
 
-    pub fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StatFS::Big(big) => big.to_js(global),
             StatFS::Small(small) => small.to_js(global),

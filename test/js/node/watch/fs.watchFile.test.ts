@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -241,7 +241,7 @@ describe("fs.watchFile", () => {
   // observed to manifest as a crash on Windows (20 attempts on macOS with
   // 200 watchers and 20 GC cycles never crashed).
   test.skipIf(!isWindows)("no crash when finalize() races WorkPool deinit", async () => {
-    const dir = tempDirWithFiles(
+    await using dir = tempDir(
       "watchfile-gc",
       Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${i}.txt`, `d`])),
     );
@@ -365,7 +365,7 @@ describe("fs.watchFile", () => {
   test("a throwing listener on the initial ENOENT callback keeps watching", async () => {
     // Fresh per-run directory so the target is guaranteed not to exist and
     // the initial stat takes the ENOENT path.
-    const dir = tempDirWithFiles("watchfile-throw", {
+    await using dir = tempDir("watchfile-throw", {
       ".keep": "",
     });
     const target = path.join(dir, "does-not-exist.txt");
@@ -415,4 +415,84 @@ describe("fs.watchFile", () => {
       signalCode: null,
     });
   }, 20_000);
+
+  // A change-callback task queued from the stat thread must not run once
+  // unwatchFile() closed the watcher. close() downgrades the native wrapper
+  // ref to a weak one, so a queued task that still runs touches a JS wrapper
+  // (and its cached listener/prevStat) that GC may already have collected:
+  // observed as Heap::addToRememberedSet "isMarked(cell)" assertion failures,
+  // segfaults in Integrity::auditCellFully, and "this.emit is not a function"
+  // type confusion in the listener.
+  //
+  // Detection without GC or timing games: the scheduler stats every watcher
+  // in one batch, queueing one change-callback task per changed file, and the
+  // first task's listener runs while its siblings' tasks are still queued in
+  // the same drain. Closing the siblings from that listener therefore always
+  // closes watchers with an in-flight task, at any interval. unwatchFile()
+  // removes all "change" listeners before stopping, so a listener re-attached
+  // right after it returns must never fire; on the unfixed build the queued
+  // native task still calls the cached bound #onChange, which emits into it.
+  test("change callback queued before unwatchFile does not fire after it returns", async () => {
+    const COUNT = 20;
+    await using dir = tempDir(
+      "watchfile-close-race",
+      Object.fromEntries(Array.from({ length: COUNT }, (_, i) => [`f${i}.txt`, "a"])),
+    );
+
+    const fixture = /* js */ `
+      const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const COUNT = ${COUNT};
+      const files = Array.from({ length: COUNT }, (_, i) => path.join(dir, "f" + i + ".txt"));
+      let fired = 0;
+      let late = 0;
+      const watchers = files.map((f, i) =>
+        fs.watchFile(f, { interval: 100 }, () => {
+          if (fired++) return;
+          // First delivered callback of the poll batch: the sibling watchers'
+          // change tasks are already queued behind this one. Close them, then
+          // re-attach listeners that must never be called.
+          for (let j = 0; j < COUNT; j++) {
+            if (j === i) continue;
+            fs.unwatchFile(files[j]);
+            watchers[j].on("change", () => { late++; });
+          }
+          clearInterval(churn);
+          fs.unwatchFile(f);
+          // The sibling tasks run (or bail) in the same drain that dispatched
+          // this callback, so one later timer turn is ample margin.
+          setTimeout(() => {
+            console.log("late=" + late + " siblings=" + (COUNT - 1));
+            process.exit(late === 0 ? 0 : 1);
+          }, 100);
+        }),
+      );
+      const churn = setInterval(() => {
+        for (const f of files) fs.appendFileSync(f, "b");
+      }, 3);
+      // If no change callback is ever delivered, fail loudly instead of hanging.
+      setTimeout(() => {
+        if (fired === 0) {
+          console.error("no change callback delivered");
+          process.exit(2);
+        }
+      }, 10_000);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: `late=0 siblings=${COUNT - 1}`,
+      stderr: expect.not.stringContaining("ASSERTION"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 30_000);
 });

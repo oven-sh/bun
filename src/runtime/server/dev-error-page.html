@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Internal Server Error</title>
+  </head>
+  <body>
+    <!-- The bracketed placeholders below are filled in by DevErrorPage.rs; keep prettier away from them. -->
+    <!-- prettier-ignore -->
+    <script id="__bunfallback" type="application/json">{[error_json]s}</script>
+
+    <!-- prettier-ignore -->
+    <style data-has-bun-fallback-style>{[bun_error_css]s}</style>
+
+    <!-- prettier-ignore -->
+    <script type="module">
+      globalThis.__BUN_DATA__ = JSON.parse(document.getElementById("__bunfallback").textContent);
+      document.getElementById("__bunfallback").remove();
+      {[bun_error_js]s};
+      globalThis[Symbol.for("Bun__renderFallbackError")](globalThis.__BUN_DATA__);
+    </script>
+  </body>
+</html>

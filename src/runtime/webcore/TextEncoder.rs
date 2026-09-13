@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use bun_core::strings;
+use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 
@@ -14,7 +15,7 @@ fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsRe
 /// # Safety
 /// `ptr` must be valid for reading `len` bytes of Latin-1 data.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encode8(
+unsafe extern "C" fn TextEncoder__encode8(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
@@ -105,13 +106,13 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     let bytes = strings::to_utf8_alloc_with_type(slice);
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encode16(
+unsafe extern "C" fn TextEncoder__encode16(
     global_this: &JSGlobalObject,
     ptr: *const u16,
     len: usize,
@@ -124,11 +125,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode16(
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn c(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
+unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     encode16_impl(global_this, slice)
@@ -172,7 +169,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
     // the `JSStringIterator` callback-pointer field types at `iter()` below.
-    pub(crate) extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
+    extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -188,18 +185,13 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub(crate) extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
+    extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub(crate) extern "C" fn write8(
-        it: *mut JSStringIterator,
-        ptr: *const u8,
-        len: u32,
-        offset: u32,
-    ) {
+    extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -213,13 +205,13 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub(crate) extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
+    extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub(crate) fn iter(&mut self) -> JSStringIterator {
+    fn iter(&mut self) -> JSStringIterator {
         JSStringIterator {
             data: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             stop: 0,
@@ -235,7 +227,7 @@ impl<'a> RopeStringEncoder<'a> {
 // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
 // It also isn't usable for latin1 strings which contain non-ascii characters
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextEncoder__encodeRopeString(
+extern "C" fn TextEncoder__encodeRopeString(
     global_this: &JSGlobalObject,
     rope_str: &JSString,
 ) -> JSValue {
@@ -270,7 +262,7 @@ pub(crate) extern "C" fn TextEncoder__encodeRopeString(
 /// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
 /// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
+unsafe extern "C" fn TextEncoder__encodeInto16(
     input_ptr: *const u16,
     input_len: usize,
     buf_ptr: *mut u8,
@@ -292,7 +284,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
 /// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
 /// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encodeInto8(
+unsafe extern "C" fn TextEncoder__encodeInto8(
     input_ptr: *const u8,
     input_len: usize,
     buf_ptr: *mut u8,

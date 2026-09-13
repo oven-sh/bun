@@ -732,6 +732,17 @@ The renamed symbols are then used during final code generation to produce output
 - Manages HTML chunk creation
 - Assigns unique keys and templates to chunks
 
+#### `mergeSmallChunks.rs`
+
+**Purpose**: Folds code-splitting chunks into a chunk that is loaded under exactly the same conditions, so every entry point still loads the same files but fewer modules; with `--min-chunk-size`, also folds small side-effect-free chunks into a chunk more entry points load.
+
+**Key functions**:
+
+- Computes, per `import()` entry point, which other entry points are guaranteed to be loaded already whenever it loads
+- Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
+- Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
+- With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
+
 #### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.
@@ -751,7 +762,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
-- Manages import precedence
+- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

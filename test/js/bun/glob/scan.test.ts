@@ -699,7 +699,7 @@ describe("absolute path pattern", async () => {
 describe("glob scan should not escape cwd boundary", () => {
   test("pattern .*/* should not match parent directory via ..", async () => {
     // Create a directory structure where we can verify paths don't escape cwd
-    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+    await using tempdir = tempDir("glob-cwd-escape", {
       ".hidden": {
         "file.txt": "hidden file content",
       },
@@ -731,7 +731,7 @@ describe("glob scan should not escape cwd boundary", () => {
   });
 
   test("pattern .*/**/*.ts should not escape cwd", async () => {
-    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+    await using tempdir = tempDir("glob-cwd-escape-ts", {
       ".config": {
         "settings.ts": "export default {}",
         "nested": {
@@ -769,14 +769,14 @@ describe("glob scan should not escape cwd boundary", () => {
 
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
-    const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
+    await using tempdir = tempDir("glob-scan-wildcard-fast-path", {
       "lol.md": "",
       "lol2.md": "",
       "shouldnt-show.md23243": "",
       "shouldnt-show.ts": "",
     });
     const glob = new Glob("*.md");
-    const entries = await Array.fromAsync(glob.scan(tempdir));
+    const entries = await Array.fromAsync(glob.scan(String(tempdir)));
     // bun root dir
     expect(entries.sort()).toEqual(["lol.md", "lol2.md"].sort());
   });
@@ -785,9 +785,9 @@ describe("glob.scan wildcard fast path", async () => {
   describe("fast-path detection edgecase", async () => {
     function runTest(pattern: string, files: Record<string, string>, expected: string[]) {
       test(`pattern: ${pattern}`, async () => {
-        const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", files);
+        await using tempdir = tempDir("glob-scan-wildcard-fast-path", files);
         const glob = new Glob(pattern);
-        const entries = await Array.fromAsync(glob.scan(tempdir));
+        const entries = await Array.fromAsync(glob.scan(String(tempdir)));
         expect(entries.sort()).toEqual(expected.sort());
       });
     }
@@ -856,7 +856,7 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   files[parts.join("/") + "/hit.txt"] = "";
   files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
 
-  const dir = tempDirWithFiles("glob-deep", files);
+  using dir = tempDir("glob-deep", files);
 
   // Exact-depth pattern: depth `*` components + literal tail
   const star = Array(depth).fill("*").join("/") + "/hit.txt";

@@ -34,6 +34,7 @@ typedef void* zig_mutex_t;
 
 // IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
 struct us_quic_socket_context_s;
+struct us_nq_driver_s;
 
 struct us_internal_loop_data_t {
 #ifdef LIBUS_USE_LIBUV
@@ -44,13 +45,6 @@ struct us_internal_loop_data_t {
     long long sweep_next_tick_ns;
 #endif
     int sweep_timer_count;
-#ifdef LIBUS_USE_LIBUV
-    /* Sockets whose peer FIN was deferred behind buffered data while paused
-     * (poll_cb's MSG_PEEK probe): the sweep escalates them via SO_ERROR when
-     * the peer later resets, since the one-shot DISCONNECT report was already
-     * consumed by the FIN. Zero cost while no socket is in that state. */
-    int fin_deferred_count;
-#endif
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
@@ -65,6 +59,11 @@ struct us_internal_loop_data_t {
      * the gap between loop_post and getTimeout is sub-µs so storing the
      * relative diff is precise enough. */
     long long quic_next_tick_us;
+    /* node:quic endpoints on this loop. us_nq_loop_flush_if_pending walks it
+     * from loop_pre/loop_post and the microtask drain, running each endpoint's
+     * full process pass only when it flagged pending work -- one engine pass
+     * per loop turn instead of one per native call. */
+    struct us_nq_driver_s *nq_head;
 #ifdef LIBUS_USE_LIBUV
     /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
      * for lsquic's time-driven state. POSIX folds the deadline into the

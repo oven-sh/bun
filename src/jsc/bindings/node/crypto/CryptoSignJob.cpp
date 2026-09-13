@@ -215,11 +215,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
 }
 
-extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(globalObject);
 }
-void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -230,8 +230,8 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
+            RETURN_IF_EXCEPTION(scope, {});
+            return { err };
         }
 
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -239,48 +239,23 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, m_signResult->size());
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, {});
 
-        Bun__EventLoop__runCallback2(
-            lexicalGlobalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(jsNull()),
-            JSValue::encode(signature));
-
-        break;
+        return { jsNull(), signature };
     }
     case Mode::Verify: {
         if (!m_verifyResult) {
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
+            RETURN_IF_EXCEPTION(scope, {});
+            return { err };
         }
 
-        Bun__EventLoop__runCallback2(
-            lexicalGlobalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(jsNull()),
-            JSValue::encode(jsBoolean(*m_verifyResult)));
-        break;
+        return { jsNull(), jsBoolean(*m_verifyResult) };
     }
     }
-}
-
-extern "C" SignJob* Bun__SignJob__create(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-SignJob* SignJob::create(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    return Bun__SignJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SignJob__schedule(SignJob* job);
-void SignJob::schedule()
-{
-    Bun__SignJob__schedule(this);
+    return {};
 }
 
 extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
@@ -416,22 +391,26 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         //              return 0;
         //      }
         //
+        //    EC and DSA providers do the same thing:
+        //    - providers/implementations/keymgmt/ec_kmgmt.c returns "SHA256"
+        //    - providers/implementations/keymgmt/dsa_kmgmt.c returns DSA_DEFAULT_MD ("SHA256")
+        //
         // BoringSSL Difference:
         // =====================
         // BoringSSL (used by Bun) does not have this automatic default mechanism.
-        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA/EC/DSA keys,
         // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
         //
         // This Fix:
         // =========
         // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
-        // default digest for RSA keys when no algorithm is specified, matching the
-        // OpenSSL behavior documented above.
+        // default digest for RSA, EC, and DSA keys when no algorithm is specified,
+        // matching the OpenSSL behavior documented above.
         //
         // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
         // as null since these algorithms perform their own hashing internally and
         // don't require a separate digest algorithm.
-        if (keyObject.asymmetricKey().isRsaVariant()) {
+        if (keyObject.asymmetricKey().isRsaVariant() || keyObject.asymmetricKey().isSigVariant()) {
             digest = Digest::FromName("SHA256"_s);
         }
     }

@@ -3811,6 +3811,16 @@ describe("expect()", () => {
     }
   });
 
+  // The message of the error that `fn` throws, without ANSI colors. Bun prints the "not" of a failed `.not` in bold.
+  const failureMessage = (/** @type {() => void} */ fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return ANY(e).message.replaceAll(/\x1B\[[0-9;]*m/g, "");
+    }
+    return "did not throw";
+  };
+
   // https://github.com/oven-sh/bun/issues/17074
   describe("toBeEmpty() with a value that is not a string, object, or iterable", () => {
     /** @type {{ label: string, value: any }[]} */
@@ -3845,18 +3855,10 @@ describe("expect()", () => {
 
     if (isBun) {
       test("the message has the matcher and the received value", () => {
-        const message = (/** @type {() => void} */ fn) => {
-          try {
-            fn();
-          } catch (e) {
-            return ANY(e).message.replaceAll(/\x1B\[[0-9;]*m/g, "");
-          }
-          return "did not throw";
-        };
-        expect(message(() => expect(undefined).toBeEmpty())).toBe(
+        expect(failureMessage(() => expect(undefined).toBeEmpty())).toBe(
           "expect(received).toBeEmpty()\n\nExpected value to be a string, object, or iterable\n\nReceived: undefined\n",
         );
-        expect(message(() => expect(5).not.toBeEmpty())).toBe(
+        expect(failureMessage(() => expect(5).not.toBeEmpty())).toBe(
           "expect(received).not.toBeEmpty()\n\nExpected value to be a string, object, or iterable\n\nReceived: 5\n",
         );
       });
@@ -3914,14 +3916,14 @@ describe("expect()", () => {
     for (const { label, value } of values) {
       test(label, () => {
         expect(value).toBeEmpty();
-        expect(() => expect(value).not.toBeEmpty()).toThrow(
+        expect(failureMessage(() => expect(value).not.toBeEmpty())).toContain(
           isBun ? "Expected value not to be empty" : "Expected value to not be empty",
         );
       });
     }
 
     test(`""`, () => {
-      expect(() => expect("").not.toBeEmpty()).toThrow(
+      expect(failureMessage(() => expect("").not.toBeEmpty())).toContain(
         isBun ? "Expected value not to be empty" : "Expected value to not be empty",
       );
     });

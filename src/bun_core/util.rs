@@ -1224,23 +1224,6 @@ impl Stdio {
     }
 }
 
-/// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
-/// Use instead of encoding the invalid value directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FdOptional(FdBacking);
-impl FdOptional {
-    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline]
-    pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 {
-            None
-        } else {
-            Some(Fd(self.0))
-        }
-    }
-}
-
 /// Best-effort fd → path. Returns bytes written (>0), 0 on misc failure,
 /// -1 on EBADF/ENOENT (caller may render `[BADF]`). Body is libc-only
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
@@ -3383,7 +3366,6 @@ pub trait Integer: Copy + Default {
     fn from_f64(v: f64) -> Self;
     fn from_i64(v: i64) -> Self;
     fn from_u64(v: u64) -> Self;
-    fn to_f64(self) -> f64;
 }
 macro_rules! impl_integer {
     ($($t:ty: $signed:expr),* $(,)?) => { $(
@@ -3396,7 +3378,6 @@ macro_rules! impl_integer {
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
             #[inline] fn from_i64(v: i64) -> Self { v as Self }
             #[inline] fn from_u64(v: u64) -> Self { v as Self }
-            #[inline] fn to_f64(self) -> f64 { self as f64 }
         }
     )* };
 }
@@ -3413,8 +3394,6 @@ pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
     fn from_ne_slice(b: &[u8]) -> Self;
-    /// Write `self.to_ne_bytes()` into `out[..SIZE]`.
-    fn encode_ne(self, out: &mut [u8]);
 }
 
 macro_rules! impl_native_endian_int {
@@ -3426,10 +3405,6 @@ macro_rules! impl_native_endian_int {
                 let mut a = [0u8; core::mem::size_of::<$t>()];
                 a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
                 <$t>::from_ne_bytes(a)
-            }
-            #[inline]
-            fn encode_ne(self, out: &mut [u8]) {
-                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
             }
         }
     )*};

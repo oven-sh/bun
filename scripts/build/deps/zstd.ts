@@ -36,7 +36,7 @@ export const zstd: Dependency = {
   versionMacro: "ZSTD_HASH",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "facebook/zstd",
     commit: ZSTD_COMMIT,
   }),

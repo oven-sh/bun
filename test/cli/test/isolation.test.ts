@@ -1077,6 +1077,160 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(exitCode).toBe(0);
 });
 
+// The swap sweeps what exists AT the file boundary. Work a finished file left
+// in flight lands later, while the next file runs: a thread-pool job settles a
+// promise of the retired realm, a child the swap killed reports its exit. The
+// finished file's continuation must not run then. Before the fence it did, and
+// whatever it created (a setInterval, a Bun.serve, a child process, a chdir)
+// was adopted by the running file.
+describe.concurrent("--isolate: a finished file's late completions do not run in the next file", () => {
+  const lateFixtures = {
+    "a-late.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+
+      const dir = import.meta.dir;
+
+      test("leaks a thread-pool chain and a child with onExit", () => {
+        // Each turn hops through the thread pool, so the chain is always mid-flight
+        // at the swap. It only acts once b-late.test.ts says it is running.
+        (async () => {
+          while (!existsSync(join(dir, "b-running"))) {
+            await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+          }
+          process.chdir(tmpdir());
+          const server = Bun.serve({ port: 0, fetch: () => new Response("served by dead A") });
+          writeFileSync(join(dir, "a-acted"), String(server.port));
+        })();
+
+        // Killed by the swap; its exit lands while B runs.
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+          stdio: ["ignore", "ignore", "ignore"],
+          onExit() {
+            writeFileSync(join(dir, "a-onexit"), "");
+          },
+        });
+
+        expect(existsSync(join(dir, "b-running"))).toBe(false);
+      });
+    `,
+    "b-late.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync, realpathSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const dir = import.meta.dir;
+
+      test("sees nothing from A", async () => {
+        writeFileSync(join(dir, "b-running"), "");
+        // Turn the event loop through the thread pool so A's pending job (and
+        // its killed child's exit) get every chance to land here.
+        for (let i = 0; i < 40 && !existsSync(join(dir, "a-acted")); i++) {
+          await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+        }
+        expect({
+          acted: existsSync(join(dir, "a-acted")),
+          onExit: existsSync(join(dir, "a-onexit")),
+          cwd: realpathSync("."),
+        }).toEqual({
+          acted: false,
+          onExit: false,
+          cwd: realpathSync(dir),
+        });
+      });
+    `,
+  };
+  const files = ["./a-late.test.ts", "./b-late.test.ts"];
+
+  test("--isolate", async () => {
+    using dir = tempDir("isolate-late", lateFixtures);
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // One worker takes both files (scale-up gated), so the same fence applies
+  // between files inside a --parallel worker.
+  test("--parallel", async () => {
+    using dir = tempDir("isolate-late-parallel", lateFixtures);
+    const { stderr, exitCode } = await runTests(String(dir), ["--parallel=2"], files, {
+      ...bunEnv,
+      BUN_TEST_PARALLEL_SCALE_MS: "60000",
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A FinalizationRegistry cleanup that a finished file created reaches none of
+  // the checks above: JSC calls it directly from a DeferredWorkTimer job, not
+  // through a microtask, a Job or run_callback. The cleanup ran in the retired
+  // realm while a later file executed, and an error it threw was charged to
+  // that later file (which then lost its remaining tests to "Cannot call test()
+  // after the test run has completed"). The retired realm now reports its
+  // script execution as stopped, so Bun drops the job, as JSC's own
+  // DeferredWorkTimer::doWork does for a stopped realm.
+  test("a finished file's FinalizationRegistry cleanup does not run in the next file", async () => {
+    using dir = tempDir("isolate-finalization-registry", {
+      "a-registry.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+        // The cleanup only acts once b-registry.test.ts says it is running, and it
+        // registers fresh garbage each time, so this registry has dead entries at
+        // every collection for as long as its realm is alive.
+        const registry = new FinalizationRegistry(() => {
+          if (existsSync(join(dir, "b-running"))) writeFileSync(join(dir, "a-acted"), "");
+          registry.register({}, 0);
+        });
+
+        test("registers objects that die at once", () => {
+          for (let i = 0; i < 200; i++) registry.register({ i }, i);
+          expect(existsSync(join(dir, "b-running"))).toBe(false);
+        });
+      `,
+      "b-registry.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+        writeFileSync(join(dir, "b-running"), "");
+
+        test("A's FinalizationRegistry cleanup does not run here", async () => {
+          // Collect, then round-trip the thread pool, so a cleanup A left queued gets
+          // every chance to land here.
+          for (let i = 0; i < 20 && !existsSync(join(dir, "a-acted")); i++) {
+            Bun.gc(true);
+            await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+          }
+          expect(existsSync(join(dir, "a-acted"))).toBe(false);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-registry.test.ts", "./b-registry.test.ts"],
+      // A collects between its last drain and the swap, which is when the cleanup it
+      // leaves behind is queued. Natural GC timing does that only sometimes.
+      { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Each of these leaked handles used to pin its test file's ENTIRE global
 // object (and therefore the file's module graph) for the rest of a
 // `bun test --isolate` run, growing memory by one full global per file:

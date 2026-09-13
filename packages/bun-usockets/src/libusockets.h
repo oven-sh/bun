@@ -677,6 +677,19 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
+
+/* Return codes of us_socket_queued_input. */
+#define LIBUS_QUEUED_INPUT_NONE 0  /* a read would block: nothing is queued */
+#define LIBUS_QUEUED_INPUT_DATA 1  /* at least one byte is readable */
+#define LIBUS_QUEUED_INPUT_EOF 2   /* the peer sent a FIN */
+#define LIBUS_QUEUED_INPUT_ERROR 3 /* the read side failed, e.g. a reset */
+/* What the read side of the socket holds right now, without a trip through
+ * the event loop. The peek consumes nothing, so the poll still reports the
+ * same input later and the normal read path still handles it. Callers that
+ * own a socket between loop iterations use this to tell an idle connection
+ * from one the peer has already written to or closed. */
+int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
+
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as

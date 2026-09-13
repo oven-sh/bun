@@ -290,7 +290,6 @@ pub trait BlobExt {
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob
     where
         Self: Sized;
-    fn transfer(&self);
     fn shared_view_raw(&self) -> *mut [u8];
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
@@ -1371,12 +1370,11 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         let extra_options = options.extra_options;
         let Some(store) = self.store.get().clone() else {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    global_this.create_error_instance(format_args!("Blob is detached")),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                global_this,
+                global_this.create_error_instance(format_args!("Blob is detached")),
+            )
+            .to_js());
         };
 
         if self.is_s3() {
@@ -1386,12 +1384,11 @@ impl BlobExt for Blob {
             let aws_options = match s3.get_credentials_with_options(extra_options, global_this) {
                 Ok(o) => o,
                 Err(err) => {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            global_this.take_exception(err),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        global_this,
+                        err,
+                    )?
+                    .to_js());
                 }
             };
 
@@ -1430,12 +1427,11 @@ impl BlobExt for Blob {
         }
 
         if !matches!(store.data, store::Data::File(_)) {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    global_this.create_error_instance(format_args!("Blob is read-only")),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                global_this,
+                global_this.create_error_instance(format_args!("Blob is read-only")),
+            )
+            .to_js());
         }
 
         let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
@@ -1466,10 +1462,11 @@ impl BlobExt for Blob {
                     match result {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            return Ok(JSPromise::rejected_promise(
                                 global_this,
                                 err.with_path(path).to_js(global_this),
-                            ));
+                            )
+                            .to_js());
                         }
                     }
                 };
@@ -1522,10 +1519,7 @@ impl BlobExt for Blob {
                 });
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
-                        ),
+                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js(),
                     );
                 }
 
@@ -1564,101 +1558,22 @@ impl BlobExt for Blob {
 
                 if let bun_sys::Result::Err(err) = sink.start(&stream_start) {
                     return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
-                        ),
+                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js(),
                     );
                 }
                 break 'brk_sink sink;
             }
         };
 
-        // `pipe_stream` takes its own refs.
-        if let Some(promise) =
-            // SAFETY: sole owner so far; `&mut` scoped to the call.
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
-        {
-            return Ok(promise);
+        // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
+        let mut readable_stream = readable_stream;
+        // SAFETY: sole owner so far; `&mut` scoped to the call.
+        let result =
+            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, global_this) };
+        if let Some(err) = result.to_error() {
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
         }
-
-        let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
-            global_this,
-            readable_stream.value,
-            file_sink.as_non_null(),
-        );
-
-        assignment_result.ensure_still_alive();
-
-        if let Some(err) = assignment_result.to_error() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err,
-                ),
-            );
-        }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            global_this.bun_vm().as_mut().drain_microtasks();
-
-            assignment_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
-                            promise: jsc::JSPromiseStrong::init(global_this),
-                            readable_stream_ref:
-                                webcore::readable_stream::ReadableStreamStrong::init(
-                                    readable_stream,
-                                    global_this,
-                                ),
-                            sink: file_sink,
-                        }));
-                        // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
-                        let promise_value = unsafe { (*wrapper).promise.value() };
-                        assignment_result.then(
-                            global_this,
-                            wrapper.cast::<c_void>(),
-                            on_file_stream_resolve_request_stream_shim,
-                            on_file_stream_reject_request_stream_shim,
-                        );
-                        return Ok(promise_value);
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        let written = file_sink.stream_bytes.get().unwrap_or(0);
-                        readable_stream.done();
-                        return Ok(JSPromise::resolved_promise_value(
-                            global_this,
-                            JSValue::js_number(written as f64),
-                        ));
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        readable_stream.cancel(global_this)?;
-                        promise.set_handled(global_this.vm());
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            promise.result(global_this.vm()),
-                        ));
-                    }
-                }
-            } else {
-                readable_stream.cancel(global_this)?;
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        assignment_result,
-                    ),
-                );
-            }
-        }
-        let written = file_sink.stream_bytes.get().unwrap_or(0);
-
-        Ok(JSPromise::resolved_promise_value(
-            global_this,
-            JSValue::js_number(written as f64),
-        ))
+        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2407,17 +2322,6 @@ impl BlobExt for Blob {
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
-    }
-
-    // Transferring doesn't change the reference count
-    // It is a move
-    #[inline]
-    fn transfer(&self) {
-        // No `.deref()` here: the receiver already
-        // holds the same `*Store`; leak our +1 into theirs.
-        if let Some(s) = self.take_store() {
-            let _ = s.into_raw();
-        }
     }
 
     // dupe / dupe_with_content_type / to_js: defined once below (top-level impl); duplicates removed (E0592).
@@ -4208,15 +4112,12 @@ pub trait MkdirpTarget {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
-    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-        global,
-        global
-            .err(
-                jsc::ErrorCode::BODY_ALREADY_USED,
-                format_args!("Body already used"),
-            )
-            .to_js(),
-    )
+    global
+        .err(
+            jsc::ErrorCode::BODY_ALREADY_USED,
+            format_args!("Body already used"),
+        )
+        .reject()
 }
 
 #[derive(Default, Clone, Copy)]
@@ -4341,12 +4242,7 @@ fn write_file_with_empty_source_to_destination(
                 }
 
                 *err = sys_error_with_path_like(err, &file.pathlike);
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        err.to_js(ctx),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise(ctx, err.to_js(ctx)).to_js());
             }
         }
         store::Data::S3(s3) => {
@@ -4354,12 +4250,7 @@ fn write_file_with_empty_source_to_destination(
             let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
                 Ok(o) => o,
                 Err(err) => {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            ctx,
-                            ctx.take_exception(err),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
                 }
             };
 
@@ -4538,14 +4429,11 @@ pub(crate) fn write_file_with_source_destination(
         )? {
             return destination_blob.pipe_readable_stream_to_blob(ctx, stream, options);
         } else {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ctx.create_error_instance(format_args!(
-                        "Failed to stream bytes from s3 bucket"
-                    )),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ctx.create_error_instance(format_args!("Failed to stream bytes from s3 bucket")),
+            )
+            .to_js());
         }
     } else if destination_type == store::DataTag::Bytes && source_type == store::DataTag::Bytes {
         // If this is bytes <> bytes, we can just duplicate it
@@ -4568,12 +4456,7 @@ pub(crate) fn write_file_with_source_destination(
         let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
             Ok(o) => o,
             Err(err) => {
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        ctx.take_exception(err),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
             }
         };
         let proxy_owned = http_proxy_href(ctx);
@@ -4610,10 +4493,13 @@ pub(crate) fn write_file_with_source_destination(
                             core::ptr::null_mut(),
                         );
                     } else {
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        return Ok(JSPromise::rejected_promise(
                             ctx,
-                            ctx.create_error_instance(format_args!("Failed to stream bytes to s3 bucket")),
-                        ));
+                            ctx.create_error_instance(format_args!(
+                                "Failed to stream bytes to s3 bucket"
+                            )),
+                        )
+                        .to_js());
                     }
                 } else {
                     struct Wrapper {
@@ -4706,14 +4592,13 @@ pub(crate) fn write_file_with_source_destination(
                         core::ptr::null_mut(),
                     );
                 } else {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            ctx,
-                            ctx.create_error_instance(format_args!(
-                                "Failed to stream bytes to s3 bucket"
-                            )),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise(
+                        ctx,
+                        ctx.create_error_instance(format_args!(
+                            "Failed to stream bytes to s3 bucket"
+                        )),
+                    )
+                    .to_js());
                 }
             }
         }
@@ -4939,10 +4824,7 @@ pub(crate) fn write_file_internal(
                     // borrow of the body value is live.
                     let _ = unsafe { (*body_value).use_() };
                     Ok(ControlFlow::Break(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err_js,
-                        ),
+                        JSPromise::rejected_promise(global_this, err_js).to_js(),
                     ))
                 }
                 BodyTag::Locked => {
@@ -5048,10 +4930,7 @@ pub(crate) fn write_file_internal(
                                 // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
                                 return Ok(ControlFlow::Break(
-                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                        global_this,
-                                        err_js,
-                                    ),
+                                    JSPromise::rejected_promise(global_this, err_js).to_js(),
                                 ));
                             }
                             // SAFETY: the match borrow ended with the pattern; no other borrow is live.
@@ -5281,10 +5160,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                return JSPromise::rejected_promise(
                     global_this,
                     err.with_path(pathlike.path().slice()).to_js(global_this),
-                );
+                )
+                .to_js();
             }
         }
     };
@@ -5329,10 +5209,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                     } else {
                         err.with_path(pathlike.path().slice()).to_js(global_this)
                     };
-                    return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        err_js,
-                    );
+                    return JSPromise::rejected_promise(global_this, err_js).to_js();
                 }
             }
         }
@@ -5369,10 +5246,11 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                     *_needs_async = true;
                     return JSValue::ZERO;
                 }
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                return JSPromise::rejected_promise(
                     global_this,
                     err.with_path(pathlike.path().slice()).to_js(global_this),
-                );
+                )
+                .to_js();
             }
         }
     };
@@ -5404,10 +5282,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 } else {
                     err.with_path(pathlike.path().slice()).to_js(global_this)
                 };
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err_js,
-                );
+                return JSPromise::rejected_promise(global_this, err_js).to_js();
             }
         }
     }
@@ -5767,95 +5642,6 @@ impl Drop for S3BlobDownloadTask {
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
-// FileStreamWrapper / pipeReadableStreamToBlob
-// ──────────────────────────────────────────────────────────────────────────
-
-struct FileStreamWrapper {
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    pub sink: RefPtr<webcore::FileSink>,
-}
-
-pub(crate) fn on_file_stream_resolve_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-    if let Some(stream) = strong.get() {
-        stream.done();
-    }
-    let written = this.sink.stream_bytes.get().unwrap_or(0);
-    this.promise
-        .resolve(global_this, JSValue::js_number(written as f64))?;
-    Ok(JSValue::UNDEFINED)
-}
-
-pub(crate) fn on_file_stream_reject_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // Take ownership via Box so Drop runs `sink.deref()`
-    // and frees the wrapper.
-    // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
-    // through `then()` from the resolve path; we are the sole consumer here.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let err = args[0];
-
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-
-    this.promise.reject(global_this, Ok(err))?;
-
-    if let Some(stream) = strong.get() {
-        stream.cancel(global_this)?;
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-// C-ABI shims for `JSValue::then`. The Rust-side
-// host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
-// Exported under the legacy symbol names so C++ (`BunPromiseInlines.h`) links
-// the same symbol it does today.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
-    unsafe fn on_file_stream_resolve_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
-    unsafe fn on_file_stream_reject_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
-    }
-}
-
-// the local `AnyPromiseResultExt` shim was removed —
-// `bun_jsc::AnyPromise::result` is an inherent method (and `JSInternalPromise`
-// is a transparent alias for `JSPromise`), so the `.result(vm)` call below
-// resolves directly upstream.
-
-// ──────────────────────────────────────────────────────────────────────────
 // getSliceFrom / getSlice / type/name/lastModified/size getters
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -6040,6 +5826,25 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
             }
             _ => {}
         },
+    }
+}
+
+/// Whether a second Blob over `store` reads the same bytes from the start.
+/// Memory and S3 do. A path does when it names a regular file (each read
+/// opens it again); it is stat'd here if that is not yet known. A file
+/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
+    match Store::data_mut(store).tag() {
+        store::DataTag::Bytes | store::DataTag::S3 => true,
+        store::DataTag::File => {
+            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
+                return false;
+            }
+            if Store::data_mut(store).as_file().seekable.is_none() {
+                resolve_file_stat(store);
+            }
+            Store::data_mut(store).as_file().seekable != Some(false)
+        }
     }
 }
 

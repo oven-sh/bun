@@ -155,7 +155,7 @@ impl NapiEnv {
     /// Assert that we're not currently performing garbage collection
     pub(crate) fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { Bun__napi_check_gc(self.as_mut_ptr()) };
+        unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
     }
 
     pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -2058,7 +2058,7 @@ extern "C" fn napi_fatal_error(
     message_len_: usize,
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
-    Bun__napi_suppress_crash_on_abort_if_desired();
+    napi_internal_suppress_crash_on_abort_if_desired();
     let mut message = napi_span(message_ptr, message_len_);
     if message.is_empty() {
         message = b"fatal error";
@@ -2330,32 +2330,32 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> napi_status;
 
-    fn Bun__napi_cleanup_env_cpp(env: napi_env);
-    fn Bun__napi_check_gc(env: napi_env);
+    fn napi_internal_cleanup_env_cpp(env: napi_env);
+    fn napi_internal_check_gc(env: napi_env);
 
     /// Returns false if the env has already torn down its registry.
     fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void) -> bool;
     fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void);
 }
 
-extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
+extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
     // SAFETY: data is the napi_env we registered below.
-    unsafe { Bun__napi_cleanup_env_cpp(data as napi_env) };
+    unsafe { napi_internal_cleanup_env_cpp(data as napi_env) };
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_register_cleanup_zig(env_: napi_env) {
+extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null.
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_.cast::<c_void>(),
-        Bun__napi_register_cleanup_callback,
+        napi_internal_register_cleanup_callback,
     );
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
+extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -2365,7 +2365,7 @@ extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
 }
 
 unsafe extern "C" {
-    fn Bun__napi_remove_finalizer(
+    fn napi_internal_remove_finalizer(
         env: napi_env,
         fun: napi_finalize,
         hint: *mut c_void,
@@ -2395,7 +2395,7 @@ impl Finalizer {
 
         (self.fun)(env, self.data, self.hint);
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         env_ref.surface_exception(env_ref.to_js())
     }
@@ -2412,7 +2412,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_enqueue_finalizer(
+extern "C" fn napi_internal_enqueue_finalizer(
     env: napi_env,
     fun: napi_finalize,
     data: *mut c_void,
@@ -3172,7 +3172,7 @@ impl ThreadSafeFunction {
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_threadsafe_function_env_teardown(tsfn: *mut c_void) {
+extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `finalize` and
     // `env_teardown` both remove the entry before freeing. Exclusive borrow
@@ -3562,6 +3562,20 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value12IsUint8ArrayEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function15GetScriptOriginEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function19GetScriptLineNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function21GetScriptColumnNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ResourceNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin10LineOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ColumnOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin8ScriptIdEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12SourceMapUrlEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin7OptionsEv() -> *mut c_void;
+        pub(super) static _ZN2v88Function19kLineOffsetNotFoundE: i32;
         pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
         pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
@@ -3897,6 +3911,34 @@ mod v8_api {
         pub(super) fn v8_Value_ToString() -> *mut c_void;
         #[link_name = "?ToInteger@Value@v8@@QEBA?AV?$MaybeLocal@VInteger@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_Value_ToInteger() -> *mut c_void;
+        #[link_name = "?GetScriptOrigin@Function@v8@@QEBA?AVScriptOrigin@2@XZ"]
+        pub(super) fn v8_Function_GetScriptOrigin() -> *mut c_void;
+        #[link_name = "?GetScriptLineNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptLineNumber() -> *mut c_void;
+        #[link_name = "?GetScriptColumnNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptColumnNumber() -> *mut c_void;
+        #[link_name = "?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInt32() -> *mut c_void;
+        #[link_name = "?Value@Int32@v8@@QEBAHXZ"]
+        pub(super) fn v8_Int32_Value() -> *mut c_void;
+        #[link_name = "?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ"]
+        pub(super) fn v8_ScriptOrigin_VerifyHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?ResourceName@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_ResourceName() -> *mut c_void;
+        #[link_name = "?LineOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_LineOffset() -> *mut c_void;
+        #[link_name = "?ColumnOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ColumnOffset() -> *mut c_void;
+        #[link_name = "?ScriptId@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ScriptId() -> *mut c_void;
+        #[link_name = "?SourceMapUrl@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_SourceMapUrl() -> *mut c_void;
+        #[link_name = "?GetHostDefinedOptions@ScriptOrigin@v8@@QEBA?AV?$Local@VData@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_GetHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?Options@ScriptOrigin@v8@@QEBA?AVScriptOriginOptions@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_Options() -> *mut c_void;
+        #[link_name = "?kLineOffsetNotFound@Function@v8@@2HB"]
+        pub(super) static v8_Function_kLineOffsetNotFound: i32;
         #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
         pub(super) fn v8_Context_Global() -> *mut c_void;
         #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
@@ -4993,6 +5035,19 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v85Value12IsUint8ArrayEv,
             _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE,
             _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE,
+            _ZNK2v88Function15GetScriptOriginEv,
+            _ZNK2v88Function19GetScriptLineNumberEv,
+            _ZNK2v88Function21GetScriptColumnNumberEv,
+            _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Int325ValueEv,
+            _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin12ResourceNameEv,
+            _ZNK2v812ScriptOrigin10LineOffsetEv,
+            _ZNK2v812ScriptOrigin12ColumnOffsetEv,
+            _ZNK2v812ScriptOrigin8ScriptIdEv,
+            _ZNK2v812ScriptOrigin12SourceMapUrlEv,
+            _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin7OptionsEv,
             _ZN2v87Context6GlobalEv,
             _ZNK2v86Object18InternalFieldCountEv,
             _ZN2v86Object15GetIdentityHashEv,
@@ -5030,6 +5085,8 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
         );
+        // Data symbol: keep_symbols! only takes function paths.
+        ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);
     }
     #[cfg(windows)]
     {
@@ -5172,6 +5229,19 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Value_IsUint8Array,
             v8_Value_ToString,
             v8_Value_ToInteger,
+            v8_Function_GetScriptOrigin,
+            v8_Function_GetScriptLineNumber,
+            v8_Function_GetScriptColumnNumber,
+            v8_Value_ToInt32,
+            v8_Int32_Value,
+            v8_ScriptOrigin_VerifyHostDefinedOptions,
+            v8_ScriptOrigin_ResourceName,
+            v8_ScriptOrigin_LineOffset,
+            v8_ScriptOrigin_ColumnOffset,
+            v8_ScriptOrigin_ScriptId,
+            v8_ScriptOrigin_SourceMapUrl,
+            v8_ScriptOrigin_GetHostDefinedOptions,
+            v8_ScriptOrigin_Options,
             v8_Context_Global,
             v8_Object_InternalFieldCount,
             v8_Object_GetIdentityHash,
@@ -5218,6 +5288,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Map_Set,
             v8_Map_Delete,
         );
+        ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }
 
     // posix_platform_specific_v8_apis

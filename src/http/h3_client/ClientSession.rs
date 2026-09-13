@@ -232,7 +232,10 @@ impl ClientSession {
         // `Stream.client` is a live backref while attached; `ParentRef::from`
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
+        let replay_safe = !st.headers_sent || client_ref.method.is_idempotent();
+        if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {

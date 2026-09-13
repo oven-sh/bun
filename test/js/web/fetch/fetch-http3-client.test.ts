@@ -671,6 +671,104 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   }
 });
 
+// Same shape as the retry above, but the in-flight request is not idempotent
+// and A's handler has already received it. The origin may have acted on it, so
+// the client must surface the failure instead of sending it a second time
+// (RFC 9110 §9.2.2); the HTTP/1.1 and HTTP/2 clients apply the same rule.
+test.each(["POST", "PATCH"])("does not replay a %s that was already sent", async method => {
+  const hits: string[] = [];
+  const received = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const a = Bun.serve({
+    port: 0,
+    reusePort: true,
+    tls,
+    http3: true,
+    http1: false,
+    fetch: async req => {
+      hits.push(`a ${req.method}`);
+      if (req.method === method) {
+        received.resolve();
+        await release.promise;
+      }
+      return new Response("a");
+    },
+  });
+  let b: Server | undefined;
+  try {
+    const port = a.port;
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
+    const inflight = fetch(`https://127.0.0.1:${port}/`, { ...h3, method, body: "payload" });
+    await received.promise;
+    // This continuation runs in the microtask drain of A's handler, with A's
+    // lsquic engine still on the stack. Stop A from a fresh event-loop turn.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    b = Bun.serve({
+      port,
+      reusePort: true,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: req => {
+        hits.push(`b ${req.method}`);
+        return new Response("b");
+      },
+    });
+    a.stop(true);
+    release.resolve();
+    const outcome = await inflight.then(r => r.text()).catch(e => e.code);
+    expect(outcome).toBe("HTTP3StreamReset");
+    // The origin is reachable: a new request lands on B, the first one never did.
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("b");
+    expect(hits).toEqual(["a GET", `a ${method}`, "b GET"]);
+  } finally {
+    release.resolve();
+    void a.stop(true);
+    void b?.stop(true);
+  }
+});
+
+// A request that never left the client is safe to send again whatever its
+// method. The fake server answers each Initial with a Version Negotiation
+// packet that lists only a reserved version, so the handshake fails before the
+// request is written. Each connection attempt uses a new connection ID.
+test.each(["GET", "POST"])("re-sends a %s once when the connection failed before it was sent", async method => {
+  const attempts = new Set<string>();
+  const server = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, packet, port, address) {
+        if (packet.length < 7 || (packet[0] & 0x80) === 0) return;
+        const dcidLength = packet[5];
+        const dcid = packet.subarray(6, 6 + dcidLength);
+        const scidLength = packet[6 + dcidLength];
+        const scid = packet.subarray(7 + dcidLength, 7 + dcidLength + scidLength);
+        attempts.add(dcid.toString("hex"));
+        socket.send(
+          Buffer.concat([
+            Buffer.from([0xc0, 0, 0, 0, 0, scidLength]),
+            scid,
+            Buffer.from([dcidLength]),
+            dcid,
+            Buffer.from([0x0a, 0x0a, 0x0a, 0x0a]),
+          ]),
+          port,
+          address,
+        );
+      },
+    },
+  });
+  try {
+    const init = method === "GET" ? {} : { method, body: "payload" };
+    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init }).catch(e => e.code);
+    expect(outcome).toBe("HTTP3HandshakeFailed");
+    expect(attempts.size).toBe(2);
+  } finally {
+    server.close();
+  }
+});
+
 // Subprocess so the experimental flag is process-scoped and the in-process
 // server above (http1: false) doesn't interfere — this server keeps http1 on
 // so the first fetch goes over TCP and reads Alt-Svc.

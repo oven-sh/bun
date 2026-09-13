@@ -24,6 +24,7 @@
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "ObjectBindings.h"
+#include "VectorSizeLimit.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -193,22 +194,35 @@ size_t readableStreamGetNumReadIntoRequests(JSReadableStream* stream)
     return static_cast<JSReadableStreamBYOBReader*>(stream->m_reader.get())->m_readIntoRequests.size();
 }
 
-// ReadableStreamAddReadRequest(stream, readRequest)
-void readableStreamAddReadRequest(VM& vm, JSReadableStream* stream, JSReadRequest* readRequest)
+// ReadableStreamAddReadRequest(stream, readRequest). Script adds one request per read(), so
+// the deque can fill. The throw (a GC allocation) happens before the cell lock is taken.
+void readableStreamAddReadRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadRequest* readRequest)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(readableStreamHasDefaultReader(stream));
     ASSERT(stream->m_state == ReadableStreamState::Readable);
     auto* reader = static_cast<JSReadableStreamDefaultReader*>(stream->m_reader.get());
+    if (reader->m_readRequests.size() >= Bun::maxDequeSize<WriteBarrier<JSReadRequest>>()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
     WTF::Locker locker { reader->cellLock() };
     reader->m_readRequests.append(WriteBarrier<JSReadRequest>(vm, reader, readRequest));
 }
 
-// ReadableStreamAddReadIntoRequest(stream, readRequest)
-void readableStreamAddReadIntoRequest(VM& vm, JSReadableStream* stream, JSReadIntoRequest* readRequest)
+// ReadableStreamAddReadIntoRequest(stream, readRequest). Fallible like readableStreamAddReadRequest.
+void readableStreamAddReadIntoRequest(JSGlobalObject* globalObject, JSReadableStream* stream, JSReadIntoRequest* readRequest)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(readableStreamHasBYOBReader(stream));
     ASSERT(stream->m_state == ReadableStreamState::Readable || stream->m_state == ReadableStreamState::Closed);
     auto* reader = static_cast<JSReadableStreamBYOBReader*>(stream->m_reader.get());
+    if (reader->m_readIntoRequests.size() >= Bun::maxDequeSize<WriteBarrier<JSReadIntoRequest>>()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
     WTF::Locker locker { reader->cellLock() };
     reader->m_readIntoRequests.append(WriteBarrier<JSReadIntoRequest>(vm, reader, readRequest));
 }

@@ -37,7 +37,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
-#include <bit>
 #include <wtf/Deque.h>
 #include <wtf/Locker.h>
 #include <wtf/MathExtras.h>
@@ -136,8 +135,8 @@ public:
             JSC::throwRangeError(globalObject, scope, "The queuing strategy's chunk size must be a non-negative, finite number"_s);
             return;
         }
-        // Deque::append CRASH()es on a full queue. The close sentinel (an empty value) must fit, so values stop a slot early.
-        if (value && m_queue.size() + 1 >= maxEntryCount()) [[unlikely]] {
+        // The close sentinel (an empty value) must fit, so values stop a slot early.
+        if (value && m_queue.size() + 1 >= Bun::maxDequeSize<Entry>()) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return;
         }
@@ -175,8 +174,12 @@ public:
 
     // Byte-queue manual mutators (the byte controller updates its two slots by hand).
     // Callers adjust [[queueTotalSize]] separately via adjustTotalSize().
+    // Script picks the entry count, so a caller checks isFull() before it takes the lock and
+    // throws when the queue is full. Only then is append() safe.
+    bool isFull() const { return m_queue.size() >= Bun::maxDequeSize<Entry>(); }
     void append(const WTF::AbstractLocker&, Entry&& entry)
     {
+        ASSERT(!isFull());
         m_queue.append(WTF::move(entry));
     }
     void prepend(const WTF::AbstractLocker&, Entry&& entry)
@@ -218,12 +221,6 @@ public:
     }
 
 private:
-    // A Deque's capacity is a power of two within the Vector bound, and the ring keeps one slot empty.
-    static size_t maxEntryCount()
-    {
-        return std::max<size_t>(std::bit_floor(Bun::maxVectorSize<Entry>()), 1) - 1;
-    }
-
     static void analyzeEntry(JSC::JSCell* from, JSC::HeapAnalyzer& analyzer, ValueWithSize& entry, uint32_t i)
     {
         JSC::JSValue v = entry.value.get();

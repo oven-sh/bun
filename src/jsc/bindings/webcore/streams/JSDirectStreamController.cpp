@@ -830,7 +830,8 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         else {
             auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promiseToReturn);
-            readableStreamAddReadRequest(vm, stream, readRequest);
+            readableStreamAddReadRequest(globalObject, stream, readRequest);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

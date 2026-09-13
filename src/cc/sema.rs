@@ -23,7 +23,8 @@ pub(crate) mod simd;
 #[path = "sema_vla.rs"]
 mod vla;
 
-/// Maximum height of an expression tree. Code generation recurses once per level.
+/// Maximum height of an expression tree: a limit of this implementation, which bounds every
+/// pass that walks one (constant evaluation, code generation, dropping it).
 const MAX_EXPR_DEPTH: u32 = 1000;
 
 #[derive(Clone, Debug)]

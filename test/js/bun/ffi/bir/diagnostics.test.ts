@@ -143,14 +143,16 @@ int main(void) { puts("ran"); return 0; }
     });
   }
 
-  // Just under those limits is an ordinary program.
-  test.concurrent("a thousand additions and two hundred parentheses compile and run", async () => {
+  // What any real program stays far inside of. (How deep is too deep depends on how much stack the thread that
+  // compiles has left, and a debug build uses several times a release build's.)
+  test.concurrent("five hundred additions and a hundred parentheses compile and run", async () => {
     const source = `int printf(const char *, ...);
-int chain(int x) { return x${" + x".repeat(990)}; }
-int nested(void) { return ${"(".repeat(240)}7${")".repeat(240)}; }
-int main(void) { printf("%d %d\\n", chain(2), nested()); return 0; }`;
+int chain(int x) { return x${" + x".repeat(500)}; }
+int nested(void) { return ${"(".repeat(100)}7${")".repeat(100)}; }
+int blocks(int v) { ${"{".repeat(100)} v++; ${"}".repeat(100)} return v; }
+int main(void) { printf("%d %d %d\\n", chain(2), nested(), blocks(1)); return 0; }`;
     const { stdout, stderr, exitCode } = await firstError(source);
-    expect(lines(stdout), stderr).toBe("1982 7\n");
+    expect(lines(stdout), stderr).toBe("1002 7 2\n");
     expect(exitCode).toBe(0);
   });
   for (const [what, source, message] of deep) {

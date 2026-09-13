@@ -20,7 +20,8 @@ use crate::types::{FuncType, Quals, Target, Type, WideKind};
 pub(crate) mod microsoft;
 
 /// Maximum nesting of recursive grammar productions (parentheses, blocks, declarators,
-/// brace initializers).
+/// brace initializers): a limit of this implementation (C11 5.2.4.1 asks for 127 levels of
+/// blocks and 63 of parentheses), which also bounds every pass that walks what was parsed.
 const MAX_NESTING: u32 = 500;
 
 /// What the attributes on a declaration asked for; everything else is ignored.
@@ -377,7 +378,7 @@ impl<S: TokenSource> Parser<S> {
 
     fn enter(&mut self) -> Res<()> {
         self.nesting += 1;
-        if self.nesting > MAX_NESTING {
+        if self.nesting > MAX_NESTING || !self.sema.tcx.stack_check.is_safe_to_recurse() {
             return err(self.loc(), "nesting is too deep");
         }
         Ok(())

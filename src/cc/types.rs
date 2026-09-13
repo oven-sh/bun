@@ -242,6 +242,9 @@ pub(crate) struct StructDef {
 pub(crate) struct TypeCtx {
     pub(crate) target: Target,
     pub(crate) structs: Vec<StructDef>,
+    /// How much stack the thread that is compiling has, for whatever recurses once per level of
+    /// nesting in the source.
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 /// A set of type qualifiers, and the alignment a typedef gave the type with
@@ -546,6 +549,7 @@ impl TypeCtx {
         TypeCtx {
             target,
             structs: Vec::new(),
+            stack_check: bun_core::StackCheck::init(),
         }
     }
 

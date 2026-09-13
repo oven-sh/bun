@@ -169,6 +169,9 @@ fn eval_addr(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
 }
 
 pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
+    if !tcx.stack_check.is_safe_to_recurse() {
+        return err(e.loc, "expression is nested too deeply");
+    }
     let ty = &e.ty;
     // 128-bit values other than literals are not folded.
     let mut wide = ty.is_int128() && !matches!(e.kind, ExprKind::IntLit(_));

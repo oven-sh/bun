@@ -15,6 +15,9 @@ use crate::lexer::Lexer;
 use crate::token::{Loc, PpKind, PpToken, Punct, Res, TokenSource, display_bytes, err};
 use crate::types::Target;
 
+// What the parser is given, token by token: `BUN_DEBUG_cc_tokens=1`.
+bun_core::declare_scope!(cc_tokens, hidden);
+
 /// One entry of the file table: a file that contributed tokens, or the name `#line` gave to
 /// part of one.
 pub(crate) struct SourceFile {
@@ -982,6 +985,14 @@ fn format_time(now: u64) -> String {
 
 impl TokenSource for Preprocessor {
     fn next_token(&mut self) -> Res<PpToken> {
-        Ok(self.next_expanded()?.tok)
+        let tok = self.next_expanded()?.tok;
+        bun_core::scoped_log!(
+            cc_tokens,
+            "{}:{}: {}",
+            self.files.borrow().name(tok.loc.file),
+            tok.loc.line,
+            display_bytes(spelling(&tok))
+        );
+        Ok(tok)
     }
 }

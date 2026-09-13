@@ -1649,6 +1649,9 @@ impl<'a> FnGen<'a, '_> {
 
     fn gen_expr(&mut self, e: &Expr) -> Res<Option<V>> {
         let loc = e.loc;
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            return err(loc, "expression is nested too deeply");
+        }
         let result_unused = std::mem::take(&mut self.result_unused);
         Ok(Some(match &e.kind {
             ExprKind::IntLit(v) if e.ty.is_pair() => self.pair_literal(&e.ty, *v),
@@ -3065,6 +3068,9 @@ impl<'a> FnGen<'a, '_> {
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt, loc: Loc) -> Res<()> {
+        if !self.tcx.stack_check.is_safe_to_recurse() {
+            return err(loc, "nesting is too deep");
+        }
         match stmt {
             Stmt::Empty => Ok(()),
             Stmt::Expr(e) => self.gen_discard(e),

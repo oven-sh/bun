@@ -803,6 +803,8 @@ pub mod parse_worker {
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
+        // For `Loader::C`: the functions of the module `source.contents` is.
+        c_exports: &[String],
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -1171,24 +1173,12 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                // `source.contents` is already the compiled BIR, which names the functions the
-                // module exports. This injects the following code, so that they are named exports
-                // the bundler can check and tree-shake:
+                // `source.contents` is already the compiled BIR. This injects the following code, so
+                // that the module's functions are named exports the bundler can check and tree-shake:
                 //
                 // { add: require(unique_key).add, mul: require(unique_key).mul }
                 //
-                let names = match bun_cc::export_names(&source.contents) {
-                    Ok(names) => names,
-                    Err(message) => {
-                        // logger OOM-only
-                        let _ = log.add_error_fmt(
-                            Some(source),
-                            Loc::EMPTY,
-                            format_args!("{message}"),
-                        );
-                        return Err(crate::Error::ParserError);
-                    }
-                };
+                let names = c_exports;
                 let unique_key = register_embedded_asset(
                     bump,
                     source,
@@ -2521,11 +2511,11 @@ pub mod parse_worker {
 
         // A C file is compiled now; what the bundle carries (and a standalone executable embeds)
         // is its BIR, which the runtime turns into machine code without a C parser or headers.
+        let mut c_exports: Vec<String> = Vec::new();
         let compiled_c: Option<Vec<u8>> = if loader == Loader::C && !is_empty {
             // BIR is specific to a platform (type sizes, struct layout, how arguments are passed, which
             // headers were read): the C is compiled for the platform the bundle is for.
             let c_target = topts.c_target.unwrap_or_else(bun_cc::Target::host);
-            let c_options = bun_cc::CompileOptions::new(c_target);
             // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
             let Ok(filename) = core::str::from_utf8(file_path.text) else {
                 // logger OOM-only
@@ -2555,10 +2545,13 @@ pub mod parse_worker {
                     }
                 }
             }
-            let mut units: Vec<(&[u8], &str)> = vec![(entry_contents, filename)];
-            units.extend(linked.iter().map(|(contents, name)| (contents.as_slice(), name.as_str())));
-            match bun_cc::compile_many(&units, &c_options, log).output {
-                Some(output) => Some(output.bir),
+            let mut units = vec![bun_cc::Unit { path: filename, contents: entry_contents }];
+            units.extend(linked.iter().map(|(contents, name)| bun_cc::Unit { path: name, contents }));
+            match bun_cc::compile(&units, c_target, log).output {
+                Some(output) => {
+                    c_exports = output.exports;
+                    Some(output.bir)
+                }
                 None => return Err(AnyError::ParserError),
             }
         } else {
@@ -2827,6 +2820,7 @@ pub mod parse_worker {
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
+                    &c_exports,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)

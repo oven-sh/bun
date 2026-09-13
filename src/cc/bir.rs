@@ -57,18 +57,6 @@ pub(crate) enum Ty {
 }
 
 impl Ty {
-    fn from_u8(b: u8) -> Option<Ty> {
-        Some(match b {
-            0 => Ty::Void,
-            1 => Ty::I32,
-            2 => Ty::I64,
-            3 => Ty::F32,
-            4 => Ty::F64,
-            5 => Ty::V128,
-            _ => return None,
-        })
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             Ty::Void => "void",
@@ -107,18 +95,6 @@ pub(crate) enum Lane {
 }
 
 impl Lane {
-    fn from_u8(b: u8) -> Option<Lane> {
-        Some(match b {
-            0 => Lane::I8x16,
-            1 => Lane::I16x8,
-            2 => Lane::I32x4,
-            3 => Lane::I64x2,
-            4 => Lane::F32x4,
-            5 => Lane::F64x2,
-            _ => return None,
-        })
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             Lane::I8x16 => "i8x16",
@@ -164,18 +140,6 @@ pub(crate) enum RelocKind {
     Tls = 3,
 }
 
-impl RelocKind {
-    fn from_u8(b: u8) -> Option<RelocKind> {
-        Some(match b {
-            0 => RelocKind::Data,
-            1 => RelocKind::Func,
-            2 => RelocKind::Extern,
-            3 => RelocKind::Tls,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub(crate) enum MemKind {
@@ -191,21 +155,6 @@ pub(crate) enum MemKind {
 }
 
 impl MemKind {
-    fn from_u8(b: u8) -> Option<MemKind> {
-        Some(match b {
-            0 => MemKind::I8S,
-            1 => MemKind::I8U,
-            2 => MemKind::I16S,
-            3 => MemKind::I16U,
-            4 => MemKind::I32,
-            5 => MemKind::I64,
-            6 => MemKind::F32,
-            7 => MemKind::F64,
-            8 => MemKind::V128,
-            _ => return None,
-        })
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             MemKind::I8S => "i8s",
@@ -241,11 +190,6 @@ macro_rules! op_enum {
         }
 
         impl $name {
-            fn from_u8(b: u8) -> Option<$name> {
-                $(if b == $value { return Some($name::$variant); })*
-                None
-            }
-
             pub(crate) fn name(self) -> &'static str {
                 match self {
                     $($name::$variant => stringify!($variant)),*
@@ -371,7 +315,6 @@ op_enum!(VLaneOp {
     Gt = 0x88,
     Ge = 0x89,
     Bitmask = 0x8d,
-    AllTrue = 0x8f,
     AddSat = 0x90,
     SubSat = 0x91,
     AvgU = 0x92,
@@ -401,12 +344,7 @@ impl VLaneOp {
 
     fn operands(self) -> usize {
         match self {
-            VLaneOp::Splat
-            | VLaneOp::Neg
-            | VLaneOp::Abs
-            | VLaneOp::Sqrt
-            | VLaneOp::Bitmask
-            | VLaneOp::AllTrue => 1,
+            VLaneOp::Splat | VLaneOp::Neg | VLaneOp::Abs | VLaneOp::Sqrt | VLaneOp::Bitmask => 1,
             _ => 2,
         }
     }
@@ -1241,568 +1179,6 @@ impl Module {
     }
 }
 
-// ───────────────────────────── reader ─────────────────────────────
-
-struct Reader<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-    /// Number of results of the function whose body is being decoded: `Ret` has that many operands.
-    function_results: usize,
-}
-
-type ReadResult<T> = Result<T, String>;
-
-impl Reader<'_> {
-    fn err<T>(&self, what: &str) -> ReadResult<T> {
-        Err(format!("BIR decode error at byte {}: {}", self.pos, what))
-    }
-
-    fn u8(&mut self) -> ReadResult<u8> {
-        match self.bytes.get(self.pos) {
-            Some(&b) => {
-                self.pos += 1;
-                Ok(b)
-            }
-            None => self.err("unexpected end of input"),
-        }
-    }
-
-    fn take(&mut self, n: usize) -> ReadResult<&[u8]> {
-        let end = match self.pos.checked_add(n) {
-            Some(end) if end <= self.bytes.len() => end,
-            _ => return self.err("unexpected end of input"),
-        };
-        let slice = &self.bytes[self.pos..end];
-        self.pos = end;
-        Ok(slice)
-    }
-
-    fn varuint(&mut self) -> ReadResult<u64> {
-        let mut result: u64 = 0;
-        let mut shift = 0u32;
-        loop {
-            let byte = self.u8()?;
-            if shift >= 64 || (shift == 63 && byte & 0x7e != 0) {
-                return self.err("varuint overflows 64 bits");
-            }
-            result |= u64::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return Ok(result);
-            }
-            shift += 7;
-        }
-    }
-
-    fn varint(&mut self) -> ReadResult<i64> {
-        let mut result: i64 = 0;
-        let mut shift = 0u32;
-        loop {
-            let byte = self.u8()?;
-            if shift >= 64 {
-                return self.err("varint overflows 64 bits");
-            }
-            result |= i64::from(byte & 0x7f) << shift;
-            shift += 7;
-            if byte & 0x80 == 0 {
-                if shift < 64 && byte & 0x40 != 0 {
-                    result |= -1i64 << shift;
-                }
-                return Ok(result);
-            }
-        }
-    }
-
-    fn u32v(&mut self) -> ReadResult<u32> {
-        let v = self.varuint()?;
-        match u32::try_from(v) {
-            Ok(v) => Ok(v),
-            Err(_) => self.err("index does not fit in 32 bits"),
-        }
-    }
-
-    /// A count of items that each take at least one byte; bounds allocation by the input size.
-    fn count(&mut self) -> ReadResult<usize> {
-        let v = self.varuint()?;
-        let remaining = (self.bytes.len() - self.pos) as u64;
-        if v > remaining {
-            return self.err("count exceeds remaining input");
-        }
-        Ok(v as usize)
-    }
-
-    fn relocs(&mut self) -> ReadResult<Vec<Reloc>> {
-        let count = self.count()?;
-        let mut relocs = Vec::with_capacity(count);
-        for _ in 0..count {
-            let offset = self.varuint()?;
-            let kind = self.u8()?;
-            let Some(kind) = RelocKind::from_u8(kind) else {
-                return self.err("invalid reloc kind");
-            };
-            relocs.push(Reloc {
-                offset,
-                kind,
-                index: self.varuint()?,
-                addend: self.varint()?,
-            });
-        }
-        Ok(relocs)
-    }
-
-    fn str(&mut self) -> ReadResult<String> {
-        let n = self.count()?;
-        let bytes = self.take(n)?;
-        match std::str::from_utf8(bytes) {
-            Ok(s) => Ok(s.to_owned()),
-            Err(_) => Err(format!(
-                "BIR decode error at byte {}: string is not UTF-8",
-                self.pos
-            )),
-        }
-    }
-
-    fn ty(&mut self) -> ReadResult<Ty> {
-        let b = self.u8()?;
-        match Ty::from_u8(b) {
-            Some(t) => Ok(t),
-            None => self.err("invalid type byte"),
-        }
-    }
-
-    fn args(&mut self) -> ReadResult<Vec<V>> {
-        let n = self.count()?;
-        let mut args = Vec::with_capacity(n);
-        for _ in 0..n {
-            args.push(self.u32v()?);
-        }
-        Ok(args)
-    }
-
-    fn lane(&mut self) -> ReadResult<Lane> {
-        let b = self.u8()?;
-        match Lane::from_u8(b) {
-            Some(l) => Ok(l),
-            None => self.err("invalid lane shape"),
-        }
-    }
-
-    fn bytes16(&mut self) -> ReadResult<[u8; 16]> {
-        let mut out = [0u8; 16];
-        out.copy_from_slice(self.take(16)?);
-        Ok(out)
-    }
-
-    /// The kind byte of a Load or Store: the memory kind and the volatile bit.
-    fn access_kind(&mut self) -> ReadResult<(MemKind, bool)> {
-        let b = self.u8()?;
-        match MemKind::from_u8(b & !VOLATILE_ACCESS) {
-            Some(k) => Ok((k, b & VOLATILE_ACCESS != 0)),
-            None => self.err("invalid memory kind"),
-        }
-    }
-
-    fn mem_kind(&mut self) -> ReadResult<MemKind> {
-        let b = self.u8()?;
-        match MemKind::from_u8(b) {
-            Some(k) => Ok(k),
-            None => self.err("invalid memory kind"),
-        }
-    }
-
-    fn inst(&mut self) -> ReadResult<Inst> {
-        let op = self.u8()?;
-        if let Some(bin) = BinOp::from_u8(op) {
-            return Ok(Inst::Bin(bin, self.u32v()?, self.u32v()?));
-        }
-        if let Some(un) = UnOp::from_u8(op) {
-            return Ok(Inst::Un(un, self.u32v()?));
-        }
-        if let Some(vop) = VLaneOp::from_u8(op) {
-            let lane = self.lane()?;
-            let signed = if vop.has_signed() {
-                self.u8()? != 0
-            } else {
-                false
-            };
-            let mut args = Vec::with_capacity(vop.operands());
-            for _ in 0..vop.operands() {
-                args.push(self.u32v()?);
-            }
-            return Ok(Inst::VLane(vop, lane, signed, args));
-        }
-        if let Some(vop) = VBitsOp::from_u8(op) {
-            let mut args = Vec::with_capacity(vop.operands());
-            for _ in 0..vop.operands() {
-                args.push(self.u32v()?);
-            }
-            return Ok(Inst::VBits(vop, args));
-        }
-        if let Some(conv) = ConvOp::from_u8(op) {
-            return Ok(Inst::Conv(conv, self.ty()?, self.u32v()?));
-        }
-        Ok(match op {
-            opcode::CONST_I32 => {
-                let v = self.varint()?;
-                match i32::try_from(v) {
-                    Ok(v) => Inst::ConstI32(v),
-                    Err(_) => return self.err("ConstI32 out of range"),
-                }
-            }
-            opcode::CONST_I64 => Inst::ConstI64(self.varint()?),
-            opcode::CONST_F32 => {
-                let b = self.take(4)?;
-                Inst::ConstF32(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            }
-            opcode::CONST_F64 => {
-                let b = self.take(8)?;
-                Inst::ConstF64(u64::from_le_bytes([
-                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-                ]))
-            }
-            opcode::CONST_V128 => Inst::ConstV128(self.bytes16()?),
-            opcode::V_EXTRACT => {
-                Inst::VExtract(self.lane()?, self.u8()? != 0, self.u8()?, self.u32v()?)
-            }
-            opcode::V_REPLACE => {
-                Inst::VReplace(self.lane()?, self.u8()?, self.u32v()?, self.u32v()?)
-            }
-            opcode::V_SHUFFLE => {
-                let (a, b) = (self.u32v()?, self.u32v()?);
-                Inst::VShuffle(a, b, self.bytes16()?)
-            }
-            opcode::V_CONVERT => Inst::VConvert(self.u8()?, self.u32v()?),
-            opcode::V_EXT_MUL => Inst::VExtMul(
-                self.lane()?,
-                self.u8()? != 0,
-                self.u8()? != 0,
-                self.u32v()?,
-                self.u32v()?,
-            ),
-            opcode::TLS_ADDR => Inst::TlsAddr(self.varuint()?),
-            opcode::FRAME_ADDRESS => Inst::FrameAddress,
-            opcode::CPU_ID => Inst::CpuId(self.u32v()?, self.u32v()?),
-            opcode::INLINE_ASM => {
-                let flags = self.u8()?;
-                let n = self.count()?;
-                let mut code = Vec::with_capacity(n.min(4096));
-                for _ in 0..n {
-                    code.push(self.u8()?);
-                }
-                let n = self.count()?;
-                let mut inputs = Vec::with_capacity(n.min(16));
-                for _ in 0..n {
-                    inputs.push((self.u32v()?, self.u8()?));
-                }
-                let n = self.count()?;
-                let mut outputs = Vec::with_capacity(n.min(16));
-                for _ in 0..n {
-                    outputs.push((self.ty()?, self.u8()?));
-                }
-                let n = self.count()?;
-                let mut clobbers = Vec::with_capacity(n.min(64));
-                for _ in 0..n {
-                    clobbers.push(self.u8()?);
-                }
-                Inst::InlineAsm(Box::new(InlineAsm {
-                    flags,
-                    code,
-                    inputs,
-                    outputs,
-                    clobbers,
-                }))
-            }
-            opcode::ATOMIC_LOAD => Inst::AtomicLoad(self.mem_kind()?, self.u8()?, self.u32v()?),
-            opcode::ATOMIC_STORE => {
-                Inst::AtomicStore(self.mem_kind()?, self.u8()?, self.u32v()?, self.u32v()?)
-            }
-            opcode::ATOMIC_RMW => Inst::AtomicRmw(
-                self.u8()?,
-                self.mem_kind()?,
-                self.u8()?,
-                self.u32v()?,
-                self.u32v()?,
-            ),
-            opcode::ATOMIC_CAS => Inst::AtomicCas(
-                self.mem_kind()?,
-                self.u8()?,
-                self.u8()?,
-                self.u32v()?,
-                self.u32v()?,
-                self.u32v()?,
-            ),
-            opcode::FENCE => Inst::Fence(self.u8()?),
-            opcode::LOAD => {
-                let (kind, volatile) = self.access_kind()?;
-                let (addr, offset) = (self.u32v()?, self.varint()?);
-                if volatile {
-                    Inst::VolatileLoad(kind, addr, offset)
-                } else {
-                    Inst::Load(kind, addr, offset)
-                }
-            }
-            opcode::STORE => {
-                let (kind, volatile) = self.access_kind()?;
-                let (value, addr, offset) = (self.u32v()?, self.u32v()?, self.varint()?);
-                if volatile {
-                    Inst::VolatileStore(kind, value, addr, offset)
-                } else {
-                    Inst::Store(kind, value, addr, offset)
-                }
-            }
-            opcode::SLOT_ADDR => Inst::SlotAddr(self.u32v()?),
-            opcode::DATA_ADDR => Inst::DataAddr(self.varuint()?),
-            opcode::FUNC_ADDR => Inst::FuncAddr(self.u32v()?),
-            opcode::EXTERN_ADDR => Inst::ExternAddr(self.u32v()?),
-            opcode::LOCAL_GET => Inst::LocalGet(self.u32v()?),
-            opcode::LOCAL_SET => Inst::LocalSet(self.u32v()?, self.u32v()?),
-            opcode::CALL => Inst::Call(self.u32v()?, self.args()?),
-            opcode::CALL_EXTERN => Inst::CallExtern(self.u32v()?, self.args()?),
-            opcode::CALL_INDIRECT => Inst::CallIndirect(self.u32v()?, self.u32v()?, self.args()?),
-            opcode::SELECT => Inst::Select(self.u32v()?, self.u32v()?, self.u32v()?),
-            opcode::MEM_COPY => Inst::MemCopy(self.u32v()?, self.u32v()?, self.u32v()?),
-            opcode::MEM_SET => Inst::MemSet(self.u32v()?, self.u32v()?, self.u32v()?),
-            opcode::JUMP => Inst::Jump(self.u32v()?),
-            opcode::BR => Inst::Br(self.u32v()?, self.u32v()?, self.u32v()?),
-            opcode::SWITCH => {
-                let v = self.u32v()?;
-                let default = self.u32v()?;
-                let n = self.count()?;
-                let mut cases = Vec::with_capacity(n);
-                for _ in 0..n {
-                    cases.push((self.varint()?, self.u32v()?));
-                }
-                Inst::Switch(v, default, cases)
-            }
-            opcode::RET => {
-                let n = self.function_results;
-                let mut values = Vec::with_capacity(n);
-                for _ in 0..n {
-                    values.push(self.u32v()?);
-                }
-                Inst::Ret(values)
-            }
-            opcode::RET_VOID => Inst::RetVoid,
-            opcode::UNREACHABLE => Inst::Unreachable,
-            opcode::TRAP => Inst::Trap,
-            opcode::VA_START => Inst::VaStart(self.u32v()?),
-            opcode::STACK_ALLOC => Inst::StackAlloc(self.u32v()?, self.varuint()?),
-            opcode::STACK_SAVE => Inst::StackSave,
-            opcode::STACK_RESTORE => Inst::StackRestore(self.u32v()?),
-            _ => return self.err(&format!("unknown opcode 0x{op:02x}")),
-        })
-    }
-}
-
-impl Module {
-    pub(crate) fn decode(bytes: &[u8]) -> ReadResult<Module> {
-        let mut r = Reader {
-            bytes,
-            pos: 0,
-            function_results: 0,
-        };
-        if r.take(4)? != MAGIC {
-            return Err("not a BIR module (bad magic)".to_string());
-        }
-        let arch = r.u8()?;
-        let os = r.u8()?;
-        if arch > 1 {
-            return r.err("unknown arch");
-        }
-        if os > 3 {
-            return r.err("unknown os");
-        }
-        if r.u8()? != POINTER_BYTES {
-            return r.err("pointerBytes must be 8");
-        }
-        if r.u8()? != 0 {
-            return r.err("reserved header byte must be 0");
-        }
-
-        let nsigs = r.count()?;
-        let mut sigs = Vec::with_capacity(nsigs);
-        for _ in 0..nsigs {
-            let nrets = r.count()?;
-            if nrets > 4 {
-                return r.err("a sig has at most 4 results");
-            }
-            let mut rets = Vec::with_capacity(nrets);
-            for _ in 0..nrets {
-                rets.push(r.ty()?);
-            }
-            let flags = r.u8()?;
-            if flags & !1 != 0 {
-                return r.err("unknown sig flags");
-            }
-            let nparams = r.count()?;
-            let mut params = Vec::with_capacity(nparams);
-            for _ in 0..nparams {
-                params.push(match r.u8()? {
-                    0 => Param::Value(r.ty()?),
-                    1 => {
-                        let size = r.varuint()?;
-                        let align = r.varuint()?;
-                        let exhausts = match r.u8()? {
-                            0 => Exhausts::Nothing,
-                            1 => Exhausts::IntegerRegisters,
-                            2 => Exhausts::FloatRegisters,
-                            _ => return r.err("invalid Exhausts"),
-                        };
-                        Param::ByValStack {
-                            size,
-                            align,
-                            exhausts,
-                        }
-                    }
-                    2 => Param::IndirectResult,
-                    _ => return r.err("invalid parameter kind"),
-                });
-            }
-            sigs.push(Sig {
-                rets,
-                variadic: flags & 1 != 0,
-                params,
-            });
-        }
-
-        let nexterns = r.count()?;
-        let mut externs = Vec::with_capacity(nexterns);
-        for _ in 0..nexterns {
-            let name = r.str()?;
-            let byte = r.u8()?;
-            let kind = match byte & !WEAK_EXTERN {
-                0 => ExternKind::Function,
-                1 => ExternKind::Data,
-                _ => return r.err("invalid extern kind"),
-            };
-            externs.push(Extern {
-                name,
-                kind,
-                weak: byte & WEAK_EXTERN != 0,
-                sig: r.u32v()?,
-            });
-        }
-
-        let size = r.varuint()?;
-        let align = r.varuint()?;
-        let ninit = r.count()?;
-        let init = r.take(ninit)?.to_vec();
-        let relocs = r.relocs()?;
-        let data = Data {
-            size,
-            align,
-            init,
-            relocs,
-        };
-        let tls = {
-            let size = r.varuint()?;
-            let align = r.varuint()?;
-            let ninit = r.count()?;
-            Tls {
-                size,
-                align,
-                init: r.take(ninit)?.to_vec(),
-                relocs: r.relocs()?,
-            }
-        };
-
-        let nfuncs = r.count()?;
-        let mut funcs = Vec::with_capacity(nfuncs);
-        for _ in 0..nfuncs {
-            let name = r.str()?;
-            let sig = r.u32v()?;
-            let flags = r.u8()?;
-            if flags & !(3 | INLINE_ALWAYS | INLINE_NEVER | INLINE_HINT) != 0 {
-                return r.err("unknown func flags");
-            }
-            if flags & INLINE_ALWAYS != 0 && flags & INLINE_NEVER != 0 {
-                return r.err("function is both always_inline and noinline");
-            }
-            funcs.push(Func {
-                name,
-                sig,
-                exported: flags & 1 != 0,
-                returns_twice: flags & 2 != 0,
-                inlining: flags & (INLINE_ALWAYS | INLINE_NEVER | INLINE_HINT),
-                locals: Vec::new(),
-                slots: Vec::new(),
-                blocks: Vec::new(),
-            });
-        }
-        for f in &mut funcs {
-            r.function_results = match sigs.get(f.sig as usize) {
-                Some(sig) => sig.rets.len(),
-                None => return r.err("function sig out of range"),
-            };
-            let nlocals = r.count()?;
-            for _ in 0..nlocals {
-                f.locals.push(r.ty()?);
-            }
-            let nslots = r.count()?;
-            for _ in 0..nslots {
-                f.slots.push(Slot {
-                    size: r.varuint()?,
-                    align: r.varuint()?,
-                });
-            }
-            let nblocks = r.count()?;
-            for _ in 0..nblocks {
-                let ninsts = r.count()?;
-                let mut insts = Vec::with_capacity(ninsts);
-                for _ in 0..ninsts {
-                    insts.push(r.inst()?);
-                }
-                f.blocks.push(insts);
-            }
-        }
-
-        let nexports = r.count()?;
-        let mut exports = Vec::with_capacity(nexports);
-        for _ in 0..nexports {
-            let name = r.str()?;
-            let func = r.u32v()?;
-            let ret = r.u8()?;
-            let nargs = r.count()?;
-            let args = r.take(nargs)?.to_vec();
-            exports.push(Export {
-                name,
-                func,
-                ret,
-                args,
-            });
-        }
-        let nlibraries = r.count()?;
-        let mut libraries = Vec::with_capacity(nlibraries);
-        for _ in 0..nlibraries {
-            libraries.push(r.str()?);
-        }
-        let mut tables: [Vec<u32>; 2] = [Vec::new(), Vec::new()];
-        for table in &mut tables {
-            let count = r.count()?;
-            table.reserve(count);
-            for _ in 0..count {
-                table.push(r.u32v()?);
-            }
-        }
-        let [constructors, destructors] = tables;
-        if r.pos != bytes.len() {
-            return r.err("trailing bytes after module");
-        }
-        Ok(Module {
-            arch,
-            os,
-            sigs,
-            externs,
-            data,
-            tls,
-            funcs,
-            exports,
-            libraries,
-            constructors,
-            destructors,
-        })
-    }
-}
-
 // ───────────────────────────── validation ─────────────────────────────
 
 /// Value numbering and typing of one function, computed by [`analyze`].
@@ -1977,7 +1353,6 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                             | VLaneOp::ShrS
                             | VLaneOp::ShrU
                             | VLaneOp::Bitmask
-                            | VLaneOp::AllTrue
                             | VLaneOp::AddSat
                             | VLaneOp::SubSat
                             | VLaneOp::AvgU
@@ -2016,7 +1391,7 @@ pub(crate) fn analyze(module: &Module, func_index: usize) -> Result<FuncInfo, St
                             expect(args[1], Ty::I32)?;
                             Some(Ty::V128)
                         }
-                        VLaneOp::Bitmask | VLaneOp::AllTrue => {
+                        VLaneOp::Bitmask => {
                             expect(args[0], Ty::V128)?;
                             Some(Ty::I32)
                         }
@@ -3111,7 +2486,7 @@ impl FuncBuilder {
 
     /// A lane-shaped vector operation; the result type follows from the operation.
     pub(crate) fn vlane(&mut self, op: VLaneOp, lane: Lane, signed: bool, args: Vec<V>) -> V {
-        let ty = if matches!(op, VLaneOp::Bitmask | VLaneOp::AllTrue) {
+        let ty = if op == VLaneOp::Bitmask {
             Ty::I32
         } else {
             Ty::V128

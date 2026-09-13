@@ -15,6 +15,22 @@ const fakeReactNodeModules = {
   `,
 };
 
+// An unwrapped package whose module converts to ESM (it assigns `exports.x`, not
+// `module.exports`). `unused` is only there to show whether the package was tree-shaken.
+const convertedReactNodeModules = {
+  "/node_modules/react/index.js": /* js */ `
+    exports.react = "react";
+    exports.unused = "REMOVE";
+  `,
+  "/node_modules/react/package.json": /* json */ `
+    {
+      "name": "react",
+      "version": "2.0.0",
+      "main": "index.js"
+    }
+  `,
+};
+
 describe("bundler", () => {
   itBundled("cjs2esm/ModuleExportsFunction", {
     files: {
@@ -364,6 +380,213 @@ describe("bundler", () => {
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
+    },
+  });
+  // A let/var initialized by require() of an unwrapped package is only an alias of the
+  // package while nothing assigns to it. Every variable here is assigned later in some
+  // form, so each one has to stay a real variable initialized from the import; the
+  // expected output is what running entry.js unbundled prints.
+  itBundled("cjs2esm/UnwrappedModuleRequireRebound", {
+    files: {
+      "/entry.js": /* js */ `
+        let a = require("react");
+        console.log(a.react);
+        a = { react: "a" };
+        console.log(a.react);
+
+        var b = require("react");
+        b = { react: "b" };
+        console.log(b.react);
+
+        c = { react: "c before" };
+        console.log(c.react);
+        var c = require("react");
+        console.log(c.react);
+        c = { react: "c after" };
+        console.log(c.react);
+
+        let d = require("react");
+        function rebindD() {
+          d = { react: "d" };
+        }
+        rebindD();
+        console.log(d.react);
+
+        function inner() {
+          let e = require("react");
+          const before = e.react;
+          e = { react: "e" };
+          return before + " " + e.react;
+        }
+        console.log(inner());
+
+        let f = require("react");
+        f += "";
+        console.log(typeof f, f.react);
+
+        let g = require("react");
+        g++;
+        console.log(typeof g, g.react);
+
+        let h = require("react");
+        [h] = [{ react: "h" }];
+        console.log(h.react);
+
+        let i = require("react");
+        ({ i } = { i: { react: "i" } });
+        console.log(i.react);
+
+        let j = require("react");
+        ({ ...j } = { react: "j" });
+        console.log(j.react);
+
+        let k = require("react");
+        [...k] = [{ react: "k" }];
+        console.log(k.length, k[0].react);
+
+        let l = require("react");
+        for (l of [{ react: "l" }]) {}
+        console.log(l.react);
+
+        let m = require("react");
+        for (m in { key: 1 }) {}
+        console.log(m, m.react);
+
+        // The declaration only reaches module scope by being hoisted out of the block.
+        if (a) {
+          var o = require("react");
+        }
+        o = { react: "o" };
+        console.log(o.react);
+
+        // react-dom stays a CommonJS wrapper, so this one worked before as well.
+        let n = require("react-dom");
+        console.log(n.dom);
+        n = { dom: "n" };
+        console.log(n.dom);
+      `,
+      ...convertedReactNodeModules,
+      "/node_modules/react-dom/index.js": /* js */ `
+        module.exports = { dom: "dom" };
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        {
+          "name": "react-dom",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    run: {
+      stdout: [
+        "react",
+        "a",
+        "b",
+        "c before",
+        "react",
+        "c after",
+        "d",
+        "react e",
+        "string undefined",
+        "number undefined",
+        "h",
+        "i",
+        "j",
+        "1 k",
+        "l",
+        "key undefined",
+        "o",
+        "dom",
+        "n",
+      ].join("\n"),
+    },
+  });
+  // Declaring the variable a second time rebinds it too, whether the second
+  // declaration is in the same scope or is a var hoisted out of a nested block.
+  itBundled("cjs2esm/UnwrappedModuleRequireRedeclared", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = require("react");
+        console.log(a.react);
+        var a = { react: "a" };
+        console.log(a.react);
+
+        var b = require("react");
+        console.log(b.react);
+        if (a) {
+          var b = { react: "b" };
+        }
+        console.log(b.react);
+      `,
+      ...convertedReactNodeModules,
+    },
+    run: {
+      stdout: "react\na\nreact\nb",
+    },
+  });
+  // Variables that are never rebound still become the import itself, so the package is
+  // still tree-shaken: `unused` must not survive. Minified code reuses the same short
+  // names in every function, so only assignments and redeclarations that resolve to the
+  // variable itself may count, not ones that hit a same-named parameter, local, block
+  // binding or arrow default.
+  itBundled("cjs2esm/UnwrappedModuleRequireNotReboundIsTreeShaken", {
+    files: {
+      "/entry.js": /* js */ `
+        var top = require("react");
+        console.log(top.react);
+
+        function inFunction() {
+          let local = require("react");
+          return local.react;
+        }
+        console.log(inFunction());
+
+        const fixed = require("react");
+        console.log(fixed.react);
+
+        function parameter(top) {
+          top = { react: "parameter" };
+          return top.react;
+        }
+        console.log(parameter(0));
+
+        function hoisted() {
+          for (var top = 0; top < 2;) {
+            top++;
+          }
+          // Assigned after the block closed; the var it hits is hoisted out of the block.
+          top = top * 10;
+          return top;
+        }
+        console.log(hoisted());
+
+        function redeclared(top) {
+          var top = "again";
+          return top;
+        }
+        console.log(redeclared(0));
+
+        {
+          let top = "block";
+          top += "!";
+          console.log(top);
+        }
+
+        console.log(((top = "arrow") => top)());
+
+        function unrelated() {
+          let fixed = 1;
+          fixed = 2;
+          return fixed;
+        }
+        console.log(unrelated());
+      `,
+      ...convertedReactNodeModules,
+    },
+    dce: true,
+    treeShaking: true,
+    run: {
+      stdout: ["react", "react", "react", "parameter", "20", "again", "block!", "arrow", "2"].join("\n"),
     },
   });
   // A require() of an unwrapped package that initializes a destructuring

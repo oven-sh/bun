@@ -1396,6 +1396,10 @@ impl<'a> Parser<'a> {
                             deferred_import.import_record_id,
                         )
                     };
+                    debug_assert!(
+                        !p.symbols.as_slice()[ns_ref.inner_index() as usize].has_been_assigned_to(),
+                        "visit_decls turned an assigned variable into its import"
+                    );
                     let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
                     remaining_stmts = rest;
 

@@ -145,6 +145,28 @@ impl Code {
         AssignTarget::None
     }
 
+    /// The operator a compound assignment applies: `+` for `+=`, `??` for `??=`.
+    pub fn compound_assign_operator(self) -> Option<Code> {
+        Some(match self {
+            Code::BinAddAssign => Code::BinAdd,
+            Code::BinSubAssign => Code::BinSub,
+            Code::BinMulAssign => Code::BinMul,
+            Code::BinDivAssign => Code::BinDiv,
+            Code::BinRemAssign => Code::BinRem,
+            Code::BinPowAssign => Code::BinPow,
+            Code::BinShlAssign => Code::BinShl,
+            Code::BinShrAssign => Code::BinShr,
+            Code::BinUShrAssign => Code::BinUShr,
+            Code::BinBitwiseOrAssign => Code::BinBitwiseOr,
+            Code::BinBitwiseAndAssign => Code::BinBitwiseAnd,
+            Code::BinBitwiseXorAssign => Code::BinBitwiseXor,
+            Code::BinNullishCoalescingAssign => Code::BinNullishCoalescing,
+            Code::BinLogicalOrAssign => Code::BinLogicalOr,
+            Code::BinLogicalAndAssign => Code::BinLogicalAnd,
+            _ => return None,
+        })
+    }
+
     pub fn is_prefix(code: Code) -> bool {
         (code as u8) < (Code::UnPostDec as u8)
     }

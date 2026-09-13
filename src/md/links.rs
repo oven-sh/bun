@@ -10,8 +10,8 @@ type SpanAttrs<'a> = SpanDetail<'a>;
 
 /// Maximum parenthesis nesting depth inside a bare link destination.
 /// CommonMark allows implementations to impose such a limit ("at least three
-/// levels of nesting should be supported"); cmark and md4c both use 32.
-/// Without a cap, an unclosed destination is rescanned for every candidate
+/// levels of nesting should be supported"); cmark and md4c both use
+/// 32. Without a cap, an unclosed destination is rescanned for every candidate
 /// link, which is quadratic on inputs like `"[a](b"` repeated.
 const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 
@@ -64,15 +64,7 @@ pub(crate) struct ParsedDest<'a> {
     pub(crate) end_pos: usize,
 }
 
-/// Scan the link destination that starts at `start` (CommonMark §6.3). Inline
-/// links, the link lookahead and reference definitions all call this, so they
-/// cannot disagree on what a destination is.
-///
-/// `<...>` form: no line ending and no unescaped `<` before the closing `>`.
-/// Bare form: may be empty, ends at whitespace or at a `)` that closes nothing,
-/// holds no ASCII control character, and its unescaped parentheses must
-/// balance. A backslash escapes ASCII punctuation only, so `\` before a space
-/// or a line ending hides nothing.
+/// CommonMark §6.3 link destination, shared by inline links, the link lookahead and reference definitions.
 pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
     let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
     let mut p = start;
@@ -448,10 +440,7 @@ impl Parser<'_> {
                     parsed.dest
                 }
                 None => {
-                    // Not an inline link (cmark rejects it too). Skip the
-                    // title and ')' checks, so that a '(' of the rejected
-                    // destination is not reparsed as a title opener, but keep
-                    // the reference/shortcut fallback below reachable.
+                    // Not an inline link: skip the title and ')' checks, keep the reference/shortcut fallback.
                     pos = content.len();
                     b""
                 }
@@ -663,9 +652,7 @@ impl Parser<'_> {
             {
                 p += 1;
             }
-            // Same destination scan and same fallback as process_link: the
-            // lookahead and the parser must agree on what is a link or
-            // emphasis collection desyncs from rendering.
+            // Must agree with process_link, or emphasis collection desyncs from rendering.
             p = match scan_link_destination(content, p) {
                 Some(parsed) => parsed.end_pos,
                 None => content.len(),

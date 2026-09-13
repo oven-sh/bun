@@ -6,7 +6,8 @@
  * can configure once then run specific targets.
  */
 
-import { existsSync, globSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -137,12 +138,14 @@ export interface ConfigureResult {
  * on the next reconfigure (since adding a .ts usually means editing
  * an existing one to import it).
  *
- * Excludes runtime-only files (fetch-cli.ts, download.ts, ci.ts) and
- * runtime-only scripts — changes to those don't affect the build graph.
+ * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
+ * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
+ * and download.ts count: configure computes fetch URLs and checks source
+ * staleness through them.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -250,7 +253,12 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
-export async function configure(input: ConfigureInput): Promise<ConfigureResult> {
+/**
+ * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
+ * (build.ts --config-file), as opposed to build.ts configuring before it
+ * spawns ninja.
+ */
+export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -360,12 +368,32 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   // Write build.ninja (only if changed).
   const changed = await n.write();
+  const ninjaPath = resolve(cfg.buildDir, "build.ninja");
   mark("n.write");
 
-  // Pre-create all object file parent directories. Ninja doesn't mkdir;
-  // CMake pre-creates CMakeFiles/<target>.dir/* at generate time, we do
-  // the same. Derived from output.objects so there's no hidden state —
-  // the orchestrator already knows every .o path.
+  // build.ninja is also the output of the `regen` edge, whose inputs are the
+  // build scripts and configure.json. ninja compares those against the mtime
+  // it *recorded* for build.ninja when it last ran that edge itself, so after
+  // a script edit a manifest brought up to date here (outside ninja) still
+  // looks stale and ninja would run configure a second time on startup.
+  // Having just configured, the manifest is current as of now: stamp it and
+  // let `-t restat` record that. (Not when ninja is the one running us — it
+  // records its own edge — and nothing to record into in a fresh dir.)
+  if (!fromNinja) {
+    const now = new Date();
+    utimesSync(ninjaPath, now, now);
+    if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
+      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+    }
+  }
+  mark("restat");
+
+  // Pre-create all object file parent directories (ninja would create them
+  // edge by edge; having the tree up front serves tools that read
+  // compile_commands.json before any edge ran). CMake pre-creates
+  // CMakeFiles/<target>.dir/* at generate time, we do the same. Derived
+  // from output.objects so there's no hidden state — the orchestrator
+  // already knows every .o path.
   mkdirAll(output.objects.map(dirname));
   mark("mkdirAll");
 
@@ -380,7 +408,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   }
   mark("orderFile");
 
-  const ninjaFile = resolve(cfg.buildDir, "build.ninja");
+  const ninjaFile = ninjaPath;
 
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");

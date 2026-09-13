@@ -9,6 +9,9 @@
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
+ *   - static scans of the link (verify-binary.ts): the executable's exports,
+ *     dynamic libraries, initializers, hardening; duplicate definitions among
+ *     the link inputs. Ninja validations of the link edge.
  *
  * ## Build modes
  *
@@ -27,8 +30,9 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { binaryExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -242,9 +246,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // forbidUndefined stamps (source.ts). Whatever the dep objects go into
-  // next, the archive or the link, waits for them, so a dep that regrows a
-  // forbidden reference fails before anything containing it is produced.
+  // forbidUndefined stamps (source.ts): validations of whatever the dep
+  // objects go into next, the archive or the link — a dep that regrows a
+  // forbidden reference fails that build without delaying the link.
   const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
@@ -509,14 +513,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
+    // Static scans: the deps' forbidden-symbol checks on the objects going
+    // in, verify-binary.ts on the executable coming out and on the link line.
+    validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  // ─── Step 7: post-link (strip, dsymutil, smoke test, static scans) ───
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
 }
@@ -655,10 +662,11 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     linkerMapOutputs: linkerMapOutputs(cfg),
+    validations: postLinkChecks(cfg, exeName),
   });
 
   // Strip + smoke test — same as full mode.
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return {
     exe,
@@ -732,9 +740,10 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     linkerMapOutputs: linkerMapOutputs(cfg),
+    validations: postLinkChecks(cfg, exeName),
   });
 
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return {
     exe,
@@ -748,9 +757,11 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 }
 
 /**
- * Post-link steps shared by every linking mode (full, link-only,
- * rust-and-link): strip, dsymutil, the `bun` phony, and the `--revision`
- * smoke test.
+ * Post-link steps shared by every linking mode (full, archive-link,
+ * link-only, rust-and-link): strip, dsymutil, the `bun` phony, the
+ * `--revision` smoke test, and verify-binary.ts' static scans. `linkInputs`
+ * is every object and archive on that mode's link line (what the
+ * duplicate-definition scan reads).
  *
  * Centralized because the smoke_test and dsymutil edges must be ordered
  * after strip — their rule commands wrap through `cfg.jsRuntime`
@@ -767,6 +778,7 @@ export function emitPostLink(
   exe: string,
   exeName: string,
   stripflags: string[],
+  linkInputs: string[],
 ): { strippedExe: string | undefined; dsym: string | undefined } {
   // Plain release only: produce stripped `bun` alongside `bun-profile`.
   // Debug/asan/valgrind/assertions keep symbols (you want them for
@@ -796,9 +808,147 @@ export function emitPostLink(
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
+  //
+  // `ninja check` runs the smoke test (a default target, configure.ts) and
+  // the static scans by name; the scans are also validations of the link
+  // edge (postLinkChecks), so anything that relinks the executable runs them.
+  n.phony("check", [
+    ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
+    ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
+    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
+  ]);
 
   return { strippedExe, dsym };
+}
+
+function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump: string; cxxfilt: string } | undefined {
+  const { nm, readobj, objdump, cxxfilt } = cfg;
+  return nm !== undefined && readobj !== undefined && objdump !== undefined && cxxfilt !== undefined
+    ? { nm, readobj, objdump, cxxfilt }
+    : undefined;
+}
+
+/** Stamp of verify-binary.ts' scans of the executable, when the LLVM readers are available. */
+function binaryVerifyStamp(cfg: Config, exeName: string): string | undefined {
+  return binaryVerifyTools(cfg) !== undefined ? resolve(cfg.buildDir, `${exeName}.binary-verified`) : undefined;
+}
+
+/** Stamp of the duplicate-definition scan of the link inputs (its report is `<exe>.duplicate-symbols.txt`). */
+function duplicateSymbolsStamp(cfg: Config, exeName: string): string | undefined {
+  // COFF objects need llvm-objdump to tell COMDAT from strong (verify-binary.ts coffDefinitions).
+  return cfg.nm !== undefined && !(cfg.windows && cfg.objdump === undefined)
+    ? resolve(cfg.buildDir, `${exeName}.duplicate-symbols-checked`)
+    : undefined;
+}
+
+/**
+ * The static scans emitPostLink attaches to an executable, as the stamp
+ * paths the link edge names as its ninja validations — so `ninja bun` (or
+ * anything that relinks it) runs them, without making them inputs of
+ * anything. A scan whose tool is missing has no stamp and is not emitted.
+ * (The smoke test is not one of these: it stays an edge of its own behind
+ * the `check` default target.)
+ */
+export function postLinkChecks(cfg: Config, exeName: string): string[] {
+  return [binaryVerifyStamp(cfg, exeName), duplicateSymbolsStamp(cfg, exeName)].filter(
+    (p): p is string => p !== undefined,
+  );
+}
+
+const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
+
+/**
+ * verify-binary.ts' static scans of the linked executable — exported
+ * symbols, dynamic libraries and symbol-version ceilings, forbidden imports,
+ * static initializers, hardening bits, debug info — against what
+ * binary-expectations.ts says this target should look like. The
+ * expectations are serialized now; the scan runs as a validation of the link.
+ */
+function emitBinaryVerify(
+  n: Ninja,
+  cfg: Config,
+  exe: string,
+  exeName: string,
+  strippedExe: string | undefined,
+): string[] {
+  const stamp = binaryVerifyStamp(cfg, exeName);
+  const tools = binaryVerifyTools(cfg);
+  if (stamp === undefined || tools === undefined) return [];
+  const spec = resolve(cfg.buildDir, `${exeName}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name: exeName, exe, tools, expect: binaryExpectations(cfg) }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("binary_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} binary $spec`,
+    description: `check ${exeName} exports, dynamic deps, initializers, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "binary_verify",
+    inputs: [exe],
+    // linkDepends: the export lists in src/ the check reads (also link inputs).
+    implicitInputs: [
+      spec,
+      verifyBinaryPath,
+      resolve(import.meta.dirname, "binary-expectations.ts"),
+      ...linkDepends(cfg),
+    ],
+    // Same reason as emitSmokeTest: never run while strip is mid-write when
+    // the wrapper runtime is <buildDir>/bun itself.
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
+ * A symbol with two strong external definitions among the link inputs: the
+ * linker takes one silently when the other is an archive member it never
+ * loads. verify-binary.ts scans every object and archive on the link line
+ * (the prebuilt WebKit/ICU archives included); the report also lists weak
+ * definitions whose sizes differ (informational).
+ */
+function emitDuplicateSymbolCheck(
+  n: Ninja,
+  cfg: Config,
+  exeName: string,
+  linkInputs: string[],
+  strippedExe: string | undefined,
+): string[] {
+  const stamp = duplicateSymbolsStamp(cfg, exeName);
+  if (stamp === undefined) return [];
+  const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
+  const q = (p: string) => quote(p, cfg.windows);
+  // While rustc's LLVM is ahead of clang's (the rust-lld swap in config.ts),
+  // libbun_runtime's bitcode is unreadable by clang's llvm-nm/objdump; use the
+  // ones rustup ships beside rust-lld (component llvm-tools). If they are
+  // missing the scan reports every unreadable input and fails, with a hint.
+  const rustLldInUse = cfg.rustLld !== undefined && dirname(cfg.ld) === dirname(cfg.rustLld);
+  const rustBin = rustLldInUse
+    ? basename(dirname(cfg.rustLld!)) === "gcc-ld"
+      ? dirname(dirname(cfg.rustLld!))
+      : dirname(cfg.rustLld!)
+    : undefined;
+  const rustTool = (name: string, fallback: string): string => {
+    const p = rustBin !== undefined ? join(rustBin, name + cfg.host.exeSuffix) : undefined;
+    return p !== undefined && existsSync(p) ? p : fallback;
+  };
+  const nm = rustTool("llvm-nm", cfg.nm!);
+  const objdump = cfg.windows ? rustTool("llvm-objdump", cfg.objdump!) : undefined;
+  // The report is always written; $out is the stamp, written only on success.
+  n.rule("duplicate_symbols", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    description: `check ${exeName} link inputs for duplicate definitions`,
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "duplicate_symbols",
+    inputs: linkInputs,
+    implicitInputs: [verifyBinaryPath],
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+  });
+  return [stamp];
 }
 
 /**
@@ -811,13 +961,10 @@ export function emitPostLink(
  * order-only input so this rule never runs while strip is mid-write; see
  * emitPostLink for why.
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): string[] {
   // Skip when the binary can't run on this host (different os/arch/abi) —
-  // `ninja check` becomes a no-op alias for the exe.
-  if (!cfg.canRunOnHost) {
-    n.phony("check", [exe]);
-    return;
-  }
+  // `ninja check` then just depends on the exe (and the static scans).
+  if (!cfg.canRunOnHost) return [exe];
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
 
   // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR. Fall back
@@ -859,8 +1006,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
 
-  // Phony target — `ninja check` runs the smoke test.
-  n.phony("check", [stamp]);
+  return [stamp];
 }
 
 /**

@@ -76,6 +76,7 @@ Edge dependency types:
 - **explicit inputs** (`$in`) — listed on the build line, passed to the command
 - **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, dep lib outputs (invalidation signal for their headers), or a per-file generated header this source is known to read
 - **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read"
+- **validations** (`|@ check`, ninja 1.11+) — built whenever this edge is, but not an input of it or of anything downstream. The static scans of bun's link and the deps' `forbidUndefined` checks are validations: relinking (or re-archiving) runs them, nothing waits on them
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
@@ -164,7 +165,7 @@ For `mode: "full"` (the normal case):
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
-9. **Smoke test** — `<exe> --revision` catches load-time failures.
+9. **Checks** — `ninja check` (a default target) names all three. `<exe> --revision` catches load-time failures (only when the host can run the target). The other two are static and also ninja validations of the link edge: `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`) and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs, the prebuilt WebKit/ICU archives included). Each is emitted only when the LLVM tool it reads with (`llvm-nm`/`-readobj`/`-objdump`/`-cxxfilt`) was found.
 
 Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
@@ -207,6 +208,8 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                 |
+| `verify-binary.ts`             | Build-time CLI: static scans of the linked executable, duplicate-definition scan of its link inputs                     |
+| `binary-expectations.ts`       | Per-target expectations for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                          |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |

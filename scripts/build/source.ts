@@ -528,9 +528,10 @@ export interface ResolvedDep {
    */
   outputs: string[];
   /**
-   * Stamps of this dep's `forbidUndefined` checks. Whatever the objects go
-   * into next waits for them: the per-dep archive here when cfg.archiveDeps,
-   * otherwise bun.ts's archive or link.
+   * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
+   * objects). Ninja validations of whatever the objects go into next — the
+   * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
+   * link — so they run with every build of it and gate nothing.
    */
   checks: string[];
 }

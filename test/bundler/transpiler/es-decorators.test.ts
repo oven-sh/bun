@@ -1696,6 +1696,27 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("[[1,2],[1],1]\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
+      // Its name is not one the class or a class around it declares, and its
+      // initializer runs as the field it is: no new.target, any constructor,
+      // a storage of its own for each evaluation of the class.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
+          read() { return [this.#p_accessor_storage, this.#p, this.#p_accessor_storage2, this.#p_accessor_storage3] } }
+        class Outer { #q_accessor_storage = "outer"; static Inner = class { accessor #q = "q"; read(outer) { return [outer.#q_accessor_storage, this.#q] } } }
+        class Base {}
+        class Last { accessor #p = new.target; static read(o) { return o.#p } }
+        class Cond extends Base { accessor #p = 1; constructor(c) { if (c) super(); else super(); } static read(o) { return o.#p } }
+        const twice = [];
+        for (let i = 0; i < 2; i++) { const C = class { accessor #p = i; static read(o) { return o.#p } }; twice.push([C, new C()]); }
+        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],null,1,[0,1]]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {
@@ -1954,6 +1975,24 @@ const installExpected = {
   values: [1, 2, null, 3, 4],
 };
 
+// `accessor #p` in each shape the lowering tells apart, after the getter /
+// setter pair it stands for, written by hand. Every class probes `#p` from
+// the initializers that run before the accessor's own, and from that one.
+function privateAccessorClasses(s: "" | "static ") {
+  const pair = `${s}#v = (this.b = #p in this, 1); ${s}get #p() { return this.#v; } ${s}set #p(v) { this.#v = v; }`;
+  const accessor = `${s}accessor #p = (this.b = #p in this, 1);`;
+  const classes = [pair, accessor, `${accessor} @id ${s}m() {}`, `@id ${accessor}`].map(
+    members => `class {
+    ${s}a = #p in this;
+    ${s}r = attempt(() => this.#p);
+    ${s}w = attempt(() => (this.#p = 2));
+    ${members}
+    static probe(o) { return [o.a, o.r, o.w, o.b, #p in o, #p in Object.create(o), o.#p, (o.#p = 3, o.#p)]; }
+  }`,
+  );
+  return classes.join(", ");
+}
+
 const extraSections = `
 // \`this\` in a static initializer, decorated or not, is the class.
 {
@@ -2062,6 +2101,30 @@ const extraSections = `
   const before = pa.acc;
   pa.acc = 7;
   out.privateAccessor = [before, pa.acc, PA.bump()];
+}
+
+// \`accessor #p\` is a private getter and setter: on the object before its first
+// initializer runs, over storage that is defined where the accessor is written.
+{
+  const id = (v) => v;
+  const attempt = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
+  out.privateAccessorBrand = [${privateAccessorClasses("")}].map((C) => C.probe(new C()));
+  out.privateStaticAccessorBrand = [${privateAccessorClasses("static ")}].map((C) => C.probe(C));
+
+  // What a decorator puts in place of the getter and the setter runs before
+  // the storage is there, and so does the access object of its context.
+  const sets = [];
+  let access;
+  const replace = (v, ctx) => { access = ctx.access; return { get() { return "got"; }, set(v) { sets.push(v); } }; };
+  class R { h = access.has(this); r = attempt(() => this.#p); w = attempt(() => (this.#p = 2)); @replace accessor #p = 1; }
+  const r = new R();
+  out.privateAccessorReplaced = [r.h, r.r, r.w, sets, access.has(r), access.has({}), access.get(r)];
+
+  // A constructor that returns an object puts the pair on that object, once.
+  class Ret { constructor(o) { return o; } }
+  class T1 extends Ret { accessor #p = 1; static has(o) { return #p in o; } }
+  class T2 extends Ret { @id accessor #p = 1; static has(o) { return #p in o; } }
+  out.privateAccessorTwice = [T1, T2].map((T) => { const o = {}; new T(o); return [T.has(o), attempt(() => new T(o))]; });
 }
 
 // Undecorated \`#private\` members of a decorated class stay native, so every
@@ -2407,6 +2470,11 @@ const extraExpected = {
   namedExpr: { defLog: ["dec:m", "eblk"], self: true, y: true },
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
+  // The pair by hand, the accessor alone, next to a decorated method, decorated.
+  privateAccessorBrand: Array(4).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateStaticAccessorBrand: Array(4).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateAccessorReplaced: [true, "got", 2, [2], true, false, "got"],
+  privateAccessorTwice: Array(2).fill([true, "TypeError"]),
   privateUpdates: [6, 6, 12, "2n", 3, 2],
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],

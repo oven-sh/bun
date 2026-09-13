@@ -2331,37 +2331,50 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  // `module.exports = require("./b")` hands out the object of "./b", so each
-  // lifted file behind a wrapped one keeps its wrapper too.
+  // `emitDecoratorMetadata` passes the import itself to `Reflect.metadata`.
+  itBundled("cjs2esm/DefaultImportHeldByDecoratorMetadata", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import Lib from "./lib.cjs";
+        const seen: any[] = [];
+        (Reflect as any).metadata = (key: string, value: any) => () => { seen.push(value); };
+        function dec(..._args: any[]) {}
+        class A {
+          @dec prop: Lib;
+        }
+        Object.defineProperty(seen[0], "x", { value: 65 });
+        console.log(Lib.x, Lib.sum());
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
+      `,
+      ...objectOperationTargets,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: "65 67" },
+  });
+  // The shape of react-dom/index.js. The wrapped file assigns the namespace
+  // object of "./main", as in 1.4.0, and every read goes through that object.
   itBundled("cjs2esm/DefaultImportHeldAsValueOfModuleExportsEqualsRequire", {
     files: {
       "/entry.js": /* js */ `
-        import React, { version } from "react";
-        Object.freeze(React);
-        try { React.version = "patched"; } catch {}
-        console.log(React.version, version, Object.isFrozen(React), React.createElement("a"));
+        import ReactDOM from "react-dom";
+        Object.defineProperty(ReactDOM, "version", { value: "dp", writable: true, enumerable: true, configurable: true });
+        console.log(ReactDOM.version, delete ReactDOM.render, "render" in ReactDOM);
       `,
-      "/node_modules/react/index.js": /* js */ `
-        console.log('index');
-        module.exports = require('./mid');
-      `,
-      "/node_modules/react/mid.js": /* js */ `
-        console.log('mid');
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
         module.exports = require('./main');
       `,
-      "/node_modules/react/main.js": /* js */ `
+      "/node_modules/react-dom/main.js": /* js */ `
         "use strict";
         exports.version = "19.0.0";
-        exports.createElement = type => "<" + type + ">";
+        exports.render = () => "rendered";
       `,
     },
     minifySyntax: true,
-    onAfterBundle(api) {
-      // no namespace object stands in for a `module.exports` of the chain
-      api.expectFile("/out.js").not.toContain("__exportCjs");
-    },
     run: {
-      stdout: "index\nmid\n19.0.0 19.0.0 true <a>",
+      stdout: "side effect\ndp true false",
     },
   });
   // Reads, calls and writes of a property, and a destructuring declaration,

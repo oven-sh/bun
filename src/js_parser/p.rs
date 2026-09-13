@@ -7926,6 +7926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
+                    self.note_import_use(ref_, IdentifierOpts::new());
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,

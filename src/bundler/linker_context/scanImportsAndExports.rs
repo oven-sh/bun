@@ -75,40 +75,6 @@ macro_rules! col_ref {
     };
 }
 
-/// Importers of lifted CommonJS file `root` get its real `module.exports`, not the namespace object that stands in for it.
-fn keep_commonjs_wrapper_of_lifted_file(
-    root: usize,
-    exports_kind: &mut [ExportsKind],
-    flags: &mut [js_meta::Flags],
-    ast_flags: &[AstFlags],
-    export_star_import_records: &[bun_alloc::AstVec<u32>],
-    import_records: &[ImportRecordList<'_>],
-) {
-    let mut pending = vec![root];
-    let mut visited: Vec<usize> = Vec::new();
-    while let Some(file) = pending.pop() {
-        if visited.contains(&file) {
-            continue;
-        }
-        visited.push(file);
-        exports_kind[file] = ExportsKind::Cjs;
-        flags[file].wrap = WrapKind::Cjs;
-        // A lifted file's export star was `module.exports = require("./b")`: the object of "./b".
-        for &star in export_star_import_records[file].iter() {
-            if let Some(record) = import_records[file].as_slice().get(star as usize)
-                && record.source_index.is_valid()
-            {
-                let target = record.source_index.get() as usize;
-                if target < ast_flags.len()
-                    && ast_flags[target].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                {
-                    pending.push(target);
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
@@ -238,14 +204,8 @@ pub(crate) fn scan_imports_and_exports(
                                 && (ni.is_exported || symbol.import_used_as_value())
                         })
                 {
-                    keep_commonjs_wrapper_of_lifted_file(
-                        other,
-                        col!(exports_kind),
-                        col!(flags),
-                        col_ref!(ast_flags_list),
-                        col_ref!(export_star_import_records),
-                        col_ref!(import_records_list),
-                    );
+                    col!(exports_kind)[other] = ExportsKind::Cjs;
+                    col!(flags)[other].wrap = WrapKind::Cjs;
                 }
                 if col_ref!(exports_kind)[other] != ExportsKind::Esm {
                     continue;

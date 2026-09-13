@@ -487,7 +487,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     RETURN_IF_EXCEPTION(scope, {});
 
     auto utf8 = request.utf8();
-    if (ModuleLoader__isBuiltin(utf8.data(), utf8.length())) {
+    if (ModuleLoader__isBuiltin(utf8.legacyCStringPointer(), utf8.length())) {
         return JSC::JSValue::encode(JSC::jsNull());
     }
 

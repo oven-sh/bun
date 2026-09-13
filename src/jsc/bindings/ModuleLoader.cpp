@@ -81,7 +81,7 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         auto* object = requireResult.getObject();
-        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
+        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().legacyCStringPointer());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 

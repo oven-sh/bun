@@ -559,7 +559,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         auto hostWithPort = hostName(m_url, is_secure);
         auto hostUtf8 = hostStr.utf8();
         auto hostWithPortUtf8 = hostWithPort.utf8();
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+        if (Bun__isNoProxy(hostUtf8.legacyCStringPointer(), hostUtf8.length(), hostWithPortUtf8.legacyCStringPointer(), hostWithPortUtf8.length())) {
             proxyConfig = std::nullopt;
             hasProxy = false;
         }
@@ -995,7 +995,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Ping);
+    this->sendWebSocketData(utf8.legacyCStringPointer(), payloadSize, Opcode::Ping);
 
     return {};
 }
@@ -1081,7 +1081,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Pong);
+    this->sendWebSocketData(utf8.legacyCStringPointer(), payloadSize, Opcode::Pong);
 
     return {};
 }

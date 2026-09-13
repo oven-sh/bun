@@ -417,7 +417,7 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
         // The *64 variants reject an over-INT_MAX length with SQLITE_TOOBIG
         // instead of narrowing it into `int` (a negative length is undefined
         // for the 32-bit bind/result API). Same in bindValue() below.
-        sqlite3_result_text64(ctx, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        sqlite3_result_text64(ctx, utf8.legacyCStringPointer(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = view->span();
         // sqlite3_result_blob64(nullptr, 0) sets NULL, not an empty BLOB —
@@ -1060,7 +1060,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 
     auto utf8 = m_location.utf8();
     sqlite3* db = nullptr;
-    int r = sqlite3_open_v2(utf8.data(), &db, flags, nullptr);
+    int r = sqlite3_open_v2(utf8.legacyCStringPointer(), &db, flags, nullptr);
     if (r != SQLITE_OK) {
         if (db) {
             throwSqliteError(globalObject, scope, db);
@@ -1275,7 +1275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
     // m_db (deferred close) but the handle itself stays valid until this
     // frame's BusyScope unwinds, so read the error from it.
     sqlite3* conn = self->connection();
-    int r = sqlite3_exec(conn, utf8.data(), nullptr, nullptr, nullptr);
+    int r = sqlite3_exec(conn, utf8.legacyCStringPointer(), nullptr, nullptr, nullptr);
     CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
         throwSqliteError(globalObject, scope, conn);
@@ -1327,7 +1327,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
     // length and avoids narrowing a size_t into int. Capture the connection
     // before the call for the error path (see jsDatabaseSyncExec).
     sqlite3* conn = self->connection();
-    int r = sqlite3_prepare_v2(conn, utf8.data(), -1, &stmt, nullptr);
+    int r = sqlite3_prepare_v2(conn, utf8.legacyCStringPointer(), -1, &stmt, nullptr);
     // prepare() runs the authorizer callback (if any), which may
     // throw — surface that over SQLite's generic "not authorized".
     CHECK_UDF_EXCEPTION(scope);
@@ -1363,7 +1363,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLocation, (JSGlobalObject * globalObject,
         RETURN_IF_EXCEPTION(scope, {});
     }
     auto utf8 = dbName.utf8();
-    const char* filename = sqlite3_db_filename(self->connection(), utf8.data());
+    const char* filename = sqlite3_db_filename(self->connection(), utf8.legacyCStringPointer());
     if (filename == nullptr || filename[0] == '\0') {
         return JSValue::encode(jsNull());
     }
@@ -1426,7 +1426,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
     }
 
     char* errmsg = nullptr;
-    int r = sqlite3_load_extension(self->connection(), pathUtf8.data(), entryPtr, &errmsg);
+    int r = sqlite3_load_extension(self->connection(), pathUtf8.legacyCStringPointer(), entryPtr, &errmsg);
     if (r != SQLITE_OK) {
         WTF::String message = errmsg ? sqliteText(errmsg) : WTF::String::fromUTF8(sqlite3_errstr(r));
         if (errmsg) sqlite3_free(errmsg);
@@ -1493,7 +1493,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     REQUIRE_DB_OPEN(self);
     auto* udf = new NodeSqliteUDF(globalObject, fn, useBigIntArgs);
     auto nameUtf8 = name.utf8();
-    int r = sqlite3_create_function_v2(self->connection(), nameUtf8.data(), argc, textRep,
+    int r = sqlite3_create_function_v2(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep,
         udf, NodeSqliteUDF::xFunc, nullptr, nullptr, NodeSqliteUDF::xDestroy);
     if (r != SQLITE_OK) {
         // SQLite owns udf once xDestroy is passed in — it invokes xDestroy
@@ -1595,7 +1595,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     auto nameUtf8 = name.utf8();
     auto xInverse = inverseFn ? NodeSqliteAggregate::xInverse : nullptr;
     auto xValue = inverseFn ? NodeSqliteAggregate::xValue : nullptr;
-    int r = sqlite3_create_window_function(self->connection(), nameUtf8.data(), argc, textRep, agg,
+    int r = sqlite3_create_window_function(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, agg,
         NodeSqliteAggregate::xStep, NodeSqliteAggregate::xFinal, xValue, xInverse, NodeSqliteAggregate::xDestroy);
     if (r != SQLITE_OK) {
         // SQLite already invoked xDestroy(agg) on the failure path.
@@ -1665,13 +1665,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
     REQUIRE_DB_OPEN(self);
     auto dbNameUtf8 = dbName.utf8();
     sqlite3_session* pSession = nullptr;
-    int r = sqlite3session_create(self->connection(), dbNameUtf8.data(), &pSession);
+    int r = sqlite3session_create(self->connection(), dbNameUtf8.legacyCStringPointer(), &pSession);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     auto tableUtf8 = table.utf8();
-    r = sqlite3session_attach(pSession, table.isEmpty() ? nullptr : tableUtf8.data());
+    r = sqlite3session_attach(pSession, table.isEmpty() ? nullptr : tableUtf8.legacyCStringPointer());
     if (r != SQLITE_OK) {
         sqlite3session_delete(pSession);
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
@@ -1983,7 +1983,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
     // sqlite3_serialize's internal PRAGMA prepare and may re-enter close()
     // (deferred, nulls m_db); read the error from the captured handle.
     sqlite3* conn = self->connection();
-    unsigned char* data = sqlite3_serialize(conn, dbNameUtf8.data(), &size, 0);
+    unsigned char* data = sqlite3_serialize(conn, dbNameUtf8.legacyCStringPointer(), &size, 0);
     // For non-memdb schemas (regular :memory: or file-backed)
     // sqlite3_serialize internally prepares `PRAGMA "<s>".page_count`,
     // which fires the authorizer with SQLITE_PRAGMA. Surface a thrown
@@ -2092,7 +2092,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     }
     self->bumpOpenGeneration();
 
-    int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
+    int r = sqlite3_deserialize(self->connection(), dbNameUtf8.legacyCStringPointer(), owned,
         static_cast<sqlite3_int64>(span.size()), static_cast<sqlite3_int64>(span.size()),
         SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE);
     // sqlite3_deserialize internally runs `ATTACH x AS <schema>` via
@@ -2597,7 +2597,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, false);
         auto utf8 = str.utf8();
         // *64: see jsValueToSqliteResult().
-        r = sqlite3_bind_text64(m_stmt, index, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        r = sqlite3_bind_text64(m_stmt, index, utf8.legacyCStringPointer(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (value.isNull()) {
         r = sqlite3_bind_null(m_stmt, index);
     } else if (value.isBigInt()) {
@@ -2677,12 +2677,12 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
             for (auto& key : keys) {
                 WTF::String keyStr = key.string();
                 auto keyUtf8 = keyStr.utf8();
-                int index = sqlite3_bind_parameter_index(m_stmt, keyUtf8.data());
+                int index = sqlite3_bind_parameter_index(m_stmt, keyUtf8.legacyCStringPointer());
                 if (index == 0 && m_allowBareNamedParams && m_bareNamedParams.has_value()) {
                     auto it = m_bareNamedParams->find(keyStr);
                     if (it != m_bareNamedParams->end()) {
                         auto fullUtf8 = it->value.utf8();
-                        index = sqlite3_bind_parameter_index(m_stmt, fullUtf8.data());
+                        index = sqlite3_bind_parameter_index(m_stmt, fullUtf8.legacyCStringPointer());
                     }
                 }
                 if (index == 0) {
@@ -3636,7 +3636,7 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         // Intentional divergence from Node (which uses prepare_v2) — the
         // hint is allocator-only, not observable behavior.
         sqlite3* conn = db->connection();
-        int r = sqlite3_prepare_v3(conn, utf8.data(), -1, SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
+        int r = sqlite3_prepare_v3(conn, utf8.legacyCStringPointer(), -1, SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
         // prepare() runs the authorizer callback (if any), which may
         // throw — surface that over SQLite's generic "not authorized"
         // so we don't overwrite the user's exception. Mirrors
@@ -3953,7 +3953,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     // The source db is already open (so this can never be the process's first
     // open), but keep the "config before any open" invariant local and free.
     Bun__initializeSQLite();
-    int r = sqlite3_open_v2(destPathUtf8.data(), &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, nullptr);
+    int r = sqlite3_open_v2(destPathUtf8.legacyCStringPointer(), &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, nullptr);
     if (r != SQLITE_OK) {
         if (dest) {
             throwSqliteError(globalObject, scope, dest);
@@ -3966,7 +3966,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     auto sourceNameUtf8 = sourceName.utf8();
     auto targetNameUtf8 = targetName.utf8();
-    sqlite3_backup* backup = sqlite3_backup_init(dest, targetNameUtf8.data(), sourceDb->connection(), sourceNameUtf8.data());
+    sqlite3_backup* backup = sqlite3_backup_init(dest, targetNameUtf8.legacyCStringPointer(), sourceDb->connection(), sourceNameUtf8.legacyCStringPointer());
     if (backup == nullptr) {
         throwSqliteError(globalObject, scope, dest);
         sqlite3_close_v2(dest);

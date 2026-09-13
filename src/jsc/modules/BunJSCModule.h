@@ -84,14 +84,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
     const char* host = defaultHost;
-    WTF::CString hostCString;
+    WTF::UTF8CString hostCString;
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        hostCString = toCString(str);
+        hostCString = toUTF8CString(str);
         if (!str.isEmpty())
-            host = hostCString.span().data();
+            host = hostCString.legacyCStringPointer();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -474,15 +474,15 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
-            auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
+            auto pathCString = toUTF8CString(String(path));
+            if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
+            Options::samplingProfilerPath() = pathCString.legacyCStringPointer();
             samplingProfiler.registerForReportAtExit();
         }
     }

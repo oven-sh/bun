@@ -1173,7 +1173,18 @@ test.concurrent.each([
      console.log(/at (\\w+)/.exec(other.stack)[1]);`,
     "formatted inner\ninner",
   ],
-])("a synchronous GC while .stack is being formatted keeps the trace: %s", async (_, source, expected) => {
+  [
+    "a node:vm Error.prepareStackTrace getter reads the lazy .stack accessor of the same error",
+    `import vm from "node:vm";
+     let e, entered = false;
+     const context = vm.createContext({ readStack() { if (entered) return; entered = true; return e.stack; } });
+     e = vm.runInContext('new Error("x")', context);
+     (function capture() { Error.captureStackTrace(e); })();
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { readStack(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)?.[1]);`,
+    "Error: x | capture",
+  ],
+])("user JS that runs while .stack is being formatted cannot invalidate the trace: %s", async (_, source, expected) => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
     env: bunEnv,

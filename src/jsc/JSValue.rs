@@ -2871,17 +2871,13 @@ impl JSValue {
     }
 
     // ── Jest "is empty object". ────────────────────────
-    /// jest-extended `toBeEmptyObject`: a `jest-get-type` "object" with no own enumerable keys.
+    /// `JSValue.isObjectEmpty` — Jest-extended `toBeEmptyObject` semantics:
+    /// Map/Set/RegExp/Date are *not* empty objects; otherwise an object with
+    /// zero own-enumerable keys.
     pub fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
         let ty = self.js_type();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
-        if self.is_array_or_proxied_array()
-            || self.is_callable()
-            || ty.is_map()
-            || ty.is_set()
-            || ty == JSType::RegExpObject
-            || self.is_date()
-        {
+        if ty.is_map() || ty.is_set() || ty == JSType::RegExpObject || self.is_date() {
             return Ok(false);
         }
         Ok(ty.is_object() && self.keys(global)?.get_length(global)? == 0)

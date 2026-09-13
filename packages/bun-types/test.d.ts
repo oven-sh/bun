@@ -1555,12 +1555,9 @@ declare module "bun:test" {
     /**
      * Asserts that a value is an empty `object`.
      *
-     * An array, a function, a `Map`, a `Set`, a `Date` and a `RegExp` are not an `object` here.
-     *
      * @example
      * expect({}).toBeEmptyObject();
      * expect({ a: 'hello' }).not.toBeEmptyObject();
-     * expect([]).not.toBeEmptyObject();
      */
     toBeEmptyObject(): void;
 

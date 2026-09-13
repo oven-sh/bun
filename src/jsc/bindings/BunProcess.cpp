@@ -897,8 +897,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 
     auto code = callFrame->argument(0);
 
-    setProcessExitCodeInner(globalObject, process, code);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    if (callFrame->argumentCount() > 0) {
+        setProcessExitCodeInner(globalObject, process, code);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -2301,7 +2303,10 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
 {
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
 
-    if (!code.isUndefinedOrNull()) {
+    if (code.isUndefinedOrNull()) {
+        process->m_isExitCodeObservable = false;
+        Bun__setExitCode(process->globalObject()->bunVM(), 0);
+    } else {
         if (code.isString()) {
             auto codeString = code.getString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, false);

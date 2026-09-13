@@ -2030,6 +2030,20 @@ test("parentPort.unref() lets a listening worker exit", async () => {
   expect(await exited).toBe(0);
 });
 
+test("clearing process.exitCode restores a worker's natural zero exit", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     process.exitCode = 23;
+     process.exitCode = undefined;
+     parentPort.postMessage({ exitCode: process.exitCode });`,
+    { eval: true },
+  );
+  const message = once(worker, "message");
+  const exited = once(worker, "exit");
+  expect(await message).toEqual([{ exitCode: undefined }]);
+  expect(await exited).toEqual([0]);
+});
+
 test("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {
   const { port1, port2 } = new MessageChannel();
   port1.postMessage(undefined);

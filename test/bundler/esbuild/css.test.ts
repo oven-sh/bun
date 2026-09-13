@@ -1296,7 +1296,26 @@ b {
   });
 
   // The final path replaces the placeholder inside a quoted string, so it is
-  // escaped for one. Windows cannot represent `"` or a line break in a file name.
+  // escaped for one.
+  itBundled("css/FileLoaderURLEscapesPublicPath", {
+    files: {
+      "/entry.css": `.a { background: url("./plain.png") }`,
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    publicPath: '");}body{color:red}a{b:url("',
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(
+        String.raw`.a{background:url("\");}body{color:red}a{b:url(\"plain-w49ecq2a.png")}` + "\n",
+      );
+    },
+  });
+
+  // Windows cannot represent `"` or a line break in a file name.
   describe.skipIf(isWindows)("asset path is escaped for the CSS string it lands in", () => {
     const injection = 'x");}body{color:red}a{b:url("y';
     itBundled("css/FileLoaderURLEscapesFileName", {
@@ -1325,24 +1344,6 @@ b {
         // The second build copies `<name>-<hash>.png` to `<name>-<hash>-<hash2>.png`. Drop `-<hash2>.png`.
         expect(assets.map(name => name.replace(/-[a-z0-9]+\.png$/, "")).sort()).toEqual(
           ["a\nb-nkpagkva", `${injection}-w49ecq2a`].sort(),
-        );
-      },
-    });
-
-    itBundled("css/FileLoaderURLEscapesPublicPath", {
-      files: {
-        "/entry.css": `.a { background: url("./plain.png") }`,
-        "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
-      },
-      loader: {
-        ".png": "file",
-      },
-      publicPath: '");}body{color:red}a{b:url("',
-      minifyWhitespace: true,
-      outdir: "/out",
-      onAfterBundle(api) {
-        expect(api.readFile("/out/entry.css")).toBe(
-          String.raw`.a{background:url("\");}body{color:red}a{b:url(\"plain-w49ecq2a.png")}` + "\n",
         );
       },
     });

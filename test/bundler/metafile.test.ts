@@ -1149,6 +1149,68 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain("require-call");
   });
 
+  test("markdown reports a split import() / require() as an import of the input it loads", async () => {
+    using dir = tempDir("metafile-md-split-imports", {
+      "entry.js": `
+        import("./lazy.js").then(m => console.log(m.value));
+        import("external-pkg").then(m => console.log(m));
+        export const load = () => require("./required.js").value;
+      `,
+      "lazy.js": `export const value = 1;`,
+      "required.js": `export const value = 2;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "entry.js",
+        "--metafile-md",
+        "--outdir=dist",
+        "--splitting",
+        "--target=bun",
+        "--external=external-pkg",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const lines = (await Bun.file(`${dir}/meta.md`).text()).split("\n");
+
+    // lazy.js and required.js are bundled into chunks of their own. Only external-pkg is external.
+    expect(lines.filter(line => /^\[(IMPORT|EXTERNAL):/.test(line))).toEqual([
+      "[IMPORT: entry.js -> lazy.js]",
+      "[EXTERNAL: entry.js imports external-pkg]",
+      "[IMPORT: entry.js -> required.js]",
+    ]);
+    expect(lines.filter(line => line.startsWith("[IMPORTED_BY:")).sort()).toEqual([
+      "[IMPORTED_BY: lazy.js <- entry.js]",
+      "[IMPORTED_BY: required.js <- entry.js]",
+    ]);
+    expect(lines.filter(line => line.includes("External imports"))).toEqual(["| External imports | 1 |"]);
+
+    // The module graph lists the same edges.
+    expect(lines.filter(line => line.startsWith("- **Imported by**")).sort()).toEqual([
+      "- **Imported by** (1 files): `entry.js`",
+      "- **Imported by** (1 files): `entry.js`",
+      "- **Imported by**: (entry point or orphan)",
+    ]);
+    expect(
+      lines.filter(line => line.startsWith("  - `")).map(line => line.replace(/contributes [^,]+/, "contributes N")),
+    ).toEqual([
+      "  - `lazy.js` (dynamic-import, contributes N, specifier: `./lazy.js`)",
+      "  - `external-pkg` (dynamic-import, **external**)",
+      "  - `required.js` (require-call, contributes N, specifier: `./required.js`)",
+    ]);
+  });
+
   test("markdown shows commonly imported modules", async () => {
     using dir = tempDir("metafile-md-common-imports", {
       "a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,

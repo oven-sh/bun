@@ -77,6 +77,17 @@ if (cookie != null) {
 }
 ```
 
+#### `getAll(name: string): string[]`
+
+Retrieves every value for a cookie name. A `Cookie` header can repeat a name, and `get()` returns only the first value.
+
+```ts title="get-all-cookies.ts" icon="/icons/typescript.svg"
+const cookies = new Bun.CookieMap("session=first; session=second");
+
+cookies.get("session"); // "first"
+cookies.getAll("session"); // ["first", "second"]
+```
+
 #### `has(name: string): boolean`
 
 Checks if a cookie with the given name exists.
@@ -438,6 +449,7 @@ class CookieMap implements Iterable<[string, string]> {
   constructor(init?: string[][] | Record<string, string> | string);
 
   get(name: string): string | null;
+  getAll(name: string): string[];
 
   toSetCookieHeaders(): string[];
 

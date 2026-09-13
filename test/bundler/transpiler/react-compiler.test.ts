@@ -1644,11 +1644,14 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import * as forms from "./forms";
-        const props = { bad: "{bad", n: 7, call() {} };
+        const calls = [];
+        const props = { bad: "{bad", n: 7, call: v => calls.push(v) };
         const lines = [];
         for (const [name, form] of Object.entries(forms)) {
           try {
-            lines.push(name + "=" + JSON.stringify(form(props).p));
+            calls.length = 0;
+            const out = JSON.stringify(form(props).p);
+            lines.push(name + "=" + out + (calls.length ? " calls=" + JSON.stringify(calls) : ""));
           } catch (e) {
             lines.push(name + " threw " + e);
           }
@@ -1734,7 +1737,7 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: `
-        Argument={"r":{"a":1}}
+        Argument={"r":{"a":1}} calls=[5]
         ArrayFromProps={"r":{"a":1},"v":[7]}
         DeclaredAbove={"r":{"a":1},"v":[7,7]}
         FoldedRead={"r":{"a":1},"v":[5,5]}

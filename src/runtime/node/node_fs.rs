@@ -7392,17 +7392,26 @@ impl NodeFS {
                 );
                 // SAFETY: instance() returns the process-lifetime resolver singleton.
                 let fs = FileSystem::get();
-                let parts = [fs.top_level_dir, path_slice];
-                let inbuf_len = inbuf.len();
-                let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                let cwd = if path_slice.starts_with(b"/") {
+                    &b""[..]
+                } else {
+                    fs.top_level_dir
+                };
+                let mut spill = Vec::new();
+                let joined = paths::resolve_path::join_spill::<paths::platform::Posix>(
+                    &mut spill,
+                    &[cwd, path_slice],
+                );
+                if joined.len() >= inbuf.len() {
                     return Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::realpath,
                         path: args.path.slice().into(),
                         ..Default::default()
                     });
-                };
+                }
                 let path_len = joined.len();
+                inbuf[..path_len].copy_from_slice(joined);
                 inbuf[path_len] = 0;
                 ZStr::from_buf(&inbuf[..], path_len)
             } else {

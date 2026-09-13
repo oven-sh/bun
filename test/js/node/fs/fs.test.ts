@@ -3255,6 +3255,61 @@ it.if(isPosix)("realpath resolves a symlink before a following parent traversal"
   expect(await promisify(fs.realpath.native)(input)).toBe(expected);
 });
 
+describe.each([
+  ["sync", realpathSync],
+  ["sync native", realpathSync.native],
+  ["promises", promises.realpath],
+  ["callback", promisify(fs.realpath)],
+  ["callback native", promisify(fs.realpath.native)],
+] as const)("realpath %s POSIX paths", (_name, realpath) => {
+  // POSIX permits backslashes in filenames; Windows treats them as separators.
+  it.skipIf(!isPosix)("preserves literal backslashes instead of resolving a collision", async () => {
+    using dir = tempDir("fs-realpath-backslash", {});
+    const root = String(dir);
+    const literal = join(root, "directory\\name");
+    const collision = join(root, "directory", "name");
+    mkdirSync(literal);
+    mkdirSync(collision, { recursive: true });
+    const target = join(literal, "file\\name.txt");
+    writeFileSync(target, "literal");
+    mkdirSync(join(collision, "file"));
+    writeFileSync(join(collision, "file", "name.txt"), "collision");
+    const link = join(root, "link\\name");
+    symlinkSync(target, link);
+
+    for (const input of [target, link, relative(process.cwd(), target)]) {
+      expect(await realpath(input)).toBe(target);
+      expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(target));
+    }
+  });
+
+  // Windows modes cannot remove POSIX read/search permissions; root bypasses them.
+  it.skipIf(!isPosix || process.getuid?.() === 0)("does not require read permission on the target", async () => {
+    using dir = tempDir("fs-realpath-permissions", { "file.txt": "private" });
+    const root = String(dir);
+    const file = join(root, "file.txt");
+    const directory = join(root, "search-only");
+    mkdirSync(directory);
+    const child = join(directory, "child.txt");
+    writeFileSync(child, "child");
+    try {
+      fs.chmodSync(file, 0o200);
+      fs.chmodSync(directory, 0o100);
+      expect(() => readFileSync(file)).toThrow(expect.objectContaining({ code: "EACCES" }));
+      expect(() => readdirSync(directory)).toThrow(expect.objectContaining({ code: "EACCES" }));
+      for (const target of [file, directory, child]) {
+        expect(await realpath(target)).toBe(target);
+        expect(await realpath(Buffer.from(target), { encoding: "buffer" })).toEqual(Buffer.from(target));
+      }
+      fs.chmodSync(file, 0);
+      expect(await realpath(file)).toBe(file);
+    } finally {
+      fs.chmodSync(file, 0o600);
+      fs.chmodSync(directory, 0o700);
+    }
+  });
+});
+
 const darwinCc = process.platform === "darwin" ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
 it.skipIf(!darwinCc)("realpath preserves process-owned POSIX locks", async () => {
   using dir = tempDir("fs-realpath-posix-lock", {

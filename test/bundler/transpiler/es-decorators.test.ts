@@ -1696,6 +1696,27 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("[[1,2],[1],1]\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
+      // Its name is not one the class or a class around it declares, and its
+      // initializer runs as the field it is: no new.target, any constructor,
+      // a storage of its own for each evaluation of the class.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
+          read() { return [this.#p_accessor_storage, this.#p, this.#p_accessor_storage2, this.#p_accessor_storage3] } }
+        class Outer { #q_accessor_storage = "outer"; static Inner = class { accessor #q = "q"; read(outer) { return [outer.#q_accessor_storage, this.#q] } } }
+        class Base {}
+        class Last { accessor #p = new.target; static read(o) { return o.#p } }
+        class Cond extends Base { accessor #p = 1; constructor(c) { if (c) super(); else super(); } static read(o) { return o.#p } }
+        const twice = [];
+        for (let i = 0; i < 2; i++) { const C = class { accessor #p = i; static read(o) { return o.#p } }; twice.push([C, new C()]); }
+        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],null,1,[0,1]]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

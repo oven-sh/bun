@@ -2651,6 +2651,10 @@ describe("expect()", () => {
     expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.anything(), "zzz"]);
     expect({ ab: 1, ac: 2 }).not.toContainAllKeys([expect.stringContaining("a"), "zzz"]);
     expect(() => expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"])).toThrow("contain all keys");
+    // A regex with the g or y flag keeps lastIndex, so a pair that matched must not be compared a second time.
+    expect({ a: 1 }).toContainAllKeys([expect.stringMatching(/a/g)]);
+    expect({ a: 1 }).toContainAllKeys([expect.stringMatching(/a/y)]);
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.stringMatching(/a/g), "b"]);
     if (isBun) {
       // jest-extended passes these two. It does not check that each key matches an entry of expected.
       expect({ a: 1, b: 2 }).not.toContainAllKeys(["a", "a"]);

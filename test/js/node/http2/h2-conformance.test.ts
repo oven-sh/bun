@@ -1928,3 +1928,118 @@ describe("stream release after a queued END_STREAM", () => {
     }
   });
 });
+
+// RFC 9113 §5.1: frames on a closed stream are discarded after minimal processing, which for DATA
+// means counting it toward the connection flow-control window. nghttp2 sends nothing back.
+describe("DATA and WINDOW_UPDATE on a closed stream", () => {
+  const PING = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const isFatal = (f: Frame) => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY;
+  const windowUpdate = (id: number, increment: number) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(increment, 0);
+    return encodeFrame(FrameType.WINDOW_UPDATE, 0, id, payload);
+  };
+  const ONE_BYTE = encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"));
+  // A zero increment and an overflow are stream errors on a stream that is still open.
+  const WINDOW_UPDATES = [windowUpdate(1, 0), windowUpdate(1, 0x7fffffff)];
+  const floods: [string, Buffer][] = [
+    ["DATA", Buffer.concat(Array(2000).fill(ONE_BYTE))],
+    ["WINDOW_UPDATE", Buffer.concat(Array.from({ length: 2000 }, (_, i) => WINDOW_UPDATES[i % 2]))],
+  ];
+
+  test.each(floods)("server: %s gets no RST_STREAM", async (_, flood) => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      c.send(flood);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      c.send(PING);
+      await c.waitFor(isPingAck);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+      expect(c.frames.some(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBe(true);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test("server: DATA still counts toward the connection window", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      // 49,152 bytes: inside the 65,535-byte connection window and past the half of it at which the
+      // server sends a WINDOW_UPDATE.
+      const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+      c.send(Buffer.concat([large, large, large]));
+      const credit = await c.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0);
+      expect(credit.payload.readUInt32BE(0)).toBeGreaterThanOrEqual(32_767);
+      expect(c.frames.filter(isFatal)).toEqual([]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test.each(floods)("client: %s gets no RST_STREAM, and the session keeps working", async (_, flood) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    let sessionError: Error | undefined;
+    client.on("error", e => (sessionError = e));
+    // One request, answered by the raw server with 200 and a body that ends the stream.
+    const roundTrip = async (id: number) => {
+      const req = client.request({ ":path": "/" });
+      req.resume();
+      const closed = once(req, "close");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id);
+      raw.sendFrame(FrameType.HEADERS, 0x4, id, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0x1, id, Buffer.from("ok"));
+      await closed;
+    };
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await roundTrip(1);
+      raw.socket!.write(Buffer.concat([flood, PING]));
+      await raw.waitFor(isPingAck);
+      await roundTrip(3);
+      expect(raw.frames.filter(isFatal)).toEqual([]);
+      expect(sessionError).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The engine has no entry for a request stream until the first frame arrives on it. That is
+  // not a closed stream: an upload larger than the window needs this WINDOW_UPDATE to finish.
+  test("client: WINDOW_UPDATE before any HEADERS or DATA on a request stream is applied", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const body = Buffer.alloc(100_000, "u");
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      req.end(body);
+      const uploaded = () =>
+        raw.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1).reduce((n, f) => n + f.length, 0);
+      // The 65,535-byte stream and connection windows stop the upload here.
+      await raw.waitFor(() => uploaded() === 65_535);
+      raw.socket!.write(Buffer.concat([windowUpdate(0, 65_535), windowUpdate(1, 65_535)]));
+      await raw.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      expect(uploaded()).toBe(body.length);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});

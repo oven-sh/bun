@@ -1437,5 +1437,29 @@
   "column": 35,
   "message": "inline assembly: an asm statement can have at most 30 operands",
   "requires": "x64"
+ },
+ {
+  "about": "intrinsic headers are per architecture",
+  "source": "#include <emmintrin.h>\nint x;",
+  "line": 1,
+  "column": 2,
+  "message": "'emmintrin.h' file not found",
+  "requires": "arm64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { __asm__(\"cpuid\"); return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "inline assembly is not supported yet ('cpuid')",
+  "requires": "arm64"
+ },
+ {
+  "about": "what the assembler refuses",
+  "source": "int main(void) { int a = 1, b = 2; __asm__(\"cmp %w1, %w0\" : \"+r\"(a) : \"r\"(b)); return a; }",
+  "line": 1,
+  "column": 36,
+  "message": "inline assembly is not supported yet ('cmp')",
+  "requires": "arm64"
  }
 ]

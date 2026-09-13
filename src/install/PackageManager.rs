@@ -1582,21 +1582,19 @@ pub fn init(
             // the underlying directory and node_modules isn't either.
             let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
 
+            // Not a path buffer: the cwd can be up to PATH_MAX - 1 bytes, and
+            // `File::openat` reports ENAMETOOLONG for a path that does not fit one.
+            let mut package_json_path: Vec<u8> =
+                Vec::with_capacity(original_cwd.len() + b"/package.json".len());
+
             loop {
-                let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
-                package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
-                package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
-                    .copy_from_slice(b"/package.json");
-                package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
-                // SAFETY: NUL written above
-                let package_json_path = ZStr::from_buf(
-                    &package_json_path_buf[..],
-                    this_cwd.len() + b"/package.json".len(),
-                );
+                package_json_path.clear();
+                package_json_path.extend_from_slice(this_cwd);
+                package_json_path.extend_from_slice(b"/package.json");
 
                 match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
-                    package_json_path.as_bytes(),
+                    &package_json_path,
                     if need_write {
                         bun_sys::O::RDWR
                     } else {
@@ -1617,7 +1615,7 @@ pub fn init(
                         Output::err(
                             "EACCES",
                             "Permission denied while opening \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            &[&bstr::BStr::new(&package_json_path)],
                         );
                         if need_write {
                             bun_core::note!("package.json must be writable to add packages");
@@ -1633,7 +1631,7 @@ pub fn init(
                         Output::err(
                             &e,
                             "could not open \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            &[&bstr::BStr::new(&package_json_path)],
                         );
                         return Err(e.into());
                     }

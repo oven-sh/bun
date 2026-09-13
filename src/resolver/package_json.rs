@@ -382,7 +382,11 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let package_json_path_ = r_fs.abs(&parts);
+        // Longer than the thread-local join buffer when `input_path` is close to PATH_MAX.
+        let mut spill: Vec<u8> = Vec::new();
+        let package_json_path_ = resolve_path::resolve_path::join_abs_string_spill::<
+            resolve_path::platform::Loose,
+        >(r_fs.top_level_dir(), &mut spill, &parts);
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)

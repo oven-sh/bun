@@ -67,6 +67,7 @@ private:
     size_t m_index { 0 };
     size_t m_nextIndex { 0 };
     char32_t m_codepoint;
+    bool m_tokenAppendFailure { false };
 
     void getNextCodePoint();
     void seekNextCodePoint(size_t index);

@@ -53,6 +53,58 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+// $.env() sets the default that $`cmd`.env() sets for one command, so both take the same values: any object.
+describe("$.env() argument validation", () => {
+  const error = expect.objectContaining({ name: "TypeError", message: "env must be an object or undefined" });
+
+  // `undefined` is not in this list: it restores process.env.
+  describe.each([5, 0, NaN, 1n, "str", "", true, false, null, Symbol("env")])("%p is not an object", value => {
+    test("new $.Shell().env() throws and keeps the previous env", async () => {
+      const $$ = new $.Shell();
+      $$.env({ BUN: "bun" });
+
+      // @ts-expect-error
+      expect(() => $$.env(value)).toThrow(error);
+      expect(await $$`echo $BUN`.text()).toBe("bun\n");
+    });
+
+    test("$.env() throws", () => {
+      // @ts-expect-error
+      expect(() => $.env(value)).toThrow(error);
+    });
+
+    test("$`cmd`.env() throws", () => {
+      // A block body keeps expect() from waiting on the returned ShellPromise, which never starts.
+      expect(() => {
+        // @ts-expect-error
+        $`true`.env(value);
+      }).toThrow("env must be an object");
+    });
+  });
+
+  // Each value is in its own array, because describe.each() spreads an array row into arguments.
+  describe.each([[{}], [Object.create(null)], [[]], [new Map()], [() => {}]])("%p is an object", value => {
+    test("new $.Shell().env() accepts it", () => {
+      const $$ = new $.Shell();
+      expect(() => $$.env(value)).not.toThrow();
+    });
+
+    test("$.env() accepts it", () => {
+      try {
+        expect(() => $.env(value)).not.toThrow();
+      } finally {
+        $.env(undefined);
+      }
+    });
+
+    test("$`cmd`.env() accepts it", () => {
+      expect(() => {
+        $`true`.env(value);
+      }).not.toThrow();
+    });
+  });
+});
+
 test("$.text", async () => {
   expect(await $`echo hello`.text()).toBe("hello\n");
 });

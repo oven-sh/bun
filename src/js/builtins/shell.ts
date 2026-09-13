@@ -272,7 +272,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
         this[envSymbol] = originalDefaultEnv;
-      } else if (newEnv) {
+      } else if ($isObject(newEnv)) {
         this[envSymbol] = Object.assign({}, newEnv);
       } else {
         throw new TypeError("env must be an object or undefined");

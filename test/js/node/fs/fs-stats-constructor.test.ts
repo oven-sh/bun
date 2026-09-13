@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { Stats, statSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { Stats, statSync, utimesSync } from "node:fs";
+import path from "node:path";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):
 //   Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs)
@@ -54,6 +55,93 @@ test("Stats instances share Stats.prototype", () => {
   const bigint = statSync(import.meta.path, { bigint: true });
   expect(Object.getPrototypeOf(bigint).constructor.name).toBe("BigIntStats");
   expect(bigint instanceof Object.getPrototypeOf(bigint).constructor).toBe(true);
+});
+
+// Node.js computes every date field as `new Date(MathRound(Number(this.<field>Ms)))`, in one
+// getter shared by Stats and BigIntStats. The Date constructor truncates, so without the round
+// a real stat with a fraction of 0.5 ms or more comes out 1 ms early.
+describe("Stats date getters convert *Ms like Node.js", () => {
+  test("a real stat rounds the fraction instead of truncating it", () => {
+    using dir = tempDir("stats-date", { "file.txt": "x" });
+    const file = path.join(String(dir), "file.txt");
+    utimesSync(file, 1700000000.7896, 1700000000.7896);
+
+    const stats = statSync(file);
+    const bigint = statSync(file, { bigint: true });
+    // The stored fraction depends on the filesystem's timestamp resolution
+    // (789.5999 with nanoseconds on Linux, 789.6 with 100 ns on Windows).
+    expect(stats.mtimeMs).toBeGreaterThanOrEqual(1700000000789.5);
+    expect(stats.mtimeMs).toBeLessThan(1700000000790);
+    expect({
+      mtime: stats.mtime.getTime(),
+      atime: stats.atime.getTime(),
+      bigintMtimeMs: bigint.mtimeMs,
+      bigintMtime: bigint.mtime.getTime(),
+    }).toEqual({
+      mtime: 1700000000790,
+      atime: 1700000000790,
+      bigintMtimeMs: 1700000000789n,
+      bigintMtime: 1700000000789,
+    });
+  });
+
+  test("a Number *Ms rounds like Math.round", () => {
+    const inputs = [0.5, 1.4999, -0.5, -1.5, -1.6, 8.64e15 + 0.4, 8.64e15 + 0.6, Infinity, NaN];
+    const results = inputs.map(ms => {
+      // The getter caches the Date on the instance, so each input needs its own Stats.
+      const stats = statSync(import.meta.path);
+      stats.atimeMs = ms;
+      return stats.atime.getTime();
+    });
+    expect(results).toEqual([1, 1, 0, -1, -2, 8.64e15, NaN, NaN, NaN]);
+  });
+
+  test("a BigInt *Ms past 64 bits is an Invalid Date, not a wrapped value", () => {
+    const bigint = statSync(import.meta.path, { bigint: true });
+    bigint.atimeMs = 2n ** 64n + 5n;
+    bigint.mtimeMs = -(2n ** 63n) - 1n;
+    bigint.ctimeMs = 8_640_000_000_000_000n;
+    bigint.birthtimeMs = 8_640_000_000_000_001n;
+    expect([
+      bigint.atime.getTime(),
+      bigint.mtime.getTime(),
+      bigint.ctime.getTime(),
+      bigint.birthtime.getTime(),
+    ]).toEqual([NaN, NaN, 8.64e15, NaN]);
+  });
+
+  test("both classes accept a Number or a BigInt *Ms", () => {
+    const stats = statSync(import.meta.path);
+    const bigint = statSync(import.meta.path, { bigint: true });
+    // @ts-expect-error Node.js accepts the other numeric type too
+    stats.ctimeMs = 5n;
+    // @ts-expect-error Node.js accepts the other numeric type too
+    bigint.ctimeMs = 5.5;
+    const statsCtime = Object.getOwnPropertyDescriptor(Stats.prototype, "ctime")!.get!;
+    const bigintCtime = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(bigint), "ctime")!.get!;
+    expect({
+      numberClassWithBigInt: stats.ctime.getTime(),
+      bigintClassWithNumber: bigint.ctime.getTime(),
+      statsGetterWithBigInt: statsCtime.call({ ctimeMs: 7n }).getTime(),
+      bigintGetterWithNumber: bigintCtime.call({ ctimeMs: 7.5 }).getTime(),
+    }).toEqual({
+      numberClassWithBigInt: 5,
+      bigintClassWithNumber: 6,
+      statsGetterWithBigInt: 7,
+      bigintGetterWithNumber: 8,
+    });
+  });
+
+  test("a *Ms that is not numeric still throws from the coercion", () => {
+    const stats = statSync(import.meta.path);
+    const bigint = statSync(import.meta.path, { bigint: true });
+    // @ts-expect-error a Symbol cannot convert to a number
+    stats.atimeMs = Symbol("x");
+    // @ts-expect-error a Symbol cannot convert to a number
+    bigint.atimeMs = Symbol("x");
+    expect(() => stats.atime).toThrow(TypeError);
+    expect(() => bigint.atime).toThrow(TypeError);
+  });
 });
 
 // A call resolved through a binding that a closure captures is compiled with the scope object

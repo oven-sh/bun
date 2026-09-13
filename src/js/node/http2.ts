@@ -2044,6 +2044,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // session.destroy() is destroying the stream: node's _destroy ends the writable without
+  // _final, so no END_STREAM reaches the wire behind the GOAWAY and no 'finish' is emitted.
+  SessionDestroyed = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2280,7 +2283,16 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // listener would otherwise turn session.destroy(code) into an uncaught
   // exception (e.g. grpc-js forceShutdown destroying sessions with
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
+  stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
   stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
+}
+// Client counterpart: the same synchronous teardown, through emitStreamErrorNT so the stream gets
+// the error and rstCode the deferred streamError dispatch delivers. A stream still live when the
+// native sweep settles its flow-control-queued write would emit 'drain' from the teardown.
+function cancelStreamForSessionDestroy(session: ClientHttp2Session, rstCode: number, stream: Http2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
+  emitStreamErrorNT(session, stream, rstCode, true, false);
 }
 class Http2Stream extends Duplex {
   #id: number;
@@ -2588,11 +2600,16 @@ class Http2Stream extends Duplex {
         this[kAborted] = true;
         this.emit("aborted");
       }
-      // at this state destroyed will be true but we need to close the writable side
-      this._writableState.destroyed = false;
-      this.end();
-      // we now restore the destroyed flag
-      this._writableState.destroyed = true;
+      if ((this[bunHTTP2StreamStatus] & StreamState.SessionDestroyed) !== 0) {
+        // destroyed stays set, so end() marks the writable ended and _final does not run.
+        this.end();
+      } else {
+        // at this state destroyed will be true but we need to close the writable side
+        this._writableState.destroyed = false;
+        this.end();
+        // we now restore the destroyed flag
+        this._writableState.destroyed = true;
+      }
     }
 
     const session = this[bunHTTP2Session];
@@ -4289,7 +4306,6 @@ class ServerHttp2Session extends Http2Session {
         // Windows agents the frame deterministically arrived first).
         self.destroy();
       } else {
-        self.#parser?.emitErrorToAllStreams(errorCode);
         // Like Node, destroy with an error but send our own goaway with
         // NGHTTP2_NO_ERROR since this side had no error.
         self.destroy(sessionErrorFromCode(errorCode), constants.NGHTTP2_NO_ERROR);
@@ -4317,7 +4333,9 @@ class ServerHttp2Session extends Http2Session {
   #onClose() {
     const parser = this.#parser;
     if (parser) {
-      parser.emitAbortToAllStreams();
+      // Node's socketOnClose: close(NGHTTP2_CANCEL) every stream, then destroy it. A native abort
+      // sweep first would settle queued writes on streams that are still live ('drain').
+      parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
@@ -5870,9 +5888,17 @@ class ClientHttp2Session extends Http2Session {
         }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
+        const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
+        // Destroy the open streams before the native sweep (see the server session). The sweep
+        // rejects a non-numeric code, and that throw must leave the streams for the retry.
+        if (typeof streamRstCode === "number") {
+          parser.forEachStream(
+            FunctionPrototypeBind.$call(cancelStreamForSessionDestroy, undefined, this, streamRstCode),
+          );
+        }
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
         try {
-          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+          parser.emitErrorToAllStreams(streamRstCode);
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }

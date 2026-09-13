@@ -121,10 +121,6 @@ export default [
         fn: "emitErrorToAllStreams",
         length: 1,
       },
-      emitAbortToAllStreams: {
-        fn: "emitAbortToAllStreams",
-        length: 0,
-      },
       getNextStream: {
         fn: "getNextStream",
         length: 0,

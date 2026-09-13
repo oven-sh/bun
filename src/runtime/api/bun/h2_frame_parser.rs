@@ -6520,45 +6520,6 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn emit_abort_to_all_streams(
-        this: &Self,
-        _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
-        // so the loop body can keep using `this` (`&Self`) directly.
-        let mut it = StreamResumableIterator::init(this);
-        while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
-            // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
-            let stream = unsafe { &mut *stream_ptr };
-            // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
-            if this.is_server.get() {
-                if stream.id % 2 == 0 {
-                    continue;
-                }
-            } else if stream.id % 2 != 0 {
-                continue;
-            }
-            if stream.state != StreamState::CLOSED {
-                let old_state = stream.state;
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::CANCEL.0;
-                let identifier = stream.get_identifier();
-                identifier.ensure_still_alive();
-                stream.free_resources::<false>(this);
-                this.dispatch_with_2_extra(
-                    JSH2FrameParser::Gc::onAborted,
-                    identifier,
-                    JSValue::UNDEFINED,
-                    JSValue::js_number(old_state as u8 as f64),
-                );
-            }
-        }
-        Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn emit_error_to_all_streams(
         this: &Self,
         global_object: &JSGlobalObject,

@@ -87,6 +87,10 @@ impl KnownGlobal {
         minify_whitespace: bool,
     ) -> Option<js_ast::Expr> {
         let id = if let js_ast::ExprData::EIdentifier(ident) = e.target.data {
+            // Inside a `with` body the name can be a property of the object.
+            if ident.must_keep_due_to_with_stmt() {
+                return None;
+            }
             ident.ref_
         } else {
             return None;

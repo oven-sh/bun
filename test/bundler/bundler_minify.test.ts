@@ -1383,6 +1383,86 @@ describe("bundler", () => {
     },
   });
 
+  // A sloppy direct eval can declare `var Array` in the function that calls it, so
+  // the unbound name is not always the global. The eval can run after the function
+  // that holds the `new` expression is created.
+  itBundled("minify/GlobalConstructorKeptWithDirectEval", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function array() { eval("var Array = function () { return { mine: 1 } }"); return new Array(1, 2); }
+        function object() { eval("var Object = function () { return { mine: 2 } }"); return new Object(); }
+        function error() { eval("var Error = function (m) { this.mine = m }"); return new Error(3); }
+        function closureBeforeEval() {
+          var make = () => new Array(1, 2);
+          eval("var Array = function () { return { mine: 4 } }");
+          return make();
+        }
+        function closureAfterEval() {
+          eval("var Array = function () { return { mine: 5 } }");
+          return [0].map(() => new Array(1, 2))[0];
+        }
+        var calls = [];
+        function unused() { eval("var Set = function () { calls.push(6) }"); new Set(); return calls; }
+        console.log(JSON.stringify([array(), object(), error(), closureBeforeEval(), closureAfterEval(), unused()]));
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.cjs");
+      expect([...out.matchAll(/new Array\(1, 2\)/g)]).toHaveLength(3);
+      expect(out).toContain("new Object");
+      expect(out).toContain("new Error(3)");
+      expect(out).toContain("new Set");
+    },
+    run: {
+      stdout: '[{"mine":1},{"mine":2},{"mine":3},{"mine":4},{"mine":5},[6]]',
+    },
+  });
+
+  // In a `with` body the name can be a property of the object. Code outside the body
+  // is still folded, and so is a file where every eval is indirect.
+  itBundled("minify/GlobalConstructorKeptInWithBody", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var calls = [];
+        var scope = {
+          Array: function () { return { mine: 1 } },
+          Object: function () { return { mine: 2 } },
+          Error: function (m) { this.mine = m },
+          Set: function () { calls.push(4) },
+        };
+        function inside(o) {
+          with (o) {
+            new Set();
+            return [new Array(1, 2), new Object(), new Error(3), (() => new Array(1, 2))()];
+          }
+        }
+        function outside() { return new Error("outside").message; }
+        function indirectEval() { (0, eval)("1"); eval?.("2"); return new Error("indirect").message; }
+        console.log(JSON.stringify([inside(scope), calls, outside(), indirectEval()]));
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.cjs");
+      expect([...out.matchAll(/new Array\(1, 2\)/g)]).toHaveLength(2);
+      expect(out).toContain("new Object");
+      expect(out).toContain("new Error(3)");
+      expect(out).toContain("new Set");
+      expect(out).toContain('Error("outside")');
+      expect(out).not.toContain('new Error("outside")');
+      expect(out).toContain('Error("indirect")');
+      expect(out).not.toContain('new Error("indirect")');
+    },
+    run: {
+      stdout: '[[{"mine":1},{"mine":2},{"mine":3},{"mine":1}],[4],"outside","indirect"]',
+    },
+  });
+
   itBundled("minify/TypeofUndefinedOptimization", {
     files: {
       "/entry.js": /* js */ `

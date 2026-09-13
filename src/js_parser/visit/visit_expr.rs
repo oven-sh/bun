@@ -2457,7 +2457,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(arg);
         }
 
-        if p.options.features.minify_syntax {
+        // A sloppy direct eval can declare `var Array` in a function around this expression.
+        if p.options.features.minify_syntax && !p.parse_pass_saw_direct_eval {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.arena,
                 &mut *e_,

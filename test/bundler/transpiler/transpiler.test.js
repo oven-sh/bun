@@ -3909,6 +3909,16 @@ class Foo {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
 
+    it("known-global constructors that a with object or a direct eval can shadow", () => {
+      expectPrinted_("with (o) x = new Array(1, 2)", "with (o)\n  x = new Array(1, 2)");
+      expectPrinted_("with (o) x = () => new Object()", "with (o)\n  x = () => new Object");
+      expectPrinted_("with (o) new Set()", "with (o)\n  new Set");
+
+      expectPrinted_("eval(a); x = new Array(1, 2)", "eval(a);\nx = new Array(1, 2)");
+      expectPrinted_("x = () => new Error(b); eval(a)", "x = () => new Error(b);\neval(a)");
+      expectPrinted_("(eval)(a); x = new Object()", "eval(a);\nx = new Object");
+    });
+
     it.todo("const inlining", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

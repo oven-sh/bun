@@ -167,8 +167,16 @@ parts.push("# Flags that take a value with a fixed set of choices, flag name -> 
 parts.push("$script:BunFlagChoices = " + hashtable(choiceEntries));
 
 parts.push("# Subcommand descriptions.");
+// Package-manager aliases are completed like their commands.
+const ALIASES: Record<string, string> = { install: "i", add: "a", remove: "rm", update: "up", create: "c" };
 const commandLines = commands
-  .map(([name, cmd]) => "    " + psQuote(name) + " = " + psQuote(DESCRIPTION_FIXUPS[name] ?? cmd.description ?? "") + ";")
+  .flatMap(([name, cmd]) => {
+    const desc = psQuote(DESCRIPTION_FIXUPS[name] ?? cmd.description ?? "");
+    const lines = ["    " + psQuote(name) + " = " + desc + ";"];
+    const alias = ALIASES[name];
+    if (alias) lines.push("    " + psQuote(alias) + " = " + desc + ";");
+    return lines;
+  })
   .join("\n");
 parts.push("$script:BunCommands = @{\n" + commandLines + "\n}");
 
@@ -182,14 +190,11 @@ const flagTableLines = commands
   .join("\n");
 parts.push("$script:BunFlags = @{\n    '*' = " + hashtable(groupFlags) + "\n" + flagTableLines + "\n}");
 
-parts.push("# Flags that consume the next token as their value. '*' holds the shared");
-parts.push("# package-manager value flags plus the global ones.");
-const globalValueFlags = hashtable(
-  flagEntries(
-    data.globalFlags
-      .filter(f => f.hasValue)
-      .concat(SHARED_GROUP.flatMap(name => (data.commands[name]?.flags ?? []).filter(f => f.hasValue))),
-  ),
+parts.push("# Flags that consume the next token as their value. Global value flags apply");
+parts.push("# to every command; '*' holds the shared package-manager value flags.");
+const globalValueFlags = hashtable(flagEntries(data.globalFlags.filter(f => f.hasValue)));
+const sharedValueFlags = hashtable(
+  flagEntries(SHARED_GROUP.flatMap(name => (data.commands[name]?.flags ?? []).filter(f => f.hasValue))),
 );
 const valueTableLines = commands
   .filter(([name]) => !SHARED_GROUP.includes(name))
@@ -199,7 +204,8 @@ const valueTableLines = commands
   })
   .filter(Boolean)
   .join("\n");
-parts.push("$script:BunValueFlags = @{\n    '*' = " + globalValueFlags + "\n" + valueTableLines + "\n}");
+parts.push("$script:BunGlobalValueFlags = " + globalValueFlags);
+parts.push("$script:BunValueFlags = @{\n    '*' = " + sharedValueFlags + "\n" + valueTableLines + "\n}");
 
 const pmLines = Object.values(data.commands.pm?.subcommands ?? {})
   .map(sc => "    " + psQuote(sc.name) + " = " + psQuote(sc.description ?? "") + ";")

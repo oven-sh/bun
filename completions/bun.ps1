@@ -64,9 +64,13 @@ $script:BunCommands = @{
     'repl' = 'Start an interactive JavaScript/TypeScript REPL';
     'exec' = 'Execute a shell script directly from Bun.';
     'install' = 'Install the dependencies listed in package.json.';
+    'i' = 'Install the dependencies listed in package.json.';
     'add' = 'Add a new dependency to package.json and install it.';
+    'a' = 'Add a new dependency to package.json and install it.';
     'remove' = 'Remove a package from package.json and uninstall from node_modules.';
+    'rm' = 'Remove a package from package.json and uninstall from node_modules.';
     'update' = 'Update dependencies to their most recent versions within the version range in package.json.';
+    'up' = 'Update dependencies to their most recent versions within the version range in package.json.';
     'audit' = 'Check installed packages for vulnerabilities.';
     'dedupe' = 'Remove duplicate versions from bun.lock by re-resolving dependency ranges onto versions that are already in the lockfile, then install.';
     'prune' = 'Remove packages from node_modules that are not in bun.lock. With --production, also remove packages that are only needed by devDependencies.';
@@ -80,6 +84,7 @@ $script:BunCommands = @{
     'build' = 'Transpile and bundle one or more files.';
     'init' = 'Initialize a Bun project in the current directory.';
     'create' = 'Create a new project from a template (bun create <template>)';
+    'c' = 'Create a new project from a template (bun create <template>)';
     'upgrade' = 'Upgrade Bun to the latest version';
 }
 
@@ -311,12 +316,11 @@ $script:BunFlags = @{
     'upgrade' = @{}
 }
 
-# Flags that consume the next token as their value. '*' holds the shared
+# Flags that consume the next token as their value. Global value flags apply
 
-# package-manager value flags plus the global ones.
+# to every command; '*' holds the shared package-manager value flags.
 
-$script:BunValueFlags = @{
-    '*' = @{
+$script:BunGlobalValueFlags = @{
     '--preload' = 'Import a module before other modules are loaded <path>';
     '-r' = 'Import a module before other modules are loaded <path>';
     '--require' = 'Alias of --preload, for Node.js compatibility <path>';
@@ -345,15 +349,24 @@ $script:BunValueFlags = @{
     '--cwd' = 'Absolute path to resolve files & entry points from. This just changes the process'' cwd. <path>';
     '--config' = 'Specify path to Bun config file. Default $cwd/bunfig.toml <path>';
     '-c' = 'Specify path to Bun config file. Default $cwd/bunfig.toml <path>';
+}
+
+$script:BunValueFlags = @{
+    '*' = @{
+    '--config' = 'Specify path to config file (bunfig.toml) <path>';
+    '-c' = 'Specify path to config file (bunfig.toml) <path>';
     '--ca' = 'Provide a Certificate Authority signing certificate';
     '--cafile' = 'The same as `--ca`, but is a file path to the certificate <path>';
     '--cache-dir' = 'Store & load cached data from a specific directory path <path>';
+    '--cwd' = 'Set a specific cwd <path>';
     '--backend' = 'Platform-specific optimizations for installing dependencies. Possible values: "clonefile" (default), "hardlink", "symlink", "copyfile"';
     '--registry' = 'Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables';
     '--concurrent-scripts' = 'Maximum number of concurrent jobs for lifecycle scripts (default 5)';
     '--network-concurrency' = 'Maximum number of concurrent network requests (default 48)';
     '--omit' = 'Exclude ''dev'', ''optional'', or ''peer'' dependencies from install';
     '--linker' = 'Linker strategy (one of "isolated" or "hoisted")';
+    '--filter' = 'Install packages for the matching workspaces';
+    '-F' = 'Install packages for the matching workspaces';
     '--catalog' = 'Add the resolved version to the root package.json catalog and depend on it as "catalog:" (use --catalog=NAME for a named catalog)';
     '--minimum-release-age' = 'Only install packages published at least N seconds ago (security feature)';
     '--cpu' = 'Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)';
@@ -456,6 +469,7 @@ function script:__bunWantsValue([string]$cmd, [string]$flag) {
     if ($flag -notmatch '^--[a-zA-Z0-9][a-zA-Z0-9-]*$' -and $flag -notmatch '^-[a-zA-Z0-9]$') { return $false }
     $table = $script:BunValueFlags[$cmd]
     if ($table -and $table.ContainsKey($flag)) { return $true }
+    if ($script:BunGlobalValueFlags.ContainsKey($flag)) { return $true }
     if ($script:BunSharedCommands -notcontains $cmd) { return $false }
     $shared = $script:BunValueFlags['*']
     return $shared -and $shared.ContainsKey($flag)

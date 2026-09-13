@@ -16,6 +16,7 @@ function script:__bunWantsValue([string]$cmd, [string]$flag) {
     if ($flag -notmatch '^--[a-zA-Z0-9][a-zA-Z0-9-]*$' -and $flag -notmatch '^-[a-zA-Z0-9]$') { return $false }
     $table = $script:BunValueFlags[$cmd]
     if ($table -and $table.ContainsKey($flag)) { return $true }
+    if ($script:BunGlobalValueFlags.ContainsKey($flag)) { return $true }
     if ($script:BunSharedCommands -notcontains $cmd) { return $false }
     $shared = $script:BunValueFlags['*']
     return $shared -and $shared.ContainsKey($flag)

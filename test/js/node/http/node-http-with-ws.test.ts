@@ -3,19 +3,15 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import { createRequire } from "node:module";
 import { connect, type AddressInfo, type Socket } from "node:net";
-import path from "node:path";
 import type { Duplex } from "node:stream";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
+import NpmWebSocketServerModule from "../../../node_modules/ws/lib/websocket-server.js";
+import NpmWebSocketModule from "../../../node_modules/ws/lib/websocket.js";
 
-const require = createRequire(import.meta.url);
-const wsPackageRoot = path.resolve(import.meta.dir, "../../../node_modules/ws");
-const NpmWebSocket: typeof import("ws").WebSocket = require(path.join(wsPackageRoot, "lib/websocket.js"));
-const NpmWebSocketServer: typeof import("ws").WebSocketServer = require(
-  path.join(wsPackageRoot, "lib/websocket-server.js"),
-);
+const NpmWebSocket: typeof import("ws").WebSocket = NpmWebSocketModule;
+const NpmWebSocketServer: typeof import("ws").WebSocketServer = NpmWebSocketServerModule;
 
 async function listen(server: http.Server): Promise<number> {
   server.listen(0, "127.0.0.1");
@@ -59,6 +55,31 @@ function waitForWebSocketOpen(ws: import("ws").WebSocket): Promise<void> {
   });
 }
 
+function waitForWebSocketMessage(ws: import("ws").WebSocket): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off("message", onMessage);
+      ws.off("error", onError);
+      ws.off("close", onClose);
+    };
+    const onMessage = (data: import("ws").RawData) => {
+      cleanup();
+      resolve(Buffer.from(data as Buffer));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("WebSocket closed before delivering a message"));
+    };
+    ws.once("message", onMessage);
+    ws.once("error", onError);
+    ws.once("close", onClose);
+  });
+}
+
 async function closeWebSocketServer(wss: import("ws").WebSocketServer): Promise<void> {
   for (const ws of wss.clients) {
     ws.terminate();
@@ -69,6 +90,7 @@ async function closeWebSocketServer(wss: import("ws").WebSocketServer): Promise<
 async function openWebSocketWithAgent(params: {
   ServerClass: typeof import("ws").WebSocketServer;
   reuse: boolean;
+  warmupRequests?: number;
   onClient?: (ws: import("ws").WebSocket) => void;
   onConnection?: (ws: import("ws").WebSocket) => void;
   serverOptions?: http.ServerOptions;
@@ -96,7 +118,8 @@ async function openWebSocketWithAgent(params: {
   });
   const port = await listen(server);
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
-  if (params.reuse) {
+  const warmupRequests = params.warmupRequests ?? (params.reuse ? 1 : 0);
+  for (let request = 0; request < warmupRequests; request++) {
     await finishKeepAliveRequest(port, agent);
   }
   const client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
@@ -104,7 +127,7 @@ async function openWebSocketWithAgent(params: {
   try {
     await waitForWebSocketOpen(client);
     const accepted = await upgraded.promise;
-    if (params.reuse) {
+    if (warmupRequests > 0) {
       expect(accepted.socket === warmupSocket).toBe(true);
     }
     return { accepted, agent, client, server, wss };
@@ -202,28 +225,91 @@ class SocketReader {
 
 describe.concurrent("npm ws on node:http upgrade sockets", () => {
   test.each([
-    ["fresh", false],
-    ["reused keep-alive", true],
-  ] as const)("delivers the 101 and an immediate callback write on a %s socket", async (_name, reuse) => {
-    let connection!: import("ws").WebSocket;
-    const message = Promise.withResolvers<Buffer>();
-    const fixture = await openWebSocketWithAgent({
-      ServerClass: NpmWebSocketServer,
-      reuse,
-      onClient(ws) {
-        ws.once("message", data => message.resolve(Buffer.from(data as Buffer)));
-      },
-      onConnection(ws) {
-        connection = ws;
-        ws.send("ready");
-      },
+    ["fresh", false, 0],
+    ["reused keep-alive", true, 1],
+    ["multiply reused keep-alive", true, 3],
+  ] as const)(
+    "delivers the 101 and an immediate callback write on a %s socket",
+    async (_name, reuse, warmupRequests) => {
+      let connection!: import("ws").WebSocket;
+      const message = Promise.withResolvers<Buffer>();
+      const fixture = await openWebSocketWithAgent({
+        ServerClass: NpmWebSocketServer,
+        reuse,
+        warmupRequests,
+        onClient(ws) {
+          ws.once("message", data => message.resolve(Buffer.from(data as Buffer)));
+        },
+        onConnection(ws) {
+          connection = ws;
+          ws.send("ready");
+        },
+      });
+      try {
+        expect(connection).toBe(fixture.accepted.ws);
+        expect(fixture.accepted.head).toEqual(Buffer.alloc(0));
+        expect((await message.promise).toString()).toBe("ready");
+      } finally {
+        await closeWebSocketFixture(fixture);
+      }
+    },
+  );
+
+  test.each([
+    ["a fresh caller cork", "fresh"],
+    ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
+  ] as const)("preserves %s and its pending writes", async (_name, mode) => {
+    let serverSocket!: Socket;
+    const server = http.createServer((_req, res) => res.end("ok"));
+    server.on("connection", socket => {
+      serverSocket = socket;
+      if (mode !== "replaced-dispatcher") socket.cork();
     });
+    const wss = new NpmWebSocketServer({ noServer: true });
+    const upgraded = Promise.withResolvers<void>();
+    server.on("upgrade", (req, socket, head) => {
+      try {
+        wss.handleUpgrade(req, socket, head, ws => {
+          ws.send("pending");
+          upgraded.resolve();
+        });
+      } catch (error) {
+        upgraded.reject(error);
+      }
+    });
+    const port = await listen(server);
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    let client: import("ws").WebSocket | undefined;
+    let clientEvents: Promise<PromiseSettledResult<unknown>[]> = Promise.resolve([]);
     try {
-      expect(connection).toBe(fixture.accepted.ws);
-      expect(fixture.accepted.head).toEqual(Buffer.alloc(0));
-      expect((await message.promise).toString()).toBe("ready");
+      if (mode !== "fresh") {
+        await finishKeepAliveRequest(port, agent);
+      }
+      if (mode === "replaced-dispatcher") {
+        serverSocket.uncork();
+        serverSocket.cork();
+      }
+      client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
+      const opened = waitForWebSocketOpen(client);
+      const message = waitForWebSocketMessage(client);
+      clientEvents = Promise.allSettled([opened, message]);
+      await upgraded.promise;
+      const corkedBeforeRelease = serverSocket.writableCorked;
+      const bufferedBeforeRelease = serverSocket.writableLength;
+      serverSocket.uncork();
+      await opened;
+      const received = await message;
+      expect(corkedBeforeRelease).toBe(1);
+      expect(bufferedBeforeRelease).toBeGreaterThan(0);
+      expect(received.toString()).toBe("pending");
     } finally {
-      await closeWebSocketFixture(fixture);
+      if (serverSocket?.writableCorked) serverSocket.uncork();
+      client?.terminate();
+      await clientEvents;
+      agent.destroy();
+      await closeWebSocketServer(wss);
+      await new Promise<void>(resolve => server.close(() => resolve()));
     }
   });
 

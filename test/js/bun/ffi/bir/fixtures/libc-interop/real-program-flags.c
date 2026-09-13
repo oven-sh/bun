@@ -3,7 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
-struct PacketHeader {
+// (Bit-fields of different types share a word only in the System V layout, so it is asked for by name: Windows has another.)
+struct __attribute__((gcc_struct)) PacketHeader {
     unsigned version : 3;
     unsigned type : 5;
     bool urgent : 1;

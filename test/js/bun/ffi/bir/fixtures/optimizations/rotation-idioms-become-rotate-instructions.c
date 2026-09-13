@@ -5,7 +5,7 @@ typedef unsigned int u32; typedef unsigned long long u64;
          u32 ror32(u32 x, unsigned char n) { return (x >> (n & 31)) + (x << ((32 - n) & 31)); }
          u64 xor_form(u64 x, u64 n) { return (x >> (n & 63)) ^ (x << ((0 - n) & 63)); }
          u32 member(const struct { u32 w[2]; } *s, int n) { return (s->w[1] << n) | (s->w[1] >> (32 - n)); }
-         u32 builtins(u32 x, u64 y, int n) { return __builtin_rotateleft32(x, n) ^ (u32)__builtin_rotateright64(y, n) ^ _rotl(x, 3) ^ (u32)_rotr64(y, 5) ^ (u32)_lrotl(y, 7); }
+         u32 builtins(u32 x, u64 y, int n) { return __builtin_rotateleft32(x, n) ^ (u32)__builtin_rotateright64(y, n) ^ _rotl(x, 3) ^ (u32)_rotr64(y, 5) ^ (u32)_lrotl(1, 7); }
          unsigned char narrow(unsigned char x, int n) { return __builtin_rotateleft8(x, n); }
          u32 not_a_rotation(u32 x, u32 y, int n, int m) { return ((x << n) | (y >> (32 - n))) + ((x << n) | (x >> (32 - m))) + ((x << n) | (x >> (31 - n))); }
          int signed_one(int x, int n) { return (x << n) | (x >> (32 - n)); }

@@ -365,6 +365,62 @@ fn abi_register_accounting() {
     assert!(has(&quad, "contains 'long double'"), "{quad}");
 }
 
+/// An 8-byte vector is one SSE eightbyte on System V, a short vector on AArch64 (where a struct
+/// of them is homogeneous only with its own kind), and an integer on x64 Windows.
+#[test]
+fn eight_byte_vectors_in_calls() {
+    let plain = "typedef unsigned char v __attribute__((vector_size(8))); v f(v a, int n, v b);";
+    assert_eq!(abi_of(plain, LINUX_X64), "f64 <- f64, i32, f64");
+    assert_eq!(abi_of(plain, LINUX_ARM64), "f64 <- f64, i32, f64");
+    assert_eq!(abi_of(plain, MAC_ARM64), "f64 <- f64, i32, f64");
+    assert_eq!(abi_of(plain, WINDOWS_X64), "i64 <- i64, i32, i64");
+    let pair = "typedef int v __attribute__((vector_size(8))); typedef float w __attribute__((vector_size(8)));
+        struct P { v a; w b; }; struct P f(struct P p);";
+    assert_eq!(
+        abi_of(pair, LINUX_X64),
+        "{f64:8@0 f64:8@8} <- {f64:8@0 f64:8@8}"
+    );
+    assert_eq!(
+        abi_of(pair, LINUX_ARM64),
+        "{f64:8@0 f64:8@8} <- {f64:8@0 f64:8@8}"
+    );
+    assert_eq!(abi_of(pair, WINDOWS_X64), "sret <- ref");
+    let with_int = "typedef short v __attribute__((vector_size(8))); struct P { int n; v a; }; struct P f(struct P p);";
+    assert_eq!(
+        abi_of(with_int, LINUX_X64),
+        "{i64:8@0 f64:8@8} <- {i64:8@0 f64:8@8}"
+    );
+    assert_eq!(
+        abi_of(with_int, LINUX_ARM64),
+        "{i64:8@0 i64:8@8} <- {i64:8@0 i64:8@8}"
+    );
+    // A `double` beside a vector of the same size is not a homogeneous aggregate.
+    let mixed = "typedef float v __attribute__((vector_size(8))); struct P { double d; v a; }; struct P f(struct P p);";
+    assert_eq!(
+        abi_of(mixed, LINUX_ARM64),
+        "{i64:8@0 i64:8@8} <- {i64:8@0 i64:8@8}"
+    );
+    assert_eq!(
+        abi_of(mixed, LINUX_X64),
+        "{f64:8@0 f64:8@8} <- {f64:8@0 f64:8@8}"
+    );
+    let four = "typedef unsigned short v __attribute__((vector_size(8))); struct Q { v val[4]; }; struct Q f(struct Q q);";
+    assert_eq!(
+        abi_of(four, LINUX_ARM64),
+        "{f64:8@0 f64:8@8 f64:8@16 f64:8@24} <- {f64:8@0 f64:8@8 f64:8@16 f64:8@24}"
+    );
+    assert_eq!(abi_of(four, LINUX_X64), "sret <- stack(32,8)");
+    let one_double = crate::tests::error_for(
+        "typedef double v __attribute__((vector_size(8))); v f(v a) { return a; }",
+        LINUX_X64,
+    );
+    assert!(has(&one_double, "GCC and Clang disagree"), "{one_double}");
+    crate::tests::checked_for(
+        "typedef double v __attribute__((vector_size(8))); v f(v a) { return a + a; }",
+        LINUX_ARM64,
+    );
+}
+
 fn dump(src: &str, target: Target) -> String {
     match compile(src.as_bytes(), "t.c", target) {
         Ok(bir) => disassemble(&bir).unwrap(),

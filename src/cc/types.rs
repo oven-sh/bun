@@ -165,6 +165,8 @@ pub(crate) enum WideKind {
     /// `__float128` / `_Float128`: IEEE binary128.
     Float128,
     ComplexFloat128,
+    /// `_Float16` / `__fp16`: IEEE binary16, which Apple's and ARM's headers declare functions of.
+    Float16,
 }
 
 impl WideKind {
@@ -174,6 +176,7 @@ impl WideKind {
             WideKind::ComplexLongDouble => "long double _Complex",
             WideKind::Float128 => "_Float128",
             WideKind::ComplexFloat128 => "_Float128 _Complex",
+            WideKind::Float16 => "_Float16",
         }
     }
 }
@@ -572,6 +575,7 @@ impl TypeCtx {
                     WideKind::ComplexLongDouble => long_double * 2,
                     WideKind::Float128 => 16,
                     WideKind::ComplexFloat128 => 32,
+                    WideKind::Float16 => 2,
                 }
             }
         })
@@ -618,13 +622,40 @@ impl TypeCtx {
         }
     }
 
-    /// The lane shape of a 16-byte vector type.
+    /// Whether `ty` is an 8-byte vector (a NEON `d` register's worth, an MMX `__m64`). Its
+    /// value travels as the 64-bit scalar `half_vector_carrier` says and is computed with in
+    /// the low half of a 16-byte vector.
+    pub(crate) fn is_half_vector(&self, ty: &Type) -> bool {
+        let ty = ty.unatomic();
+        ty.is_vector() && self.size_of(ty) == Some(8)
+    }
+
+    /// What holds an 8-byte vector: a `double`'s register everywhere (System V class SSE, an
+    /// AAPCS64 short vector) except on x64 Windows, which passes `__m64` as an integer.
+    pub(crate) fn half_vector_carrier(&self) -> bir::Ty {
+        if self.target.os == Os::Windows && self.target.arch == Arch::X86_64 {
+            bir::Ty::I64
+        } else {
+            bir::Ty::F64
+        }
+    }
+
+    /// How many elements a vector type has.
+    pub(crate) fn lane_count(&self, ty: &Type) -> u32 {
+        match ty.unatomic() {
+            Type::Vector(_, count) => *count,
+            _ => 1,
+        }
+    }
+
+    /// The lane shape of a 16-byte vector type, or of the 16-byte vector whose low half an
+    /// 8-byte one is.
     pub(crate) fn lane_of(&self, ty: &Type) -> Option<bir::Lane> {
         let ty = ty.unatomic();
         let Type::Vector(elem, _) = ty else {
             return None;
         };
-        if self.size_of(ty) != Some(16) {
+        if !matches!(self.size_of(ty), Some(8 | 16)) {
             return None;
         }
         Some(match (&**elem, self.size_of(elem)?) {
@@ -680,6 +711,7 @@ impl TypeCtx {
         match ty {
             Type::Void => bir::Ty::Void,
             Type::Atomic(inner) | Type::Qualified(_, inner) => self.machine_ty(inner),
+            Type::Vector(..) if self.is_half_vector(ty) => self.half_vector_carrier(),
             Type::Vector(..) => bir::Ty::V128,
             Type::Float => bir::Ty::F32,
             Type::Double => bir::Ty::F64,
@@ -711,6 +743,13 @@ impl TypeCtx {
         use bir::MemKind;
         match ty {
             Type::Atomic(inner) | Type::Qualified(_, inner) => self.mem_kind(inner, for_store),
+            Type::Vector(..) if self.is_half_vector(ty) => {
+                if self.half_vector_carrier() == bir::Ty::F64 {
+                    MemKind::F64
+                } else {
+                    MemKind::I64
+                }
+            }
             Type::Vector(..) => MemKind::V128,
             Type::Bool | Type::UChar => MemKind::I8U,
             Type::Char | Type::SChar => {

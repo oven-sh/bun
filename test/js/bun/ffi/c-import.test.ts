@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
-// The backend has only run on Linux x64 so far; elsewhere the import throws.
-const supported = isLinux && !isArm64;
+// These have run on Linux x64 and macOS arm64.
+const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
 
 async function run(dir: string, args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });

@@ -12,13 +12,15 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <time.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <unistd.h>
+#ifndef _WIN32 // POSIX's
 #include <pthread.h>
+#endif
 #include <wchar.h>
 #include <locale.h>
 int everything(void) { return EOF + (int)sizeof(struct stat) * 0 + (SIGINT == 2); }

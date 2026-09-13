@@ -2537,9 +2537,16 @@ pub mod parse_worker {
             let mut c_options = bun_cc::CompileOptions::new(c_target);
             c_options.file_provider = &bun_cc::HostFiles;
             c_options.system_include_dirs = bun_cc::default_system_include_dirs(c_target);
+            // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
+            if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
+                && let Ok(sdk) = core::str::from_utf8(sdk)
+                && !sdk.is_empty()
+            {
+                c_options.system_include_dirs.push(format!("{sdk}/usr/include"));
+            }
             // What gcc, clang and bun:ffi's cc() also search, after the system's own directories.
             if let Some(list) = bun_core::env_var::C_INCLUDE_PATH.get() {
-                for directory in bun_core::strings::split(list, b":") {
+                for directory in bun_core::strings::split(list, if cfg!(windows) { b";" } else { b":" }) {
                     if let Ok(directory) = core::str::from_utf8(directory)
                         && !directory.is_empty()
                     {

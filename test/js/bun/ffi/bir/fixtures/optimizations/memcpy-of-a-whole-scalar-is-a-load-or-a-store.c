@@ -1,4 +1,4 @@
-void *memcpy(void *, const void *, unsigned long); void *memmove(void *, const void *, unsigned long); void *memset(void *, int, unsigned long);
+void *memcpy(void *, const void *, __SIZE_TYPE__); void *memmove(void *, const void *, __SIZE_TYPE__); void *memset(void *, int, __SIZE_TYPE__);
          typedef unsigned int u32; typedef unsigned long long u64;
          static u32 read32(const void *p) { u32 v; memcpy(&v, p, sizeof v); return v; }
          static u64 read64(const void *p) { u64 v; __builtin_memcpy(&v, p, sizeof(v)); return v; }
@@ -12,7 +12,7 @@ void *memcpy(void *, const void *, unsigned long); void *memmove(void *, const v
          int partial(const void *p) { int v = 0; memcpy(&v, p, 3); return v; }
          int escapes(const void *p) { int v; int *q = &v; memcpy(&v, p, sizeof v); return *q; }
          void *result_used(void *d, const void *s) { int v; void *r = memcpy(&v, s, 4); memcpy(d, &v, 4); return r == (void *)&v ? d : 0; }
-         void *general(void *d, const void *s, unsigned long n) { memset(d, 0x5a, n + 4); return memcpy(d, s, n); }
+         void *general(void *d, const void *s, __SIZE_TYPE__ n) { memset(d, 0x5a, n + 4); return memcpy(d, s, n); }
 
 int printf(const char *, ...);
 static void bun_test_fill(unsigned char *to, const unsigned char *from, int n) {

@@ -245,10 +245,6 @@ fn unsupported_constructs_are_diagnosed() {
         "static int f(void); int g(void) { return f(); }",
         "used but never defined",
     );
-    assert!(has(
-        &error_for("struct S { int a : 3; } s;", WINDOWS_X64),
-        "bit-fields are not supported for Windows"
-    ));
 }
 
 #[test]

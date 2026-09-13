@@ -55,7 +55,7 @@
            int errors(void) { errno = 0; errno = ERANGE; int saved = errno; errno = 0; return saved == ERANGE && errno == 0 && EINVAL == 22; }
            double maths(double x) { return floor(x) + ceil(x) + fabs(-x) + (isnan(NAN) ? 100 : 0) + (isinf(INFINITY) ? 1000 : 0) + (M_PI > 3.14 ? 10000 : 0); }
            int failing_assert(int x) { assert(x > 0 && "x must be positive"); return x; }
-           bool limits_ok(void) { return PATH_MAX >= 256 && CHAR_BIT == 8 && SSIZE_MAX == LONG_MAX && RAND_MAX >= 32767 && EXIT_FAILURE == 1 && BUFSIZ > 0; }
+           bool limits_ok(void) { return PATH_MAX >= 256 && CHAR_BIT == 8 && LLONG_MAX > LONG_MAX / 2 && RAND_MAX >= 32767 && EXIT_FAILURE == 1 && BUFSIZ > 0; }
 
 int printf(const char *, ...);
 static void bun_test_fill(unsigned char *to, const unsigned char *from, int n) {

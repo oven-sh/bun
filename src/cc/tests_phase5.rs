@@ -256,6 +256,29 @@ fn neon_kernels_compile() {
     );
 }
 
+/// A 64-bit NEON vector is a `double`'s worth in memory and in calls; zstd's eight-byte copy is
+/// one load and one store.
+#[test]
+fn neon_d_registers() {
+    let source = "#include <arm_acle.h>
+         #include <arm_neon.h>
+         void copy8(void *dst, const void *src) { vst1_u8((uint8_t *)dst, vld1_u8((const uint8_t *)src)); }
+         uint16x8_t widen(uint8x8_t v, uint8x16_t q) { return vaddw_u8(vmovl_u8(v), vget_high_u8(q)); }
+         uint8x8x2_t halves(uint8x16_t q) { return (uint8x8x2_t){{vget_low_u8(q), vget_high_u8(q)}}; }
+         uint32_t crc(uint32_t c, uint64_t x) { return __crc32d(c, x); }";
+    for target in [LINUX_ARM64, MAC_ARM64] {
+        let bir = compile(source.as_bytes(), "t.c", target).expect("compiles");
+        let text = disassemble(&bir).expect("valid");
+        assert!(has(&text, "Load f64"), "{text}");
+        assert!(has(&text, "Store f64"), "{text}");
+        assert!(
+            has(&text, "widen (exported): sig") && has(&text, "(f64, v128) -> v128"),
+            "{text}"
+        );
+        assert!(has(&text, "(v128) -> (f64, f64)"), "{text}");
+    }
+}
+
 #[test]
 fn intrinsic_headers_are_per_architecture() {
     let e = error_for("#include <emmintrin.h>\nint x;", LINUX_ARM64);
@@ -273,7 +296,7 @@ fn intrinsic_headers_are_per_architecture() {
     }
     for target in [LINUX_ARM64, MAC_ARM64] {
         compile(
-            b"#include <arm_neon.h>\nint f(void) { return 0; }",
+            b"#include <arm_neon.h>\n#include <arm_acle.h>\nint f(void) { return 0; }",
             "t.c",
             target,
         )
@@ -295,13 +318,13 @@ fn vector_diagnostics() {
          v2f declared_only(v2f);
          float first(float4 v) { return v[0] + sizeof(v2f) + sizeof(v8i); }",
     );
-    let only = "only 16-byte vectors are supported yet";
+    let only = "only 8-byte and 16-byte vectors are supported yet";
     assert_error(
-        "typedef float v2f __attribute__((vector_size(8))); v2f f(v2f a) { return a; }",
+        "typedef float v8f __attribute__((vector_size(32))); v8f f(v8f a) { return a; }",
         only,
     );
     assert_error(
-        "typedef float v2f __attribute__((vector_size(8))); float f(v2f *p) { return (*p)[0]; }",
+        "typedef short v2s __attribute__((vector_size(4))); short f(v2s *p) { return (*p)[0]; }",
         only,
     );
     assert_error(

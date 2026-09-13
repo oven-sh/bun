@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { run, supported } from "../run-fixtures";
+import { meets, run, supported } from "../run-fixtures";
 
 // Miscompile checks on real code: parts of the vendored libraries are compiled from their sources by Bun's
 // C compiler, linked with a small driver and run against known answers. They read the vendored sources, so
@@ -73,7 +73,8 @@ const sourcesIn = (root: string, dirs: string[]) =>
 describe.skipIf(!heavy)("vendored libraries", () => {
   const lengths = [0, 1, 15, 16, 17, 63, 64, 255, 1000, 5553, 20000];
 
-  test.skipIf(!existsSync(vendor("zlib")) || !existsSync(generated("zlib")))("zlib-ng's checksums", async () => {
+  // (The SSSE3 kernel is one of the four implementations compared.)
+  test.skipIf(!meets("x64") || !existsSync(vendor("zlib")) || !existsSync(generated("zlib")))("zlib-ng's checksums", async () => {
     const zlib = vendor("zlib");
     const out = await runProgram(
       "zlib-ng",
@@ -188,7 +189,7 @@ ${body}`;
     const root = vendor("libdeflate");
     const out = await runProgram(
       "libdeflate",
-      ["lib/utils.c", "lib/x86/cpu_features.c", "lib/deflate_compress.c", "lib/deflate_decompress.c", "lib/adler32.c", "lib/crc32.c", "lib/zlib_compress.c", "lib/zlib_decompress.c"].map(f => join(root, f)),
+      ["lib/utils.c", "lib/x86/cpu_features.c", "lib/arm/cpu_features.c", "lib/deflate_compress.c", "lib/deflate_decompress.c", "lib/adler32.c", "lib/crc32.c", "lib/zlib_compress.c", "lib/zlib_decompress.c"].map(f => join(root, f)),
       [],
       [root],
       roundTripDriver(

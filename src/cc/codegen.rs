@@ -416,6 +416,15 @@ impl<'a> FnGen<'a, '_> {
         if from == to || (from.is_vector() && to.is_vector()) {
             return Ok(v);
         }
+        // An 8-byte vector and a 64-bit integer are the same bits (`vcreate_u8`, `_mm_cvtsi64_m64`).
+        if self.tcx.is_half_vector(from) || self.tcx.is_half_vector(to) {
+            let (have, want) = (self.b.value_ty(v), self.mty(to));
+            return Ok(match (have, want) {
+                (Ty::I64, Ty::F64) | (Ty::F64, Ty::I64) => self.b.conv(ConvOp::Bitcast, want, v),
+                (have, want) if have == want => v,
+                _ => return internal(loc, "an 8-byte vector converted to a type of another size"),
+            });
+        }
         if from.is_long_double() || to.is_long_double() {
             return self.long_double_convert(v, from, to, loc);
         }
@@ -674,6 +683,7 @@ impl<'a> FnGen<'a, '_> {
                 signed,
             } => {
                 let vector = self.b.local_get(local);
+                let vector = self.whole_vector(vector);
                 self.b.def(
                     Inst::VExtract(lane, signed, index, vector),
                     lane.scalar_ty(),
@@ -798,8 +808,11 @@ impl<'a> FnGen<'a, '_> {
             Place::Lane {
                 local, lane, index, ..
             } => {
-                let vector = self.b.local_get(local);
+                let held = self.b.local_get(local);
+                let carrier = self.b.value_ty(held);
+                let vector = self.whole_vector(held);
                 let updated = self.b.def(Inst::VReplace(lane, index, vector, v), Ty::V128);
+                let updated = self.low_half_as(updated, carrier);
                 self.b.effect(Inst::LocalSet(local, updated));
             }
             Place::Mem { base, offset } => {
@@ -1726,7 +1739,7 @@ impl<'a> FnGen<'a, '_> {
             }
             ExprKind::BitNot(a) if e.ty.is_vector() => {
                 let v = self.gen_value(a)?;
-                self.gen_vec_not(v)
+                self.gen_vec_not(&e.ty, v)
             }
             ExprKind::Neg(a) => {
                 let v = self.gen_value(a)?;
@@ -2177,7 +2190,9 @@ impl<'a> FnGen<'a, '_> {
             }
             ExprKind::VaArg(ap) => {
                 let list = self.gen_value(ap)?;
-                let address = self.gen_va_arg_address(list, e.ty.is_float());
+                let in_float_register = e.ty.is_float()
+                    || (self.tcx.is_half_vector(&e.ty) && self.mty(&e.ty) == Ty::F64);
+                let address = self.gen_va_arg_address(list, in_float_register);
                 self.b.load(self.tcx.mem_kind(&e.ty, false), address, 0)
             }
             ExprKind::VaCopy(dst, src) => {

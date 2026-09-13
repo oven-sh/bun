@@ -2,7 +2,7 @@
          #include <stdint.h>
          int add_u32(unsigned a, unsigned b) { unsigned r; int o = __builtin_add_overflow(a, b, &r); return o * 2 + (r == a + b); }
          int add_i32(int a, int b) { int r; return __builtin_sadd_overflow(a, b, &r) * 1000 + (r & 0xff); }
-         int sub_i64(long a, long b) { long r; int o = __builtin_sub_overflow(a, b, &r); return o * 2 + (r == (long)((unsigned long)a - (unsigned long)b)); }
+         int sub_i64(long long a, long long b) { long long r; int o = __builtin_sub_overflow(a, b, &r); return o * 2 + (r == (long long)((unsigned long long)a - (unsigned long long)b)); }
          int mul_size(size_t a, size_t b) { size_t r; int o = __builtin_mul_overflow(a, b, &r); return o * 2 + (r == a * b); }
          int mul_i64(long long a, long long b) { long long r; return __builtin_smulll_overflow(a, b, &r) * 2 + (r == (long long)((unsigned long long)a * (unsigned long long)b)); }
          int mixed(int a, unsigned long b) { unsigned char r; int o = __builtin_add_overflow(a, b, &r); return o * 1000 + r; }
@@ -21,7 +21,7 @@
              __builtin_cpu_init();
              __builtin_assume(p != 0);
              return (q == table) + (__builtin_object_size(p, 0) == (size_t)-1) * 2 + (__builtin_object_size(p, 2) == 0) * 4
-                  + __builtin_cpu_supports("avx2") * 8 + __builtin_choose_expr(sizeof(long) == 8, 16, table) + __builtin_unpredictable(p != 0) * 32;
+                  + __builtin_cpu_supports("avx2") * 8 + __builtin_choose_expr(sizeof(long long) == 8, 16, table) + __builtin_unpredictable(p != 0) * 32;
          }
          size_t library(const char *s) { return __builtin_strlen(s) + (__builtin_strstr(s, "lo") - s) + __builtin_strspn(s, "eh"); }
          #if __has_builtin(__builtin_mul_overflow) && __has_builtin(__builtin_rotateleft32) && __has_builtin(__builtin_frame_address)

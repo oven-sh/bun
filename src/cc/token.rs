@@ -334,6 +334,8 @@ pub(crate) enum Tok {
     PragmaPack(PackOp),
     /// `#pragma weak name`.
     PragmaWeak(Rc<str>),
+    /// `#pragma ms_struct on` / `off`.
+    PragmaMsStruct(bool),
     /// `#pragma redefine_extname name symbol`: `name` is linked as `symbol`.
     PragmaRedefine(Rc<str>, Rc<str>),
 }
@@ -365,6 +367,7 @@ impl Tok {
             Tok::Punct(p) => format!("'{}'", p.spelling()),
             Tok::PragmaPack(_) => "'#pragma pack'".to_string(),
             Tok::PragmaWeak(_) => "'#pragma weak'".to_string(),
+            Tok::PragmaMsStruct(_) => "'#pragma ms_struct'".to_string(),
             Tok::PragmaRedefine(..) => "'#pragma redefine_extname'".to_string(),
         }
     }
@@ -392,7 +395,11 @@ pub(crate) fn classify(pp: &PpToken, char_is_signed: bool) -> Res<Token> {
                 std::str::from_utf8(text).ok().and_then(|t| t.parse().ok())
             };
             let text = pp.text.as_slice();
-            if text == b"pack pop" {
+            if text == b"ms_struct on" {
+                Tok::PragmaMsStruct(true)
+            } else if text == b"ms_struct off" {
+                Tok::PragmaMsStruct(false)
+            } else if text == b"pack pop" {
                 Tok::PragmaPack(PackOp::Pop)
             } else if let Some(n) = text.strip_prefix(b"pack set ") {
                 Tok::PragmaPack(PackOp::Set(value(n)))

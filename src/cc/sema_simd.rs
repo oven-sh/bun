@@ -9,7 +9,7 @@ use crate::constexpr::{self, Const};
 use crate::token::{Loc, Res, err};
 use crate::types::Type;
 
-pub(crate) const ONLY_16_BYTE_VECTORS: &str = "only 16-byte vectors are supported yet";
+pub(crate) const VECTOR_SIZES: &str = "only 8-byte and 16-byte vectors are supported yet";
 
 /// The `__ATOMIC_*` memory order values.
 mod c_order {
@@ -74,16 +74,27 @@ impl Sema {
     fn lane(&self, ty: &Type, loc: Loc) -> Res<Lane> {
         match self.tcx.lane_of(ty) {
             Some(lane) => Ok(lane),
-            None => err(loc, ONLY_16_BYTE_VECTORS),
+            None => err(loc, VECTOR_SIZES),
         }
     }
 
     /// Same number of lanes of the same width, and both integer or both floating.
     fn same_shape(&self, a: &Type, b: &Type) -> bool {
         match (self.tcx.lane_of(a), self.tcx.lane_of(b)) {
-            (Some(x), Some(y)) => x == y,
+            (Some(x), Some(y)) => x == y && self.tcx.lane_count(a) == self.tcx.lane_count(b),
             _ => false,
         }
+    }
+
+    /// The 16-byte vector operand of a builtin that is defined on whole registers.
+    fn whole_register(&self, e: &Expr, name: &str, loc: Loc) -> Res<Lane> {
+        if self.tcx.size_of(&e.ty) != Some(16) {
+            return err(
+                loc,
+                format!("{name} has an operand of the wrong vector type"),
+            );
+        }
+        self.lane(&e.ty, loc)
     }
 
     fn elem_zero(&self, elem: &Type, loc: Loc) -> Res<Expr> {
@@ -134,6 +145,13 @@ impl Sema {
         let sizes = (self.tcx.size_of(&e.ty), self.tcx.size_of(to));
         if e.ty.is_vector() && to.is_vector() && sizes.0 == sizes.1 {
             return self.vec_bitcast(e, to, loc);
+        }
+        // An 8-byte vector and a 64-bit integer are the same bits.
+        let bits = |vector: &Type, scalar: &Type| {
+            self.tcx.is_half_vector(vector) && scalar.is_integer() && !scalar.is_int128()
+        };
+        if sizes.0 == sizes.1 && (bits(&e.ty, to) || bits(to, &e.ty)) {
+            return self.mk(ExprKind::Cast(Box::new(e)), to.clone(), loc);
         }
         err(
             loc,
@@ -316,8 +334,10 @@ impl Sema {
             // Two scalars take the shape of the condition.
             (self.splat(a, &mask.ty, loc)?, self.splat(b, &mask.ty, loc)?)
         };
-        let (ml, vl) = (self.lane(&mask.ty, loc)?, self.lane(&a.ty, loc)?);
-        if ml.count() != vl.count() {
+        self.lane(&a.ty, loc)?;
+        if self.tcx.lane_count(&mask.ty) != self.tcx.lane_count(&a.ty)
+            || self.tcx.size_of(&mask.ty) != self.tcx.size_of(&a.ty)
+        {
             return err(
                 loc,
                 "the vector condition and the operands of '?:' must have the same number of elements",
@@ -393,13 +413,19 @@ impl Sema {
         Ok(e)
     }
 
-    /// Byte indices that pick whole lanes: `lanes[i]` indexes the `2 * count` lanes of `a:b`.
-    fn lane_shuffle_bytes(lane: Lane, lanes: &[u32]) -> [u8; 16] {
+    /// Byte indices that pick whole lanes: `lanes[i]` indexes the `2 * count` lanes of `a:b`,
+    /// each of which has `count` lanes of `lane`'s width at the start of its 16 bytes.
+    fn lane_shuffle_bytes(lane: Lane, count: u32, lanes: &[u32]) -> [u8; 16] {
         let width = 16 / u32::from(lane.count());
         let mut bytes = [0u8; 16];
         for (i, &pick) in lanes.iter().enumerate().take(lane.count() as usize) {
+            let start = if pick < count {
+                pick * width
+            } else {
+                16 + (pick - count) * width
+            };
             for k in 0..width {
-                bytes[i * width as usize + k as usize] = (pick * width + k) as u8;
+                bytes[i * width as usize + k as usize] = (start + k) as u8;
             }
         }
         bytes
@@ -418,9 +444,14 @@ impl Sema {
         let a = self.vector_arg(args.swap_remove(0), "__builtin_shufflevector")?;
         let (a, b) = self.vec_operands(a, b, "__builtin_shufflevector", loc)?;
         let lane = self.lane(&a.ty, loc)?;
-        let count = u32::from(lane.count());
-        if indices.len() != count as usize {
-            return err(loc, ONLY_16_BYTE_VECTORS);
+        let count = self.tcx.lane_count(&a.ty);
+        // The result has as many lanes as there are indices: half a vector, or two of them.
+        let Type::Vector(elem, _) = &a.ty else {
+            return err(loc, "internal error: shuffle of a non-vector");
+        };
+        let ty = Type::Vector(Rc::clone(elem), indices.len() as u32);
+        if !matches!(self.tcx.size_of(&ty), Some(8 | 16)) {
+            return err(loc, VECTOR_SIZES);
         }
         let mut lanes = Vec::with_capacity(indices.len());
         for index in &indices {
@@ -434,8 +465,7 @@ impl Sema {
             // -1 is "don't care".
             lanes.push(value.max(0) as u32);
         }
-        let bytes = Self::lane_shuffle_bytes(lane, &lanes);
-        let ty = a.ty.clone();
+        let bytes = Self::lane_shuffle_bytes(lane, count, &lanes);
         self.mk(
             ExprKind::VecBuiltin(VecBuiltin::Shuffle(bytes), vec![a, b]),
             ty,
@@ -457,25 +487,28 @@ impl Sema {
         };
         let (a, b) = self.vec_operands(a, b, "__builtin_shuffle", loc)?;
         let lane = self.lane(&a.ty, loc)?;
-        let mask_lane = self.lane(&mask.ty, loc)?;
-        if !self.is_int_vector(&mask.ty) || mask_lane.count() != lane.count() {
+        self.lane(&mask.ty, loc)?;
+        if !self.is_int_vector(&mask.ty)
+            || self.tcx.lane_count(&mask.ty) != self.tcx.lane_count(&a.ty)
+            || self.tcx.size_of(&mask.ty) != self.tcx.size_of(&a.ty)
+        {
             return err(
                 loc,
                 "the mask of __builtin_shuffle must be an integer vector with as many elements as the operands",
             );
         }
-        let count = u64::from(lane.count());
+        let count = u64::from(self.tcx.lane_count(&a.ty));
         let modulus = if two_inputs { count * 2 } else { count };
         let ty = a.ty.clone();
         if let Some(bytes) = self.const_vector_bytes(&mask) {
-            let width = (16 / count) as usize;
+            let width = 16 / lane.count() as usize;
             let mut lanes = Vec::with_capacity(count as usize);
             for i in 0..count as usize {
                 let mut raw = [0u8; 8];
                 raw[..width].copy_from_slice(&bytes[i * width..(i + 1) * width]);
                 lanes.push((u64::from_le_bytes(raw) % modulus) as u32);
             }
-            let bytes = Self::lane_shuffle_bytes(lane, &lanes);
+            let bytes = Self::lane_shuffle_bytes(lane, count as u32, &lanes);
             return self.mk(
                 ExprKind::VecBuiltin(VecBuiltin::Shuffle(bytes), vec![a, b]),
                 ty,
@@ -576,7 +609,7 @@ impl Sema {
             return err(loc, format!("{name} takes one argument"));
         }
         let v = self.vector_arg(args.swap_remove(0), name)?;
-        if self.lane(&v.ty, loc)?.count() != lane.count() {
+        if self.whole_register(&v, name, loc)?.count() != lane.count() {
             return err(
                 loc,
                 format!("{name} has an operand of the wrong vector type"),
@@ -604,7 +637,8 @@ impl Sema {
     }
 
     /// A two-operand builtin on whole 128-bit vectors whose operands must have `lane`
-    /// shape (any signedness) and whose result has type `to`.
+    /// shape (any signedness) and whose result has type `to`. The ones that only look at
+    /// the lanes they produce also take 8-byte vectors, as the low half of zeros.
     pub(crate) fn lane_builtin(
         &self,
         op: VecBuiltin,
@@ -619,8 +653,18 @@ impl Sema {
         }
         let b = self.vector_arg(args.swap_remove(1), name)?;
         let a = self.vector_arg(args.swap_remove(0), name)?;
+        let low_half_too = matches!(
+            op,
+            VecBuiltin::Swizzle
+                | VecBuiltin::AverageUnsigned
+                | VecBuiltin::ExtMul { high: false, .. }
+        ) && self.tcx.size_of(&a.ty) == self.tcx.size_of(&b.ty);
         for operand in [&a, &b] {
-            let shape = self.lane(&operand.ty, loc)?;
+            let shape = if low_half_too {
+                self.lane(&operand.ty, loc)?
+            } else {
+                self.whole_register(operand, name, loc)?
+            };
             if shape.count() != lane.count() || shape.is_float() {
                 return err(
                     loc,
@@ -1389,16 +1433,17 @@ pub(crate) fn vector_bytes(e: &Expr, tcx: &crate::types::TypeCtx) -> Option<[u8;
         };
         Some((bytes, width))
     };
-    if tcx.size_of(&e.ty) != Some(16) {
+    let Some(size @ (8 | 16)) = tcx.size_of(&e.ty) else {
         return None;
-    }
+    };
+    let size = size as usize;
     let mut out = [0u8; 16];
     match &e.kind {
         ExprKind::VecInit(lanes) => {
             let mut at = 0;
             for lane in lanes {
                 let (bytes, width) = lane_bytes(lane)?;
-                if at + width > 16 || bytes.len() != width {
+                if at + width > size || bytes.len() != width {
                     return None;
                 }
                 out[at..at + width].copy_from_slice(&bytes);
@@ -1411,7 +1456,7 @@ pub(crate) fn vector_bytes(e: &Expr, tcx: &crate::types::TypeCtx) -> Option<[u8;
             if width == 0 || bytes.len() != width || 16 % width != 0 {
                 return None;
             }
-            for chunk in out.chunks_mut(width) {
+            for chunk in out[..size].chunks_mut(width) {
                 chunk.copy_from_slice(&bytes);
             }
             Some(out)

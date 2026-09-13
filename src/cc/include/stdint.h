@@ -1,6 +1,10 @@
 /* Integer types (C11 7.20). */
 #ifndef __BUN_CC_STDINT_H
 #define __BUN_CC_STDINT_H
+/* A C library's own <stdint.h>, which its headers sometimes reach by a path of their own, uses this
+   guard, and so do programs that ask whether the types are there: one of the two files is enough. */
+#ifndef _STDINT_H
+#define _STDINT_H 1
 
 /* C libraries expect <stdint.h> to have pulled in their feature-test macros. */
 #if defined __has_include
@@ -108,4 +112,5 @@ typedef __UINTMAX_TYPE__ uintmax_t;
 #define INTMAX_C(c) __INTMAX_C(c)
 #define UINTMAX_C(c) __UINTMAX_C(c)
 
+#endif
 #endif

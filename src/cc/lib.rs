@@ -29,6 +29,8 @@ mod tests;
 #[cfg(test)]
 mod tests_phase13;
 #[cfg(test)]
+mod tests_phase14;
+#[cfg(test)]
 mod tests_phase2;
 #[cfg(test)]
 mod tests_phase3;
@@ -143,7 +145,13 @@ impl CompileOptions<'_> {
             system_include_dirs: Vec::new(),
             defines: Vec::new(),
             undefines: Vec::new(),
-            gnu_version: None,
+            // Apple's SDK headers are written for a GNU C compatible compiler: without the claim
+            // `NAN` is a call to a function that exists only on x86 and `va_list` is `void *`.
+            gnu_version: if target.os == Os::MacOs {
+                Some((9, 0, 0))
+            } else {
+                None
+            },
             replace_aggregates: true,
             file_provider: &NoFiles,
         }
@@ -152,6 +160,26 @@ impl CompileOptions<'_> {
 
 /// The directories a hosted compiler searches for `<...>` headers on this machine.
 pub fn default_system_include_dirs(target: Target) -> Vec<String> {
+    if target.os == Os::MacOs && cfg!(target_os = "macos") {
+        // The C library's headers are in the SDK, which `xcrun --show-sdk-path` would name; these
+        // are the places it names. (A caller that honours `SDKROOT` adds that one itself.)
+        let roots = [
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        ];
+        let mut dirs: Vec<String> = ["/usr/local/include", "/opt/homebrew/include"]
+            .into_iter()
+            .filter(|dir| std::path::Path::new(dir).is_dir())
+            .map(str::to_string)
+            .collect();
+        if let Some(root) = roots
+            .into_iter()
+            .find(|root| std::path::Path::new(&format!("{root}/usr/include/stdio.h")).is_file())
+        {
+            dirs.push(format!("{root}/usr/include"));
+        }
+        return dirs;
+    }
     if target.os != Os::Linux || !cfg!(target_os = "linux") {
         return Vec::new();
     }

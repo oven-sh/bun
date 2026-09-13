@@ -44,8 +44,114 @@ impl ExternResolver {
         if let Some(address) = bun_sys::dlsym_impl(None, name) {
             return address;
         }
+        #[cfg(windows)]
+        if let Some(address) = windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes())) {
+            return address;
+        }
         glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
     }
+}
+
+/// What a C toolchain on Windows links statically into every program, so no library exports it: the
+/// 128-bit integer routines of the compiler's runtime (taking and returning `__int128` the way this
+/// compiler passes any 16-byte object there: by address, the result through a hidden first pointer)
+/// and the C99 `snprintf` family, which msvcrt.dll only has under older names and semantics.
+#[cfg(windows)]
+mod windows_runtime {
+    use core::ffi::c_void;
+
+    macro_rules! binary {
+        ($name:ident, $int:ty, $op:ident) => {
+            unsafe extern "C" fn $name(out: *mut $int, a: *const $int, b: *const $int) -> *mut $int {
+                // SAFETY: the compiled code passes the addresses of three 16-byte objects of its own.
+                unsafe {
+                    let (a, b) = (a.read_unaligned(), b.read_unaligned());
+                    // Division by zero is undefined in C; it must not be a Rust panic through C frames.
+                    out.write_unaligned(a.$op(b).unwrap_or(0));
+                }
+                out
+            }
+        };
+    }
+    binary!(udivti3, u128, checked_div);
+    binary!(umodti3, u128, checked_rem);
+    binary!(divti3, i128, checked_div);
+    binary!(modti3, i128, checked_rem);
+
+    macro_rules! to_float {
+        ($name:ident, $int:ty, $float:ty) => {
+            unsafe extern "C" fn $name(value: *const $int) -> $float {
+                // SAFETY: the address of a 16-byte object of the compiled code's.
+                unsafe { value.read_unaligned() as $float }
+            }
+        };
+    }
+    to_float!(floattidf, i128, f64);
+    to_float!(floatuntidf, u128, f64);
+    to_float!(floattisf, i128, f32);
+    to_float!(floatuntisf, u128, f32);
+
+    macro_rules! from_float {
+        ($name:ident, $float:ty, $int:ty) => {
+            unsafe extern "C" fn $name(out: *mut $int, value: $float) -> *mut $int {
+                // SAFETY: the address of a 16-byte object of the compiled code's.
+                unsafe { out.write_unaligned(value as $int) };
+                out
+            }
+        };
+    }
+    from_float!(fixdfti, f64, i128);
+    from_float!(fixunsdfti, f64, u128);
+    from_float!(fixsfti, f32, i128);
+    from_float!(fixunssfti, f32, u128);
+
+    unsafe extern "C" {
+        fn Bun__CModule__snprintf();
+        fn Bun__CModule__vsnprintf();
+    }
+
+    pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
+        Some(match name {
+            b"__udivti3" => udivti3 as *mut c_void,
+            b"__umodti3" => umodti3 as *mut c_void,
+            b"__divti3" => divti3 as *mut c_void,
+            b"__modti3" => modti3 as *mut c_void,
+            b"__floattidf" => floattidf as *mut c_void,
+            b"__floatuntidf" => floatuntidf as *mut c_void,
+            b"__floattisf" => floattisf as *mut c_void,
+            b"__floatuntisf" => floatuntisf as *mut c_void,
+            b"__fixdfti" => fixdfti as *mut c_void,
+            b"__fixunsdfti" => fixunsdfti as *mut c_void,
+            b"__fixsfti" => fixsfti as *mut c_void,
+            b"__fixunssfti" => fixunssfti as *mut c_void,
+            b"snprintf" => Bun__CModule__snprintf as *mut c_void,
+            b"vsnprintf" => Bun__CModule__vsnprintf as *mut c_void,
+            _ => return None,
+        })
+    }
+}
+
+/// Windows has no process-wide symbol lookup: every library is asked by name. These are the ones a
+/// C toolchain links by default there (the C runtime a small C compiler's headers describe, then
+/// the core system libraries).
+#[cfg(windows)]
+fn windows_libraries(name: &ZStr) -> Option<*mut c_void> {
+    const LIBRARIES: [&core::ffi::CStr; 6] = [
+        c"msvcrt.dll",
+        c"ucrtbase.dll",
+        c"kernel32.dll",
+        c"user32.dll",
+        c"advapi32.dll",
+        c"ws2_32.dll",
+    ];
+    LIBRARIES.iter().find_map(|library| {
+        // SAFETY: a NUL-terminated name; loading (or re-finding) a system library has no preconditions.
+        let handle = unsafe { bun_sys::windows::LoadLibraryA(library.as_ptr()) };
+        if handle.is_null() {
+            return None;
+        }
+        bun_sys::dlsym_impl(Some(handle), name)
+    })
 }
 
 /// Bun leaves the process with `quick_exit` on Linux, which neither runs `atexit` handlers nor flushes
@@ -191,9 +297,16 @@ fn compile_to_bir(
 ) -> JsResult<Vec<u8>> {
     let target = bun_cc::Target::host();
     let mut system_include_dirs = bun_cc::default_system_include_dirs(target);
+    // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
+    if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
+        && let Ok(sdk) = core::str::from_utf8(sdk)
+        && !sdk.is_empty()
+    {
+        system_include_dirs.push(format!("{sdk}/usr/include"));
+    }
     // What gcc, clang and bun:ffi's cc() also search, after the system's own directories.
     if let Some(list) = bun_core::env_var::C_INCLUDE_PATH.get() {
-        for directory in bun_core::strings::split(list, b":") {
+        for directory in bun_core::strings::split(list, if cfg!(windows) { b";" } else { b":" }) {
             if let Ok(directory) = core::str::from_utf8(directory)
                 && !directory.is_empty()
             {
@@ -242,15 +355,24 @@ fn compile_to_bir(
 /// BIR -> machine code -> `{ name: function }` for every non-static C function. The functions
 /// keep the module (its code and data) alive.
 pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
-    // The arm64, macOS and Windows code paths of the backend (argument passing, variadic calls,
-    // by-value aggregates) are written to their ABIs but have not executed yet.
-    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        return Err(global_this.throw(format_args!(
-            "Importing C is only supported on Linux x64 so far"
-        )));
-    }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     at_exit::install();
+    #[cfg(windows)]
+    {
+        // msvcrt.dll prints exponents with three digits unless told to follow C99.
+        static TWO_DIGIT_EXPONENTS: std::sync::Once = std::sync::Once::new();
+        TWO_DIGIT_EXPONENTS.call_once(|| {
+            if let Some(set_output_format) = windows_libraries(bun_core::zstr!("_set_output_format")) {
+                // SAFETY: `unsigned _set_output_format(unsigned)`; 1 is _TWO_DIGIT_EXPONENT.
+                let set_output_format: unsafe extern "C" fn(core::ffi::c_uint) -> core::ffi::c_uint =
+                    unsafe { core::mem::transmute(set_output_format) };
+                // SAFETY: as above.
+                unsafe {
+                    set_output_format(1);
+                }
+            }
+        });
+    }
 
     let mut module: *mut c_void = core::ptr::null_mut();
     // SAFETY: `bir` outlives the call; the resolver is only used during it.
@@ -273,7 +395,20 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
         unsafe {
             at_exit::atexit(handler);
         }
-        #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+        #[cfg(windows)]
+        {
+            // The list of the C runtime the program itself calls `atexit` in, not Bun's.
+            if let Some(atexit) = windows_libraries(bun_core::zstr!("atexit")) {
+                // SAFETY: `int atexit(void (*)(void))`.
+                let atexit: unsafe extern "C" fn(unsafe extern "C" fn()) -> core::ffi::c_int =
+                    unsafe { core::mem::transmute(atexit) };
+                // SAFETY: as above.
+                unsafe {
+                    atexit(handler);
+                }
+            }
+        }
+        #[cfg(not(any(windows, all(target_os = "linux", target_env = "gnu"))))]
         {
             unsafe extern "C" {
                 fn atexit(handler: unsafe extern "C" fn()) -> core::ffi::c_int;

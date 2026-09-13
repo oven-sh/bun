@@ -25,6 +25,11 @@ static int counts(void) {
     return tries * 1000 + unchanged * 100 + (int)total + record.a + record.text[1] + code + depth;
 }
 
+#ifdef _WIN32 // no signal mask to save or restore there
+#define sigjmp_buf jmp_buf
+#define sigsetjmp(env, save) setjmp(env)
+#define siglongjmp longjmp
+#endif
 static sigjmp_buf senv;
 static int with_mask(void) {
     int v = sigsetjmp(senv, 1);

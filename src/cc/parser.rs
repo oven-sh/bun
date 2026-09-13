@@ -38,6 +38,8 @@ struct Attrs {
     cleanup: Option<(Rc<str>, Loc)>,
     /// `transparent_union`.
     transparent_union: bool,
+    /// `ms_struct` (true) or `gcc_struct` (false): whose bit-field layout a structure has.
+    ms_struct: Option<bool>,
     /// `always_inline` / `noinline`, as `bir::INLINE_*`.
     inlining: u8,
     /// `gnu_inline`: `extern inline` and plain `inline` mean what they meant before C99.
@@ -138,6 +140,8 @@ pub(crate) struct Parser<S: TokenSource> {
     /// `#pragma pack`: the most a member may be aligned to, and the values pushed.
     pack: Option<u64>,
     pack_stack: Vec<Option<u64>>,
+    /// `#pragma ms_struct on` is in effect.
+    ms_struct: bool,
     /// How many parentheses of a declarator (`(*name)`) are open.
     declarator_parens: u32,
     /// The `cleanup` calls of the variables the current block item declared.
@@ -215,6 +219,7 @@ impl<S: TokenSource> Parser<S> {
             star_bound: None,
             pack: None,
             pack_stack: Vec::new(),
+            ms_struct: false,
             declarator_parens: 0,
             pending_cleanups: Vec::new(),
             declarator_cleanup: None,
@@ -234,6 +239,10 @@ impl<S: TokenSource> Parser<S> {
                 Tok::PragmaPack(op) => *op,
                 Tok::PragmaWeak(name) => {
                     self.sema.pragma_weak.push((Rc::clone(name), token.loc));
+                    continue;
+                }
+                Tok::PragmaMsStruct(on) => {
+                    self.ms_struct = *on;
                     continue;
                 }
                 Tok::PragmaRedefine(old, new) => {
@@ -1094,6 +1103,11 @@ impl<S: TokenSource> Parser<S> {
                 }
                 self.bump()?;
                 match std::str::from_utf8(&label) {
+                    // A label is the assembler's name for the symbol; everywhere else (what the
+                    // loader looks up) it goes by its C name, which on Mach-O lacks the leading `_`.
+                    Ok(name) if self.sema.tcx.target.os == crate::types::Os::MacOs => {
+                        attrs.asm_label = Some(Rc::from(name.strip_prefix('_').unwrap_or(name)));
+                    }
                     Ok(name) => attrs.asm_label = Some(Rc::from(name)),
                     Err(_) => return err(loc, "asm label is not valid UTF-8"),
                 }
@@ -1212,8 +1226,9 @@ impl<S: TokenSource> Parser<S> {
                 // These change the layout, the calling convention or the meaning of the code
                 // and are not implemented: accepting them silently would miscompile.
                 "transparent_union" => attrs.transparent_union = true,
-                "ms_struct"
-                | "scalar_storage_order"
+                "ms_struct" => attrs.ms_struct = Some(true),
+                "gcc_struct" => attrs.ms_struct = Some(false),
+                "scalar_storage_order"
                 | "naked"
                 | "vectorcall"
                 | "regcall"
@@ -1698,6 +1713,7 @@ impl<S: TokenSource> Parser<S> {
         };
         self.expect(Punct::LBrace)?;
         let pragma_pack = self.pack;
+        let pragma_ms_struct = self.ms_struct;
         let mut fields: Vec<FieldDecl> = Vec::new();
         while !self.at(Punct::RBrace) {
             if self.cur.tok == Tok::Eof {
@@ -1788,12 +1804,18 @@ impl<S: TokenSource> Parser<S> {
         }
         self.bump()?;
         self.parse_attributes(&mut struct_attrs)?;
+        // Microsoft's bit-field layout is what Windows targets have; the attributes and the
+        // pragma choose it, or the other one, anywhere.
+        let ms_bitfields = struct_attrs
+            .ms_struct
+            .unwrap_or(pragma_ms_struct || self.sema.tcx.target.os == crate::types::Os::Windows);
         self.sema.complete_struct(
             id,
             fields,
             struct_attrs.packed,
             struct_attrs.aligned,
             pragma_pack,
+            ms_bitfields,
             kw_loc,
         )?;
         if struct_attrs.transparent_union {
@@ -1822,10 +1844,28 @@ impl<S: TokenSource> Parser<S> {
             }
             _ => None,
         };
+        // `enum E : type` (C23, and clang before it): the enumeration's type is written out.
+        // (In a structure `enum E : 3` is a bit-field; a type never starts with a number.)
+        let mut fixed_type = None;
+        if self.at(Punct::Colon) && self.next_is_type_start()? {
+            self.bump()?;
+            let ty = self.parse_type_name()?;
+            if !ty.is_integer() {
+                return err(
+                    kw_loc,
+                    "the underlying type of an enumeration must be an integer type",
+                );
+            }
+            fixed_type = Some(ty.unqualified().clone());
+        }
         if !self.at(Punct::LBrace) {
             let Some(tag) = tag else {
                 return err(kw_loc, "expected a tag or '{' after 'enum'");
             };
+            if let (Some(ty), None) = (&fixed_type, self.sema.lookup_tag(&tag)) {
+                self.sema.bind_tag(tag, Tag::Enum(ty.clone()));
+                return Ok(ty.clone());
+            }
             return match self.sema.lookup_tag(&tag) {
                 Some(Tag::Enum(ty)) => Ok(ty),
                 Some(Tag::Struct(_)) => err(
@@ -1880,7 +1920,12 @@ impl<S: TokenSource> Parser<S> {
         }
         self.expect(Punct::RBrace)?;
         self.parse_attributes(&mut ignored)?;
-        let ty = if forward_declared && fits_int {
+        let ty = if let Some(fixed) = fixed_type {
+            fixed
+        } else if self.sema.tcx.target.os == crate::types::Os::Windows {
+            // Microsoft's enumerations are all `int`.
+            Type::Int
+        } else if forward_declared && fits_int {
             Type::Int
         } else if !any_negative && fits_uint {
             Type::UInt
@@ -3189,7 +3234,7 @@ impl<S: TokenSource> Parser<S> {
         }
         self.expect(Punct::RParen)?;
         self.expect(Punct::Semi)?;
-        let [outputs, inputs] = operands;
+        let [mut outputs, mut inputs] = operands;
 
         // The instructions: a mnemonic and its operands, lower case, without `%` and blanks.
         let mut instructions: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
@@ -3319,6 +3364,28 @@ impl<S: TokenSource> Parser<S> {
             let mut stmts = Vec::new();
             self.lower_wide_arithmetic(divide, outputs, inputs, &mut stmts, loc)?;
             return Ok(Stmt::Block(stmts));
+        }
+        // AArch64 `rbit %w0, %w1` / `rbit %0, %1`: the bit reversal C cannot say, which the
+        // compression libraries write this way when the compiler says it is GNU C.
+        let bit_reversal = !x86
+            && matches!(instructions.as_slice(), [(m, _)] if &m[..] == b"rbit")
+            && outputs.len() == 1
+            && inputs.len() == 1
+            && matches!(outputs[0].0.as_slice(), b"=r" | b"=&r")
+            && inputs[0].0 == b"r";
+        if bit_reversal {
+            let (_, output) = outputs.swap_remove(0);
+            let (_, input) = inputs.swap_remove(0);
+            let wide = instructions[0].1.first() != Some(&b'w');
+            let (bits, name) = if wide {
+                (64, "rbit (64-bit)")
+            } else {
+                (32, "rbit (32-bit)")
+            };
+            let reversed = self.sema.bitreverse_builtin(bits, name, vec![input], loc)?;
+            let target = self.sema.rvalue_type(&output.ty);
+            let reversed = self.sema.cast(reversed, &target, loc)?;
+            return Ok(Stmt::Expr(self.sema.assign(output, reversed, loc)?));
         }
         if only_hints && !outputs.is_empty() {
             // Nothing executes: the statement is there to keep the compiler from knowing
@@ -3459,7 +3526,13 @@ impl<S: TokenSource> Parser<S> {
                 } else {
                     format!("inline assembly: {message}")
                 };
-                return err(loc, message);
+                // An error only if the statement is ever compiled: system headers define inline
+                // functions with assembly this cannot assemble, and few programs call them.
+                return Ok(Stmt::Expr(self.sema.mk(
+                    ExprKind::Unsupported(Rc::from(message)),
+                    Type::Void,
+                    loc,
+                )?));
             }
         };
 
@@ -5173,7 +5246,6 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "flatten",
     "format",
     "format_arg",
-    "gcc_struct",
     "hot",
     "internal_linkage",
     "leaf",

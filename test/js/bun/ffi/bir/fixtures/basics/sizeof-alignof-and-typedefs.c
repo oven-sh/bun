@@ -1,4 +1,4 @@
-typedef unsigned long size_t;
+typedef __SIZE_TYPE__ size_t;
          typedef struct Pair { char c; int i; } Pair, *PairPtr;
          typedef int Row[4];
          typedef int (*Cmp)(const void *, const void *);

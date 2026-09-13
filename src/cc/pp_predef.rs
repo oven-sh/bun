@@ -107,6 +107,12 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
         Os::MacOs => {
             def("__APPLE__", "1");
             def("__MACH__", "1");
+            // What <TargetConditionals.h> takes as the sign of a compiler it knows.
+            def("__APPLE_CC__", "6000");
+            if target.arch == Arch::Aarch64 {
+                def("__arm64__", "1");
+                def("__arm64", "1");
+            }
         }
         Os::Windows => {
             def("_WIN32", "1");

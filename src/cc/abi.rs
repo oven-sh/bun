@@ -84,6 +84,9 @@ enum Leaf {
     F32,
     F64,
     V128,
+    /// An 8-byte vector: System V class SSE like a `double`, and an AAPCS64 short vector,
+    /// which makes a homogeneous aggregate only with its own kind.
+    V64,
     /// An x87 `long double`: classes X87 and X87UP.
     X87,
 }
@@ -143,6 +146,16 @@ fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<
             kind.name()
         )),
         Type::Atomic(inner) | Type::Qualified(_, inner) => flatten(tcx, inner, base, out),
+        Type::Vector(..) if tcx.is_half_vector(ty) => {
+            check_vector(tcx, ty)?;
+            out.push(Field {
+                offset: base,
+                size: 8,
+                kind: Leaf::V64,
+                align: 8,
+            });
+            Ok(())
+        }
         Type::Vector(..) => {
             check_vector(tcx, ty)?;
             out.push(Field {
@@ -207,8 +220,17 @@ fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<
 }
 
 fn check_vector(tcx: &TypeCtx, ty: &Type) -> Result<(), String> {
-    if ty.is_vector() && tcx.size_of(ty) != Some(16) {
-        return Err(crate::sema::simd::ONLY_16_BYTE_VECTORS.to_string());
+    if ty.is_vector() && !matches!(tcx.size_of(ty), Some(8 | 16)) {
+        return Err(crate::sema::simd::VECTOR_SIZES.to_string());
+    }
+    // GCC passes and returns it in memory, Clang returns it in a register.
+    let sysv =
+        tcx.target.arch == crate::types::Arch::X86_64 && tcx.target.os != crate::types::Os::Windows;
+    if sysv && tcx.is_half_vector(ty) && matches!(ty.unatomic().vector_elem(), Some(Type::Double)) {
+        return Err(
+            "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -469,15 +491,34 @@ pub(crate) fn lower_call(
     }
 
     let mut passes = Vec::with_capacity(args.len());
+    // Apple's arm64 convention: named arguments that miss the registers are packed on the stack at
+    // their natural alignment, and every anonymous one follows in eight-byte slots. A 16-byte
+    // aligned anonymous argument needs to know where it lands to pad itself.
+    let mut apple_named_stack_bytes: u64 = 0;
+    let mut apple_anonymous_slots: u64 = 0;
     for (index, arg) in args.iter().enumerate() {
         let anonymous = index >= named;
         let size = tcx.size_of(arg).unwrap_or(0);
         let align = tcx.align_of(arg).unwrap_or(1);
-        let pass = if windows && !arm && arg.is_vector() {
+        let pass = if windows && !arm && arg.is_vector() && !tcx.is_half_vector(arg) {
             regs.scalar(Ty::I64);
             ArgPass::Reference
         } else if !is_aggregate(arg) {
             let ty = tcx.machine_ty(arg);
+            if apple_arm {
+                let free = if ty.uses_float_registers() {
+                    regs.float_free
+                } else {
+                    regs.int_free
+                };
+                if anonymous {
+                    apple_anonymous_slots += size.div_ceil(8).max(1);
+                } else if free == 0 {
+                    let natural = size.max(1);
+                    apple_named_stack_bytes =
+                        apple_named_stack_bytes.next_multiple_of(natural) + natural;
+                }
+            }
             regs.scalar(ty);
             ArgPass::Scalar(ty)
         } else if size == 0 {
@@ -498,15 +539,32 @@ pub(crate) fn lower_call(
                 // also where the backend puts anonymous values: integer pieces give the same bytes.
                 flatten(tcx, arg, 0, &mut Vec::new())?;
                 if size > 16 {
+                    apple_anonymous_slots += 1;
                     ArgPass::Reference
                 } else {
-                    ArgPass::Pieces(int_pieces(size))
+                    let mut pieces = int_pieces(size);
+                    let slot = apple_named_stack_bytes.div_ceil(8) + apple_anonymous_slots;
+                    if align >= 16 && slot % 2 == 1 {
+                        pieces.insert(
+                            0,
+                            Piece {
+                                offset: 0,
+                                bytes: 0,
+                                ty: Ty::I64,
+                            },
+                        );
+                    }
+                    apple_anonymous_slots += pieces.len() as u64;
+                    ArgPass::Pieces(pieces)
                 }
             } else if let Some(pieces) = hfa_pieces(tcx, arg)? {
                 if regs.take_float(pieces.len() as u32) {
                     ArgPass::Pieces(pieces)
                 } else {
                     regs.float_free = 0;
+                    apple_named_stack_bytes = apple_named_stack_bytes
+                        .next_multiple_of(align.max(8))
+                        + size.next_multiple_of(8);
                     ArgPass::Stack {
                         size: size.next_multiple_of(8),
                         align: align.max(8),
@@ -530,9 +588,12 @@ pub(crate) fn lower_call(
                     ArgPass::Pieces(pieces)
                 } else {
                     regs.int_free = 0;
+                    let align = if align >= 16 { 16 } else { 8 };
+                    apple_named_stack_bytes =
+                        apple_named_stack_bytes.next_multiple_of(align) + size.next_multiple_of(8);
                     ArgPass::Stack {
                         size: size.next_multiple_of(8),
-                        align: if align >= 16 { 16 } else { 8 },
+                        align,
                         exhausts: Exhausts::IntegerRegisters,
                     }
                 }

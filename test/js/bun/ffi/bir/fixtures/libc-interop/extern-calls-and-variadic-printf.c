@@ -1,8 +1,8 @@
 int printf(const char *fmt, ...);
 int puts(const char *s);
-unsigned long strlen(const char *s);
-void *memcpy(void *d, const void *s, unsigned long n);
-void *memset(void *d, int c, unsigned long n);
+__SIZE_TYPE__ strlen(const char *s);
+void *memcpy(void *d, const void *s, __SIZE_TYPE__ n);
+void *memset(void *d, int c, __SIZE_TYPE__ n);
 int abs(int);
 double sqrt(double);
 /* atoi returns an int; declared like this, the bits above the low byte are whatever the
@@ -12,8 +12,8 @@ int lens(void) { char buf[16]; memset(buf, 'x', 15); buf[15] = 0; memcpy(buf, "a
 double root(double d) { return sqrt(d) + sqrt(16); }
 int narrow_ret(const char *digits) { return atoi(digits); }
 int print(void) {
-    float f = 1.5f; char c = 'Z'; short s = -7; unsigned char u = 200; long big = 1234567890123L; unsigned un = 4000000000u;
-    int n = printf("%d %s %.2f %c %d %d %ld %u %x%%\n", 42, "str", f, c, s, u, big, un, 255);
+    float f = 1.5f; char c = 'Z'; short s = -7; unsigned char u = 200; long long big = 1234567890123LL; unsigned un = 4000000000u;
+    int n = printf("%d %s %.2f %c %d %d %lld %u %x%%\n", 42, "str", f, c, s, u, big, un, 255);
     puts("done");
     return n;
 }

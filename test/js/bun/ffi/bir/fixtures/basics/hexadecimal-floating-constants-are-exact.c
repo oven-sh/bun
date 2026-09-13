@@ -14,7 +14,7 @@ int main(void) {
   printf("%.17g\n", (double)just_above());
   printf("%.17g\n", (double)subnormal());
   printf("%.17g\n", (double)big());
-  printf("%.17g\n", (double)over());
+  printf("%s\n", over() > big() ? "inf" : "finite"); // (the C libraries spell infinity differently)
   printf("%.17g\n", (double)tie_even());
   printf("%.17g\n", (double)tie_odd());
   printf("%.17g\n", (double)sticky());

@@ -382,7 +382,8 @@
   "source": "void f(int x) { __asm__(\"pushq %q0\" : \"+r\"(x)); }",
   "line": 1,
   "column": 17,
-  "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for"
+  "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for",
+  "requires": "x64"
  },
  {
   "about": "unsupported constructs are diagnosed",
@@ -473,42 +474,80 @@
   "source": "#include <arm_neon.h>\nint x;",
   "line": 1,
   "column": 2,
-  "message": "'arm_neon.h' file not found"
+  "message": "'arm_neon.h' file not found",
+  "requires": "x64"
  },
  {
   "about": "vector diagnostics",
-  "source": "typedef float v2f __attribute__((vector_size(8))); v2f f(v2f a) { return a; }",
+  "source": "typedef float v8f __attribute__((vector_size(32))); v8f f(v8f a) { return a; }",
   "line": 1,
-  "column": 74,
-  "message": "only 16-byte vectors are supported yet"
+  "column": 75,
+  "message": "only 8-byte and 16-byte vectors are supported yet"
  },
  {
   "about": "vector diagnostics",
-  "source": "typedef float v2f __attribute__((vector_size(8))); float f(v2f *p) { return (*p)[0]; }",
+  "source": "typedef short v2s __attribute__((vector_size(4))); short f(v2s *p) { return (*p)[0]; }",
   "line": 1,
   "column": 78,
-  "message": "only 16-byte vectors are supported yet"
+  "message": "only 8-byte and 16-byte vectors are supported yet"
  },
  {
   "about": "vector diagnostics",
   "source": "typedef int v8i __attribute__((vector_size(32))); v8i g; int f(void) { return g[0]; }",
   "line": 1,
   "column": 79,
-  "message": "only 16-byte vectors are supported yet"
+  "message": "only 8-byte and 16-byte vectors are supported yet"
  },
  {
   "about": "vector diagnostics",
   "source": "typedef char v4c __attribute__((vector_size(4))); v4c f(void);  int g(void) { f(); return 0; }",
   "line": 1,
   "column": 80,
-  "message": "only 16-byte vectors are supported yet"
+  "message": "only 8-byte and 16-byte vectors are supported yet"
  },
  {
   "about": "vector diagnostics",
   "source": "typedef double v8d __attribute__((vector_size(64))); void f(void) { v8d x = {0}; }",
   "line": 1,
   "column": 77,
-  "message": "only 16-byte vectors are supported yet"
+  "message": "only 8-byte and 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef double v1d __attribute__((vector_size(8))); v1d f(v1d a) { return a + a; }",
+  "line": 1,
+  "column": 57,
+  "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
+  "requires": "x64"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef double v1d __attribute__((vector_size(8))); struct s { v1d v; }; void g(struct s); void f(struct s *p) { g(*p); }",
+  "line": 1,
+  "column": 79,
+  "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
+  "requires": "x64"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int v2i __attribute__((vector_size(8))); typedef int v4i __attribute__((vector_size(16))); v4i f(v2i a) { return (v4i)a; }",
+  "line": 1,
+  "column": 122,
+  "message": "cannot cast 'int __attribute__((vector_size(8)))' to 'int __attribute__((vector_size(16)))'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int v2i __attribute__((vector_size(8))); int f(v2i a) { return (int)a; }",
+  "line": 1,
+  "column": 72,
+  "message": "cannot cast 'int __attribute__((vector_size(8)))' to 'int'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int v2i __attribute__((vector_size(8))); typedef short v4s __attribute__((vector_size(8))); v2i f(v2i a, v4s b) { return a + b; }",
+  "line": 1,
+  "column": 132,
+  "message": "invalid operands to binary + ('int __attribute__((vector_size(8)))' and 'short __attribute__((vector_size(8)))')"
  },
  {
   "about": "vector diagnostics",
@@ -641,7 +680,8 @@
   "source": "_Atomic long double x; void f(void) { x = 1; }",
   "line": 1,
   "column": 41,
-  "message": "an atomic operation on an object of type 'long double' is not supported: there are no 16-byte atomic operations"
+  "message": "an atomic operation on an object of type 'long double' is not supported: there are no 16-byte atomic operations",
+  "requires": "x87"
  },
  {
   "about": "atomic diagnostics",
@@ -718,7 +758,8 @@
   "source": "long double _Complex z; double f(void) { return __real__ z; }",
   "line": 1,
   "column": 58,
-  "message": "computing with values of type 'long double _Complex' is not supported yet"
+  "message": "computing with values of type 'long double _Complex' is not supported yet",
+  "requires": "x87"
  },
  {
   "about": "computed goto bytecode interpreter",
@@ -883,13 +924,6 @@
  },
  {
   "about": "attributes that change meaning are implemented or refused",
-  "source": "struct __attribute__((ms_struct)) s { int a : 3; };",
-  "line": 1,
-  "column": 32,
-  "message": "__attribute__((ms_struct)) is not supported: it changes how the code must be compiled"
- },
- {
-  "about": "attributes that change meaning are implemented or refused",
   "source": "__attribute__((naked)) void f(void) {}",
   "line": 1,
   "column": 21,
@@ -1019,14 +1053,16 @@
   "source": "int f(int x) { __asm__(\"frobnicate %0\" : \"+r\"(x)); return x; }",
   "line": 1,
   "column": 16,
-  "message": "inline assembly: unsupported instruction 'frobnicate'"
+  "message": "inline assembly: unsupported instruction 'frobnicate'",
+  "requires": "x64"
  },
  {
   "about": "inline assembly that needs no assembler",
   "source": "int f(void) { int x; __asm__(\"cpuid\" : \"=r\"(x) : \"a\"(0)); return x; }",
   "line": 1,
   "column": 45,
-  "message": "inline assembly is not supported yet (an output of 'cpuid' that is not in a named register)"
+  "message": "inline assembly is not supported yet (an output of 'cpuid' that is not in a named register)",
+  "requires": "x64"
  },
  {
   "about": "inline assembly that needs no assembler",

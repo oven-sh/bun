@@ -16,6 +16,11 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 
+#if OS(WINDOWS)
+#include <cstdarg>
+#include <windows.h>
+#endif
+
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::JSValue) == 19, "FFI::Type tag drift");
@@ -175,3 +180,44 @@ extern "C" JSC::EncodedJSValue Bun__CModule__createExports(Zig::GlobalObject* gl
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(exports));
 }
+
+#if OS(WINDOWS)
+// C99's snprintf and vsnprintf for C compiled against msvcrt.dll, which has them only as _snprintf and
+// _vsnprintf: those do not terminate a truncated string and return -1 for one.
+namespace {
+using VSNPrintF = int(__cdecl*)(char*, size_t, const char*, va_list);
+using VSCPrintF = int(__cdecl*)(const char*, va_list);
+template<typename Function> Function msvcrtFunction(const char* name)
+{
+    HMODULE msvcrt = LoadLibraryA("msvcrt.dll");
+    return msvcrt ? reinterpret_cast<Function>(GetProcAddress(msvcrt, name)) : nullptr;
+}
+}
+
+extern "C" int Bun__CModule__vsnprintf(char* buffer, size_t size, const char* format, va_list arguments)
+{
+    static VSNPrintF print = msvcrtFunction<VSNPrintF>("_vsnprintf");
+    static VSCPrintF count = msvcrtFunction<VSCPrintF>("_vscprintf");
+    if (!print || !count)
+        return -1;
+    va_list copy;
+    va_copy(copy, arguments);
+    int length = count(format, copy);
+    va_end(copy);
+    if (size) {
+        int written = print(buffer, size, format, arguments);
+        if (written < 0 || static_cast<size_t>(written) >= size)
+            buffer[size - 1] = 0;
+    }
+    return length;
+}
+
+extern "C" int Bun__CModule__snprintf(char* buffer, size_t size, const char* format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    int length = Bun__CModule__vsnprintf(buffer, size, format, arguments);
+    va_end(arguments);
+    return length;
+}
+#endif

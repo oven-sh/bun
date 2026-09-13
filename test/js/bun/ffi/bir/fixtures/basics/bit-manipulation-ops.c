@@ -16,16 +16,18 @@ int clz(unsigned v) { return __builtin_clz(v); }
 
 int printf(const char *, ...);
 int main(void) {
+  // `long` has 32 bits on Windows: what depends on its width is printed as if it had 64.
+  int narrower = 64 - (int)sizeof(long) * 8;
   printf("%d\n", (int)clz(1));
   printf("%d\n", (int)clz(1048576));
   printf("%d\n", (int)clz(-1));
-  printf("%d\n", (int)clzl(1LL));
+  printf("%d\n", (int)clzl(1LL) + narrower);
   printf("%d\n", (int)clzll(1099511627776LL));
   printf("%d\n", (int)ctz(80));
-  printf("%d\n", (int)ctzl(8589934592LL));
+  printf("%d\n", (int)ctzl(1UL << (sizeof(long) * 8 - 31)) + narrower);
   printf("%d\n", (int)ctzll((-9223372036854775807LL - 1)));
   printf("%d\n", (int)pop(252641535));
-  printf("%d\n", (int)popl(-1LL));
+  printf("%d\n", (int)popl(-1LL) + narrower);
   printf("%d\n", (int)popll(-9223372036854775807LL));
   printf("%d\n", (int)swap16(4660));
   printf("%d\n", (int)swap32(305419896));

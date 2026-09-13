@@ -31,7 +31,10 @@ const X86_HEADERS: &[(&str, &str)] = &[
     ("cpuid.h", include_str!("include/cpuid.h")),
 ];
 
-const ARM64_HEADERS: &[(&str, &str)] = &[("arm_neon.h", include_str!("include/arm_neon.h"))];
+const ARM64_HEADERS: &[(&str, &str)] = &[
+    ("arm_neon.h", include_str!("include/arm_neon.h")),
+    ("arm_acle.h", include_str!("include/arm_acle.h")),
+];
 
 const BUILTIN_DIR: &str = "<builtin>";
 
@@ -410,6 +413,24 @@ impl Preprocessor<'_> {
                     has_leading_space: false,
                 });
             }
+            return;
+        }
+        if let (true, [state]) = (is(first, b"ms_struct"), rest) {
+            // `reset` goes back to what the target does, and no target this is set for does.
+            let text: &[u8] = if is(state, b"on") {
+                b"ms_struct on"
+            } else if is(state, b"off") || is(state, b"reset") {
+                b"ms_struct off"
+            } else {
+                return;
+            };
+            self.pending_pragma = Some(PpToken {
+                kind: PpKind::Pragma,
+                text: text.to_vec(),
+                loc,
+                at_start_of_line: true,
+                has_leading_space: false,
+            });
             return;
         }
         let inner = match rest {

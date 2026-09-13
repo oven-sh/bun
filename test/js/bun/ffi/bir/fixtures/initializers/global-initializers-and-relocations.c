@@ -6,7 +6,7 @@ struct Item { const char *name; int id; int *slot; };
            static const char *names[] = { "zero", "one", "two" };
            static struct Item items[] = { { "alpha", 1, &counter }, { .id = 2, .name = "beta", .slot = &values[3] } };
            static char *tail = (char *)values + 12;
-           static long as_int = (long)&counter;
+           static __INTPTR_TYPE__ as_int = (__INTPTR_TYPE__)&counter;
            static char message[] = "hi there";
            static const char *mid = "abcdef" + 2;
            extern int later;
@@ -24,7 +24,7 @@ struct Item { const char *name; int id; int *slot; };
            static int zero_array[64];
            static int (*fp)(void);
            int read(void) { return *third + *also + names[2][0] + items[0].name[0] + items[1].name[1] + *items[0].slot + *items[1].slot; }
-           int read2(void) { return *(int *)tail + (as_int == (long)&counter) + message[3] + *mid + *plater + tentative; }
+           int read2(void) { return *(int *)tail + (as_int == (__INTPTR_TYPE__)&counter) + message[3] + *mid + *plater + tentative; }
            int read3(void) { return (int)(scale * 4 + negative * 4) + bytes[0] + bytes[1] + bytes[2] + sized + enums[3] + neg + (int)f + zero_array[63] + (fp == 0); }
            int bump(void) { static int n = 100; static int *p = &counter; return ++n + (*p)++; }
            int sizeof_names(void) { return sizeof names / sizeof names[0]; }

@@ -1,10 +1,44 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Bun's own C compiler (bun_cc + JavaScriptCore's B3) has only run on Linux x64 so far.
-export const supported = isLinux && !isArm64;
+// Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
+export const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
+
+/**
+ * What a fixture needs beyond `supported`, in a `<name>.requires` file (a `requires` file for a project) or a
+ * diagnostics case's `requires`: `x64` (x86-64 instructions, intrinsics or diagnostics), `arm64` (`<arm_neon.h>`),
+ * `x87` (80-bit `long double`: x86-64 outside Windows), `glibc` (its symbols or headers), `posix` (headers and
+ * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
+ * and choice of enumeration types, which Windows does not share) or `windows`.
+ */
+export function meets(requirement: string | undefined) {
+  switch (requirement?.trim()) {
+    case undefined:
+      return true;
+    case "x64":
+      return !isArm64;
+    case "arm64":
+      return isArm64;
+    case "x87":
+      return !isArm64 && !isWindows;
+    case "glibc":
+      return isLinux;
+    case "posix":
+    case "lp64":
+    case "sysv":
+      return !isWindows;
+    case "windows":
+      return isWindows;
+    default:
+      throw new Error(`unknown requirement ${JSON.stringify(requirement)}`);
+  }
+}
+
+function requirementIn(path: string) {
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
 
 export async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
@@ -26,6 +60,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
       const expectedPath = join(dir, `${name}.expected`);
       // A C file without an expectation is part of another fixture (a second translation unit, an include).
       if (!existsSync(expectedPath)) continue;
+      if (!meets(requirementIn(join(dir, `${name}.requires`)))) continue;
       const declare = name in failing ? test.failing : test.concurrent;
       declare(name in failing ? `${name} (${failing[name]})` : name, async () => {
         const entry = existsSync(join(dir, `${name}.ts`)) ? `${name}.ts` : `${name}.c`;
@@ -53,6 +88,7 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
   describe.skipIf(!supported)(`${area}: several files linked into one program`, () => {
     for (const name of names) {
       const dir = join(root, name);
+      if (!meets(requirementIn(join(dir, "requires")))) continue;
       const declare = name in failing ? test.failing : test;
       declare(name in failing ? `${name} (${failing[name]})` : name, async () => {
         const units = [...new Bun.Glob("*.c").scanSync(dir)].filter(file => file !== "main.c").sort();

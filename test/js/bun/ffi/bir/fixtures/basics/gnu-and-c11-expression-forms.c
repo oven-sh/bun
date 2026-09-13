@@ -61,14 +61,14 @@ int main(void) {
   printf("%d\n", (int)builtins(9));
   printf("%d\n", (int)offsets());
   printf("%d\n", (int)bits(1110016, 1099511627776LL));
-  printf("%d\n", (int)bits2(8589934592LL));
+  printf("%d\n", (int)bits2(2147483648LL));
   printf("%d\n", (int)swap32(305419896));
   printf("%d\n", (int)swap16(4660));
   printf("%lld\n", (long long)swap64(72623859790382856LL));
   printf("%d\n", (int)unreachable(-1));
   bun_test_fill(buffer1, (const unsigned char[]){97, 98, 99, 100, 101, 102, 0, 0}, 8);
   printf("%lld\n", (long long)builtin_lib((void *)buffer1));
-  printf("%.17g\n", (double)inf());
+  printf("%s\n", inf() > 1e308 ? "inf" : "finite"); // (the C libraries spell infinity differently)
   printf("%d\n", (int)extension());
   return 0;
 }

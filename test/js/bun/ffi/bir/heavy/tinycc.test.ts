@@ -33,7 +33,7 @@ const notExpected: Record<string, string> = {
   "70_floating_point_literals": "tcc's binary floating constants (0b.11p1)",
   "102_alignas": "implicit int, which GCC rejects too",
   "34_array_assignment": "array assignment, which GCC rejects too",
-  "95_bitfields_ms": "__attribute__((ms_struct)) layout",
+  "95_bitfields_ms": "expects what tcc prints for its own Windows target; GCC and Clang print other things here too (ours is Clang's)",
   "98_al_ax_extend": "a function written in file-scope assembly",
   "99_fastcall": "32-bit x86 calling conventions in file-scope assembly",
   "117_builtins": "the second half runs under tcc's bounds checker",
@@ -83,7 +83,8 @@ describe.skipIf(!enabled)("tinycc tests2", () => {
       // __FILE__ is the path the file was opened by; the expected output has the bare name.
       const printed = trimmed(result.stdout.replaceAll(tests2 + "/", ""));
       expect(printed, result.stderr).toBe(trimmed(readFileSync(join(tests2, `${name}.expect`), "utf8")));
-    });
+      // (124_atomic_counter's contended threads take six seconds on some machines, compiled by anything.)
+    }, name === "124_atomic_counter" ? 30_000 : undefined);
   }
 });
 
@@ -106,7 +107,8 @@ describe.skipIf(!enabled || !Bun.which("gcc"))("tinycc tcctest.c", () => {
     const includes = [tinycc, join(tinycc, "tests"), config];
     const gcc = Bun.spawnSync({
       // By its full path, as Bun names the file it runs: `__BASE_FILE__` prints it.
-      cmd: ["gcc", "-w", "-O0", ...includes.map(i => `-I${i}`), join(String(dir), "tcctest.c"), "-lm", "-o", "reference"],
+      // (-Wno-int-conversion: clang, which is `gcc` on macOS, makes an error of what tcctest.c passes to an old-style function.)
+      cmd: ["gcc", "-w", "-Wno-int-conversion", "-O0", ...includes.map(i => `-I${i}`), join(String(dir), "tcctest.c"), "-lm", "-o", "reference"],
       cwd: String(dir),
       stderr: "pipe",
     });

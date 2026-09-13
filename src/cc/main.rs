@@ -43,7 +43,7 @@ fn main() -> ExitCode {
     let mut system_dirs = Vec::new();
     let mut defines = Vec::new();
     let mut undefines = Vec::new();
-    let mut gnu_version = None;
+    let mut gnu_version_flag = None;
     let mut replace_aggregates = true;
 
     let mut args = std::env::args().skip(1);
@@ -85,7 +85,7 @@ fn main() -> ExitCode {
             }
         } else if let Some(version) = arg.strip_prefix("-fgnuc-version=") {
             match bun_cc::parse_gnu_version(version) {
-                Some(parsed) => gnu_version = parsed,
+                Some(parsed) => gnu_version_flag = Some(parsed),
                 None => return usage_error("-fgnuc-version needs major[.minor[.patch]], or 0"),
             }
         } else {
@@ -117,6 +117,7 @@ fn main() -> ExitCode {
             }
         }
     }
+    let gnu_version = gnu_version_flag.unwrap_or_else(|| CompileOptions::new(target).gnu_version);
     if dump_predefined {
         match gnu_version {
             Some(version) => print!("{}", bun_cc::predefined_macros_as_gnu(target, version)),

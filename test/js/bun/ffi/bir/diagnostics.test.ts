@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import cases from "./fixtures/diagnostics/cases.json";
-import { run, supported } from "./run-fixtures";
+import { meets, run, supported } from "./run-fixtures";
 
 // What the compiler refuses, and what it says: `file:line:column: error: message`, the first error only.
 async function firstError(source: string) {
@@ -10,7 +10,8 @@ async function firstError(source: string) {
 }
 
 describe.skipIf(!supported)("diagnostics", () => {
-  cases.forEach(({ about, source, line, column, message }, index) => {
+  cases.forEach(({ about, source, line, column, message, requires }: (typeof cases)[number] & { requires?: string }, index) => {
+    if (!meets(requires)) return;
     test.concurrent(`${index}: ${about}: ${message.slice(0, 60)}`, async () => {
       const { stdout, stderr, exitCode } = await firstError(source);
       expect(stderr).toContain(`test.c:${line}:${column}: error: ${message}`);

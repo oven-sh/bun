@@ -165,7 +165,7 @@ impl Sema {
                     field("overflow_arg_area", void_ptr.clone()),
                     field("reg_save_area", void_ptr),
                 ];
-                let _ = self.complete_struct(id, fields, false, None, None, none);
+                let _ = self.complete_struct(id, fields, false, None, None, false, none);
                 Type::Array(Rc::new(Type::Struct(id)), Some(1))
             }
             (Arch::Aarch64, _) => {
@@ -177,7 +177,7 @@ impl Sema {
                     field("__gr_offs", Type::Int),
                     field("__vr_offs", Type::Int),
                 ];
-                let _ = self.complete_struct(id, fields, false, None, None, none);
+                let _ = self.complete_struct(id, fields, false, None, None, false, none);
                 Type::Struct(id)
             }
         };
@@ -194,6 +194,8 @@ impl Sema {
             ("_Float64x", long_double),
             ("_Float128", Type::Wide(crate::types::WideKind::Float128)),
             ("__float128", Type::Wide(crate::types::WideKind::Float128)),
+            ("_Float16", Type::Wide(crate::types::WideKind::Float16)),
+            ("__fp16", Type::Wide(crate::types::WideKind::Float16)),
         ] {
             self.bind(Rc::from(name), Symbol::Typedef(ty));
         }
@@ -314,7 +316,10 @@ impl Sema {
     }
 
     /// Lays out the members of a struct/union and marks it complete. Bit-fields follow the
-    /// System V / Itanium rules GCC uses on the LP64 targets.
+    /// System V / Itanium rules GCC uses on the LP64 targets, or Microsoft's when
+    /// `ms_bitfields`: a bit-field lives in a whole object of its declared type, which it
+    /// shares only with neighbours whose types have that size.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn complete_struct(
         &mut self,
         id: StructId,
@@ -322,6 +327,7 @@ impl Sema {
         packed: bool,
         min_align: Option<u64>,
         pragma_pack: Option<u64>,
+        ms_bitfields: bool,
         loc: Loc,
     ) -> Res<()> {
         let is_union = self.tcx.struct_def(id).is_union;
@@ -330,6 +336,12 @@ impl Sema {
         let mut bit_pos: u64 = 0;
         let mut size_bits: u64 = 0;
         let mut align: u64 = 1;
+        // Microsoft layout: the bits of the storage unit the last bit-field is in (0 after
+        // anything else) and how many of them are free.
+        let (mut unit_bits, mut unit_free): (u64, u64) = (0, 0);
+        // Clang has two implementations of the Microsoft rules, which part ways on attributes
+        // and in unions: the one for Windows targets, and `ms_struct` on the others.
+        let windows = self.tcx.target.os == crate::types::Os::Windows;
         let nfields = fields.len();
         for (i, field) in fields.into_iter().enumerate() {
             let FieldDecl {
@@ -367,6 +379,7 @@ impl Sema {
             // bit-fields next to each other whatever their type; a zero-width bit-field is
             // affected by neither.
             let zero_width = bit_width == Some(0);
+            let requested = field_align.unwrap_or(0);
             let mut falign = natural_align;
             let mut bits_packed = false;
             // An `aligned` bit-field starts a unit of its own even where `#pragma pack`
@@ -381,7 +394,8 @@ impl Sema {
                 if let Some(limit) = pragma_pack {
                     bits_packed = true;
                     falign = falign.min(limit);
-                    if field_align.is_some_and(|a| limit < a) {
+                    // (Microsoft lets an alignment written on the member win.)
+                    if field_align.is_some_and(|a| limit < a) && !windows {
                         field_align = None;
                     }
                 }
@@ -397,10 +411,111 @@ impl Sema {
             if is_union {
                 bit_pos = 0;
             }
-            if let Some(width) = bit_width {
-                if self.tcx.target.os == crate::types::Os::Windows {
-                    return err(loc, "bit-fields are not supported for Windows targets yet");
+            if let (Some(width), true) = (bit_width, ms_bitfields) {
+                let width = u64::from(width);
+                let type_bits = fsize * 8;
+                if width > type_bits {
+                    return err(loc, "width of bit-field exceeds its type");
                 }
+                // The alignment of the storage unit.
+                let mut unit_align = if windows {
+                    let limit = if packed { Some(1) } else { pragma_pack };
+                    let mut a = natural_align.max(requested);
+                    if let Some(limit) = limit {
+                        a = a.min(limit);
+                    }
+                    if field_packed {
+                        a = 1;
+                    }
+                    a.max(requested)
+                } else {
+                    // `packed` means something here only together with `#pragma pack`.
+                    let mut a = fsize.max(requested);
+                    if let (Some(limit), true) = (pragma_pack, width != 0) {
+                        a = if packed || field_packed {
+                            fsize.min(limit)
+                        } else {
+                            a.min(limit)
+                        };
+                    }
+                    a
+                };
+                let fits = unit_bits == type_bits && width <= unit_free;
+                if is_union {
+                    // The whole unit at offset 0; its alignment is not the union's.
+                    let occupied = if width != 0 {
+                        type_bits
+                    } else if windows {
+                        if unit_bits != 0 { type_bits } else { 0 }
+                    } else {
+                        8
+                    };
+                    size_bits = size_bits.max(occupied);
+                    unit_bits = if width != 0 { type_bits } else { 0 };
+                    unit_free = 0;
+                    if let (true, Some(_)) = (width != 0, &name) {
+                        members.push(Member {
+                            name,
+                            ty,
+                            offset: 0,
+                            bitfield: Some(BitField {
+                                bit_offset: 0,
+                                width: width as u32,
+                                readable: 0,
+                            }),
+                        });
+                    }
+                    continue;
+                }
+                if width == 0 {
+                    // It ends the unit of the bit-field before it, and is nothing anywhere else.
+                    if unit_bits != 0 {
+                        // (Where `#pragma pack` has misaligned the unit, Microsoft aligns its
+                        // end, and so does Clang's `ms_struct` unless the zero-width field has
+                        // the unit's size: then it aligns the next free bit.)
+                        let from = if windows || unit_bits != type_bits {
+                            bit_pos
+                        } else {
+                            bit_pos - unit_free
+                        };
+                        bit_pos = bit_pos.max(from.next_multiple_of(unit_align * 8));
+                        size_bits = size_bits.max(bit_pos);
+                        align = align.max(unit_align);
+                    }
+                    (unit_bits, unit_free) = (0, 0);
+                    continue;
+                }
+                if !fits {
+                    let start = (bit_pos / 8).next_multiple_of(unit_align);
+                    if start.checked_add(fsize).is_none_or(|end| end >= (1 << 40)) {
+                        return err(loc, "struct is too large");
+                    }
+                    bit_pos = (start + fsize) * 8;
+                    size_bits = size_bits.max(bit_pos);
+                    (unit_bits, unit_free) = (type_bits, type_bits);
+                } else if windows {
+                    // A field that joins a unit does not add to the alignment there.
+                    unit_align = 1;
+                }
+                align = align.max(unit_align);
+                let at = bit_pos - unit_free;
+                unit_free -= width;
+                if name.is_some() {
+                    members.push(Member {
+                        name,
+                        ty,
+                        offset: at / 8,
+                        bitfield: Some(BitField {
+                            bit_offset: (at % 8) as u32,
+                            width: width as u32,
+                            readable: 0,
+                        }),
+                    });
+                }
+                continue;
+            }
+            (unit_bits, unit_free) = (0, 0);
+            if let Some(width) = bit_width {
                 let unit_bits = fsize * 8;
                 if u64::from(width) > unit_bits {
                     return err(loc, "width of bit-field exceeds its type");
@@ -896,8 +1011,8 @@ impl Sema {
     // ───────────────────────────── expression construction ─────────────────────────────
 
     pub(crate) fn mk(&self, kind: ExprKind, ty: Type, loc: Loc) -> Res<Expr> {
-        if ty.is_vector() && self.tcx.size_of(&ty) != Some(16) {
-            return err(loc, simd::ONLY_16_BYTE_VECTORS);
+        if ty.is_vector() && !matches!(self.tcx.size_of(&ty), Some(8 | 16)) {
+            return err(loc, simd::VECTOR_SIZES);
         }
         let mut e = Expr {
             kind,
@@ -2319,7 +2434,8 @@ impl Sema {
                 Some(param) => self.assign_convert(arg, param, aloc, "passing an argument")?,
                 None => {
                     let arg = self.rvalue(arg)?;
-                    if arg.ty.is_struct() || arg.ty.is_complex() {
+                    if arg.ty.is_struct() || arg.ty.is_complex() || self.tcx.is_half_vector(&arg.ty)
+                    {
                         converted.push(arg);
                         continue;
                     }
@@ -2786,7 +2902,7 @@ impl Sema {
         if ty.is_struct() && !self.tcx.is_complete(&ty) {
             return err(loc, "va_arg of an incomplete type");
         }
-        if !ty.is_scalar() && !ty.is_struct() && !ty.is_complex() {
+        if !ty.is_scalar() && !ty.is_struct() && !ty.is_complex() && !self.tcx.is_half_vector(&ty) {
             return err(
                 loc,
                 format!("invalid type '{}' for va_arg", self.tcx.display(&ty)),

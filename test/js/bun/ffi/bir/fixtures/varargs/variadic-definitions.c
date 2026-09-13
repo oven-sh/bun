@@ -41,7 +41,7 @@
            int forwarded(void) { return forward(9, 5, 1, 1, 1, 1, 1, 1, 1, 1); }
            int vsnprintf(char *, size_t, const char *, va_list);
            static int format(char *out, size_t n, const char *fmt, ...) { va_list ap; va_start(ap, fmt); int r = vsnprintf(out, n, fmt, ap); va_end(ap); return r; }
-           int formatted(char *out) { return format(out, 64, "%d-%s-%.1f-%ld-%c", 42, "str", 2.5, 1234567890123L, 'x'); }
+           int formatted(char *out) { return format(out, 64, "%d-%s-%.1f-%lld-%c", 42, "str", 2.5, 1234567890123LL, 'x'); }
            int through_pointer(void) { int (*f)(int, ...) = sum; int (*table[])(int, ...) = { twice, sum }; return f(2, 40, 2) + table[1](1, 100); }
            int exported_variadic(int n, ...) { va_list ap; va_start(ap, n); int v = va_arg(ap, int); va_end(ap); return v; }
            int calls_exported(void) { return exported_variadic(1, 77); }

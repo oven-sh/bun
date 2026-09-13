@@ -136,7 +136,7 @@ Tools that scan `node_modules` without following symlinks, or that compare file 
 
 ### Disk usage
 
-Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win: one copy on disk instead of one per checkout. But the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs.
+Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win: one copy on disk instead of one per checkout. But the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs. [`bun pm cache prune`](/pm/cli/pm#cache) removes old downloaded packages but leaves the global store alone.
 
 ### Concurrency
 

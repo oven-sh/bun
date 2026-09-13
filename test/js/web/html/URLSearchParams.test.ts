@@ -315,8 +315,10 @@ it(".has second argument", () => {
 describe("params that do not fit in a string when serialized", () => {
   const MiB = 1024 * 1024;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  // A string of one character. The default is U+00E9.
+  const repeated = (count: number, character = "\u00e9") => Buffer.alloc(count, character, "latin1").toString("latin1");
   // U+00E9 is one character, and "%C3%A9" is six: 1.2 M characters when serialized.
-  const tooLong = "\u00e9".repeat(200_000);
+  const tooLong = repeated(200_000);
 
   // 1 MiB stands in for 2 ** 31 - 1. The limit is process-wide, so each test puts it back.
   function withStringLimit(limit: number, fn: () => void) {
@@ -341,7 +343,8 @@ describe("params that do not fit in a string when serialized", () => {
     withStringLimit(MiB, () => {
       const params = new URLSearchParams();
       params.set("a", tooLong);
-      const manyPairs = new URLSearchParams(Array.from({ length: 30 }, (_, i) => ["k" + i, "\u4e2d".repeat(5_000)]));
+      const twoByteValue = Buffer.alloc(2 * 5_000, "\u4e2d", "utf16le").toString("utf16le");
+      const manyPairs = new URLSearchParams(Array.from({ length: 30 }, (_, i) => ["k" + i, twoByteValue]));
       expect({
         toString: outcome(() => params.toString()),
         string: outcome(() => String(params)),
@@ -365,18 +368,18 @@ describe("params that do not fit in a string when serialized", () => {
   it("toString() returns a string of exactly the limit", () => {
     withStringLimit(MiB, () => {
       const params = new URLSearchParams();
-      params.set("a", "x".repeat(MiB - 2));
+      params.set("a", repeated(MiB - 2, "x"));
       const atTheLimit = outcome(() => params.toString());
-      params.set("a", "x".repeat(MiB - 1));
+      params.set("a", repeated(MiB - 1, "x"));
       const oneMore = outcome(() => params.toString());
-      params.set("a", "\u00e9".repeat(100_000));
+      params.set("a", repeated(100_000));
       const encoded = params.toString();
       expect({
         atTheLimit,
         oneMore,
         encodedLength: encoded.length,
         encodedStart: encoded.slice(0, 14),
-        roundTrip: new URLSearchParams(encoded).get("a") === "\u00e9".repeat(100_000),
+        roundTrip: new URLSearchParams(encoded).get("a") === repeated(100_000),
       }).toEqual({
         atTheLimit: MiB,
         oneMore: outOfMemory,

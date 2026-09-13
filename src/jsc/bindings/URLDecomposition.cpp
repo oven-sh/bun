@@ -240,7 +240,13 @@ static bool fitsInStringWithNumberSignsEscaped(const String& value)
 {
     if (value.length() <= String::MaxLength / 3) [[likely]]
         return true;
-    size_t numberSigns = value.is8Bit() ? std::ranges::count(value.span8(), '#') : std::ranges::count(value.span16(), '#');
+    auto countNumberSigns = [](auto characters) {
+        size_t count = 0;
+        for (auto character : characters)
+            count += character == '#';
+        return count;
+    };
+    size_t numberSigns = value.is8Bit() ? countNumberSigns(value.span8()) : countNumberSigns(value.span16());
     return value.length() + 2 * numberSigns <= String::MaxLength;
 }
 

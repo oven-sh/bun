@@ -695,9 +695,11 @@ describe("object URL prefix check", () => {
 describe("a URL that does not fit in a string", () => {
   const MiB = 1024 * 1024;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  // A string of one character. The default is U+00E9.
+  const repeated = (count: number, character = "\u00e9") => Buffer.alloc(count, character, "latin1").toString("latin1");
   // A little over 1 Mi characters when percent-encoded, and 0.6 M.
-  const tooLong = "\u00e9".repeat(176_000);
-  const fits = "\u00e9".repeat(100_000);
+  const tooLong = repeated(176_000);
+  const fits = repeated(100_000);
 
   // 1 MiB stands in for 2 ** 31 - 1. The limit is process-wide, so each test puts it back.
   function withStringLimit(limit: number, fn: () => void) {
@@ -724,8 +726,11 @@ describe("a URL that does not fit in a string", () => {
     ["the fragment", () => new URL("http://a/#" + tooLong)],
     ["the username", () => new URL("http://" + tooLong + "@a/")],
     ["an opaque path", () => new URL("foo:" + tooLong)],
-    ["a two-byte string", () => new URL("http://a/?" + "\u4e2d".repeat(117_000))],
-    ["ASCII that is escaped", () => new URL("http://a/" + " ".repeat(350_000) + "x")],
+    [
+      "a two-byte string",
+      () => new URL("http://a/?" + Buffer.alloc(2 * 117_000, "\u4e2d", "utf16le").toString("utf16le")),
+    ],
+    ["ASCII that is escaped", () => new URL("http://a/" + repeated(350_000, " ") + "x")],
     ["a relative URL", () => new URL("?" + tooLong, "http://a/b")],
     ["the base URL", () => new URL("c", "http://a/?" + tooLong)],
   ])("the constructor throws a RangeError when %s makes the URL too long", (_, construct) => {
@@ -786,11 +791,11 @@ describe("a URL that does not fit in a string", () => {
       // The parser refuses input that is too long before it reads it, so input that is not a URL finds the longest
       // input fast: a TypeError is input that it read.
       let length = 0;
-      for (let step = MiB; step >= 1; step >>= 1) {
-        const error = outcome(() => void new URL("1".repeat(length + step)));
+      for (let step = MiB / 2; step >= 1; step >>= 1) {
+        const error = outcome(() => void new URL(repeated(length + step, "1")));
         if (typeof error === "object" && error.name === "TypeError") length += step;
       }
-      const url = new URL("http://a/" + "x".repeat(length - "http://a/".length));
+      const url = new URL("http://a/" + repeated(length - "http://a/".length, "x"));
       expect({
         length: url.href.length,
         oneMore: outcome(() => new URL(url.href + "x").href),
@@ -846,10 +851,10 @@ describe("a URL that does not fit in a string", () => {
 
       // Values that fit one by one. The URL takes them at its next read, until one more may be too long. From then on
       // each append serializes, and the one that does not fit throws.
-      const value = "\u00e9".repeat(10_000);
+      const value = repeated(10_000);
       let appended = 0;
       const error = outcome(() => {
-        for (;;) {
+        while (appended < 100) {
           params.append("k", value);
           appended++;
         }
@@ -875,7 +880,7 @@ describe("a URL that does not fit in a string", () => {
       expect(url.href).toBe("http://a/?a=2&x=1#f");
 
       // A query that the URL keeps as it is can be 3 times as long once the params serialize it.
-      const parentheses = new URL("http://a/?" + "(".repeat(400_000));
+      const parentheses = new URL("http://a/?" + repeated(400_000, "("));
       expect({
         append: outcome(() => parentheses.searchParams.append("a", "b")),
         size: parentheses.searchParams.size,
@@ -899,6 +904,7 @@ describe("a URL that does not fit in a string", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode, signalCode: proc.signalCode };
     }
+    // The ASCII strings come from repeat(): it needs half the memory of a Buffer, and it is fast in a release build.
     const prelude = `
       const outcome = fn => { try { return fn()?.length; } catch (e) { return e.name + ": " + e.message; } };
       const latin1 = n => Buffer.alloc(n, 0xe9).toString("latin1");

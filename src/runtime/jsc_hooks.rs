@@ -4250,7 +4250,7 @@ pub(crate) fn loader_for_path(
     loaders: &bun_ast::LoaderHashTable,
 ) -> Option<Loader> {
     if path.is_data_url() {
-        return Some(Loader::Dataurl);
+        return Some(bun_bundler::options::data_url_loader(path.text));
     }
     let name = path.name();
     let ext = name.ext;
@@ -4337,11 +4337,15 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let (normalized_file_path_from_specifier, specifier, query) =
         // SAFETY: per fn contract.
         normalize_specifier_for_loader(unsafe { &(*jsc_vm).origin }, specifier_str);
-    let mut path = Fs::Path::init(normalized_file_path_from_specifier);
+    let mut path = if normalized_file_path_from_specifier.starts_with(b"data:") {
+        Fs::Path::init_with_namespace(normalized_file_path_from_specifier, b"dataurl")
+    } else {
+        Fs::Path::init(normalized_file_path_from_specifier)
+    };
 
     // A `data:` URL has no file name. What follows its last "." is part of the module's text.
-    let mut loader: Option<Loader> = if path.text.starts_with(b"data:") {
-        None
+    let mut loader: Option<Loader> = if path.is_data_url() {
+        Some(bun_bundler::options::data_url_loader(path.text))
     } else {
         // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders })

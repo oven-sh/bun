@@ -679,7 +679,11 @@ impl TranspilerJob {
         let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 
-        let path = bun_paths::fs::Path::init(&this.path_text);
+        let path = if this.path_text.starts_with(b"data:") {
+            bun_paths::fs::Path::init_with_namespace(&this.path_text, b"dataurl")
+        } else {
+            bun_paths::fs::Path::init(&this.path_text)
+        };
         let specifier = path.text;
         let loader = this.loader;
         let this_tag = this.resolved_source.tag;

@@ -433,14 +433,12 @@ void JSStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void JSBigIntStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void initJSStatFSClassStructure(JSC::LazyClassStructure::Initializer& init)

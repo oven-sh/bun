@@ -19,7 +19,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const LIBARCHIVE_COMMIT = "ded82291ab41d5e355831b96b0e1ff49e24d8939";
+const LIBARCHIVE_COMMIT = "27cbc7827172698143e440801fc0ba39ccb4f1f5";
 
 // The unconditional list from libarchive/CMakeLists.txt, minus the read
 // formats/filters bun never registers (it only registers tar/gnutar/gzip,
@@ -262,11 +262,11 @@ const DARWIN = def1([
 
 // Windows: clang-cl + UCRT. archive_windows.h supplies most POSIX shims;
 // this declares what the UCRT actually has. No ARCHIVE_CRYPTO_*_WIN — we
-// don't need digests for tar/gzip and it would pull in bcrypt.lib.
+// don't need digests for tar/gzip. (archive_random.c/archive_util.c call
+// BCryptGenRandom regardless; bun's link line already carries bcrypt.lib.)
 // prettier-ignore
 const WINDOWS = def1([
   "HAVE_IO_H", "HAVE_DIRECT_H", "HAVE_PROCESS_H", "HAVE_SYS_UTIME_H", "HAVE_WINDOWS_H",
-  "HAVE_WINCRYPT_H",
   "HAVE__CTIME64_S", "HAVE__FSEEKI64", "HAVE__GET_TIMEZONE", "HAVE__GMTIME64_S",
   "HAVE__LOCALTIME64_S", "HAVE__MKGMTIME64",
   "HAVE_STRNCPY_S", "HAVE_WCSCPY_S", "HAVE_WCSNCPY_S",
@@ -307,13 +307,13 @@ ${featureTest}
 #define SIZEOF_WCHAR_T ${wcharSize}
 #define ICONV_CONST
 
-#define LIBARCHIVE_VERSION_NUMBER "3008007"
-#define LIBARCHIVE_VERSION_STRING "3.8.7"
-#define BSDTAR_VERSION_STRING "3.8.7"
-#define BSDCPIO_VERSION_STRING "3.8.7"
-#define BSDCAT_VERSION_STRING "3.8.7"
-#define BSDUNZIP_VERSION_STRING "3.8.7"
-#define VERSION "3.8.7"
+#define LIBARCHIVE_VERSION_NUMBER "3008009"
+#define LIBARCHIVE_VERSION_STRING "3.8.9"
+#define BSDTAR_VERSION_STRING "3.8.9"
+#define BSDCPIO_VERSION_STRING "3.8.9"
+#define BSDCAT_VERSION_STRING "3.8.9"
+#define BSDUNZIP_VERSION_STRING "3.8.9"
+#define VERSION "3.8.9"
 
 ${ALWAYS}
 

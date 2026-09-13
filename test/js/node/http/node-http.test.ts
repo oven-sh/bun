@@ -4242,6 +4242,46 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
+it("https wraps a raw socket injected through the connection event", async () => {
+  const server = createHttpsServer(tlsCert, (req, res) => {
+    expect((req.socket as any).encrypted).toBe(true);
+    res.writeHead(200, { Connection: "close" });
+    res.end("injected-ok");
+  });
+  const rawClosed = Promise.withResolvers<void>();
+  const front = createNetServer(socket => {
+    socket.once("close", () => rawClosed.resolve());
+    server.emit("connection", socket);
+  });
+
+  try {
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const response = await new Promise<{ statusCode: number | undefined; body: string }>((resolve, reject) => {
+      const request = https.get(
+        {
+          host: "127.0.0.1",
+          port: (front.address() as AddressInfo).port,
+          rejectUnauthorized: false,
+          agent: false,
+        },
+        response => {
+          const chunks: Buffer[] = [];
+          response.on("data", chunk => chunks.push(chunk));
+          response.on("end", () =>
+            resolve({ statusCode: response.statusCode, body: Buffer.concat(chunks).toString("utf8") }),
+          );
+        },
+      );
+      request.on("error", reject);
+    });
+
+    expect(response).toEqual({ statusCode: 200, body: "injected-ok" });
+    await rawClosed.promise;
+  } finally {
+    front.close();
+  }
+});
+
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
 // belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
 // (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the

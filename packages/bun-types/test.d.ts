@@ -1129,7 +1129,8 @@ declare module "bun:test" {
     /**
      * Asserts that an `object` contains at least one of the provided keys.
      *
-     * The value must be an object.
+     * A primitive is converted to an object first, so a string has its indices and `length`.
+     * `null` and `undefined` have no keys.
      *
      * @example
      * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['a']);
@@ -1224,6 +1225,8 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
+     *
+     * A primitive is converted to an object first, so a string has its indices and `length`.
      *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);

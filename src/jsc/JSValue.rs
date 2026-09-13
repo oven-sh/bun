@@ -1368,9 +1368,10 @@ impl JSValue {
         })?;
         Ok(if v.is_empty() { None } else { Some(v) })
     }
-    /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
-    /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
-    /// can throw, so this is routed through `from_js_host_call_generic`.
+    /// `Object.prototype.hasOwnProperty.call(self, key)`. ToObject boxes a
+    /// primitive `self` and throws for undefined and null. `key.toPropertyKey()`
+    /// and Proxy traps can throw too, so this is routed through
+    /// `from_js_host_call_generic`.
     #[track_caller]
     pub fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {

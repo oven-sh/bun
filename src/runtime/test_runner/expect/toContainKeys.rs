@@ -7,8 +7,8 @@ impl Expect {
         self.contain_matcher(global, frame, "toContainKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 let count = expected.get_length(g)?;
-                // jest-extended checks truthiness before hasOwnProperty; non-object passes only on empty expected.
-                if !value.is_object() { return Ok(ContainOutcome::pass(count == 0)); }
+                // jest-extended checks truthiness before hasOwnProperty; a falsy value passes only on empty expected.
+                if !value.to_boolean() { return Ok(ContainOutcome::pass(count == 0)); }
                 let mut i: u32 = 0;
                 while u64::from(i) < count {
                     if !value.has_own_property_value(g, expected.get_index(g, i)?)? {

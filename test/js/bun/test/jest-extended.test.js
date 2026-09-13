@@ -540,9 +540,33 @@ describe("jest-extended", () => {
   // test("toBeObject()")
   // test("toBeEmptyObject()")
   // test("toContainKey()")
-  // test("toContainKeys()")
+
+  test("toContainKeys() boxes a primitive, like hasOwnProperty", () => {
+    // A string owns its indices and "length".
+    expect("abc").toContainKeys(["0", "length"]);
+    expect("abc").toContainKeys([0, 1, 2]);
+    expect("abc").not.toContainKeys(["3"]);
+    expect("abc").not.toContainKeys(["0", "toString"]);
+    expect(42).not.toContainKeys(["toFixed"]);
+    expect(Symbol.iterator).not.toContainKeys(["description"]);
+    expect(() => expect("abc").not.toContainKeys(["0", "length"])).toThrow("toContainKeys");
+    expect(() => expect("abc").toContainKeys(["3"])).toThrow("toContainKeys");
+  });
+
   // test("toContainAllKeys()")
-  // test("toContainAnyKeys()")
+
+  test("toContainAnyKeys() boxes a primitive, like hasOwnProperty", () => {
+    // A string owns its indices and "length".
+    expect("abc").toContainAnyKeys(["z", "length"]);
+    expect("abc").toContainAnyKeys([2]);
+    expect("").toContainAnyKeys(["length"]);
+    expect("abc").not.toContainAnyKeys(["3", "toString"]);
+    expect(42).not.toContainAnyKeys(["toFixed"]);
+    expect(Symbol.iterator).not.toContainAnyKeys(["description"]);
+    expect(() => expect("abc").not.toContainAnyKeys(["length"])).toThrow("toContainAnyKeys");
+    expect(() => expect("abc").toContainAnyKeys(["3"])).toThrow("toContainAnyKeys");
+  });
+
   // test("toContainValue()")
   // test("toContainValues()")
   // test("toContainAllValues()")

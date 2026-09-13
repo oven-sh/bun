@@ -9,19 +9,29 @@ impl Expect {
             |g, value, expected| {
                 if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }
                 let values = value.values(g)?;
-                let count = values.get_length(g)?;
-                if count != expected.get_length(g)? { return Ok(ContainOutcome::pass(false)); }
-                let mut itr = expected.array_iterator(g)?;
-                let mut pass = false;
-                'outer: while let Some(item) = itr.next()? {
-                    let mut i: u32 = 0;
-                    while u64::from(i) < count {
-                        if values.get_index(g, i)?.jest_deep_equals(item, g)? { pass = true; continue 'outer; }
-                        i += 1;
-                    }
-                    return Ok(ContainOutcome::pass(false));
-                }
+                if values.get_length(g)? != expected.get_length(g)? { return Ok(ContainOutcome::pass(false)); }
+                // jest-extended only walks values -> expected; the reverse walk keeps { a: 1, b: 1 } from matching [1, 2].
+                let pass = each_has_match(g, values, expected, |object_value, item| object_value.jest_deep_equals(item, g))?
+                    && each_has_match(g, expected, values, |item, object_value| object_value.jest_deep_equals(item, g))?;
                 Ok(ContainOutcome::pass(pass))
             })
     }
+}
+
+/// Whether `matches(item, candidate)` holds for each element of the array `items` with some element of the array `candidates`.
+fn each_has_match(
+    g: &JSGlobalObject,
+    items: JSValue,
+    candidates: JSValue,
+    matches: impl Fn(JSValue, JSValue) -> JsResult<bool>,
+) -> JsResult<bool> {
+    let mut items = items.array_iterator(g)?;
+    'items: while let Some(item) = items.next()? {
+        let mut candidates = candidates.array_iterator(g)?;
+        while let Some(candidate) = candidates.next()? {
+            if matches(item, candidate)? { continue 'items; }
+        }
+        return Ok(false);
+    }
+    Ok(true)
 }

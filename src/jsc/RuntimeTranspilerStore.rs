@@ -90,6 +90,10 @@ fn dump_source_string_failiable(
     {
         return Ok(());
     }
+    // A `data:` URL is not a file path, and it can be longer than a path buffer.
+    if specifier.starts_with(b"data:") {
+        return Ok(());
+    }
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 

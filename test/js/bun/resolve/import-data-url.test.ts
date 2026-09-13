@@ -81,6 +81,12 @@ test.each(["text/javascript", "application/javascript"])("TypeScript syntax in %
   await expect(import(`data:${mime},${encodeURIComponent(code)}`)).rejects.toThrow("Unexpected enum");
 });
 
+// https://github.com/oven-sh/bun/issues/29159
+test("TypeScript syntax in a base64 application/javascript payload is a syntax error", async () => {
+  const code = btoa('export const a = "a";\nexport enum A { A }\n');
+  await expect(import(`data:application/javascript;base64,${code}`)).rejects.toThrow("Unexpected enum");
+});
+
 test("errors from nested data: URL modules propagate", async () => {
   const inner = `data:text/javascript,${encodeURIComponent('throw new Error("boom.1")')}`;
   const outer = `data:text/javascript,${encodeURIComponent(`import ${JSON.stringify(inner)}`)}`;
@@ -108,6 +114,11 @@ test("static import derives the loader from the MIME type", async () => {
     exitCode: 0,
     signalCode: null,
   });
+});
+
+test("require() loads a CommonJS payload that contains a dot", () => {
+  const url = `data:text/javascript,${encodeURIComponent("module.exports = { b: 2.5 };")}`;
+  expect(require(url)).toEqual({ b: 2.5 });
 });
 
 test("Bun.build inlines application/javascript data: URL modules", async () => {

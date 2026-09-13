@@ -66,6 +66,7 @@ pub(crate) fn generate_chunk_json(
 
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
+    let ignored_suffixes = parse_graph.input_files.items_ignored_suffix();
 
     // Start chunk entry: "path/to/output.js": {
     write_json_string(&mut json, &chunk.final_rel_path)?;
@@ -109,7 +110,11 @@ pub(crate) fn generate_chunk_json(
         first_chunk_input = false;
 
         json.extend_from_slice(b"\n        ");
-        write_json_string(&mut json, file_path)?;
+        write_input_path(
+            &mut json,
+            file_path,
+            ignored_suffixes[file_source_index as usize],
+        )?;
         write!(
             json,
             ": {{\n          \"bytesInOutput\": {}\n        }}",
@@ -173,7 +178,11 @@ pub(crate) fn generate_chunk_json(
             let entry_source = &sources[entry_source_index as usize];
             if !entry_source.path.text.is_empty() && !entry_source.path.pretty.is_empty() {
                 json.extend_from_slice(b",\n      \"entryPoint\": ");
-                write_json_string(&mut json, entry_source.path.pretty)?;
+                write_input_path(
+                    &mut json,
+                    entry_source.path.pretty,
+                    ignored_suffixes[entry_source_index as usize],
+                )?;
             }
         }
     }
@@ -214,6 +223,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let mut first_input = true;
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
+    let ignored_suffixes = parse_graph.input_files.items_ignored_suffix();
     let loaders = parse_graph.input_files.items_loader();
     let import_records_list = parse_graph.ast.items_import_records();
 
@@ -281,11 +291,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         j.push_static(b"\n    ");
         {
             let mut buf: Vec<u8> = Vec::new();
-            write!(
-                buf,
-                "{}",
-                bfmt::format_json_string_utf8(path, Default::default())
-            )?;
+            write_input_path(&mut buf, path, ignored_suffixes[source_index as usize])?;
             j.push_owned(buf.into_boxed_slice());
         }
         {
@@ -313,7 +319,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 // Bundled imports use the target source's pretty path (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
                 // `source_index` without rewriting the path. Externals/chunk refs fall through.
-                let import_path: &[u8] = 'path: {
+                let (import_path, import_suffix): (&[u8], &[u8]) = 'path: {
                     if record.source_index.is_valid()
                         && record.source_index.get() != Index::RUNTIME.get()
                     {
@@ -321,19 +327,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                         if idx < sources.len() {
                             let pretty = sources[idx].path.pretty;
                             if !pretty.is_empty() {
-                                break 'path pretty;
+                                break 'path (pretty, ignored_suffixes[idx]);
                             }
                         }
                     }
-                    record.path.text
+                    (record.path.text, b"")
                 };
                 {
                     let mut buf: Vec<u8> = Vec::new();
-                    write!(
-                        buf,
-                        "{}",
-                        bfmt::format_json_string_utf8(import_path, Default::default())
-                    )?;
+                    write_input_path(&mut buf, import_path, import_suffix)?;
                     j.push_owned(buf.into_boxed_slice());
                 }
                 j.push_static(b",\n          \"kind\": \"");
@@ -488,6 +490,18 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
         "{}",
         bfmt::format_json_string_utf8(str, Default::default())
     )
+}
+
+/// `pretty` plus the `?query` of the import that made the input, like esbuild.
+fn write_input_path(
+    writer: &mut impl Write,
+    pretty: &[u8],
+    ignored_suffix: &[u8],
+) -> std::io::Result<()> {
+    if ignored_suffix.is_empty() {
+        return write_json_string(writer, pretty);
+    }
+    write_json_string(writer, &[pretty, ignored_suffix].concat())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

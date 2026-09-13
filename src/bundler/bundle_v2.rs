@@ -2351,15 +2351,18 @@ pub mod bv2_impl {
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
-            // Check the FileMap first for in-memory files
-            if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
-                    self.arena(),
-                    &import_record.source_file,
-                    &import_record.specifier,
-                ) {
-                    let file_map_result = _file_map_result;
+            let mut had_busted_dir_cache = false;
+            let mut ignored_suffix = IgnoredSuffix::default();
+            let resolve_result: _resolver::Result = loop {
+                let specifier = ignored_suffix.strip_from(&import_record.specifier);
+
+                // Check the FileMap first for in-memory files
+                if let Some(file_map_result) = self.file_map.and_then(|file_map| {
+                    file_map.resolve(self.arena(), &import_record.source_file, specifier)
+                }) {
                     let mut path_primary = file_map_result.path_pair.primary;
+                    let module_key = ignored_suffix
+                        .append_to(self.arena(), file_map_result.path_pair.primary.text);
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2367,7 +2370,7 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
+                            .get_or_put(module_key)
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2381,7 +2384,7 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
+                            if let Some(out_loader) = record.loader.or(ignored_suffix.loader()) {
                                 break 'brk out_loader;
                             }
                             // SAFETY: see `transpiler` note above.
@@ -2400,6 +2403,7 @@ pub mod bv2_impl {
                             .enqueue_parse_task(
                                 &file_map_result,
                                 &mut tmp_source,
+                                ignored_suffix.in_key(module_key),
                                 loader,
                                 import_record.original_target,
                             )
@@ -2423,18 +2427,26 @@ pub mod bv2_impl {
                     }
                     return;
                 }
-            }
 
-            let mut had_busted_dir_cache = false;
-            let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
-                    &import_record.specifier,
+                    specifier,
                     import_record.kind,
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
+                        // Not for the dev server: its graph has one module for each file path.
+                        if err == _resolver::Error::ModuleNotFound
+                            && ignored_suffix.is_empty()
+                            && self.dev_server.is_none()
+                        {
+                            if let Some(suffix) = IgnoredSuffix::of(&import_record.specifier) {
+                                ignored_suffix = suffix;
+                                continue;
+                            }
+                        }
+
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
@@ -2608,9 +2620,10 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            let module_key = ignored_suffix.append_to(self.arena(), path.text);
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get(module_key) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 path = self
@@ -2627,7 +2640,7 @@ pub mod bv2_impl {
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
                         .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
+                    if let Some(out_loader) = record.loader.or(ignored_suffix.loader()) {
                         break 'brk out_loader;
                     }
                     // SAFETY: see `transpiler` note above.
@@ -2645,20 +2658,23 @@ pub mod bv2_impl {
                     .enqueue_parse_task(
                         &resolve_result,
                         &mut tmp_source,
+                        ignored_suffix.in_key(module_key),
                         loader,
                         import_record.original_target,
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put(module_key, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text, true)
                     {
+                        // `scan_for_secondary_paths` looks this up in `PathToSourceIndexMap`.
+                        let secondary_key = ignored_suffix.append_to(self.arena(), secondary.text);
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
+                            bun_alloc::AstAlloc::vec_from_slice(secondary_key);
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -2670,7 +2686,7 @@ pub mod bv2_impl {
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    let key_text: Box<[u8]> = module_key.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -3721,6 +3737,7 @@ pub mod bv2_impl {
             &mut self,
             resolve_result: &_resolver::Result,
             source: &mut bun_ast::Source,
+            ignored_suffix: &'static [u8],
             loader: Loader,
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
@@ -3729,6 +3746,7 @@ pub mod bv2_impl {
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
+                ignored_suffix,
                 loader,
                 side_effects: loader.side_effects(),
                 ..Default::default()
@@ -3744,6 +3762,7 @@ pub mod bv2_impl {
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
+            task.ignored_suffix = ignored_suffix;
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
@@ -6162,6 +6181,56 @@ pub mod bv2_impl {
         }
     }
 
+    /// The `?query` cut from an import specifier that resolves only without it.
+    #[derive(Clone, Copy, Default)]
+    struct IgnoredSuffix<'s>(&'s [u8]);
+
+    impl<'s> IgnoredSuffix<'s> {
+        /// The same cut as the runtime makes (`normalize_specifier_for_resolution`).
+        fn of(specifier: &'s [u8]) -> Option<Self> {
+            let start = strings::index_of_char_usize(specifier, b'?')?;
+            (start > 0).then(|| Self(&specifier[start..]))
+        }
+
+        fn is_empty(self) -> bool {
+            self.0.is_empty()
+        }
+
+        /// `specifier` is the specifier that `self` is the end of.
+        fn strip_from(self, specifier: &[u8]) -> &[u8] {
+            &specifier[..specifier.len() - self.0.len()]
+        }
+
+        /// The runtime loads a `?raw` import as text (`get_loader_and_virtual_source`).
+        fn loader(self) -> Option<Loader> {
+            (self.0 == b"?raw").then_some(Loader::Text)
+        }
+
+        /// For the path of the resolved file: the key of the module in `PathToSourceIndexMap`.
+        fn append_to(self, arena: &ThreadLocalArena, path_text: &'static [u8]) -> &'static [u8] {
+            if self.0.is_empty() {
+                return path_text;
+            }
+            let key = arena.alloc_slice_fill_default::<u8>(path_text.len() + self.0.len());
+            key[..path_text.len()].copy_from_slice(path_text);
+            key[path_text.len()..].copy_from_slice(self.0);
+            // SAFETY: the arena outlives the bundle pass.
+            unsafe { interned_slice(key) }
+        }
+
+        /// The suffix as the end of `module_key`, for `InputFile::ignored_suffix`.
+        fn in_key(self, module_key: &'static [u8]) -> &'static [u8] {
+            &module_key[module_key.len() - self.0.len()..]
+        }
+
+        /// An import record finds its module in `PathToSourceIndexMap` through `path.text`.
+        fn set_module_key(self, record: &mut ImportRecord, module_key: &'static [u8]) {
+            if !self.0.is_empty() {
+                record.path.text = module_key;
+            }
+        }
+    }
+
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
         pub(crate) source: &'a bun_ast::Source,
@@ -6413,34 +6482,39 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
-                        let mut file_map_result = _file_map_result;
+                let mut had_busted_dir_cache = false;
+                let mut ignored_suffix = IgnoredSuffix::default();
+                let resolve_result: _resolver::Result = 'inner: loop {
+                    let specifier = ignored_suffix.strip_from(import_record.path.text);
+
+                    // Check the FileMap first for in-memory files
+                    if let Some(mut file_map_result) = self.file_map.and_then(|file_map| {
+                        file_map.resolve(self.arena(), source.path.text, specifier)
+                    }) {
                         let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
+                        let module_key = ignored_suffix.append_to(self.arena(), path_primary.text);
+                        let import_record_loader = import_record
+                            .loader
+                            .or(ignored_suffix.loader())
+                            .unwrap_or_else(|| {
+                                Fs::Path::init(path_primary.text)
+                                    .loader(&transpiler.options.loaders)
+                                    .unwrap_or(Loader::File)
+                            });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
+                        if let Some(id) = self.path_to_source_index_map(target).get(module_key) {
                             import_record.source_index = Index::init(id);
-                            continue;
+                            continue 'outer;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        let resolve_entry = resolve_queue.get_or_put(module_key).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
                                 path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
+                            ignored_suffix.set_module_key(import_record, module_key);
+                            continue 'outer;
                         }
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
@@ -6454,7 +6528,7 @@ pub mod bv2_impl {
                             )
                         };
                         import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
+                        ignored_suffix.set_module_key(import_record, module_key);
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
@@ -6471,17 +6545,15 @@ pub mod bv2_impl {
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
+                        resolve_task.ignored_suffix = ignored_suffix.in_key(module_key);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
-                        continue;
+                        continue 'outer;
                     }
-                }
 
-                let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
-                        import_record.path.text,
+                        specifier,
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
@@ -6526,6 +6598,17 @@ pub mod bv2_impl {
                                         )
                                         .expect("oom");
                                     }
+                                }
+                            }
+
+                            // Not for the dev server: its graph has one module for each file path.
+                            if err == _resolver::Error::ModuleNotFound
+                                && ignored_suffix.is_empty()
+                                && self.dev_server.is_none()
+                            {
+                                if let Some(suffix) = IgnoredSuffix::of(import_record.path.text) {
+                                    ignored_suffix = suffix;
+                                    continue 'inner;
                                 }
                             }
 
@@ -6680,6 +6763,8 @@ pub mod bv2_impl {
                         )
                     {
                         import_record.path = path_as_static(&resolve_result.path_pair.primary);
+                        import_record.path.text =
+                            ignored_suffix.append_to(self.arena(), import_record.path.text);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -6769,10 +6854,13 @@ pub mod bv2_impl {
                 }
 
                 let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
-                    });
+                    let resolved_loader = import_record
+                        .loader
+                        .or(ignored_suffix.loader())
+                        .unwrap_or_else(|| {
+                            path.loader(&transpiler.options.loaders)
+                                .unwrap_or(Loader::File)
+                        });
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
@@ -6795,7 +6883,13 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                // The linker finds this entry point through the path of the file.
+                if is_html_entrypoint {
+                    ignored_suffix = IgnoredSuffix::default();
+                }
+
+                let module_key = ignored_suffix.append_to(self.arena(), path.text);
+                if let Some(id) = self.path_to_source_index_map(target).get(module_key) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -6809,11 +6903,12 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put(module_key).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
                         path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                    ignored_suffix.set_module_key(import_record, module_key);
                     continue;
                 }
 
@@ -6822,6 +6917,7 @@ pub mod bv2_impl {
                     .expect("oom");
 
                 import_record.path = path_as_static(path);
+                ignored_suffix.set_module_key(import_record, module_key);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.
@@ -6840,18 +6936,22 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
+                resolve_task.ignored_suffix = ignored_suffix.in_key(module_key);
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(secondary.text, path.text, true)
                     {
-                        resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
+                        // `scan_for_secondary_paths` looks `text` up in `PathToSourceIndexMap`.
+                        let mut secondary = *secondary;
+                        secondary.text = ignored_suffix.append_to(self.arena(), secondary.text);
+                        resolve_task.secondary_path_for_commonjs_interop = Some(secondary);
                     }
                 }
 
                 if is_html_entrypoint {
-                    self.generate_server_html_module(path, target, import_record, path.text)
+                    self.generate_server_html_module(path, target, import_record, module_key)
                         .expect("unreachable");
                 }
             }
@@ -6915,6 +7015,7 @@ pub mod bv2_impl {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(new_task.path.text),
+                        ignored_suffix: new_task.ignored_suffix,
                         side_effects: new_task.side_effects,
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop

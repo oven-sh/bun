@@ -339,6 +339,37 @@ describe("bundler files option", () => {
     expect(output).toContain('"b"');
   });
 
+  test("in-memory file imported with a query suffix", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      target: "bun",
+      files: {
+        "/entry.js": `
+          import source from "./lib.js?raw";
+          import { value } from "./lib.js?v=1";
+          console.log(JSON.stringify([source, value]));
+        `,
+        "/lib.js": `export const value = 42;`,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    using dir = tempDir("bundler-files-query-suffix", {});
+    await Bun.write(`${dir}/out.js`, result.outputs[0]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `${dir}/out.js`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["export const value = 42;",42]\n');
+    expect(exitCode).toBe(0);
+  });
+
   test("in-memory file overrides real file on disk", async () => {
     // Create a temp directory with a real file
     using dir = tempDir("bundler-files-override", {

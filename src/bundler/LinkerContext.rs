@@ -1881,6 +1881,9 @@ impl<'a> LinkerContext<'a> {
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
             // SAFETY: parse_graph backref; exclusive access via &mut *.
             let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            // SAFETY: same backref; a different column from `sources`.
+            let ignored_suffixes =
+                unsafe { (*self.parse_graph).input_files.items_ignored_suffix() };
             for part_range in js.parts_in_chunk_in_order.iter() {
                 let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
 
@@ -1913,6 +1916,11 @@ impl<'a> LinkerContext<'a> {
 
                 // Then include the file path
                 hasher.write(file_path);
+                // `write` hashes the length too: no write for no suffix keeps the hashes as they were.
+                let ignored_suffix = ignored_suffixes[part_range.source_index.get() as usize];
+                if !ignored_suffix.is_empty() {
+                    hasher.write(ignored_suffix);
+                }
 
                 // Then include the part range
                 hasher.write_ints(&[part_range.part_index_begin, part_range.part_index_end]);

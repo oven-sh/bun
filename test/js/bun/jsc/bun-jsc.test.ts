@@ -23,6 +23,7 @@ import {
   setTimeZone,
   totalCompileTime,
 } from "bun:jsc";
+import { jscInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
 
@@ -622,7 +623,6 @@ describe("conservative roots", () => {
   // cell also mark the cell on its left, as if it were a butterfly pointer past the end of that cell
   // (oven-sh/WebKit#636). The storage on the left then kept its keys alive, and the table that replaced it, and so on.
   it("a stack reference to a Set's storage does not keep the storage allocated before it alive", () => {
-    const { jscInternals } = require("bun:internal-for-testing");
     class Key {}
     // A Set allocates its storage on the first add. Consecutive allocations are neighbors in a MarkedBlock. Every
     // second Set is dropped at once, so that no array ever references a dropped Set.

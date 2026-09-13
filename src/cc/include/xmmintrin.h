@@ -130,6 +130,11 @@ __BUN_CC_INTRIN void _mm_sfence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST);
 #define _MM_HINT_T1 2
 #define _MM_HINT_T2 1
 #define _MM_HINT_NTA 0
+#ifdef _MSC_VER
+/* (A function there: <winnt.h> declares it again.) */
+__BUN_CC_INTRIN void _mm_prefetch(const char *__p, int __hint) { (void)__p, (void)__hint; }
+#else
 #define _mm_prefetch(p, hint) ((void)(p), (void)(hint))
+#endif
 
 #endif

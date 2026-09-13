@@ -182,42 +182,114 @@ extern "C" JSC::EncodedJSValue Bun__CModule__createExports(Zig::GlobalObject* gl
 }
 
 #if OS(WINDOWS)
-// C99's snprintf and vsnprintf for C compiled against msvcrt.dll, which has them only as _snprintf and
-// _vsnprintf: those do not terminate a truncated string and return -1 for one.
+// The Universal C Runtime's stdio functions are inline functions in <stdio.h> over a few exported workers, so
+// ucrtbase.dll has no `printf` to find. These are what legacy_stdio_definitions.lib gives a program that declares
+// them itself instead of including the header. They use ucrtbase.dll's streams, as the compiled C does: Bun's own C
+// runtime is a separate, statically linked copy.
 namespace {
-using VSNPrintF = int(__cdecl*)(char*, size_t, const char*, va_list);
-using VSCPrintF = int(__cdecl*)(const char*, va_list);
-template<typename Function> Function msvcrtFunction(const char* name)
+
+HMODULE ucrt()
 {
-    HMODULE msvcrt = LoadLibraryA("msvcrt.dll");
-    return msvcrt ? reinterpret_cast<Function>(GetProcAddress(msvcrt, name)) : nullptr;
-}
+    static HMODULE module = LoadLibraryA("ucrtbase.dll");
+    return module;
 }
 
-extern "C" int Bun__CModule__vsnprintf(char* buffer, size_t size, const char* format, va_list arguments)
+template<typename Function> Function ucrtFunction(const char* name)
 {
-    static VSNPrintF print = msvcrtFunction<VSNPrintF>("_vsnprintf");
-    static VSCPrintF count = msvcrtFunction<VSCPrintF>("_vscprintf");
-    if (!print || !count)
+    return ucrt() ? reinterpret_cast<Function>(GetProcAddress(ucrt(), name)) : nullptr;
+}
+
+using Stream = void*;
+using VFPrintF = int(__cdecl*)(unsigned long long, Stream, const char*, void*, va_list);
+using VSPrintF = int(__cdecl*)(unsigned long long, char*, size_t, const char*, void*, va_list);
+using VFScanF = int(__cdecl*)(unsigned long long, Stream, const char*, void*, va_list);
+using VSScanF = int(__cdecl*)(unsigned long long, const char*, size_t, const char*, void*, va_list);
+using IOB = Stream(__cdecl*)(unsigned);
+
+// _CRT_INTERNAL_PRINTF_STANDARD_SNPRINTF_BEHAVIOR
+constexpr unsigned long long standardSnprintf = 1ull << 1;
+
+Stream standardStream(unsigned index)
+{
+    static IOB iob = ucrtFunction<IOB>("__acrt_iob_func");
+    return iob ? iob(index) : nullptr;
+}
+
+int printToStream(Stream stream, const char* format, va_list arguments)
+{
+    static VFPrintF print = ucrtFunction<VFPrintF>("__stdio_common_vfprintf");
+    return print && stream ? print(0, stream, format, nullptr, arguments) : -1;
+}
+
+int printToBuffer(unsigned long long options, char* buffer, size_t size, const char* format, va_list arguments)
+{
+    static VSPrintF print = ucrtFunction<VSPrintF>("__stdio_common_vsprintf");
+    if (!print)
         return -1;
-    va_list copy;
-    va_copy(copy, arguments);
-    int length = count(format, copy);
-    va_end(copy);
-    if (size) {
-        int written = print(buffer, size, format, arguments);
-        if (written < 0 || static_cast<size_t>(written) >= size)
-            buffer[size - 1] = 0;
-    }
-    return length;
+    int result = print(options, buffer, size, format, nullptr, arguments);
+    return result < 0 ? -1 : result;
 }
 
-extern "C" int Bun__CModule__snprintf(char* buffer, size_t size, const char* format, ...)
+int scanStream(Stream stream, const char* format, va_list arguments)
 {
-    va_list arguments;
-    va_start(arguments, format);
-    int length = Bun__CModule__vsnprintf(buffer, size, format, arguments);
-    va_end(arguments);
-    return length;
+    static VFScanF scan = ucrtFunction<VFScanF>("__stdio_common_vfscanf");
+    return scan && stream ? scan(0, stream, format, nullptr, arguments) : -1;
+}
+
+int scanBuffer(const char* buffer, const char* format, va_list arguments)
+{
+    static VSScanF scan = ucrtFunction<VSScanF>("__stdio_common_vsscanf");
+    return scan ? scan(0, buffer, static_cast<size_t>(-1), format, nullptr, arguments) : -1;
+}
+
+}
+
+#define BUN_C_VARIADIC(call)          \
+    va_list arguments;                \
+    va_start(arguments, format);      \
+    int result = call;                \
+    va_end(arguments);                \
+    return result;
+
+extern "C" int Bun__CModule__vprintf(const char* format, va_list arguments) { return printToStream(standardStream(1), format, arguments); }
+extern "C" int Bun__CModule__vfprintf(Stream stream, const char* format, va_list arguments) { return printToStream(stream, format, arguments); }
+extern "C" int Bun__CModule__vsprintf(char* buffer, const char* format, va_list arguments) { return printToBuffer(0, buffer, static_cast<size_t>(-1), format, arguments); }
+extern "C" int Bun__CModule__vsnprintf(char* buffer, size_t size, const char* format, va_list arguments) { return printToBuffer(standardSnprintf, buffer, size, format, arguments); }
+extern "C" int Bun__CModule__vscanf(const char* format, va_list arguments) { return scanStream(standardStream(0), format, arguments); }
+extern "C" int Bun__CModule__vfscanf(Stream stream, const char* format, va_list arguments) { return scanStream(stream, format, arguments); }
+extern "C" int Bun__CModule__vsscanf(const char* buffer, const char* format, va_list arguments) { return scanBuffer(buffer, format, arguments); }
+extern "C" int Bun__CModule__printf(const char* format, ...) { BUN_C_VARIADIC(printToStream(standardStream(1), format, arguments)) }
+extern "C" int Bun__CModule__fprintf(Stream stream, const char* format, ...) { BUN_C_VARIADIC(printToStream(stream, format, arguments)) }
+extern "C" int Bun__CModule__sprintf(char* buffer, const char* format, ...) { BUN_C_VARIADIC(printToBuffer(0, buffer, static_cast<size_t>(-1), format, arguments)) }
+extern "C" int Bun__CModule__snprintf(char* buffer, size_t size, const char* format, ...) { BUN_C_VARIADIC(printToBuffer(standardSnprintf, buffer, size, format, arguments)) }
+extern "C" int Bun__CModule__scanf(const char* format, ...) { BUN_C_VARIADIC(scanStream(standardStream(0), format, arguments)) }
+extern "C" int Bun__CModule__fscanf(Stream stream, const char* format, ...) { BUN_C_VARIADIC(scanStream(stream, format, arguments)) }
+extern "C" int Bun__CModule__sscanf(const char* buffer, const char* format, ...) { BUN_C_VARIADIC(scanBuffer(buffer, format, arguments)) }
+
+#undef BUN_C_VARIADIC
+
+// `atexit` is in the program's own startup code with Microsoft's toolchain; what it calls is exported.
+extern "C" int Bun__CModule__atexit(void (*function)())
+{
+    using Register = int(__cdecl*)(void (*)());
+    static Register registerFunction = ucrtFunction<Register>("_crt_atexit");
+    return registerFunction ? registerFunction(function) : -1;
+}
+
+extern "C" int Bun__CModule__at_quick_exit(void (*function)())
+{
+    using Register = int(__cdecl*)(void (*)());
+    static Register registerFunction = ucrtFunction<Register>("_crt_at_quick_exit");
+    return registerFunction ? registerFunction(function) : -1;
+}
+
+// Runs what the C code registered with atexit and flushes and closes its streams: what returning from `main`
+// does in a program of its own. Bun's exit does that for Bun's C runtime only.
+extern "C" void Bun__CModule__runExitHandlers()
+{
+    using Exit = void(__cdecl*)();
+    static Exit cexit = ucrtFunction<Exit>("_cexit");
+    if (cexit)
+        cexit();
 }
 #endif

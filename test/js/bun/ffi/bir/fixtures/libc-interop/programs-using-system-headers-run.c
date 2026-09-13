@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES // (what Microsoft's <math.h> wants before it defines M_PI)
 #include <stdio.h>
            #include <stdlib.h>
            #include <string.h>
@@ -9,6 +10,9 @@
            #include <assert.h>
            #include <limits.h>
            #include <stdbool.h>
+           #ifndef PATH_MAX // Microsoft's <stdlib.h> calls it _MAX_PATH
+           #define PATH_MAX _MAX_PATH
+           #endif
            int strings(void) {
                char buf[32];
                strcpy(buf, "hello");

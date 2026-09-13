@@ -2522,37 +2522,58 @@ pub mod parse_worker {
         // A C file is compiled now; what the bundle carries (and a standalone executable embeds)
         // is its BIR, which the runtime turns into machine code without a C parser or headers.
         let compiled_c: Option<Vec<u8>> = if loader == Loader::C && !is_empty {
-            // BIR is specific to a platform (type sizes, struct layout, which headers were read), and
-            // only the host's headers are here to read.
-            if !matches!(topts.compile_target_builtins, options::CompileTargetBuiltins::Host) {
-                // logger OOM-only
-                let _ = log.add_error(
-                    None,
-                    Loc::EMPTY,
-                    b"Importing a \".c\" file is not supported when compiling for another platform yet",
-                );
-                return Err(AnyError::ParserError);
-            }
-            let c_target = bun_cc::Target::host();
+            // BIR is specific to a platform (type sizes, struct layout, how arguments are passed, which
+            // headers were read): the C is compiled for the platform the bundle is for.
+            let c_target = topts.c_target.unwrap_or_else(bun_cc::Target::host);
+            let for_this_machine = c_target == bun_cc::Target::host();
             let mut c_options = bun_cc::CompileOptions::new(c_target);
-            c_options.file_provider = &bun_cc::HostFiles;
-            c_options.system_include_dirs = bun_cc::default_system_include_dirs(c_target);
-            // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
-            if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
-                && let Ok(sdk) = core::str::from_utf8(sdk)
-                && !sdk.is_empty()
-            {
-                c_options.system_include_dirs.push(format!("{sdk}/usr/include"));
+            // Windows' headers name each other in any case; its file systems do not care.
+            c_options.file_provider = if c_target.os == bun_cc::Os::Windows && !cfg!(windows) {
+                &bun_cc::HostFilesAnyCase
+            } else {
+                &bun_cc::HostFiles
+            };
+            // This machine's C library is for this machine. For another platform there are the compiler's
+            // own headers, and C_INCLUDE_PATH names that platform's.
+            if for_this_machine {
+                c_options.system_include_dirs = bun_cc::default_system_include_dirs(c_target);
+                // Microsoft's headers: where a developer prompt says, else the newest Visual Studio's and Windows SDK's.
+                #[cfg(windows)]
+                {
+                    let text = |value: Option<&'static [u8]>| value.and_then(|value| core::str::from_utf8(value).ok());
+                    let roots: Vec<&str> = [
+                        text(bun_core::env_var::PROGRAMFILES::platform_get()),
+                        text(bun_core::env_var::PROGRAMFILES_X86::platform_get()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    c_options.system_include_dirs.extend(bun_cc::msvc_system_include_dirs(
+                        text(bun_core::env_var::INCLUDE::platform_get()),
+                        &roots,
+                    ));
+                }
+                // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
+                if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
+                    && let Ok(sdk) = core::str::from_utf8(sdk)
+                    && !sdk.is_empty()
+                {
+                    c_options.system_include_dirs.push(format!("{sdk}/usr/include"));
+                }
             }
-            // What gcc, clang and bun:ffi's cc() also search, after the system's own directories.
+            // What gcc and clang search as `-isystem` directories: ahead of the system's own, so that a
+            // project's copy of a header (its zlib.h, its uv.h) is the one found.
             if let Some(list) = bun_core::env_var::C_INCLUDE_PATH.get() {
+                let mut searched_first: Vec<String> = Vec::new();
                 for directory in bun_core::strings::split(list, if cfg!(windows) { b";" } else { b":" }) {
                     if let Ok(directory) = core::str::from_utf8(directory)
                         && !directory.is_empty()
                     {
-                        c_options.system_include_dirs.push(directory.to_owned());
+                        searched_first.push(directory.to_owned());
                     }
                 }
+                searched_first.append(&mut c_options.system_include_dirs);
+                c_options.system_include_dirs = searched_first;
             }
             // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
             let Ok(filename) = core::str::from_utf8(file_path.text) else {

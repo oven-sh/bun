@@ -107,6 +107,10 @@ impl CompileTarget {
             && self.libc == other.libc
     }
 
+    pub fn arch(&self) -> Architecture {
+        self.arch
+    }
+
     pub fn is_default(&self) -> bool {
         self.eql(&CompileTarget::default())
     }

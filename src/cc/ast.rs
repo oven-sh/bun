@@ -741,6 +741,9 @@ pub(crate) struct Function {
     /// Some declaration gives the function external linkage for real: anything but a
     /// plain `inline` definition, which C11 6.7.4p7 makes an "inline definition" only.
     pub(crate) external: bool,
+    /// A Microsoft `inline` definition: every unit that uses the function has one, the
+    /// program keeps one for the units that only declare it, and none is exported.
+    pub(crate) linkonce: bool,
     /// `__asm__("name")`: the symbol to link against instead of `name`.
     pub(crate) link_name: Option<Rc<str>>,
     /// `__attribute__((constructor))` / `((destructor))` and its priority (65535 when none
@@ -794,6 +797,9 @@ pub(crate) struct Global {
     /// `__attribute__((weak))` or `#pragma weak`: if only declared, its address is null when
     /// nothing defines it.
     pub(crate) weak: bool,
+    /// Any number of units may define it, with the same contents, and the program has one:
+    /// `__declspec(selectany)`, and the `static` objects of Microsoft's inline functions.
+    pub(crate) linkonce: bool,
 }
 
 /// A whole translation unit after parsing and semantic analysis.

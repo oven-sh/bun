@@ -14,6 +14,9 @@ use crate::sema::{FieldDecl, FnCtx, Sema, Storage, Symbol, Tag};
 use crate::token::{Kw, Loc, PackOp, Punct, Res, Tok, Token, TokenSource, classify, err};
 use crate::types::{FuncType, Quals, Target, Type, WideKind};
 
+#[path = "parser_ms.rs"]
+pub(crate) mod microsoft;
+
 /// Maximum nesting of recursive grammar productions (parentheses, blocks, declarators,
 /// brace initializers).
 const MAX_NESTING: u32 = 500;
@@ -48,6 +51,13 @@ struct Attrs {
     mode: Option<(Rc<str>, Loc)>,
     /// `weak`.
     weak: bool,
+    /// `__declspec(thread)`.
+    thread: bool,
+    /// `__declspec(selectany)`.
+    selectany: bool,
+    /// `__declspec(align(N))`, Microsoft's spelling (it is in `aligned` too): written ahead of
+    /// a structure's definition it is the structure's, not the declared object's.
+    declspec_align: Option<u64>,
 }
 
 struct DeclSpec {
@@ -112,7 +122,7 @@ struct SwitchCtx {
 
 pub(crate) struct Parser<S: TokenSource> {
     src: S,
-    char_is_signed: bool,
+    dialect: crate::token::Dialect,
     cur: Token,
     next: Option<Token>,
     sema: Sema,
@@ -151,6 +161,10 @@ pub(crate) struct Parser<S: TokenSource> {
     declarator_cleanup: Option<(Rc<str>, Loc)>,
     /// See `CompileOptions::replace_aggregates`.
     replace_aggregates: bool,
+    /// Microsoft C: a Windows target with no GNU C version claimed.
+    msvc: bool,
+    /// See `Attrs::declspec_align`.
+    declspec_struct_align: Option<u64>,
 }
 
 fn binary_precedence(p: Punct) -> Option<(u32, Option<BinOp>)> {
@@ -195,10 +209,9 @@ fn compound_assign_op(p: Punct) -> Option<BinOp> {
 
 impl<S: TokenSource> Parser<S> {
     pub(crate) fn new(src: S, target: Target) -> Res<Parser<S>> {
-        let char_is_signed = target.char_is_signed();
         let mut parser = Parser {
             src,
-            char_is_signed,
+            dialect: target.dialect(),
             cur: Token {
                 tok: Tok::Eof,
                 loc: Loc::default(),
@@ -224,6 +237,8 @@ impl<S: TokenSource> Parser<S> {
             pending_cleanups: Vec::new(),
             declarator_cleanup: None,
             replace_aggregates: true,
+            msvc: false,
+            declspec_struct_align: None,
         };
         parser.cur = parser.fetch()?;
         Ok(parser)
@@ -234,8 +249,15 @@ impl<S: TokenSource> Parser<S> {
     /// The next token. `#pragma pack` takes effect here, where it sits in the token stream.
     fn fetch(&mut self) -> Res<Token> {
         loop {
-            let token = classify(&self.src.next_token()?, self.char_is_signed)?;
+            let token = classify(&self.src.next_token()?, self.dialect)?;
             let op = match &token.tok {
+                Tok::Kw(Kw::MsIgnored) => continue,
+                Tok::Kw(Kw::VectorCall) => {
+                    return err(
+                        token.loc,
+                        "__vectorcall is not supported: it changes how arguments are passed",
+                    );
+                }
                 Tok::PragmaPack(op) => *op,
                 Tok::PragmaWeak(name) => {
                     self.sema.pragma_weak.push((Rc::clone(name), token.loc));
@@ -378,6 +400,12 @@ impl<S: TokenSource> Parser<S> {
         self
     }
 
+    /// Microsoft C rather than GNU C, where they differ in meaning and not just in spelling.
+    pub(crate) fn microsoft_c(mut self, yes: bool) -> Self {
+        self.msvc = yes;
+        self
+    }
+
     pub(crate) fn parse_program(mut self) -> Res<Program> {
         let replace_aggregates = self.replace_aggregates;
         while self.cur.tok != Tok::Eof {
@@ -418,6 +446,7 @@ impl<S: TokenSource> Parser<S> {
                 }),
                 is_static: true,
                 external: false,
+                linkonce: false,
                 link_name: None,
                 inlining: 0,
                 constructor,
@@ -713,6 +742,12 @@ impl<S: TokenSource> Parser<S> {
         if gnu_inline && inline_only && is_definition {
             f.inlining |= INLINE_ONLY_DEFINITION;
         }
+        // Microsoft's `inline` is C++'s: every unit that uses the function has a definition of
+        // its own, whatever other declarations say, and none is the program's one.
+        if self.msvc && spec.is_inline && is_definition {
+            f.inlining |= INLINE_ONLY_DEFINITION;
+            f.linkonce = !is_static;
+        }
         if !inline_only {
             f.external = true;
         }
@@ -825,6 +860,7 @@ impl<S: TokenSource> Parser<S> {
                 .declare_global(name, decl.ty, is_definition, decl.loc)?;
             self.sema.set_global_attrs(id, align, link_name);
             self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
+            self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
             self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
             self.sema
                 .set_thread_local(id, spec.thread_local, first, decl.loc)?;
@@ -835,6 +871,7 @@ impl<S: TokenSource> Parser<S> {
             .declare_global(Rc::clone(&name), decl.ty.clone(), true, decl.loc)?;
         self.sema.set_global_attrs(id, align, link_name);
         self.sema.globals[id as usize].weak |= decl.attrs.weak || spec.attrs.weak;
+        self.sema.globals[id as usize].linkonce |= decl.attrs.selectany || spec.attrs.selectany;
         self.sema.globals[id as usize].is_static |= spec.storage == Storage::Static;
         self.sema
             .set_thread_local(id, spec.thread_local, first, decl.loc)?;
@@ -920,6 +957,7 @@ impl<S: TokenSource> Parser<S> {
             labels: BTreeMap::new(),
             nlabels: 0,
             nstatics: 0,
+            shared_statics: self.msvc && spec.is_inline && spec.storage != Storage::Static,
             variadic: fty.variadic,
             address_labels: Vec::new(),
             label_vla_paths: BTreeMap::new(),
@@ -1016,8 +1054,10 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::Extern
                     | Kw::Float
                     | Kw::Inline
+                    | Kw::ForceInline
                     | Kw::Int
                     | Kw::Int128
+                    | Kw::Int64
                     | Kw::Long
                     | Kw::Noreturn
                     | Kw::Register
@@ -1056,6 +1096,7 @@ impl<S: TokenSource> Parser<S> {
                     | Kw::Float
                     | Kw::Int
                     | Kw::Int128
+                    | Kw::Int64
                     | Kw::Long
                     | Kw::Restrict
                     | Kw::Short
@@ -1153,9 +1194,17 @@ impl<S: TokenSource> Parser<S> {
                         );
                     }
                     attrs.aligned = Some(attrs.aligned.unwrap_or(1).max(value as u64));
+                    if name == "align" {
+                        attrs.declspec_align =
+                            Some(attrs.declspec_align.unwrap_or(1).max(value as u64));
+                    }
                 }
                 "packed" => attrs.packed = true,
                 "weak" => attrs.weak = true,
+                // Microsoft's: thread storage, and a definition that any number of units may
+                // have, of which the program keeps one.
+                "thread" => attrs.thread = true,
+                "selectany" => attrs.selectany = true,
                 "gnu_inline" => attrs.gnu_inline = true,
                 "always_inline" => attrs.inlining |= crate::bir::INLINE_ALWAYS,
                 "noinline" => attrs.inlining |= crate::bir::INLINE_NEVER,
@@ -1355,6 +1404,10 @@ impl<S: TokenSource> Parser<S> {
                     Kw::Static => set_storage(&mut storage, is_typedef, Storage::Static)?,
                     Kw::Extern => set_storage(&mut storage, is_typedef, Storage::Extern)?,
                     Kw::Inline => is_inline = true,
+                    Kw::ForceInline => {
+                        is_inline = true;
+                        attrs.inlining |= crate::bir::INLINE_ALWAYS;
+                    }
                     Kw::ThreadLocal => thread_local = true,
                     Kw::Auto | Kw::Register | Kw::Noreturn | Kw::Extension => {}
                     Kw::Volatile => quals = quals.with(Quals::VOLATILE),
@@ -1366,6 +1419,7 @@ impl<S: TokenSource> Parser<S> {
                     Kw::Short => short += 1,
                     Kw::Int => int += 1,
                     Kw::Long => long += 1,
+                    Kw::Int64 => long += 2,
                     Kw::Float => float += 1,
                     Kw::Double => double += 1,
                     Kw::Signed => signed += 1,
@@ -1376,7 +1430,17 @@ impl<S: TokenSource> Parser<S> {
                         if seen_type {
                             return err(tloc, "two or more data types in declaration specifiers");
                         }
+                        let ahead = attrs.declspec_align.take();
+                        self.declspec_struct_align = ahead;
                         other = Some(self.parse_struct_specifier()?);
+                        // A definition took it; anything else leaves it to the declaration.
+                        match self.declspec_struct_align.take() {
+                            Some(unused) => attrs.declspec_align = Some(unused),
+                            None if ahead.is_some() && attrs.aligned == ahead => {
+                                attrs.aligned = None;
+                            }
+                            None => {}
+                        }
                         any = true;
                         continue;
                     }
@@ -1631,7 +1695,7 @@ impl<S: TokenSource> Parser<S> {
             storage,
             is_typedef,
             is_inline,
-            thread_local,
+            thread_local: thread_local || attrs.thread,
             attrs,
             loc,
         })
@@ -1732,8 +1796,13 @@ impl<S: TokenSource> Parser<S> {
             }
             if self.at(Punct::Semi) {
                 // An unnamed member of untagged struct/union type is an anonymous member.
+                // (Microsoft lets the type be one that has a name, `POINT;`: its members are the
+                // enclosing structure's all the same.)
                 let is_anonymous = match &spec.ty {
-                    Type::Struct(sid) => self.sema.tcx.struct_def(*sid).tag.is_none(),
+                    Type::Struct(sid) => {
+                        let def = self.sema.tcx.struct_def(*sid);
+                        def.tag.is_none() || (self.dialect.microsoft && def.complete)
+                    }
                     _ => false,
                 };
                 if is_anonymous {
@@ -1804,6 +1873,9 @@ impl<S: TokenSource> Parser<S> {
         }
         self.bump()?;
         self.parse_attributes(&mut struct_attrs)?;
+        if let Some(ahead) = self.declspec_struct_align.take() {
+            struct_attrs.aligned = Some(struct_attrs.aligned.unwrap_or(1).max(ahead));
+        }
         // Microsoft's bit-field layout is what Windows targets have; the attributes and the
         // pragma choose it, or the other one, anywhere.
         let ms_bitfields = struct_attrs
@@ -2901,6 +2973,7 @@ impl<S: TokenSource> Parser<S> {
                 self.sema.pop_scope();
                 Ok(Stmt::Block(stmts))
             }
+            Tok::Kw(Kw::Try | Kw::Leave) => self.parse_structured_exception_handling(),
             Tok::Kw(Kw::If) => {
                 self.bump()?;
                 let cond = self.parse_paren_condition()?;
@@ -4206,6 +4279,11 @@ impl<S: TokenSource> Parser<S> {
                     };
                     return self.sema.alloca(args.swap_remove(0), align, loc);
                 }
+                if self.dialect.microsoft && self.at(Punct::LParen) {
+                    if let Some(e) = self.parse_microsoft_call(&name, loc)? {
+                        return Ok(e);
+                    }
+                }
                 if self.sema.lookup(&name).is_none() {
                     if let Some(e) = self.parse_builtin(&name, loc)? {
                         return Ok(e);
@@ -4607,6 +4685,23 @@ impl<S: TokenSource> Parser<S> {
                 let size_type = self.sema.size_type();
                 let unknown = if kind & 2 != 0 { 0 } else { -1 };
                 Ok(Some(self.sema.int_lit(unknown, size_type, loc)?))
+            }
+            // For the compiler's own headers: what this compiler cannot do, said when it is
+            // compiled into code that is used.
+            "bun_unsupported" => {
+                self.expect(Punct::LParen)?;
+                let mut message = Vec::new();
+                while let Tok::Str(part) = &self.cur.tok {
+                    message.extend_from_slice(part);
+                    self.bump()?;
+                }
+                self.expect(Punct::RParen)?;
+                let message = format!("{} is not supported", crate::token::display_bytes(&message));
+                Ok(Some(self.sema.unsupported_value(
+                    Type::Int,
+                    message,
+                    loc,
+                )?))
             }
             "assume" => {
                 // The operand is not evaluated.
@@ -5220,6 +5315,29 @@ const INLINE_ONLY_DEFINITION: u8 = 0x80;
 
 /// Attributes that can be dropped without changing what the program does.
 const IGNORED_ATTRIBUTES: &[&str] = &[
+    // `__declspec`s: where a symbol comes from is the loader's business, and the rest describe
+    // C++ classes, code placement, or what the optimizer and the analyzers may assume.
+    "dllimport",
+    "dllexport",
+    "noalias",
+    "allocator",
+    "nothrow",
+    "novtable",
+    "uuid",
+    "property",
+    "safebuffers",
+    "spectre",
+    "code_seg",
+    "allocate",
+    "empty_bases",
+    "guard",
+    "intrin_type",
+    "appdomain",
+    "process",
+    "jitintrinsic",
+    "no_sanitize_address",
+    "no_init_all",
+    "hybrid_patchable",
     "access",
     "alloc_align",
     "alloc_size",

@@ -23,7 +23,7 @@ typedef struct { double x, y; } Vec2;
          double unions(void) { union Number n = as_double(2.5); return read_double(n) + read_double(as_double(0.25)); }
          struct Empty {};
          static struct Empty nothing(struct Empty e, int x) { (void)x; return e; }
-         int empties(void) { struct Empty e; struct Empty r = nothing(e, 3); (void)r; return (int)sizeof(struct Empty) + 1; }
+         int empties(void) { struct Empty e; struct Empty r = nothing(e, 3); (void)r; return (int)(sizeof(struct Empty) == sizeof r) + (int)(sizeof(struct Empty) <= 4); } /* (no bytes in GNU C, four in Microsoft C) */
 
 int printf(const char *, ...);
 int main(void) {

@@ -54,8 +54,9 @@ impl ExternResolver {
 
 /// What a C toolchain on Windows links statically into every program, so no library exports it: the
 /// 128-bit integer routines of the compiler's runtime (taking and returning `__int128` the way this
-/// compiler passes any 16-byte object there: by address, the result through a hidden first pointer)
-/// and the C99 `snprintf` family, which msvcrt.dll only has under older names and semantics.
+/// compiler passes any 16-byte object there: by address, the result through a hidden first pointer),
+/// and the `printf` and `scanf` families and `atexit`, which with the Universal C Runtime are inline
+/// functions of its headers or part of a program's startup code (JSCFFIBridge.cpp has those).
 #[cfg(windows)]
 mod windows_runtime {
     use core::ffi::c_void;
@@ -105,9 +106,22 @@ mod windows_runtime {
     from_float!(fixsfti, f32, i128);
     from_float!(fixunssfti, f32, u128);
 
+    macro_rules! in_the_bridge {
+        ($($name:ident)*) => {
+            unsafe extern "C" {
+                $(fn $name();)*
+            }
+        };
+    }
+    in_the_bridge!(
+        Bun__CModule__printf Bun__CModule__fprintf Bun__CModule__sprintf Bun__CModule__snprintf
+        Bun__CModule__vprintf Bun__CModule__vfprintf Bun__CModule__vsprintf Bun__CModule__vsnprintf
+        Bun__CModule__scanf Bun__CModule__fscanf Bun__CModule__sscanf
+        Bun__CModule__vscanf Bun__CModule__vfscanf Bun__CModule__vsscanf
+        Bun__CModule__at_quick_exit
+    );
     unsafe extern "C" {
-        fn Bun__CModule__snprintf();
-        fn Bun__CModule__vsnprintf();
+        pub(super) fn Bun__CModule__atexit(handler: unsafe extern "C" fn()) -> core::ffi::c_int;
     }
 
     pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
@@ -124,21 +138,39 @@ mod windows_runtime {
             b"__fixunsdfti" => fixunsdfti as *mut c_void,
             b"__fixsfti" => fixsfti as *mut c_void,
             b"__fixunssfti" => fixunssfti as *mut c_void,
+            b"printf" => Bun__CModule__printf as *mut c_void,
+            b"fprintf" => Bun__CModule__fprintf as *mut c_void,
+            b"sprintf" => Bun__CModule__sprintf as *mut c_void,
             b"snprintf" => Bun__CModule__snprintf as *mut c_void,
+            b"vprintf" => Bun__CModule__vprintf as *mut c_void,
+            b"vfprintf" => Bun__CModule__vfprintf as *mut c_void,
+            b"vsprintf" => Bun__CModule__vsprintf as *mut c_void,
             b"vsnprintf" => Bun__CModule__vsnprintf as *mut c_void,
+            b"scanf" => Bun__CModule__scanf as *mut c_void,
+            b"fscanf" => Bun__CModule__fscanf as *mut c_void,
+            b"sscanf" => Bun__CModule__sscanf as *mut c_void,
+            b"vscanf" => Bun__CModule__vscanf as *mut c_void,
+            b"vfscanf" => Bun__CModule__vfscanf as *mut c_void,
+            b"vsscanf" => Bun__CModule__vsscanf as *mut c_void,
+            // Microsoft's compiler turns a call to either into one to the function the runtime exports
+            // under another name.
+            b"_setjmp" => return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmp")),
+            b"_setjmpex" => return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmpex")),
+            b"atexit" => Bun__CModule__atexit as *mut c_void,
+            b"at_quick_exit" => Bun__CModule__at_quick_exit as *mut c_void,
             _ => return None,
         })
     }
 }
 
-/// Windows has no process-wide symbol lookup: every library is asked by name. These are the ones a
-/// C toolchain links by default there (the C runtime a small C compiler's headers describe, then
-/// the core system libraries).
+/// Windows has no process-wide symbol lookup: every library is asked by name. These are the ones
+/// Microsoft's toolchain links by default: the Universal C Runtime, the compiler's runtime (memcpy,
+/// setjmp, ...), then the core system libraries.
 #[cfg(windows)]
 fn windows_libraries(name: &ZStr) -> Option<*mut c_void> {
     const LIBRARIES: [&core::ffi::CStr; 6] = [
-        c"msvcrt.dll",
         c"ucrtbase.dll",
+        c"vcruntime140.dll",
         c"kernel32.dll",
         c"user32.dll",
         c"advapi32.dll",
@@ -288,7 +320,7 @@ impl bun_cc::FileProvider for RecordingFiles<'_> {
 }
 
 /// C source -> BIR. `#include "…"` resolves next to `path`; `<…>` searches the compiler's own
-/// headers, the system's, then `C_INCLUDE_PATH`.
+/// headers, `C_INCLUDE_PATH`, then the system's.
 fn compile_to_bir(
     global_this: &JSGlobalObject,
     path: &[u8],
@@ -297,6 +329,22 @@ fn compile_to_bir(
 ) -> JsResult<Vec<u8>> {
     let target = bun_cc::Target::host();
     let mut system_include_dirs = bun_cc::default_system_include_dirs(target);
+    // Microsoft's headers: where a developer prompt says, else the newest Visual Studio's and Windows SDK's.
+    #[cfg(windows)]
+    {
+        let text = |value: Option<&'static [u8]>| value.and_then(|value| core::str::from_utf8(value).ok());
+        let roots: Vec<&str> = [
+            text(bun_core::env_var::PROGRAMFILES::platform_get()),
+            text(bun_core::env_var::PROGRAMFILES_X86::platform_get()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        system_include_dirs.extend(bun_cc::msvc_system_include_dirs(
+            text(bun_core::env_var::INCLUDE::platform_get()),
+            &roots,
+        ));
+    }
     // What clang reads to find the SDK on macOS, when it is not where Xcode's tools put it.
     if let Some(sdk) = bun_core::env_var::SDKROOT::platform_get()
         && let Ok(sdk) = core::str::from_utf8(sdk)
@@ -304,15 +352,19 @@ fn compile_to_bir(
     {
         system_include_dirs.push(format!("{sdk}/usr/include"));
     }
-    // What gcc, clang and bun:ffi's cc() also search, after the system's own directories.
+    // What gcc and clang search as `-isystem` directories: ahead of the system's own, so that a
+    // project's copy of a header (its zlib.h, its uv.h) is the one found.
     if let Some(list) = bun_core::env_var::C_INCLUDE_PATH.get() {
+        let mut searched_first: Vec<String> = Vec::new();
         for directory in bun_core::strings::split(list, if cfg!(windows) { b";" } else { b":" }) {
             if let Ok(directory) = core::str::from_utf8(directory)
                 && !directory.is_empty()
             {
-                system_include_dirs.push(directory.to_owned());
+                searched_first.push(directory.to_owned());
             }
         }
+        searched_first.append(&mut system_include_dirs);
+        system_include_dirs = searched_first;
     }
     let files = RecordingFiles {
         system_include_dirs: &system_include_dirs,
@@ -359,18 +411,17 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
     at_exit::install();
     #[cfg(windows)]
     {
-        // msvcrt.dll prints exponents with three digits unless told to follow C99.
-        static TWO_DIGIT_EXPONENTS: std::sync::Once = std::sync::Once::new();
-        TWO_DIGIT_EXPONENTS.call_once(|| {
-            if let Some(set_output_format) = windows_libraries(bun_core::zstr!("_set_output_format")) {
-                // SAFETY: `unsigned _set_output_format(unsigned)`; 1 is _TWO_DIGIT_EXPONENT.
-                let set_output_format: unsafe extern "C" fn(core::ffi::c_uint) -> core::ffi::c_uint =
-                    unsafe { core::mem::transmute(set_output_format) };
-                // SAFETY: as above.
-                unsafe {
-                    set_output_format(1);
-                }
+        // The C code has a C runtime of its own (ucrtbase.dll; Bun's is linked statically): when the
+        // process ends, its atexit handlers run and its streams are flushed too.
+        static EXIT_HANDLERS: std::sync::Once = std::sync::Once::new();
+        EXIT_HANDLERS.call_once(|| {
+            unsafe extern "C" {
+                safe fn Bun__CModule__runExitHandlers();
             }
+            extern "C" fn run() {
+                Bun__CModule__runExitHandlers();
+            }
+            bun_core::Global::add_exit_callback(run);
         });
     }
 
@@ -397,15 +448,9 @@ pub fn load_bir(global_this: &JSGlobalObject, bir: &[u8]) -> JsResult<JSValue> {
         }
         #[cfg(windows)]
         {
-            // The list of the C runtime the program itself calls `atexit` in, not Bun's.
-            if let Some(atexit) = windows_libraries(bun_core::zstr!("atexit")) {
-                // SAFETY: `int atexit(void (*)(void))`.
-                let atexit: unsafe extern "C" fn(unsafe extern "C" fn()) -> core::ffi::c_int =
-                    unsafe { core::mem::transmute(atexit) };
-                // SAFETY: as above.
-                unsafe {
-                    atexit(handler);
-                }
+            // SAFETY: the list of the C runtime the program itself calls `atexit` in, not Bun's.
+            unsafe {
+                windows_runtime::Bun__CModule__atexit(handler);
             }
         }
         #[cfg(not(any(windows, all(target_os = "linux", target_env = "gnu"))))]

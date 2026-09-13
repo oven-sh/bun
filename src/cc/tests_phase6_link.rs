@@ -34,13 +34,6 @@ fn link(units: &[(&str, &str)]) -> Result<crate::Output, String> {
     link_for(units, &[], LINUX_X64)
 }
 
-fn link_error(units: &[(&str, &str)]) -> String {
-    match link(units) {
-        Ok(_) => panic!("expected a link error"),
-        Err(e) => e,
-    }
-}
-
 const SHARED_H: &str = "#ifndef SHARED_H
 #define SHARED_H
 struct point { int x, y; };
@@ -126,39 +119,9 @@ fn three_file_project() {
     }
 }
 
+/// (What cannot be linked at all is in test/js/bun/ffi/bir/multi-file.test.ts; nothing shows a warning yet.)
 #[test]
-fn link_errors_and_warnings() {
-    let e = link_error(&[
-        ("a.c", "int f(void) { return 1; }"),
-        ("b.c", "int f(void) { return 2; }"),
-    ]);
-    assert!(
-        has(&e, "duplicate symbol 'f'") && has(&e, "a.c") && has(&e, "b.c"),
-        "{e}"
-    );
-    let e = link_error(&[("a.c", "int x = 1;"), ("b.c", "int y; int x = 2;")]);
-    assert!(has(&e, "duplicate symbol 'x'"), "{e}");
-    let e = link_error(&[
-        ("a.c", "int thing;"),
-        ("b.c", "int thing(void) { return 0; }"),
-    ]);
-    assert!(
-        has(&e, "'thing' is an object in a.c and a function in b.c"),
-        "{e}"
-    );
-    let e = link_error(&[
-        ("a.c", "int value(void); int f(void) { return value(); }"),
-        ("b.c", "int value = 3;"),
-    ]);
-    assert!(
-        has(&e, "called as a function but is defined as an object"),
-        "{e}"
-    );
-    let e = link_error(&[
-        ("a.c", "int f(void) { return 1; }"),
-        ("b.c", "int g(void) { return }"),
-    ]);
-    assert!(has(&e, "b.c:1:"), "{e}");
+fn link_warnings() {
     assert!(compile_many(&[], &CompileOptions::new(LINUX_X64)).is_err());
 
     // A declaration that disagrees with the definition: a warning, and the call still

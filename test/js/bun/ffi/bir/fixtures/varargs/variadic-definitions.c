@@ -45,6 +45,10 @@
            int through_pointer(void) { int (*f)(int, ...) = sum; int (*table[])(int, ...) = { twice, sum }; return f(2, 40, 2) + table[1](1, 100); }
            int exported_variadic(int n, ...) { va_list ap; va_start(ap, n); int v = va_arg(ap, int); va_end(ap); return v; }
            int calls_exported(void) { return exported_variadic(1, 77); }
+           #ifdef _MSC_VER // (whose <stdarg.h> is not C23's yet)
+           #undef va_start
+           #define va_start(list, ...) __crt_va_start(list, n)
+           #endif
            static int c23_start(int n, ...) { va_list ap; va_start(ap); int v = va_arg(ap, int); va_end(ap); return v + n; }
            int c23(void) { return c23_start(1, 41); }
            static int cond_arg(int n, ...) { va_list ap; va_start(ap, n); int v = n > 0 ? va_arg(ap, int) + va_arg(ap, int) : -1; va_end(ap); return v; }

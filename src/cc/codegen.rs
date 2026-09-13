@@ -290,6 +290,9 @@ struct FnGen<'a, 'm> {
     /// The expression about to be generated is a statement: nobody uses its value.
     /// (`gen_expr` takes this, so it only ever describes the outermost expression.)
     result_unused: bool,
+    /// For a function of the compiler's own headers: where the program first uses it, which
+    /// is where to say that it cannot be compiled.
+    used_at: Option<Loc>,
 }
 
 /// The integer type a bit-field is worked on in once it is loaded.
@@ -2178,7 +2181,9 @@ impl<'a> FnGen<'a, '_> {
                 self.load_place(place, &e.ty, loc)?
             }
             ExprKind::Intrinsic(op, args) => return self.gen_intrinsic(e, *op, args),
-            ExprKind::Unsupported(message) => return err(loc, message.to_string()),
+            ExprKind::Unsupported(message) => {
+                return err(self.used_at.unwrap_or(loc), message.to_string());
+            }
             ExprKind::VaStart(ap) => {
                 let address = self.gen_value(ap)?;
                 self.b.effect(Inst::VaStart(address));
@@ -3510,6 +3515,11 @@ fn gen_function<'a>(m: &mut ModuleGen<'a>, f: &'a Function, body: &'a FuncBody) 
         ret: f.ty.ret.clone(),
         ret_pass: abi.ret.clone(),
         result_unused: false,
+        used_at: f
+            .name
+            .starts_with(crate::parser::microsoft::PRELUDE_PREFIX)
+            .then_some(f.first_use)
+            .flatten(),
         want_wide_result: false,
         wide_result: None,
         wide_arguments: Vec::new(),
@@ -3668,6 +3678,8 @@ fn calls_returns_twice(prog: &Program, body: &FuncBody) -> bool {
                 | "sigsetjmp"
                 | "__sigsetjmp"
                 | "_setjmpex"
+                | "__intrinsic_setjmp"
+                | "__intrinsic_setjmpex"
                 | "savectx"
                 | "vfork"
                 | "getcontext"
@@ -3825,6 +3837,9 @@ pub(crate) struct Unit {
     pub(crate) destructors: Vec<(u32, u32)>,
     /// Other names the linker resolves to functions of this unit: (name, function).
     pub(crate) function_aliases: Vec<(String, u32)>,
+    /// Functions of this unit that a unit with no definition of that name may call, though
+    /// they are not exported: Microsoft's `inline` definitions.
+    pub(crate) linkonce_functions: Vec<(String, u32)>,
     /// The externs that are the calls 128-bit division turns into (`__udivti3`, ...). They
     /// stay imports of the linked module even when a unit defines a function of that name:
     /// such a function is itself written with the division that needs the call.
@@ -4113,9 +4128,11 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             offset,
             size: gsize,
             align: galign,
-            symbol: (!g.is_static).then(|| g.link_name.as_ref().unwrap_or(&g.name).to_string()),
+            symbol: (!g.is_static || g.linkonce)
+                .then(|| g.link_name.as_ref().unwrap_or(&g.name).to_string()),
             initialized: g.has_initializer,
             content: is_initialized(g),
+            linkonce: g.linkonce,
         });
     }
     for (i, blob) in m.blobs.iter().enumerate() {
@@ -4126,11 +4143,22 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             symbol: None,
             initialized: true,
             content: true,
+            linkonce: false,
         });
     }
     objects.sort_by_key(|o| (o.offset, o.size));
     tls_objects.sort_by_key(|o| (o.offset, o.size));
 
+    let mut linkonce_functions: Vec<(String, u32)> = prog
+        .funcs
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.linkonce && f.body.is_some())
+        .filter_map(|(id, f)| {
+            let name = f.link_name.as_ref().unwrap_or(&f.name).to_string();
+            Some((name, m.func_index[id]?))
+        })
+        .collect();
     // A private function only code that was never emitted calls (the dead arm of `if (0)`)
     // is not emitted either.
     let mut live = vec![false; funcs.len()];
@@ -4187,6 +4215,10 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
             *f = renumbered[*f as usize];
         }
         for (_, f) in &mut function_aliases {
+            *f = renumbered[*f as usize];
+        }
+        linkonce_functions.retain(|(_, f)| live[*f as usize]);
+        for (_, f) in &mut linkonce_functions {
             *f = renumbered[*f as usize];
         }
     }
@@ -4268,6 +4300,7 @@ pub(crate) fn generate(prog: &Program) -> Res<Unit> {
         constructors,
         destructors,
         function_aliases,
+        linkonce_functions,
         runtime_externs: m
             .runtime_externs
             .iter()

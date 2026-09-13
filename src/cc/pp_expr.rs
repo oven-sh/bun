@@ -235,7 +235,7 @@ struct ExprParser<'t> {
     tokens: &'t [PpToken],
     pos: usize,
     loc: Loc,
-    char_is_signed: bool,
+    dialect: crate::token::Dialect,
 }
 
 impl Preprocessor<'_> {
@@ -277,7 +277,7 @@ impl Preprocessor<'_> {
             tokens: &tokens,
             pos: 0,
             loc,
-            char_is_signed: self.target.char_is_signed(),
+            dialect: self.target.dialect(),
         };
         let value = parser.conditional(true)?;
         if let Some(extra) = parser.tokens.get(parser.pos) {
@@ -505,7 +505,7 @@ impl ExprParser<'_> {
                 }
                 Ok(Value::signed(value))
             }
-            PpKind::Number | PpKind::CharLit => match classify(tok, self.char_is_signed)?.tok {
+            PpKind::Number | PpKind::CharLit => match classify(tok, self.dialect)?.tok {
                 Tok::Int { value, suffix, .. } => {
                     let unsigned = suffix.unsigned || (value > i64::MAX as u64);
                     Ok(Value {

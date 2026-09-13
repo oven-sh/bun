@@ -18,7 +18,7 @@ describe.skipIf(!supported)("preprocessor: where #include looks", () => {
     "inc/loop.h": '#include "loop.h"\n',
     "inc/where.h": "const char *where = __FILE__; int level = __INCLUDE_LEVEL__;\n",
   };
-  // (The compiler's own headers come first, then the system's, then C_INCLUDE_PATH in order.)
+  // (The compiler's own headers come first, then C_INCLUDE_PATH in order, then the system's, as with gcc and clang.)
   const env = (dir: string) => ({
     ...bunEnv,
     C_INCLUDE_PATH: includePath(...["inc", "sys", "sys2"].map(d => join(dir, d))),

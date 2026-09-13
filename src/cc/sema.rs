@@ -70,6 +70,8 @@ pub(crate) struct FnCtx {
     pub(crate) labels: BTreeMap<Rc<str>, LabelInfo>,
     pub(crate) nlabels: u32,
     pub(crate) nstatics: u32,
+    /// A Microsoft `inline` function: every unit's copy uses the same `static` objects.
+    pub(crate) shared_statics: bool,
     /// The function takes `...`.
     pub(crate) variadic: bool,
     /// Labels whose address is taken with `&&`, in order of first mention.
@@ -575,7 +577,16 @@ impl Sema {
             }
             align = align.max(a);
         }
-        let size = size_bits.div_ceil(8).next_multiple_of(align);
+        let mut size = size_bits.div_ceil(8).next_multiple_of(align);
+        // Microsoft C has no object of size zero: a structure with no members, or with nothing
+        // but flexible arrays, has four bytes (or its alignment, where that was asked for).
+        if size == 0 && windows && ms_bitfields {
+            size = if min_align.is_some_and(|a| a >= 4) {
+                align
+            } else {
+                4
+            };
+        }
         for member in &mut members {
             if let Some(field) = &mut member.bitfield {
                 let window = field.bytes().next_power_of_two();
@@ -750,6 +761,7 @@ impl Sema {
                     thread_local: false,
                     extra_size: 0,
                     weak: false,
+                    linkonce: false,
                 });
                 let id = (self.globals.len() - 1) as GlobalId;
                 self.scopes[0].insert(Rc::clone(&name), Symbol::Global(id));
@@ -835,6 +847,7 @@ impl Sema {
             thread_local: false,
             extra_size: 0,
             weak: false,
+            linkonce: self.func.as_ref().is_some_and(|f| f.shared_statics),
         });
         let id = (self.globals.len() - 1) as GlobalId;
         self.bind(name, Symbol::Global(id));
@@ -877,6 +890,7 @@ impl Sema {
                     ty: fty,
                     is_static,
                     external: false,
+                    linkonce: false,
                     link_name: None,
                     inlining: 0,
                     constructor: None,
@@ -1181,7 +1195,14 @@ impl Sema {
 
     pub(crate) fn ident(&mut self, name: &str, loc: Loc) -> Res<Expr> {
         let Some(sym) = self.lookup(name).cloned() else {
-            if matches!(name, "__func__" | "__FUNCTION__" | "__PRETTY_FUNCTION__") {
+            if matches!(
+                name,
+                "__func__"
+                    | "__FUNCTION__"
+                    | "__PRETTY_FUNCTION__"
+                    | "__FUNCSIG__"
+                    | "__FUNCDNAME__"
+            ) {
                 if let Some(f) = &self.func {
                     let bytes = f.name.as_bytes().to_vec();
                     return self.string_lit(bytes, loc);
@@ -1430,7 +1451,7 @@ impl Sema {
     /// An explicit cast `(to)e`.
     /// A placeholder for a value that cannot be computed; an error only if it is reached
     /// by code generation or constant evaluation.
-    fn unsupported_value(&self, ty: Type, message: String, loc: Loc) -> Res<Expr> {
+    pub(crate) fn unsupported_value(&self, ty: Type, message: String, loc: Loc) -> Res<Expr> {
         self.mk(ExprKind::Unsupported(Rc::from(message)), ty, loc)
     }
 
@@ -2623,6 +2644,7 @@ impl Sema {
                 thread_local: false,
                 extra_size: 0,
                 weak: false,
+                linkonce: false,
             });
             let id = (self.globals.len() - 1) as GlobalId;
             return self.mk(ExprKind::Global(id), ty, loc);
@@ -2788,10 +2810,14 @@ impl Sema {
     /// Whether `name` called here means the stack allocation builtin: it does unless the
     /// program defines a function of that name.
     pub(crate) fn is_alloca_builtin(&self, name: &str) -> bool {
-        if !matches!(
-            name,
-            "alloca" | "__builtin_alloca" | "__builtin_alloca_with_align"
-        ) {
+        // (`_alloca` is Microsoft's, an intrinsic of its compiler that <malloc.h> declares.)
+        let microsoft = name == "_alloca" && self.tcx.target.os == crate::types::Os::Windows;
+        if !microsoft
+            && !matches!(
+                name,
+                "alloca" | "__builtin_alloca" | "__builtin_alloca_with_align"
+            )
+        {
             return false;
         }
         match self.lookup(name) {
@@ -2826,6 +2852,7 @@ impl Sema {
             ty: fty,
             is_static: false,
             external: true,
+            linkonce: false,
             link_name: None,
             inlining: 0,
             constructor: None,

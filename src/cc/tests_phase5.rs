@@ -1,8 +1,6 @@
 //! Tests for 128-bit vectors (the GCC/Clang vector extensions and the intrinsic headers).
 
-use crate::tests::{
-    LINUX_ARM64, LINUX_X64, WINDOWS_X64, assert_error, checked, checked_for, error_for, has,
-};
+use crate::tests::{LINUX_ARM64, LINUX_X64, WINDOWS_X64, checked_for, error_for, has};
 use crate::tests_phase4::abi_of;
 use crate::{Arch, Os, Target, compile, disassemble};
 
@@ -62,24 +60,6 @@ fn one_instruction_per_lane_wise_operation() {
 
 #[test]
 fn shuffles() {
-    checked(
-        "typedef int V __attribute__((vector_size(16)));
-         typedef unsigned char B __attribute__((vector_size(16)));
-         typedef float F __attribute__((vector_size(16)));
-         V reverse(V a) { return __builtin_shufflevector(a, a, 3, 2, 1, 0); }
-         V interleave_low(V a, V b) { return __builtin_shufflevector(a, b, 0, 4, 1, 5); }
-         V interleave_high(V a, V b) { return __builtin_shufflevector(a, b, 2, 6, 3, 7); }
-         V broadcast2(V a) { return __builtin_shufflevector(a, a, 2, 2, 2, 2); }
-         V blend(V a, V b) { return __builtin_shufflevector(a, b, 0, 5, 2, 7); }
-         V dont_care(V a, V b) { return __builtin_shufflevector(a, b, 7, -1, -1, 4); }
-         B reverse_bytes(B a) { return __builtin_shufflevector(a, a, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0); }
-         F rotate(F a) { return __builtin_shufflevector(a, a, 1, 2, 3, 0); }
-         V gnu_one(V a) { V m = {3, 2, 1, 0}; return __builtin_shuffle(a, m); }
-         V gnu_two(V a, V b) { return __builtin_shuffle(a, b, (V){0, 4, 9, 13}); }
-         V gnu_variable(V a, V m) { return __builtin_shuffle(a, m); }
-         V gnu_variable_two(V a, V b, V m) { return __builtin_shuffle(a, b, m); }
-         B gnu_bytes(B a, B m) { return __builtin_shuffle(a, m); }",
-    );
     let text = disassemble(
         &compile(
             b"typedef int V __attribute__((vector_size(16)));
@@ -101,41 +81,6 @@ fn shuffles() {
 
 #[test]
 fn conversions_and_reductions() {
-    checked(
-        "typedef int V __attribute__((vector_size(16)));
-         typedef unsigned U __attribute__((vector_size(16)));
-         typedef float F __attribute__((vector_size(16)));
-         typedef long long L __attribute__((vector_size(16)));
-         typedef double D __attribute__((vector_size(16)));
-         typedef unsigned char B __attribute__((vector_size(16)));
-         typedef short H __attribute__((vector_size(16)));
-         F to_float(V v) { return __builtin_convertvector(v, F); }
-         F unsigned_to_float(U v) { return __builtin_convertvector(v, F); }
-         V to_int(F v) { return __builtin_convertvector(v, V); }
-         U to_unsigned(F v) { return __builtin_convertvector(v, U); }
-         D long_to_double(L v) { return __builtin_convertvector(v, D); }
-         L double_to_long(D v) { return __builtin_convertvector(v, L); }
-         U same_width(V v) { return __builtin_convertvector(v, U); }
-         F reinterpret(V v) { return (F)v; }
-         int sum(V v) { return __builtin_reduce_add(v); }
-         int product(V v) { return __builtin_reduce_mul(v); }
-         int lowest(V v) { return __builtin_reduce_min(v); }
-         unsigned highest(U v) { return __builtin_reduce_max(v); }
-         int all_and(V v) { return __builtin_reduce_and(v); }
-         int any_or(V v) { return __builtin_reduce_or(v); }
-         int parity(V v) { return __builtin_reduce_xor(v); }
-         int byte_sum(B v) { return __builtin_reduce_add(v); }
-         int short_min(H v) { return __builtin_reduce_min(v); }
-         float fsum(F v) { return __builtin_reduce_add(v); }
-         double dmax(D v) { return __builtin_reduce_max(v); }
-         long long lsum(L v) { return __builtin_reduce_add(v); }
-         V absolute(V v) { return __builtin_elementwise_abs(v); }
-         F fabsolute(F v) { return __builtin_elementwise_abs(v); }
-         V smaller(V a, V b) { return __builtin_elementwise_min(a, b); }
-         U ubigger(U a, U b) { return __builtin_elementwise_max(a, b); }
-         F roots(F v) { return __builtin_elementwise_sqrt(v); }
-         float manual_sum(F v) { F s = v + __builtin_shufflevector(v, v, 2, 3, 0, 1); s += __builtin_shufflevector(s, s, 1, 0, 3, 2); return s[0]; }",
-    );
     let text = disassemble(
         &compile(
             b"typedef int V __attribute__((vector_size(16)));
@@ -283,8 +228,6 @@ fn neon_d_registers() {
 fn intrinsic_headers_are_per_architecture() {
     let e = error_for("#include <emmintrin.h>\nint x;", LINUX_ARM64);
     assert!(has(&e, "emmintrin.h"), "{e}");
-    let e = error_for("#include <arm_neon.h>\nint x;", LINUX_X64);
-    assert!(has(&e, "arm_neon.h"), "{e}");
     // Every intrinsic body type-checks on every target of its architecture.
     for target in [LINUX_X64, WINDOWS_X64] {
         compile(
@@ -305,95 +248,6 @@ fn intrinsic_headers_are_per_architecture() {
 }
 
 // ───────────────────────────── diagnostics ─────────────────────────────
-
-#[test]
-fn vector_diagnostics() {
-    // Other sizes can be named, but not used.
-    checked(
-        "typedef float v2f __attribute__((vector_size(8)));
-         typedef int v8i __attribute__((vector_size(32)));
-         typedef float v16f __attribute__((__vector_size__(64)));
-         typedef short s2 __attribute__((ext_vector_type(2)));
-         typedef float float4 __attribute__((ext_vector_type(4)));
-         v2f declared_only(v2f);
-         float first(float4 v) { return v[0] + sizeof(v2f) + sizeof(v8i); }",
-    );
-    let only = "only 8-byte and 16-byte vectors are supported yet";
-    assert_error(
-        "typedef float v8f __attribute__((vector_size(32))); v8f f(v8f a) { return a; }",
-        only,
-    );
-    assert_error(
-        "typedef short v2s __attribute__((vector_size(4))); short f(v2s *p) { return (*p)[0]; }",
-        only,
-    );
-    assert_error(
-        "typedef int v8i __attribute__((vector_size(32))); v8i g; int f(void) { return g[0]; }",
-        only,
-    );
-    assert_error(
-        "typedef char v4c __attribute__((vector_size(4))); v4c f(void);  int g(void) { f(); return 0; }",
-        only,
-    );
-    assert_error(
-        "typedef double v8d __attribute__((vector_size(64))); void f(void) { v8d x = {0}; }",
-        only,
-    );
-    assert_error(
-        "typedef int bad __attribute__((vector_size(12)));",
-        "power of two",
-    );
-    assert_error(
-        "typedef struct S { int x; } bad __attribute__((vector_size(16)));",
-        "invalid vector element type",
-    );
-    assert_error(
-        "typedef _Bool bad __attribute__((vector_size(16)));",
-        "invalid vector element type",
-    );
-    let v = "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16)));";
-    assert_error(
-        &format!("{v} V f(V a, F b) {{ return a + b; }}"),
-        "invalid operands",
-    );
-    assert_error(
-        &format!("{v} F f(F a, F b) {{ return a & b; }}"),
-        "invalid operands",
-    );
-    assert_error(&format!("{v} F f(F a) {{ return ~a; }}"), "invalid operand");
-    assert_error(
-        &format!("{v} F f(V a) {{ return a; }}"),
-        "incompatible types",
-    );
-    assert_error(&format!("{v} V f(int a) {{ return (V)a; }}"), "cannot cast");
-    assert_error(&format!("{v} int f(V a) {{ return a ? 1 : 2; }}"), "");
-    assert_error(
-        &format!("{v} int f(V a) {{ if (a) return 1; return 0; }}"),
-        "scalar",
-    );
-    assert_error(
-        &format!("{v} V f(V a) {{ return __builtin_shufflevector(a, a, 0, 1, 2, 8); }}"),
-        "out of range",
-    );
-    assert_error(
-        &format!("{v} V f(V a, int i) {{ return __builtin_shufflevector(a, a, 0, 1, 2, i); }}"),
-        "constant",
-    );
-    assert_error(
-        &format!("{v} V f(V a) {{ V v = {{1, 2, 3, 4, 5}}; return v; }}"),
-        "excess elements",
-    );
-    assert_error(
-        &format!("{v} int printf(const char *, ...); void f(V a) {{ printf(\"%d\", a); }}"),
-        "variadic argument",
-    );
-    assert_error(
-        &format!(
-            "#include <stdarg.h>\n{v} V f(int n, ...) {{ va_list ap; va_start(ap, n); V v = va_arg(ap, V); va_end(ap); return v; }}"
-        ),
-        "va_arg",
-    );
-}
 
 // ───────────────────────────── encoding ─────────────────────────────
 

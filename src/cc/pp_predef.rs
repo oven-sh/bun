@@ -10,6 +10,8 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
         let _ = writeln!(out, "#define {name} {value}");
     };
     let windows = target.os == Os::Windows;
+    // A Windows target is Microsoft C unless a GNU C version is claimed (the MinGW way).
+    let msvc = windows && gnu_version.is_none();
     let lp64 = !windows;
     let char_signed = target.char_is_signed();
     // long double is x87 extended on x86-64 SysV, IEEE quad on aarch64 Linux, double elsewhere.
@@ -18,8 +20,14 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
         _ => 16,
     };
 
-    def("__STDC__", "1");
-    def("__STDC_VERSION__", "201112L");
+    // (`cl` leaves `__STDC__` to `/Zc:__STDC__`, and the C runtime's headers declare the POSIX
+    // names only without it.)
+    if msvc {
+        def("__STDC_VERSION__", "201710L");
+    } else {
+        def("__STDC__", "1");
+        def("__STDC_VERSION__", "201112L");
+    }
     def("__STDC_HOSTED__", "1");
     def("__STDC_UTF_16__", "1");
     def("__STDC_UTF_32__", "1");
@@ -122,6 +130,20 @@ pub(crate) fn predefined_macros(target: Target, gnu_version: Option<(u32, u32, u
                 def("_M_AMD64", "100");
             } else {
                 def("_M_ARM64", "1");
+            }
+            if msvc {
+                // Visual Studio 2022 17.14 (toolset 14.44), `/std:c17 /MD`.
+                def("_MSC_VER", "1944");
+                def("_MSC_FULL_VER", "194435207");
+                def("_MSC_BUILD", "1");
+                def("_MSC_EXTENSIONS", "1");
+                def("_INTEGRAL_MAX_BITS", "64");
+                def("_MSVC_TRADITIONAL", "0");
+                def("_MSVC_EXECUTION_CHARACTER_SET", "65001");
+                def("_M_FP_PRECISE", "1");
+                def("_CRT_USE_BUILTIN_OFFSETOF", "1");
+                def("_MT", "1");
+                def("_DLL", "1");
             }
         }
     }

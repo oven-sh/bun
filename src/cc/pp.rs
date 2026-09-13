@@ -127,6 +127,8 @@ pub(crate) enum Builtin {
     BaseFile,
     Date,
     Time,
+    /// `__TIMESTAMP__`: a date and time, as `asctime` writes them.
+    Timestamp,
 }
 
 pub(crate) struct Macro {
@@ -213,6 +215,8 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) files: Rc<RefCell<FileTable>>,
     pub(crate) provider: &'a dyn FileProvider,
     pub(crate) target: Target,
+    /// Microsoft C: a Windows target with no GNU C version claimed.
+    pub(crate) msvc: bool,
     pub(crate) macros: BTreeMap<Rc<str>, Rc<Macro>>,
     pub(crate) frames: Vec<Frame>,
     /// Macro expansions in progress, innermost last.
@@ -251,6 +255,7 @@ impl<'a> Preprocessor<'a> {
             files,
             provider,
             target,
+            msvc: false,
             macros: BTreeMap::new(),
             frames: Vec::new(),
             contexts: Vec::new(),
@@ -381,8 +386,10 @@ impl<'a> Preprocessor<'a> {
         loop {
             let t = self.next_raw()?;
             let Some(name) = t.ident() else { return Ok(t) };
-            if name == b"_Pragma" {
-                if self.pragma_operator(t.tok.loc)? {
+            let microsoft_pragma =
+                name == b"__pragma" && self.target.os == crate::types::Os::Windows;
+            if name == b"_Pragma" || microsoft_pragma {
+                if self.pragma_operator(t.tok.loc, microsoft_pragma)? {
                     if let Some(pragma) = self.pending_pragma.take() {
                         return Ok(PTok::plain(pragma));
                     }
@@ -439,8 +446,9 @@ impl<'a> Preprocessor<'a> {
     }
 
     /// `_Pragma("...")`: the string is destringized and handled like a `#pragma` line.
+    /// Microsoft's `__pragma(...)` has the line itself between the parentheses.
     /// Returns false if this is not the operator.
-    fn pragma_operator(&mut self, loc: Loc) -> Res<bool> {
+    fn pragma_operator(&mut self, loc: Loc, microsoft: bool) -> Res<bool> {
         let open = self.next_raw()?;
         if !open.is_punct(Punct::LParen) {
             self.unread(open);
@@ -462,6 +470,13 @@ impl<'a> Preprocessor<'a> {
                 }
             }
             operand.push(t.tok);
+        }
+        if microsoft {
+            for t in &mut operand {
+                t.loc = loc;
+            }
+            self.pragma(&operand, loc);
+            return Ok(true);
         }
         let [literal] = operand.as_slice() else {
             return Ok(true);
@@ -790,6 +805,18 @@ impl<'a> Preprocessor<'a> {
             Builtin::BaseFile => string(&self.base_file),
             Builtin::Date => string(&format_date(self.now)),
             Builtin::Time => string(&format_time(self.now)),
+            Builtin::Timestamp => {
+                const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+                let date = format_date(self.now);
+                let (month_and_day, year) = date.split_at(date.len().saturating_sub(5));
+                string(&format!(
+                    "{} {} {}{}",
+                    DAYS[(self.now / 86_400 % 7) as usize],
+                    month_and_day,
+                    format_time(self.now),
+                    year
+                ))
+            }
         };
         PpToken {
             kind,

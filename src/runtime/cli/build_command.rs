@@ -377,6 +377,26 @@ impl BuildCommand {
             }
         }
 
+        // C in the bundle is compiled for the platform of the executable it goes into.
+        if ctx.bundler_options.compile {
+            use bun_core::env::{Architecture, OperatingSystem};
+            let target = &ctx.bundler_options.compile_target;
+            let os = match target.os {
+                OperatingSystem::Linux => Some(bun_cc::Os::Linux),
+                OperatingSystem::Mac => Some(bun_cc::Os::MacOs),
+                OperatingSystem::Windows => Some(bun_cc::Os::Windows),
+                OperatingSystem::Freebsd | OperatingSystem::Wasm => None,
+            };
+            let arch = match target.arch() {
+                Architecture::X64 => Some(bun_cc::Arch::X86_64),
+                Architecture::Arm64 => Some(bun_cc::Arch::Aarch64),
+                Architecture::Wasm => None,
+            };
+            if let (Some(os), Some(arch)) = (os, arch) {
+                this_transpiler.options.c_target = Some(bun_cc::Target { arch, os });
+            }
+        }
+
         // `bun build main.c parser.c util.c`: one C program in several files, not several programs.
         {
             let entry_points = &this_transpiler.options.entry_points;

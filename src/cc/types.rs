@@ -56,6 +56,13 @@ impl Target {
         Some(Target { arch, os })
     }
 
+    pub(crate) fn dialect(self) -> crate::token::Dialect {
+        crate::token::Dialect {
+            char_is_signed: self.char_is_signed(),
+            microsoft: self.os == Os::Windows,
+        }
+    }
+
     pub(crate) fn char_is_signed(self) -> bool {
         // AAPCS64 makes plain char unsigned; Apple and Windows arm64 keep it signed.
         !(self.arch == Arch::Aarch64 && self.os == Os::Linux)

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { includePath, meets, run, supported } from "../run-fixtures";
+import { includePath, meets, run, supported, wrapperSource } from "../run-fixtures";
 
 // Miscompile checks on real code: parts of the vendored libraries are compiled from their sources by Bun's
 // C compiler, linked with a small driver and run against known answers. They read the vendored sources, so
@@ -42,14 +42,8 @@ const bytesInC = (bytes: Uint8Array | number[]) => [...bytes].join(", ");
  * includes it, and the directories go in C_INCLUDE_PATH.
  */
 async function runProgram(name: string, sources: string[], defines: string[], includeDirs: string[], driver: string) {
-  const macros = defines
-    .map(define => {
-      const [macro, value] = define.split("=");
-      return `#define ${macro} ${value ?? 1}\n`;
-    })
-    .join("");
-  const files: Record<string, string> = { "main.c": macros + driver };
-  sources.forEach((source, index) => (files[`unit${index}.c`] = `${macros}#include "${source}"\n`));
+  const files: Record<string, string> = { "main.c": wrapperSource(defines, "driver.c"), "driver.c": driver };
+  sources.forEach((source, index) => (files[`unit${index}.c`] = wrapperSource(defines, source)));
   using dir = tempDir(`bir-${name}`, files);
   const env = { ...bunEnv, C_INCLUDE_PATH: includePath(...includeDirs) };
   const exe = join(String(dir), "program");
@@ -74,14 +68,29 @@ describe.skipIf(!heavy)("vendored libraries", () => {
   const lengths = [0, 1, 15, 16, 17, 63, 64, 255, 1000, 5553, 20000];
 
   // (The SSSE3 kernel is one of the four implementations compared.)
-  test.skipIf(!meets("x64") || !existsSync(vendor("zlib")) || !existsSync(generated("zlib")))("zlib-ng's checksums", async () => {
-    const zlib = vendor("zlib");
-    const out = await runProgram(
-      "zlib-ng",
-      ["arch/generic/adler32_c.c", "arch/generic/crc32_braid_c.c", "arch/x86/adler32_ssse3.c", "arch/generic/crc32_chorba_c.c"].map(f => join(zlib, f)),
-      ["ZLIB_COMPAT", "WITH_GZFILEOP", "X86_FEATURES", "X86_SSE2", "X86_SSSE3", "HAVE_BUILTIN_CTZ", "HAVE_BUILTIN_CTZLL"],
-      [zlib, join(zlib, "arch/generic"), join(zlib, "arch/x86"), generated("zlib")],
-      `#include <stdint.h>
+  test.skipIf(!meets("x64") || !existsSync(vendor("zlib")) || !existsSync(generated("zlib")))(
+    "zlib-ng's checksums",
+    async () => {
+      const zlib = vendor("zlib");
+      const out = await runProgram(
+        "zlib-ng",
+        [
+          "arch/generic/adler32_c.c",
+          "arch/generic/crc32_braid_c.c",
+          "arch/x86/adler32_ssse3.c",
+          "arch/generic/crc32_chorba_c.c",
+        ].map(f => join(zlib, f)),
+        [
+          "ZLIB_COMPAT",
+          "WITH_GZFILEOP",
+          "X86_FEATURES",
+          "X86_SSE2",
+          "X86_SSSE3",
+          "HAVE_BUILTIN_CTZ",
+          "HAVE_BUILTIN_CTZLL",
+        ],
+        [zlib, join(zlib, "arch/generic"), join(zlib, "arch/x86"), generated("zlib")],
+        `#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 uint32_t adler32_c(uint32_t, const uint8_t *, size_t);
@@ -100,17 +109,18 @@ int main(void) {
   return 0;
 }
 `,
-    );
-    const hex = (value: number) => value.toString(16).padStart(8, "0");
-    const expected = ["cbf43926 091e01de"];
-    for (const length of lengths) {
-      const data = sample(length);
-      const adler = hex(Bun.hash.adler32(data));
-      const crc = hex(Bun.hash.crc32(data));
-      expected.push(`${length} ${adler} ${adler} ${crc} ${crc}`);
-    }
-    expect(out).toBe(expected.join("\n") + "\n");
-  });
+      );
+      const hex = (value: number) => value.toString(16).padStart(8, "0");
+      const expected = ["cbf43926 091e01de"];
+      for (const length of lengths) {
+        const data = sample(length);
+        const adler = hex(Bun.hash.adler32(data));
+        const crc = hex(Bun.hash.crc32(data));
+        expected.push(`${length} ${adler} ${adler} ${crc} ${crc}`);
+      }
+      expect(out).toBe(expected.join("\n") + "\n");
+    },
+  );
 
   test.skipIf(!existsSync(vendor("zstd")))("zstd's xxhash", async () => {
     const zstd = vendor("zstd");
@@ -146,14 +156,16 @@ int main(void) {
     expect(out).toBe(expected.join("\n") + "\n");
   });
 
-  test.skipIf(!existsSync(vendor("hdrhistogram")) || !existsSync(generated("zlib")))("HdrHistogram's percentiles", async () => {
-    const hdr = vendor("hdrhistogram");
-    const out = await runProgram(
-      "hdrhistogram",
-      [join(hdr, "src/hdr_histogram.c")],
-      ["HDR_NO_AVX2_DISPATCH", "_GNU_SOURCE"],
-      [join(hdr, "include"), join(hdr, "src"), generated("zlib")],
-      `#include <hdr/hdr_histogram.h>
+  test.skipIf(!existsSync(vendor("hdrhistogram")) || !existsSync(generated("zlib")))(
+    "HdrHistogram's percentiles",
+    async () => {
+      const hdr = vendor("hdrhistogram");
+      const out = await runProgram(
+        "hdrhistogram",
+        [join(hdr, "src/hdr_histogram.c")],
+        ["HDR_NO_AVX2_DISPATCH", "_GNU_SOURCE"],
+        [join(hdr, "include"), join(hdr, "src"), generated("zlib")],
+        `#include <hdr/hdr_histogram.h>
 #include <stdio.h>
 int main(void) {
   struct hdr_histogram *h;
@@ -166,18 +178,22 @@ int main(void) {
   return 0;
 }
 `,
-    );
-    const [recorded, percentiles, extremes] = out.trim().split("\n").map(line => line.split(" ").map(Number));
-    expect(recorded).toEqual([1, 10000]);
-    // Three significant digits: values are exact below 2048 and within 0.1% above.
-    expect(percentiles[0]).toBe(1000);
-    expect(percentiles[1]).toBeWithin(5000, 5004);
-    expect(percentiles[2]).toBeWithin(9900, 9908);
-    expect(percentiles[3]).toBeWithin(10000, 10008);
-    expect(extremes[0]).toBe(1);
-    expect(extremes[1]).toBeWithin(10000, 10008);
-    expect(Math.abs(extremes[2] - 5000.5)).toBeLessThan(5);
-  });
+      );
+      const [recorded, percentiles, extremes] = out
+        .trim()
+        .split("\n")
+        .map(line => line.split(" ").map(Number));
+      expect(recorded).toEqual([1, 10000]);
+      // Three significant digits: values are exact below 2048 and within 0.1% above.
+      expect(percentiles[0]).toBe(1000);
+      expect(percentiles[1]).toBeWithin(5000, 5004);
+      expect(percentiles[2]).toBeWithin(9900, 9908);
+      expect(percentiles[3]).toBeWithin(10000, 10008);
+      expect(extremes[0]).toBe(1);
+      expect(extremes[1]).toBeWithin(10000, 10008);
+      expect(Math.abs(extremes[2] - 5000.5)).toBeLessThan(5);
+    },
+  );
 
   const roundTripDriver = (include: string, body: string) => `#include ${include}
 #include <string.h>
@@ -185,11 +201,23 @@ int main(void) {
 ${sampleInC}
 ${body}`;
 
-  test.skipIf(!existsSync(vendor("libdeflate")))("libdeflate round trips", async () => {
+  // For a compiler that says it is Visual Studio 2022 libdeflate compiles AVX2, AVX-512 and PCLMULQDQ kernels
+  // (chosen at run time), which this compiler has no instructions for.
+  test.skipIf(!meets("posix") || !existsSync(vendor("libdeflate")))("libdeflate round trips", async () => {
     const root = vendor("libdeflate");
     const out = await runProgram(
       "libdeflate",
-      ["lib/utils.c", "lib/x86/cpu_features.c", "lib/arm/cpu_features.c", "lib/deflate_compress.c", "lib/deflate_decompress.c", "lib/adler32.c", "lib/crc32.c", "lib/zlib_compress.c", "lib/zlib_decompress.c"].map(f => join(root, f)),
+      [
+        "lib/utils.c",
+        "lib/x86/cpu_features.c",
+        "lib/arm/cpu_features.c",
+        "lib/deflate_compress.c",
+        "lib/deflate_decompress.c",
+        "lib/adler32.c",
+        "lib/crc32.c",
+        "lib/zlib_compress.c",
+        "lib/zlib_decompress.c",
+      ].map(f => join(root, f)),
       [],
       [root],
       roundTripDriver(
@@ -222,7 +250,9 @@ int main(void) {
     );
     const lines = out.trim().split("\n");
     const data = sample(3000);
-    expect(lines[0]).toBe(`${Bun.hash.adler32(data).toString(16).padStart(8, "0")} ${Bun.hash.crc32(data).toString(16).padStart(8, "0")}`);
+    expect(lines[0]).toBe(
+      `${Bun.hash.adler32(data).toString(16).padStart(8, "0")} ${Bun.hash.crc32(data).toString(16).padStart(8, "0")}`,
+    );
     for (const line of lines.slice(1, 3)) {
       const [size, cmf, flg] = line.split(" ");
       expect(Number(size)).toBeWithin(101, 3000);
@@ -235,10 +265,11 @@ int main(void) {
 
   // `brotli -q 11` of the text: it uses the static dictionary and its transforms.
   const brotliStream = [
-    0x1f, 0x8b, 0x00, 0x00, 0x8c, 0xd4, 0x46, 0xf5, 0xd4, 0x24, 0x05, 0x91, 0xb7, 0x54, 0x2f, 0xa4, 0x0f, 0xf5, 0xb7, 0x9f, 0x09, 0x66, 0x53, 0x3e, 0x44, 0x4f,
-    0xd1, 0x08, 0x48, 0xb4, 0xb0, 0x37, 0x37, 0x38, 0xfd, 0xa6, 0x01, 0x79, 0x1b, 0x64, 0x7f, 0x92, 0xd6, 0x55, 0xf7, 0x18, 0x3b, 0x53, 0xc8, 0x71, 0x94, 0x39,
-    0x02, 0xce, 0xa8, 0x45, 0x3d, 0xbe, 0xf8, 0xa8, 0x0d, 0xcb, 0xbf, 0xfa, 0x8f, 0xfe, 0x14, 0x5c, 0xec, 0x93, 0xd3, 0x00, 0x4e, 0xb6, 0x82, 0xa6, 0x8e, 0x2a,
-    0xe9, 0x52, 0x7d, 0x74, 0x7a, 0x7a, 0x45, 0x49, 0x72, 0x00,
+    0x1f, 0x8b, 0x00, 0x00, 0x8c, 0xd4, 0x46, 0xf5, 0xd4, 0x24, 0x05, 0x91, 0xb7, 0x54, 0x2f, 0xa4, 0x0f, 0xf5, 0xb7,
+    0x9f, 0x09, 0x66, 0x53, 0x3e, 0x44, 0x4f, 0xd1, 0x08, 0x48, 0xb4, 0xb0, 0x37, 0x37, 0x38, 0xfd, 0xa6, 0x01, 0x79,
+    0x1b, 0x64, 0x7f, 0x92, 0xd6, 0x55, 0xf7, 0x18, 0x3b, 0x53, 0xc8, 0x71, 0x94, 0x39, 0x02, 0xce, 0xa8, 0x45, 0x3d,
+    0xbe, 0xf8, 0xa8, 0x0d, 0xcb, 0xbf, 0xfa, 0x8f, 0xfe, 0x14, 0x5c, 0xec, 0x93, 0xd3, 0x00, 0x4e, 0xb6, 0x82, 0xa6,
+    0x8e, 0x2a, 0xe9, 0x52, 0x7d, 0x74, 0x7a, 0x7a, 0x45, 0x49, 0x72, 0x00,
   ];
   const brotliText =
     "the quick brown fox jumps over the lazy dog. The Quick Brown Fox Jumps Over The Lazy Dog? International conference on information technology";
@@ -286,10 +317,11 @@ int main(void) {
 
   // `zstd -19` of the text: a raw-literals block with sequences, and a content checksum.
   const zstdStream = [
-    0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x7d, 0x02, 0x00, 0x04, 0x04, 0x74, 0x68, 0x65, 0x20, 0x71, 0x75, 0x69, 0x63, 0x6b, 0x20, 0x62, 0x72, 0x6f, 0x77, 0x6e,
-    0x20, 0x66, 0x6f, 0x78, 0x20, 0x6a, 0x75, 0x6d, 0x70, 0x73, 0x20, 0x6f, 0x76, 0x65, 0x72, 0x20, 0x6c, 0x61, 0x7a, 0x79, 0x20, 0x64, 0x6f, 0x67, 0x2e, 0x20,
-    0x20, 0x61, 0x67, 0x61, 0x69, 0x6e, 0x20, 0x61, 0x6e, 0x64, 0x2e, 0x20, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x20, 0x04, 0x00, 0x2e,
-    0xdf, 0x6f, 0x41, 0x10, 0x50, 0x19, 0x5a, 0xac, 0xca, 0x09, 0x1b, 0x43, 0xc6, 0x98,
+    0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x7d, 0x02, 0x00, 0x04, 0x04, 0x74, 0x68, 0x65, 0x20, 0x71, 0x75, 0x69, 0x63,
+    0x6b, 0x20, 0x62, 0x72, 0x6f, 0x77, 0x6e, 0x20, 0x66, 0x6f, 0x78, 0x20, 0x6a, 0x75, 0x6d, 0x70, 0x73, 0x20, 0x6f,
+    0x76, 0x65, 0x72, 0x20, 0x6c, 0x61, 0x7a, 0x79, 0x20, 0x64, 0x6f, 0x67, 0x2e, 0x20, 0x20, 0x61, 0x67, 0x61, 0x69,
+    0x6e, 0x20, 0x61, 0x6e, 0x64, 0x2e, 0x20, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x20, 0x04,
+    0x00, 0x2e, 0xdf, 0x6f, 0x41, 0x10, 0x50, 0x19, 0x5a, 0xac, 0xca, 0x09, 0x1b, 0x43, 0xc6, 0x98,
   ];
   const zstdText =
     "the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog again and again and again. 0123456789 0123456789 0123456789";
@@ -342,12 +374,27 @@ int main(void) {
   const sqlite = join(repo, "src/jsc/bindings/sqlite");
   test.skipIf(!existsSync(join(sqlite, "sqlite3.c")))("SQLite runs queries in memory", async () => {
     const queries: [string, string][] = [
-      ["select sqlite_version() >= '3.40', 1 + 2 * 3, 7 / 2, 7.0 / 2, 'a' || 'b', upper('hello'), abs(-5)", "1|7|3|3.5|ab|HELLO|5\n"],
-      ["create table t(id integer primary key, name text, score real); insert into t(name, score) values ('ann', 9.5), ('bob', 7.25), ('cy', 8.0), ('di', NULL)", ""],
+      [
+        "select sqlite_version() >= '3.40', 1 + 2 * 3, 7 / 2, 7.0 / 2, 'a' || 'b', upper('hello'), abs(-5)",
+        "1|7|3|3.5|ab|HELLO|5\n",
+      ],
+      [
+        "create table t(id integer primary key, name text, score real); insert into t(name, score) values ('ann', 9.5), ('bob', 7.25), ('cy', 8.0), ('di', NULL)",
+        "",
+      ],
       ["select name, score from t where score > 7.5 order by score desc", "ann|9.5\ncy|8.0\n"],
-      ["select count(*), count(score), sum(score), avg(score), max(name), group_concat(name, ',') from t", "4|3|24.75|8.25|di|ann,bob,cy,di\n"],
-      ["with recursive n(x) as (select 1 union all select x + 1 from n where x < 100) select sum(x), sum(x * x), count(*) from n", "5050|338350|100\n"],
-      ["create index by_name on t(name); select id from t where name = 'cy'; update t set score = score * 2 where id <= 2; select printf('%.2f', sum(score)) from t", "3\n41.50\n"],
+      [
+        "select count(*), count(score), sum(score), avg(score), max(name), group_concat(name, ',') from t",
+        "4|3|24.75|8.25|di|ann,bob,cy,di\n",
+      ],
+      [
+        "with recursive n(x) as (select 1 union all select x + 1 from n where x < 100) select sum(x), sum(x * x), count(*) from n",
+        "5050|338350|100\n",
+      ],
+      [
+        "create index by_name on t(name); select id from t where name = 'cy'; update t set score = score * 2 where id <= 2; select printf('%.2f', sum(score)) from t",
+        "3\n41.50\n",
+      ],
       [
         `select json_extract('{"a":[1,2,{"b":42}]}', '$.a[2].b'), json_array(1, 'x', null), round(sqrt(2), 6), 0x7fffffffffffffff + 0, -9223372036854775807 - 1`,
         '42|[1,"x",null]|1.414214|9223372036854775807|-9223372036854775808\n',
@@ -361,7 +408,10 @@ int main(void) {
         "begin; insert into t(name) select 'n' || x from (with recursive n(x) as (select 1 union all select x + 1 from n where x < 500) select x from n); commit; select count(*), min(id), max(id) from t",
         "504|1|504\n",
       ],
-      ["select name from t where name like 'n49%' order by id", "n49\nn490\nn491\nn492\nn493\nn494\nn495\nn496\nn497\nn498\nn499\n"],
+      [
+        "select name from t where name like 'n49%' order by id",
+        "n49\nn490\nn491\nn492\nn493\nn494\nn495\nn496\nn497\nn498\nn499\n",
+      ],
       [
         "create virtual table docs using fts5(body); insert into docs values ('the quick brown fox'), ('lazy dogs sleep'), ('quick thinking'); select rowid from docs where docs match 'quick' order by rowid",
         "1\n3\n",
@@ -371,7 +421,17 @@ int main(void) {
     const out = await runProgram(
       "sqlite",
       [join(sqlite, "sqlite3.c")],
-      ["SQLITE_THREADSAFE=0", "SQLITE_OMIT_LOAD_EXTENSION=1", "SQLITE_DEFAULT_MEMSTATUS=0", "SQLITE_ENABLE_MATH_FUNCTIONS=1", "SQLITE_ENABLE_JSON1=1", "SQLITE_ENABLE_FTS5=1", "SQLITE_ENABLE_RTREE=1"],
+      // (Under Microsoft C SQLite guards its memory-mapped WAL with __try, which needs unwinding this compiler has not got.)
+      [
+        "SQLITE_OMIT_SEH=1",
+        "SQLITE_THREADSAFE=0",
+        "SQLITE_OMIT_LOAD_EXTENSION=1",
+        "SQLITE_DEFAULT_MEMSTATUS=0",
+        "SQLITE_ENABLE_MATH_FUNCTIONS=1",
+        "SQLITE_ENABLE_JSON1=1",
+        "SQLITE_ENABLE_FTS5=1",
+        "SQLITE_ENABLE_RTREE=1",
+      ],
       [sqlite],
       `#include "sqlite3.h"
 #include <string.h>

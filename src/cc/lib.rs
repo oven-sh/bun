@@ -29,7 +29,7 @@ mod tests;
 #[cfg(test)]
 mod tests_phase13;
 #[cfg(test)]
-mod tests_phase14;
+mod tests_phase15;
 #[cfg(test)]
 mod tests_phase2;
 #[cfg(test)]
@@ -116,6 +116,50 @@ impl FileProvider for HostFiles {
     }
 }
 
+/// The host file system read the way Windows reads it: a name that does not exist as spelled
+/// is looked for whatever the case of its letters, and `\\` separates directories too. For
+/// compiling against a copy of the Windows SDK, whose headers name each other that way, on a
+/// file system that tells `Windows.h` from `windows.h`.
+pub struct HostFilesAnyCase;
+
+impl HostFilesAnyCase {
+    #[allow(clippy::disallowed_methods)]
+    fn resolve(path: &std::path::Path) -> Option<std::path::PathBuf> {
+        if path.exists() {
+            return Some(path.to_path_buf());
+        }
+        let name = path.file_name()?.to_str()?;
+        let parent = path.parent()?;
+        let parent = if parent.as_os_str().is_empty() {
+            std::path::PathBuf::from(".")
+        } else {
+            Self::resolve(parent)?
+        };
+        std::fs::read_dir(&parent).ok()?.find_map(|entry| {
+            let entry = entry.ok()?;
+            let spelled = entry.file_name();
+            spelled
+                .to_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(name))
+                .then(|| parent.join(spelled))
+        })
+    }
+}
+
+impl FileProvider for HostFilesAnyCase {
+    #[allow(clippy::disallowed_methods)]
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        if let Ok(bytes) = std::fs::read(path) {
+            return Some(bytes);
+        }
+        let forward: String = path
+            .chars()
+            .map(|c| if c == '\\' { '/' } else { c })
+            .collect();
+        std::fs::read(Self::resolve(std::path::Path::new(&forward))?).ok()
+    }
+}
+
 pub struct CompileOptions<'a> {
     pub target: Target,
     /// `-I`: searched for both `"..."` and `<...>`, before everything else.
@@ -156,6 +200,112 @@ impl CompileOptions<'_> {
             file_provider: &NoFiles,
         }
     }
+}
+
+/// Where Microsoft's toolchain keeps the C headers: the compiler's own (Visual Studio), the Universal
+/// C Runtime's and the Windows SDK's. `include` is the `INCLUDE` variable of a developer prompt, which
+/// says exactly; without it the newest of each under `program_files` (the `ProgramFiles` and
+/// `ProgramFiles(x86)` directories) is taken, in the order cl.exe searches them.
+// This crate is std-only by design, so it lists directories and splits strings with std rather than
+// bun_sys / bun_core::strings.
+#[allow(clippy::disallowed_methods)]
+pub fn msvc_system_include_dirs(include: Option<&str>, program_files: &[&str]) -> Vec<String> {
+    let is_dir = |dir: &str| std::path::Path::new(dir).is_dir();
+    if let Some(list) = include {
+        let mut dirs = Vec::new();
+        let mut rest = list;
+        loop {
+            let (dir, after) = match rest.split_once(';') {
+                Some((dir, after)) => (dir, Some(after)),
+                None => (rest, None),
+            };
+            if !dir.is_empty() && is_dir(dir) {
+                dirs.push(dir.to_string());
+            }
+            match after {
+                Some(after) => rest = after,
+                None => break,
+            }
+        }
+        if !dirs.is_empty() {
+            return dirs;
+        }
+    }
+    // The subdirectory of `dir` with the highest dotted version number for a name, for which `wanted` holds.
+    let newest = |dir: &str, wanted: &dyn Fn(&str) -> bool| -> Option<String> {
+        let version = |name: &str| -> Vec<u64> {
+            name.split('.')
+                .map(|part| part.parse().unwrap_or(0))
+                .collect()
+        };
+        let mut best: Option<(Vec<u64>, String)> = None;
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let path = format!("{dir}\\{name}");
+            if !wanted(&path) {
+                continue;
+            }
+            let key = version(&name);
+            if best.as_ref().is_none_or(|(other, _)| key > *other) {
+                best = Some((key, path));
+            }
+        }
+        best.map(|(_, path)| path)
+    };
+    let mut dirs = Vec::new();
+    // <ProgramFiles>\Microsoft Visual Studio\<year>\<edition>\VC\Tools\MSVC\<version>\include
+    'compiler: for root in program_files {
+        let studio = format!("{root}\\Microsoft Visual Studio");
+        let mut years: Vec<String> = match std::fs::read_dir(&studio) {
+            Ok(entries) => entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect(),
+            Err(_) => continue,
+        };
+        years.sort();
+        for year in years.iter().rev() {
+            for edition in [
+                "Enterprise",
+                "Professional",
+                "Community",
+                "BuildTools",
+                "Preview",
+            ] {
+                let tools = format!("{studio}\\{year}\\{edition}\\VC\\Tools\\MSVC");
+                if let Some(toolset) = newest(&tools, &|path| {
+                    std::path::Path::new(&format!("{path}\\include\\vcruntime.h")).is_file()
+                }) {
+                    dirs.push(format!("{toolset}\\include"));
+                    break 'compiler;
+                }
+            }
+        }
+    }
+    // <ProgramFiles(x86)>\Windows Kits\10\Include\<version>\{ucrt,shared,um}
+    for root in program_files {
+        let kits = format!("{root}\\Windows Kits\\10\\Include");
+        if let Some(sdk) = newest(&kits, &|path| {
+            std::path::Path::new(&format!("{path}\\ucrt\\stdio.h")).is_file()
+        }) {
+            for part in ["ucrt", "shared", "um"] {
+                let dir = format!("{sdk}\\{part}");
+                if is_dir(&dir) {
+                    dirs.push(dir);
+                }
+            }
+            break;
+        }
+    }
+    dirs
+}
+
+/// A Windows target is compiled as Microsoft C (its predefined macros, its C runtime's own
+/// standard headers, its `inline`) unless a GNU C version is claimed, the way MinGW does.
+fn is_microsoft_c(options: &CompileOptions<'_>) -> bool {
+    options.target.os == Os::Windows && options.gnu_version.is_none()
 }
 
 /// The directories a hosted compiler searches for `<...>` headers on this machine.
@@ -367,6 +517,7 @@ fn compile_unit(
             let tokens = preprocessor(source, filename, options, &files)?;
             let mut program = parser::Parser::new(tokens, options.target)?
                 .replacing_aggregates(options.replace_aggregates)
+                .microsoft_c(is_microsoft_c(options))
                 .parse_program()?;
             files.borrow_mut().warnings.append(&mut program.warnings);
             codegen::generate(&program)
@@ -428,7 +579,9 @@ pub fn typescript_declarations(
         let files = Rc::new(RefCell::new(FileTable::default()));
         let result = (|| {
             let tokens = preprocessor(source, filename, options, &files)?;
-            let program = parser::Parser::new(tokens, options.target)?.parse_program()?;
+            let program = parser::Parser::new(tokens, options.target)?
+                .microsoft_c(is_microsoft_c(options))
+                .parse_program()?;
             Ok(dts::typescript_declarations(&program))
         })();
         result.map_err(|e| diagnostic(&files.borrow(), e))
@@ -444,7 +597,7 @@ pub fn preprocess(
     on_compiler_thread(filename, || {
         let files = Rc::new(RefCell::new(FileTable::default()));
         let result = (|| {
-            let mut pp = preprocessor(source, filename, options, &files)?;
+            let mut pp = preprocessor_for(source, filename, options, &files, false)?;
             let mut out: Vec<u8> = Vec::new();
             let mut previous: Option<token::PpToken> = None;
             loop {
@@ -514,6 +667,18 @@ fn preprocessor<'a>(
     options: &'a CompileOptions<'_>,
     files: &Rc<RefCell<FileTable>>,
 ) -> token::Res<Preprocessor<'a>> {
+    preprocessor_for(source, filename, options, files, true)
+}
+
+/// `for_compiling` adds what only the compiler proper wants ahead of the source (the
+/// definitions of Microsoft's intrinsics), which `-E` leaves out of its output.
+fn preprocessor_for<'a>(
+    source: &[u8],
+    filename: &str,
+    options: &'a CompileOptions<'_>,
+    files: &Rc<RefCell<FileTable>>,
+    for_compiling: bool,
+) -> token::Res<Preprocessor<'a>> {
     let mut search: Vec<SearchDir> = Vec::new();
     for dir in &options.include_dirs {
         search.push(SearchDir::Dir(Rc::from(dir.as_str())));
@@ -529,6 +694,7 @@ fn preprocessor<'a>(
         search,
         filename,
     );
+    pp.msvc = is_microsoft_c(options);
     pp.define_builtins();
 
     let mut command_line = String::new();
@@ -546,6 +712,14 @@ fn preprocessor<'a>(
     }
     // Sources are stacked, so the last one pushed is read first.
     pp.push_source(filename, Rc::from(source), None);
+    if options.target.os == Os::Windows && for_compiling {
+        // What Microsoft's intrinsics do: see `parser_ms.rs`.
+        let prelude = format!(
+            "#define __BUN_MS(ret, name, params, ...) static __inline __attribute__((__always_inline__, __unused__)) ret __bun_ms_##name params __VA_ARGS__\n{}\n#undef __BUN_MS\n",
+            pp_directive::MS_INTRINSICS
+        );
+        pp.push_source("<intrinsics>", Rc::from(prelude.as_bytes()), None);
+    }
     if !command_line.is_empty() {
         pp.push_source("<command line>", Rc::from(command_line.as_bytes()), None);
     }

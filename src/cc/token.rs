@@ -230,6 +230,49 @@ pub(crate) enum Kw {
     Void,
     Volatile,
     While,
+    // Microsoft's, which only Windows targets have.
+    /// `__int64`. (`__int8`, `__int16` and `__int32` are `char`, `short` and `int`.)
+    Int64,
+    /// `__forceinline`.
+    ForceInline,
+    /// Calling conventions and pointer decorations that say nothing on a 64-bit target.
+    MsIgnored,
+    /// `__vectorcall`: a calling convention of its own, which is not implemented.
+    VectorCall,
+    Try,
+    Except,
+    Finally,
+    Leave,
+}
+
+/// What of the language depends on the target: the signedness of plain `char`, which decides
+/// the value of character constants such as `'\xff'`, and whether Microsoft's keywords exist.
+#[derive(Clone, Copy)]
+pub(crate) struct Dialect {
+    pub(crate) char_is_signed: bool,
+    pub(crate) microsoft: bool,
+}
+
+fn microsoft_keyword(ident: &[u8]) -> Option<Kw> {
+    Some(match ident {
+        b"__int8" => Kw::Char,
+        b"__int16" => Kw::Short,
+        b"__int32" => Kw::Int,
+        b"__int64" => Kw::Int64,
+        b"__forceinline" => Kw::ForceInline,
+        b"_inline" => Kw::Inline,
+        b"_asm" => Kw::Asm,
+        b"_alignof" => Kw::Alignof,
+        b"__cdecl" | b"_cdecl" | b"__stdcall" | b"_stdcall" | b"__fastcall" | b"_fastcall"
+        | b"__thiscall" | b"__clrcall" | b"__unaligned" | b"__ptr32" | b"__ptr64" | b"__sptr"
+        | b"__uptr" | b"__w64" => Kw::MsIgnored,
+        b"__vectorcall" => Kw::VectorCall,
+        b"__try" => Kw::Try,
+        b"__except" => Kw::Except,
+        b"__finally" => Kw::Finally,
+        b"__leave" => Kw::Leave,
+        _ => return None,
+    })
 }
 
 fn keyword(ident: &[u8]) -> Option<Kw> {
@@ -238,7 +281,7 @@ fn keyword(ident: &[u8]) -> Option<Kw> {
         b"_Alignof" | b"alignof" | b"__alignof__" | b"__alignof" => Kw::Alignof,
         b"asm" | b"__asm__" | b"__asm" => Kw::Asm,
         b"_Atomic" => Kw::Atomic,
-        b"__attribute__" | b"__attribute" | b"__declspec" => Kw::Attribute,
+        b"__attribute__" | b"__attribute" | b"__declspec" | b"_declspec" => Kw::Attribute,
         b"auto" => Kw::Auto,
         b"_Bool" => Kw::Bool,
         b"break" => Kw::Break,
@@ -375,14 +418,20 @@ impl Tok {
 
 // ───────────────────────────── phase 7: PpToken -> Token ─────────────────────────────
 
-/// `char_is_signed` is the target's signedness of plain `char`; it decides the value of
-/// character constants such as `'\xff'`.
-pub(crate) fn classify(pp: &PpToken, char_is_signed: bool) -> Res<Token> {
+pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
     let loc = pp.loc;
+    let char_is_signed = dialect.char_is_signed;
+    let microsoft = |text: &[u8]| {
+        if dialect.microsoft {
+            microsoft_keyword(text)
+        } else {
+            None
+        }
+    };
     let tok = match pp.kind {
         PpKind::Eof => Tok::Eof,
         PpKind::Punct(p) => Tok::Punct(p),
-        PpKind::Ident => match keyword(&pp.text) {
+        PpKind::Ident => match keyword(&pp.text).or_else(|| microsoft(&pp.text)) {
             Some(kw) => Tok::Kw(kw),
             None => match std::str::from_utf8(&pp.text) {
                 Ok(s) => Tok::Ident(Rc::from(s)),
@@ -793,6 +842,23 @@ fn parse_int(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
             longs: 2,
         },
         b"ull" | b"llu" => IntSuffix {
+            unsigned: true,
+            longs: 2,
+        },
+        // Microsoft's: the width in bits.
+        b"i8" | b"i16" | b"i32" => IntSuffix {
+            unsigned: false,
+            longs: 0,
+        },
+        b"ui8" | b"ui16" | b"ui32" => IntSuffix {
+            unsigned: true,
+            longs: 0,
+        },
+        b"i64" => IntSuffix {
+            unsigned: false,
+            longs: 2,
+        },
+        b"ui64" => IntSuffix {
             unsigned: true,
             longs: 2,
         },

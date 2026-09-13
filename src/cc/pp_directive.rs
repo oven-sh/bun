@@ -21,6 +21,18 @@ const BUILTIN_HEADERS: &[(&str, &str)] = &[
     ("stdatomic.h", include_str!("include/stdatomic.h")),
 ];
 
+/// The ones Visual Studio and the Universal C Runtime have too.
+const MSVC_RUNTIME_HEADERS: &[&str] = &[
+    "float.h",
+    "iso646.h",
+    "limits.h",
+    "stdalign.h",
+    "stdarg.h",
+    "stdbool.h",
+    "stdint.h",
+    "stdnoreturn.h",
+];
+
 /// Intrinsic headers that exist only for one architecture.
 const X86_HEADERS: &[(&str, &str)] = &[
     ("xmmintrin.h", include_str!("include/xmmintrin.h")),
@@ -36,16 +48,32 @@ const ARM64_HEADERS: &[(&str, &str)] = &[
     ("arm_acle.h", include_str!("include/arm_acle.h")),
 ];
 
+/// What Visual Studio's compiler has built in, for Windows targets. `<intrin.h>` is all of it;
+/// Visual Studio's headers reach it by other names too.
+const WINDOWS_HEADERS: &[(&str, &str)] = &[
+    ("intrin.h", include_str!("include/intrin.h")),
+    ("intrin0.h", include_str!("include/intrin0.h")),
+    ("intrin0.inl.h", include_str!("include/intrin0.h")),
+    ("ms_intrinsics.h", MS_INTRINSICS),
+];
+
+pub(crate) const MS_INTRINSICS: &str = include_str!("include/ms_intrinsics.h");
+
 const BUILTIN_DIR: &str = "<builtin>";
 
-fn builtin_header(name: &str, arch: crate::types::Arch) -> Option<&'static str> {
-    let for_arch = match arch {
+fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static str> {
+    let for_arch = match target.arch {
         crate::types::Arch::X86_64 => X86_HEADERS,
         crate::types::Arch::Aarch64 => ARM64_HEADERS,
+    };
+    let for_os: &[(&str, &str)] = match target.os {
+        crate::types::Os::Windows => WINDOWS_HEADERS,
+        _ => &[],
     };
     BUILTIN_HEADERS
         .iter()
         .chain(for_arch)
+        .chain(for_os)
         .find(|(n, _)| *n == name)
         .map(|(_, text)| *text)
 }
@@ -468,6 +496,20 @@ impl Preprocessor<'_> {
         if !is(first, b"pack") {
             return;
         }
+        // `pack(push, _CRT_PACKING)`: the operands are macro-expanded.
+        let tokens: Vec<PTok> = inner.iter().cloned().map(PTok::plain).collect();
+        let expanded = self.with_isolated_input(tokens, |pp| {
+            let mut out = Vec::new();
+            loop {
+                let t = pp.next_expanded()?;
+                if t.is_eof() {
+                    return Ok(out);
+                }
+                out.push(t.tok);
+            }
+        });
+        let Ok(expanded) = expanded else { return };
+        let inner = expanded.as_slice();
         // pack() | pack(n) | pack(push[, name][, n]) | pack(pop[, name])
         fn number(t: &PpToken) -> Option<&[u8]> {
             (t.kind == PpKind::Number && t.text.iter().all(u8::is_ascii_digit))
@@ -706,6 +748,7 @@ impl Preprocessor<'_> {
             ("__BASE_FILE__", Builtin::BaseFile),
             ("__DATE__", Builtin::Date),
             ("__TIME__", Builtin::Time),
+            ("__TIMESTAMP__", Builtin::Timestamp),
         ] {
             self.define_builtin(name, builtin);
         }
@@ -735,9 +778,7 @@ impl Preprocessor<'_> {
             .strip_prefix(BUILTIN_DIR)
             .and_then(|p| p.strip_prefix('/'))
         {
-            Some(name) => {
-                builtin_header(name, self.target.arch).map(|text| Rc::from(text.as_bytes()))
-            }
+            Some(name) => builtin_header(name, self.target).map(|text| Rc::from(text.as_bytes())),
             None => self.provider.read(path).map(Rc::from),
         };
         self.file_cache.insert(Rc::from(path), contents.clone());
@@ -780,10 +821,26 @@ impl Preprocessor<'_> {
                 ));
             }
         }
+        // Microsoft's C runtime has these itself, written for one another: the compiler's own
+        // stand in only where that one is not installed.
+        let theirs_first = self.msvc && MSVC_RUNTIME_HEADERS.contains(&name);
         for index in start..self.search.len() {
+            if theirs_first && matches!(self.search[index], SearchDir::Builtin) {
+                continue;
+            }
             let candidate = self.search_path(index, name);
             if self.load(&candidate).is_some() {
                 return Some((candidate, Some(index)));
+            }
+        }
+        if theirs_first {
+            for index in start..self.search.len() {
+                if matches!(self.search[index], SearchDir::Builtin) {
+                    let candidate = self.search_path(index, name);
+                    if self.load(&candidate).is_some() {
+                        return Some((candidate, Some(index)));
+                    }
+                }
             }
         }
         None

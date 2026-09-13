@@ -1,7 +1,7 @@
 //! Tests for the volatile access bit, the returns-twice function flag, and the constructs
 //! the library corpus needed.
 
-use crate::tests::{LINUX_X64, checked, has};
+use crate::tests::{LINUX_X64, has};
 use crate::{compile, disassemble};
 
 fn count(text: &str, needle: &str) -> usize {
@@ -126,7 +126,6 @@ fn volatile_accesses_carry_the_bit() {
     crate::validate(&bir).unwrap();
     // The decoder keeps the bit.
     assert_eq!(disassemble(&bir).unwrap(), text);
-    checked(src);
 }
 
 #[test]
@@ -191,38 +190,6 @@ fn constructors_and_destructors_are_listed() {
         "{text}"
     );
     assert!(!has(&text, "unused"), "{text}");
-    checked(src);
-    // glibc hands constructors (argc, argv, envp); here they take none, through a
-    // `void f(void)` function the loader can call.
-    checked(
-        "int seen = -1; __attribute__((constructor)) static int with_args(int argc, char **argv, char **envp) { seen = argc + (argv != 0) + (envp != 0); return 5; }
-         int main(void) { return seen; }",
-    );
-    assert!(has(
-        &crate::tests::error_for(
-            "struct s { int x; }; __attribute__((constructor)) void bad(struct s v) { (void)v; }",
-            LINUX_X64
-        ),
-        "a constructor must take and return scalars"
-    ));
-    // Across translation units: priority first, then unit order.
-    let units: [(&[u8], &str); 2] = [
-        (b"extern int log_[]; extern int n; __attribute__((constructor)) static void a(void) { log_[n++] = 1; }
-           __attribute__((constructor(500))) static void b(void) { log_[n++] = 2; }", "a.c"),
-        (b"int log_[4]; int n; __attribute__((constructor(300))) static void c(void) { log_[n++] = 3; }
-           __attribute__((constructor)) static void d(void) { log_[n++] = 4; }
-           int count(void) { return n; }", "b.c"),
-    ];
-    let linked = crate::compile_many(&units, &crate::CompileOptions::new(LINUX_X64))
-        .unwrap_or_else(|d| panic!("{}", d[0]));
-    let text = disassemble(&linked.bir).unwrap();
-    assert!(
-        has(
-            &text,
-            "constructor func 2 c\nconstructor func 1 b\nconstructor func 0 a\nconstructor func 3 d"
-        ),
-        "{text}"
-    );
 }
 
 #[test]
@@ -238,7 +205,6 @@ fn old_style_definitions_and_unprototyped_calls() {
          int through_pointer(void) { int (*fp)() = later; return fp(1, 2.0, 3000L); }
          int no_params() { return 9; }
          int call_no_params(void) { return no_params(); }";
-    checked(src);
     let text = disassemble(&compile(src.as_bytes(), "t.c", LINUX_X64).unwrap()).unwrap();
     // An old-style function takes what callers without a prototype pass: promoted types.
     assert!(
@@ -265,252 +231,6 @@ fn old_style_definitions_and_unprototyped_calls() {
         has(&text, "ExternAddr") && has(&text, "CallIndirect"),
         "{text}"
     );
-    assert!(has(
-        &crate::tests::error_for("int f(a, b) int c; { return a; }", LINUX_X64),
-        "'c' is not a parameter of the function"
-    ));
-}
-
-#[test]
-fn pragma_pack_and_push_macro() {
-    let src = "#include <stddef.h>
-         struct natural { char c; int i; short s; long long l; };
-         #pragma pack(push, 1)
-         struct one { char c; int i; short s; long long l; };
-         #pragma pack(2)
-         struct two { char c; int i; short s; long long l; };
-         #pragma pack(push, 4)
-         struct four { char c; long long l; int bits : 3; };
-         #pragma pack(pop)
-         struct two_again { char c; int i; };
-         #pragma pack(pop)
-         struct back { char c; int i; };
-         _Pragma(\"pack(1)\") struct by_operator { char c; int i; }; _Pragma(\"pack()\")
-         struct reset { char c; int i; };
-         #pragma pack(8)
-         struct capped_not_raised { char c; short s; };
-         #pragma pack()
-         int sizes[] = { sizeof(struct natural), sizeof(struct one), sizeof(struct two), sizeof(struct four),
-                         sizeof(struct two_again), sizeof(struct back), sizeof(struct by_operator), sizeof(struct reset),
-                         sizeof(struct capped_not_raised) };
-         int offsets[] = { offsetof(struct one, i), offsetof(struct one, l), offsetof(struct two, i), offsetof(struct two, l),
-                           offsetof(struct four, l), _Alignof(struct one), _Alignof(struct two), _Alignof(struct four) };
-         int size(int i) { return sizes[i]; }
-         int offset(int i) { return offsets[i]; }
-         struct one global_one = { 1, 0x01020304, 5, 6 };
-         int unaligned_read(void) { struct one *p = &global_one; return p->i + (int)p->l; }";
-    checked(src);
-    let macros = "#define X 1
-         #pragma push_macro(\"X\")
-         #undef X
-         #define X 2
-         int second = X;
-         #pragma push_macro(\"X\")
-         #undef X
-         int third =
-         #ifdef X
-           100;
-         #else
-           3;
-         #endif
-         #pragma pop_macro(\"X\")
-         int fourth = X;
-         #pragma pop_macro(\"X\")
-         int fifth = X;
-         #pragma pop_macro(\"X\")
-         int sixth = X;
-         #pragma push_macro(\"NEVER\")
-         #define NEVER 1
-         #pragma pop_macro(\"NEVER\")
-         #ifdef NEVER
-         #error pop_macro must undefine a name that was not a macro
-         #endif
-         int sum(void) { return second * 1000 + third * 100 + fourth * 10 + fifth + sixth * 10000; }";
-    checked(macros);
-    // -E keeps the pragma the parser needs.
-    let text = crate::preprocess(b"#pragma pack(push, 2)\nstruct s { int x; };\n#pragma pack(pop)\n#pragma omp parallel\nint y;", "t.c", &crate::CompileOptions::new(LINUX_X64)).unwrap();
-    assert_eq!(
-        text,
-        "#pragma pack(push, 2)\nstruct s { int x; } ;\n#pragma pack(pop)\nint y;\n"
-    );
-    assert!(has(
-        &crate::tests::error_for("#pragma pack(3)\nint x;", LINUX_X64),
-        "#pragma pack expects 1, 2, 4, 8 or 16"
-    ));
-}
-
-#[test]
-fn bit_field_layout_and_promotion_match_gcc() {
-    // From tcc's 95_bitfields.c; the layouts are what GCC produces.
-    let src = "#include <stddef.h>
-         struct t1 { unsigned x : 12; unsigned char y : 7; unsigned z : 28; unsigned a : 4; unsigned b : 5; };
-         struct t2 { int x : 12; char y : 6; long long z : 63; char a : 4; long long b : 2; };
-         struct __attribute__((packed)) p2 { int x : 12; char y : 6; long long z : 63; char a : 4; long long b : 2; };
-         struct t3 { unsigned x : 5, y : 5, : 0, z : 5; char a : 5; short b : 5; };
-         struct a3 { unsigned x : 5, y : 5, : 0, z : 5; char a : 5; __attribute__((aligned(16))) short b : 5; };
-         #pragma pack(push, 1)
-         struct k1 { unsigned x : 12; unsigned char y : 7; unsigned z : 28; unsigned a : 4; unsigned b : 5; };
-         struct k6 { int a; signed char b; int x : 12, y : 4, : 0, : 4, z : 3; char d; };
-         #pragma pack(pop)
-         struct edge { char c; int x : 17; };
-         int sizes[] = { sizeof(struct t1), sizeof(struct t2), sizeof(struct p2), sizeof(struct t3), sizeof(struct a3),
-                         sizeof(struct k1), sizeof(struct k6), _Alignof(struct t2), _Alignof(struct p2), _Alignof(struct a3),
-                         _Alignof(struct k6), sizeof(struct edge) };
-         int size(int i) { return sizes[i]; }
-         void fill(unsigned char *out, int which) {
-             if (which == 1) { struct t1 s; __builtin_memset(&s, 0, sizeof s); s.x = -1; s.y = -1; s.z = -1; s.a = -1; s.b = -1; __builtin_memcpy(out, &s, sizeof s); }
-             if (which == 2) { struct p2 s; __builtin_memset(&s, 0, sizeof s); s.x = 3; s.y = 30; s.z = 0x123456789abcdef0LL; s.a = 5; s.b = 2; __builtin_memcpy(out, &s, sizeof s); }
-         }
-         long long wide(void) { struct p2 s; s.x = -1; s.y = -1; s.a = -1; s.b = -1; s.z = 0x123456789abcdef0LL; s.z += 1; return s.z; }
-         struct p2 initialized = { 3, 30, 0x123456789abcdef0LL, 5, -2 };
-         long long from_data(void) { return initialized.z + initialized.b; }
-         struct edge edges[2];
-         int neighbour(void) { edges[1].c = 77; edges[0].x = -1; edges[0].c = 5; return edges[1].c * 100 + edges[0].c + (edges[0].x == -1); }
-         struct promo { unsigned u31 : 31; unsigned u32 : 32; unsigned long ul31 : 31; unsigned long ul32 : 32; unsigned long long ull33 : 33; long long b : 2; } p;
-         int promotions(void) {
-             return (p.u31 - 100 < 0) * 100000 + (p.u32 - 100 < 0) * 10000 + (p.ul31 - 100 < 0) * 1000
-                  + (p.ul32 - 100 < 0) * 100 + (p.ull33 - 100 < 0) * 10 + (sizeof(p.b + 0) == 4);
-         }";
-    checked(src);
-    // Storing a 17-bit field that ends a struct writes three bytes, not four.
-    let text = disassemble(
-        &compile(
-            b"struct edge { char c; int x : 17; }; void set(struct edge *e) { e->x = 1; }",
-            "t.c",
-            LINUX_X64,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let f = function(&text, "set");
-    assert!(
-        count(f, "Store i16u") == 1 && count(f, "Store i8u") == 1 && count(f, "Store i32") == 0,
-        "{f}"
-    );
-}
-
-#[test]
-fn flexible_array_members_and_zero_length_arrays() {
-    let src = "struct message { int length; char text[]; };
-         struct message hello = { 5, \"hello\" };
-         struct message listed = { 3, { 'a', 'b', 'c', 0 } };
-         static struct message designated = { .text = { [3] = 'x' }, .length = 4 };
-         struct numbers { char count; long long values[]; } numbers = { 2, { 10, 20 } };
-         struct zero { int n; int tail[0]; };
-         union either { int whole; char bytes[]; };
-         struct only { int items[]; };
-         int after = 77;
-         int sizes(void) { return sizeof(struct message) * 1000 + sizeof hello * 100 + sizeof(struct zero) * 10 + sizeof(union either); }
-         int read(void) { return hello.text[4] + listed.text[2] + designated.text[3] + designated.length + (int)numbers.values[1] + after; }
-         int local_static(void) { static struct message m = { 1, \"xy\" }; return m.text[1] + m.length; }
-         int through_zero(struct zero *z) { return z->tail[1]; }";
-    checked(src);
-    // The object grows by the initializer: 4 + 6 bytes for `hello`.
-    let text = disassemble(&compile(b"struct message { int length; char text[]; }; struct message hello = { 5, \"hello\" }; int after = 1;", "t.c", LINUX_X64).unwrap()).unwrap();
-    assert!(has(&text, "data: size 16"), "{text}");
-    assert!(has(
-        &crate::tests::error_for(
-            "struct m { int n; char t[]; }; int f(void) { struct m x = { 1, \"a\" }; return x.n; }",
-            LINUX_X64
-        ),
-        "can only be initialized in an object with static storage duration"
-    ));
-}
-
-#[test]
-fn range_designators_and_obsolete_spellings() {
-    let src = "unsigned char classes[256] = { [0 ... 255] = 7, ['a' ... 'z'] = 1, ['0' ... '9'] = 2, ['_'] = 3 };
-         struct cell { int kind; int value; };
-         struct cell grid[2][3] = { [0 ... 1][1 ... 2] = { 4, 5 }, [1][0].value = 9 };
-         struct cell old_style = { value: 8, kind: 2 };
-         int spaced[4] = { [1] 10, [3] 30 };
-         int class_of(int c) { return classes[c]; }
-         int grid_sum(void) { int s = 0; for (int i = 0; i < 2; i++) for (int j = 0; j < 3; j++) s += grid[i][j].kind * 10 + grid[i][j].value; return s; }
-         int local(int seed) { int table[8] = { [2 ... 5] = seed, [7] = 1 }; int s = 0; for (int i = 0; i < 8; i++) s = s * 3 + table[i]; return s; }
-         int others(void) { return old_style.kind * 100 + old_style.value * 10 + spaced[1] + spaced[3] + spaced[0]; }";
-    checked(src);
-    assert!(has(
-        &crate::tests::error_for("int a[4] = { [3 ... 1] = 0 };", LINUX_X64),
-        "array range designator is empty"
-    ));
-    assert!(has(
-        &crate::tests::error_for("int a[4] = { [1 ... 4] = 0 };", LINUX_X64),
-        "exceeds the array bounds"
-    ));
-}
-
-#[test]
-fn aliases_are_other_names_for_the_target() {
-    let src = "int calls;
-         int target(int x) { calls++; return x + 1; }
-         int also_target(int) __attribute__((alias(\"target\")));
-         static int hidden(int) __attribute__((alias(\"target\")));
-         int by_label(int) __asm__(\"target\");
-         int counter = 34;
-         extern int counter_alias __attribute__((alias(\"counter\")));
-         int labelled __asm__(\"counter\");
-         int use(void) { counter_alias += 1; labelled += 1; return also_target(1) + hidden(2) + by_label(3) + counter * 100 + calls * 1000; }
-         int same_address(void) { return also_target == target && &counter_alias == &counter; }";
-    checked(src);
-    let bir = compile(src.as_bytes(), "t.c", LINUX_X64).unwrap();
-    assert!(
-        crate::export_names(&bir)
-            .unwrap()
-            .contains(&"also_target".to_string())
-    );
-    assert!(
-        !crate::export_names(&bir)
-            .unwrap()
-            .contains(&"hidden".to_string())
-    );
-    assert!(has(
-        &crate::tests::error_for(
-            "void f(void) __attribute__((alias(\"nowhere\")));",
-            LINUX_X64
-        ),
-        "alias target 'nowhere' must be a function declared earlier"
-    ));
-}
-
-#[test]
-fn builtins_the_libraries_use() {
-    let src = "#include <stddef.h>
-         #include <stdint.h>
-         int add_u32(unsigned a, unsigned b) { unsigned r; int o = __builtin_add_overflow(a, b, &r); return o * 2 + (r == a + b); }
-         int add_i32(int a, int b) { int r; return __builtin_sadd_overflow(a, b, &r) * 1000 + (r & 0xff); }
-         int sub_i64(long a, long b) { long r; int o = __builtin_sub_overflow(a, b, &r); return o * 2 + (r == (long)((unsigned long)a - (unsigned long)b)); }
-         int mul_size(size_t a, size_t b) { size_t r; int o = __builtin_mul_overflow(a, b, &r); return o * 2 + (r == a * b); }
-         int mul_i64(long long a, long long b) { long long r; return __builtin_smulll_overflow(a, b, &r) * 2 + (r == (long long)((unsigned long long)a * (unsigned long long)b)); }
-         int mixed(int a, unsigned long b) { unsigned char r; int o = __builtin_add_overflow(a, b, &r); return o * 1000 + r; }
-         int mixed_sign(long long a, unsigned long long b) { long long r; return __builtin_sub_overflow(a, b, &r); }
-         int into_wider(unsigned a, unsigned b) { unsigned long long r; return __builtin_mul_overflow(a, b, &r) * 2 + (r == (unsigned long long)a * b); }
-         int calls; int next(void) { return ++calls; }
-         int once(void) { int r; calls = 0; __builtin_add_overflow(next(), next(), &r); return calls * 10 + r; }
-         unsigned rotl32(unsigned x, unsigned n) { return __builtin_rotateleft32(x, n); }
-         unsigned long long rotr64(unsigned long long x, unsigned n) { return __builtin_rotateright64(x, n); }
-         int rot8(int x, int n) { return __builtin_rotateleft8(x, n) * 1000 + __builtin_rotateright16(x, n); }
-         int bits(unsigned x, unsigned long long y) { return __builtin_ffs(x) * 10000 + __builtin_ffsll(y) * 100 + __builtin_parity(x) * 10 + __builtin_parityll(y); }
-         static char table[64] __attribute__((aligned(16)));
-         long misc(char *p) {
-             __builtin_prefetch(p); __builtin_prefetch(p + 64, 0, 3);
-             char *q = __builtin_assume_aligned(table, 16);
-             __builtin_cpu_init();
-             __builtin_assume(p != 0);
-             return (q == table) + (__builtin_object_size(p, 0) == (size_t)-1) * 2 + (__builtin_object_size(p, 2) == 0) * 4
-                  + __builtin_cpu_supports(\"avx2\") * 8 + __builtin_choose_expr(sizeof(long) == 8, 16, table) + __builtin_unpredictable(p != 0) * 32;
-         }
-         size_t library(const char *s) { return __builtin_strlen(s) + (__builtin_strstr(s, \"lo\") - s) + __builtin_strspn(s, \"eh\"); }
-         #if __has_builtin(__builtin_mul_overflow) && __has_builtin(__builtin_rotateleft32) && __has_builtin(__builtin_frame_address)
-         int has(void) { return 1; }
-         #endif";
-    checked(src);
-    assert!(has(
-        &crate::tests::error_for(
-            "int f(int a, _Bool *r) { return __builtin_add_overflow(a, a, r); }",
-            LINUX_X64
-        ),
-        "needs integer operands of at most 64 bits, not '_Bool'"
-    ));
 }
 
 #[test]
@@ -551,30 +271,12 @@ fn inline_assembly_that_needs_no_assembler() {
         ),
         "inline assembly is not supported yet ('cpuid')"
     ));
-    assert!(has(
-        &crate::tests::error_for(
-            "int f(int x) { __asm__(\"frobnicate %0\" : \"+r\"(x)); return x; }",
-            LINUX_X64
-        ),
-        "inline assembly: unsupported instruction 'frobnicate'"
-    ));
-    assert!(has(
-        &crate::tests::error_for(
-            "int f(void) { int x; __asm__(\"cpuid\" : \"=r\"(x) : \"a\"(0)); return x; }",
-            LINUX_X64
-        ),
-        "an output of 'cpuid' that is not in a named register"
-    ));
     // The validator knows the instruction only exists on x86-64.
     let mut module = crate::bir::Module::decode(&output.bir).unwrap();
     module.arch = 1;
     assert!(has(
         &crate::bir::validate(&module).unwrap_err(),
         "CpuId outside x86-64"
-    ));
-    assert!(has(
-        &crate::tests::error_for("__asm__(\".globl x\");", LINUX_X64),
-        "inline assembly is not supported yet"
     ));
 }
 
@@ -674,69 +376,11 @@ fn thread_local_initializers_with_addresses() {
         "{text}"
     );
     // A data object still cannot start out pointing into a thread's copy.
-    assert!(has(
-        &crate::tests::error_for("_Thread_local int t; int *p = &t;", LINUX_X64),
-        "address of a thread-local object is not a constant"
-    ));
 }
 
+/// (The errors are in fixtures/diagnostics/cases.json; nothing a program can see shows a warning.)
 #[test]
-fn const_is_a_real_qualifier() {
-    let src = "typedef const int cint;
-         const int limit = 10; cint other = 20; const char *const names[] = { \"a\", \"bc\" };
-         struct point { int x; const int id; };
-         int read(const struct point *p, const int *q) { return p->x + p->id + *q + limit + other + names[1][1]; }
-         int pick(void) {
-             const int local = 1; int plain = 2; const int *pc = &local; int *pp = &plain; int *const cp = &plain;
-             *cp = 3;
-             return _Generic(local, int: 1, default: 0)
-                  + _Generic(&local, const int *: 10, int *: 20)
-                  + _Generic(pc, const int *: 100, int *: 200)
-                  + _Generic(pp, const int *: 1000, int *: 2000)
-                  + _Generic(cp, int *: 10000, default: 0)
-                  + _Generic(0 ? pc : pp, const int *: 100000, int *: 200000)
-                  + _Generic(0 ? (volatile long *)0 : (const long *)0, const volatile long *: 1000000, default: 0)
-                  + _Generic(\"text\", char *: 10000000, const char *: 20000000)
-                  + _Generic((const int)plain, int: 100000000, default: 0);
-         }";
-    checked(src);
-    for (source, message) in [
-        (
-            "const int x = 1; void f(void) { x = 2; }",
-            "cannot assign to an lvalue of const-qualified type 'const int'",
-        ),
-        (
-            "void f(const int *p) { *p = 2; }",
-            "const-qualified type 'const int'",
-        ),
-        ("void f(const int *p) { (*p)++; }", "const-qualified"),
-        (
-            "struct s { int a; }; void f(const struct s *p) { p->a += 1; }",
-            "const-qualified type 'const int'",
-        ),
-        (
-            "struct s { const int a; }; void f(struct s *p) { p->a = 1; }",
-            "const-qualified",
-        ),
-        (
-            "void f(int *const p) { p = 0; }",
-            "const-qualified type 'int * const'",
-        ),
-        (
-            "void f(const char c[4]) { c[0] = 1; }",
-            "const-qualified type 'const char'",
-        ),
-        (
-            "int f(const char *); int f(char *);",
-            "conflicting types for 'f'",
-        ),
-    ] {
-        assert!(
-            has(&crate::tests::error_for(source, LINUX_X64), message),
-            "{source}: {}",
-            crate::tests::error_for(source, LINUX_X64)
-        );
-    }
+fn discarding_a_qualifier_is_a_warning() {
     let output = crate::compile_with_warnings(
         b"void take(char *); char *f(const char *s, volatile int *v) { char *p = s; take(s); int *q = v; (void)q; p = (char *)s; return s; }",
         "t.c",
@@ -800,17 +444,10 @@ fn inlining_flags_reach_the_function_declarations() {
         ),
         (4, 8, 16)
     );
-    checked(src);
 }
 
 #[test]
 fn assembly_that_only_hides_a_value_or_aligns_code() {
-    let src = "unsigned long hide(unsigned long acc) { __asm__(\"\" : \"+r\"(acc)); return acc * 3; }
-         int copy(int *in) { int out; __asm__ volatile(\"\" : \"=r\"(out) : \"0\"(*in)); return out + 1; }
-         int memory(int *p) { __asm__ volatile(\"\" : \"+m\"(*p) : : \"memory\"); return *p; }
-         int loop(int n) { int total = 0; __asm__(\".p2align 6\"); __asm__ volatile(\".balign 16\\n.align 32\");
-             for (int i = 0; i < n; i++) total += i; return total; }";
-    checked(src);
     // Anything else is assembled on x86-64 (see asm_stmt.rs) and refused elsewhere.
     let error = crate::tests::error_for(
         "int f(int a, int b) { __asm__(\"cmp %w1, %w0\" : \"+r\"(a) : \"r\"(b)); return a; }",
@@ -887,29 +524,6 @@ fn memcpy_of_a_whole_scalar_is_a_load_or_a_store() {
 }
 
 #[test]
-fn gnu_inline_and_constant_string_elements() {
-    // What glibc's headers do when the compiler says it is GCC and optimizes.
-    let src = "extern double my_atof(const char *);
-         extern __inline __attribute__((__gnu_inline__)) double my_atof(const char *s) { return s[0] - '0'; }
-         extern double my_atof(const char *);
-         __inline __attribute__((__gnu_inline__)) int emitted(int x) { return x + 1; }
-         char second[] = { \"ab\"[1], \"xy\" \"z\"[2], 0 };
-         int use(void) { return (int)my_atof(\"7\") + emitted(1) + second[0] + second[1]; }";
-    let bir = crate::compile(src.as_bytes(), "t.c", LINUX_X64).unwrap();
-    let module = crate::bir::Module::decode(&bir).unwrap();
-    let exported = |name: &str| {
-        module
-            .funcs
-            .iter()
-            .find(|f| f.name == name)
-            .map(|f| f.exported)
-    };
-    assert_eq!(exported("my_atof"), Some(false));
-    assert_eq!(exported("emitted"), Some(true));
-    checked(src);
-}
-
-#[test]
 fn narrowing_stores_and_branches_do_no_extra_work() {
     let src = "typedef unsigned short u16; typedef unsigned char u8;
          void stores(u16 *p, u8 *q, int x, long y) { *p = (u16)x; *q = (u8)y; p[1] = x; (*q)++; q[1] += 3; p[2] -= x; }
@@ -971,7 +585,6 @@ fn gnu_c_corner_cases_that_tcctest_exercises() {
          #define name def.h
          #include inc
          size_t from_header(void) { return sizeof(ptrdiff_t); }";
-    checked(src);
     let bir = crate::compile(src.as_bytes(), "t.c", LINUX_X64).unwrap();
     let text = crate::bir::disassemble(&crate::bir::Module::decode(&bir).unwrap()).unwrap();
     assert!(
@@ -979,15 +592,6 @@ fn gnu_c_corner_cases_that_tcctest_exercises() {
         "{text}"
     );
     assert!(has(&text, "Trap"), "{text}");
-    // The 16-byte compare-and-swap is an error only where it is compiled.
-    let error = crate::tests::error_for(
-        "int f(unsigned __int128 *p, unsigned __int128 *e) { return __atomic_compare_exchange_n(p, e, 1, 0, 5, 5); }",
-        LINUX_X64,
-    );
-    assert!(
-        has(&error, "there are no 16-byte atomic operations"),
-        "{error}"
-    );
 }
 
 #[test]
@@ -1249,7 +853,6 @@ fn unreachable_code_is_not_emitted_and_int128_is_announced() {
     assert_eq!(blocks("after_return"), Some(1));
     let text = crate::bir::disassemble(&module).unwrap();
     assert!(has(&text, "RotL") && !has(&text, "Unreachable"), "{text}");
-    checked(src);
 }
 
 #[test]

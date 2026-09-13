@@ -12,7 +12,7 @@
 
 use std::process::ExitCode;
 
-use bun_cc::{CompileOptions, HostFiles, Target};
+use bun_cc::{CompileOptions, HostFiles, HostFilesAnyCase, Target};
 
 const USAGE: &str = "usage: bun-cc <input.c>... (-o <out.bir> | --dump | -E | --dump-tokens | --emit-dts) [options]
 several input files are compiled separately and linked into one module (-E, --dump-tokens and --emit-dts take one)
@@ -152,6 +152,18 @@ fn main() -> ExitCode {
 
     if !nostdinc {
         system_dirs.extend(bun_cc::default_system_include_dirs(target));
+        if cfg!(windows) && target.os == bun_cc::Os::Windows {
+            let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+            let roots: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)"]
+                .into_iter()
+                .filter_map(variable)
+                .collect();
+            let roots: Vec<&str> = roots.iter().map(String::as_str).collect();
+            system_dirs.extend(bun_cc::msvc_system_include_dirs(
+                variable("INCLUDE").as_deref(),
+                &roots,
+            ));
+        }
     }
     let options = CompileOptions {
         target,
@@ -161,7 +173,12 @@ fn main() -> ExitCode {
         undefines,
         gnu_version,
         replace_aggregates,
-        file_provider: &HostFiles,
+        // (A Windows SDK copied to another system keeps its spellings.)
+        file_provider: if target.os == bun_cc::Os::Windows && !cfg!(windows) {
+            &HostFilesAnyCase
+        } else {
+            &HostFiles
+        },
     };
 
     if emit_dts {

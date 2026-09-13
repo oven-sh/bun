@@ -26,6 +26,8 @@ pub(crate) struct DataObject {
     pub(crate) initialized: bool,
     /// Sits in the initialized part of the unit's segment (non-zero bytes or relocations).
     pub(crate) content: bool,
+    /// Every unit that defines it defines the same thing; the first one is kept.
+    pub(crate) linkonce: bool,
 }
 
 pub(crate) struct LinkError {
@@ -136,6 +138,9 @@ impl<'u> Segment<'u> {
                     }
                     Some((pu, po)) => {
                         let previous = &objects_of(&units[pu], tls)[po];
+                        if previous.linkonce && object.linkonce {
+                            continue;
+                        }
                         if previous.initialized && object.initialized {
                             return fail(
                                 u,
@@ -312,6 +317,14 @@ pub(crate) fn link(units: &[Unit], names: &[String]) -> Result<Linked, LinkError
             defined_funcs.insert(name, (u, total_funcs + f));
         }
         total_funcs += unit.module.funcs.len() as u32;
+    }
+    // What nobody defines for the whole program, the first unit that defines it for itself does.
+    for (u, unit) in units.iter().enumerate() {
+        for (name, f) in &unit.linkonce_functions {
+            defined_funcs
+                .entry(name.as_str())
+                .or_insert((u, func_bases[u] + f));
+        }
     }
 
     // ── Data and thread-local storage ──

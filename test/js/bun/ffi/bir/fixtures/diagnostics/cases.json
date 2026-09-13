@@ -475,7 +475,7 @@
   "line": 1,
   "column": 2,
   "message": "'arm_neon.h' file not found",
-  "requires": "x64"
+  "requires": "glibc"
  },
  {
   "about": "vector diagnostics",
@@ -518,7 +518,7 @@
   "line": 1,
   "column": 57,
   "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
-  "requires": "sysv"
+  "requires": "x64-sysv"
  },
  {
   "about": "vector diagnostics",
@@ -526,7 +526,7 @@
   "line": 1,
   "column": 79,
   "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
-  "requires": "sysv"
+  "requires": "x64-sysv"
  },
  {
   "about": "vector diagnostics",
@@ -652,7 +652,8 @@
   "source": "#include <stdarg.h>\ntypedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int n, ...) { va_list ap; va_start(ap, n); V v = va_arg(ap, V); va_end(ap); return v; }",
   "line": 2,
   "column": 152,
-  "message": "invalid type 'int __attribute__((vector_size(16)))' for va_arg"
+  "message": "invalid type 'int __attribute__((vector_size(16)))' for va_arg",
+  "requires": "posix"
  },
  {
   "about": "atomic diagnostics",
@@ -1099,5 +1100,142 @@
   "line": 1,
   "column": 14,
   "message": "array designator index exceeds the array bounds"
+ },
+ {
+  "about": "macro expansion",
+  "source": "#define F(a, b) a\nF(1)",
+  "line": 2,
+  "column": 1,
+  "message": "macro 'F' requires 2 arguments, but 1 given"
+ },
+ {
+  "about": "macro expansion",
+  "source": "#define F(a) a\nF(1",
+  "line": 2,
+  "column": 1,
+  "message": "unterminated argument list invoking macro 'F'"
+ },
+ {
+  "about": "macro expansion",
+  "source": "#define C(a, b) a ## b\nC(+, /)",
+  "line": 2,
+  "column": 1,
+  "message": "pasting \"+\" and \"/\" does not give a valid preprocessing token"
+ },
+ {
+  "about": "macro expansion",
+  "source": "#define S(x) # y",
+  "line": 1,
+  "column": 14,
+  "message": "'#' is not followed by a macro parameter"
+ },
+ {
+  "about": "macro expansion",
+  "source": "#define P ## x",
+  "line": 1,
+  "column": 9,
+  "message": "'##' cannot appear at either end of a macro expansion"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1 / 0\n#endif",
+  "line": 1,
+  "column": 7,
+  "message": "division by zero in preprocessor expression"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1 +\n#endif",
+  "line": 1,
+  "column": 2,
+  "message": "expected a value in preprocessor expression"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1.5\n#endif",
+  "line": 1,
+  "column": 5,
+  "message": "floating constant in preprocessor expression"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1 2\n#endif",
+  "line": 1,
+  "column": 7,
+  "message": "missing binary operator in preprocessor expression"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#endif",
+  "line": 1,
+  "column": 1,
+  "message": "#endif without #if"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#else",
+  "line": 1,
+  "column": 1,
+  "message": "#else without #if"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1\n#else\n#else\n#endif",
+  "line": 3,
+  "column": 1,
+  "message": "#else after #else"
+ },
+ {
+  "about": "conditional directives",
+  "source": "\n#error stop here",
+  "line": 2,
+  "column": 1,
+  "message": "#error stop here"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#bogus",
+  "line": 1,
+  "column": 2,
+  "message": "invalid preprocessing directive #bogus"
+ },
+ {
+  "about": "conditional directives",
+  "source": "#if 1\nint x;",
+  "line": 1,
+  "column": 1,
+  "message": "unterminated conditional directive"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "int __vectorcall f(float x);",
+  "line": 1,
+  "column": 5,
+  "message": "__vectorcall is not supported: it changes how arguments are passed",
+  "requires": "windows"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "static __inline int guarded(int *p) {\n  int v = 0;\n  __try { v = *p; if (v) __leave; v = 1; } __except (v == 1 ? 1 : 0) { v = -1; }\n  __try { v++; } __finally { v += 2; }\n  return v;\n}\nint uses(int *p) { return guarded(p); }",
+  "line": 3,
+  "column": 3,
+  "message": "structured exception handling (__try) is not supported",
+  "requires": "windows"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "void f(void) { __try { } }",
+  "line": 1,
+  "column": 26,
+  "message": "expected __except or __finally after the block of __try",
+  "requires": "windows"
+ },
+ {
+  "about": "Microsoft C",
+  "source": "unsigned char _InterlockedCompareExchange128(__int64 volatile *, __int64, __int64, __int64 *);\nstatic __inline int cas(__int64 volatile *p, __int64 *c) { return _InterlockedCompareExchange128(p, 1, 2, c); }\nint uses(__int64 volatile *p, __int64 *c) { return cas(p, c); }",
+  "line": 2,
+  "column": 67,
+  "message": "_InterlockedCompareExchange128: a 16-byte compare and swap is not supported",
+  "requires": "windows"
  }
 ]

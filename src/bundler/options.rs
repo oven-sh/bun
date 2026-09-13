@@ -1345,6 +1345,8 @@ pub struct BundleOptions<'a> {
     /// When every entry point is a C file they are one program: the first stays the entry point and
     /// these are compiled and linked with it, as `cc a.c b.c c.c` would.
     pub c_link_sources: Box<[Box<[u8]>]>,
+    /// `--compile --target=…`: the platform C files are compiled for. `None` is this one.
+    pub c_target: Option<bun_cc::Target>,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1547,6 +1549,7 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: self.optimize_bytecode,
             compile_target_builtins: self.compile_target_builtins.clone(),
             c_link_sources: self.c_link_sources.clone(),
+            c_target: self.c_target,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1796,6 +1799,7 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
             c_link_sources: Box::default(),
+            c_target: None,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

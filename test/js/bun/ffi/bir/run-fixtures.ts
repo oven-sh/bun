@@ -9,9 +9,10 @@ export const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
 /**
  * What a fixture needs beyond `supported`, in a `<name>.requires` file (a `requires` file for a project) or a
  * diagnostics case's `requires`: `x64` (x86-64 instructions, intrinsics or diagnostics), `arm64` (`<arm_neon.h>`),
- * `x87` (80-bit `long double`: x86-64 outside Windows), `glibc` (its symbols or headers), `posix` (headers and
+ * `x87` (80-bit `long double`: x86-64 outside Windows), `x64-sysv` (the System V calling convention for x86-64), `glibc` (its symbols or headers), `posix` (headers and
  * functions Windows does not have), `lp64` (a 64-bit `long`: not Windows), `sysv` (the System V layout of bit-fields
- * and choice of enumeration types, which Windows does not share) or `windows`.
+ * and choice of enumeration types, which Windows does not share), `windows`, or `msvc-headers` (Windows with
+ * Visual Studio's and the Windows SDK's headers where `INCLUDE` or `BUN_C_MSVC_INCLUDE` says they are).
  */
 export function meets(requirement: string | undefined) {
   switch (requirement?.trim()) {
@@ -22,6 +23,7 @@ export function meets(requirement: string | undefined) {
     case "arm64":
       return isArm64;
     case "x87":
+    case "x64-sysv":
       return !isArm64 && !isWindows;
     case "glibc":
       return isLinux;
@@ -31,6 +33,15 @@ export function meets(requirement: string | undefined) {
       return !isWindows;
     case "windows":
       return isWindows;
+    case "msvc-headers":
+      // Visual Studio's and the Windows SDK's: named by a developer prompt, or where the compiler looks for them.
+      return (
+        isWindows &&
+        (Boolean(process.env.INCLUDE) ||
+          existsSync(
+            join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include"),
+          ))
+      );
     default:
       throw new Error(`unknown requirement ${JSON.stringify(requirement)}`);
   }
@@ -42,6 +53,18 @@ export function meets(requirement: string | undefined) {
  */
 export function includePath(...directories: string[]) {
   return [...directories, process.env.C_INCLUDE_PATH ?? ""].filter(Boolean).join(delimiter);
+}
+
+/**
+ * `bun build` and `bun x.c` take no -D or -I: a file that needs macros is compiled through a wrapper that defines
+ * them (`NAME` or `NAME=value`) and then includes it, and its include directories go in C_INCLUDE_PATH.
+ */
+export function wrapperSource(defines: string[], source: string) {
+  const macros = defines.map(define => {
+    const at = define.indexOf("=");
+    return at < 0 ? `#define ${define} 1\n` : `#define ${define.slice(0, at)} ${define.slice(at + 1)}\n`;
+  });
+  return `${macros.join("")}#include ${JSON.stringify(source.replaceAll("\\", "/"))}\n`;
 }
 
 // A C runtime that opens stdout in text mode (msvcrt) writes "\r\n", and git may check text files out that way.

@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use crate::abi::{ArgPass, Piece, RetPass, lower_call};
 use crate::bir::Exhausts;
-use crate::tests::{LINUX_ARM64, LINUX_X64, WINDOWS_X64, checked, has};
+use crate::tests::{LINUX_ARM64, LINUX_X64, WINDOWS_X64, has};
 use crate::{Arch, Os, Target, compile, disassemble, parse_for_tests};
 
 const MAC_ARM64: Target = Target {
@@ -228,7 +228,8 @@ fn abi_classification_tables() {
             "{i64:8@0} <- {i64:8@0}",
             "",
         ),
-        ("", "void <- none", "void <- none", "void <- none"),
+        // (A structure with no members takes four bytes in Microsoft C.)
+        ("", "void <- none", "void <- none", "{i32:4@0} <- {i32:4@0}"),
     ];
     for (members, sysv, aapcs, win) in table {
         assert_eq!(round_trip(members, LINUX_X64), *sysv, "System V: {members}");
@@ -410,11 +411,6 @@ fn eight_byte_vectors_in_calls() {
         "{f64:8@0 f64:8@8 f64:8@16 f64:8@24} <- {f64:8@0 f64:8@8 f64:8@16 f64:8@24}"
     );
     assert_eq!(abi_of(four, LINUX_X64), "sret <- stack(32,8)");
-    let one_double = crate::tests::error_for(
-        "typedef double v __attribute__((vector_size(8))); v f(v a) { return a; }",
-        LINUX_X64,
-    );
-    assert!(has(&one_double, "GCC and Clang disagree"), "{one_double}");
     crate::tests::checked_for(
         "typedef double v __attribute__((vector_size(8))); v f(v a) { return a + a; }",
         LINUX_ARM64,
@@ -428,150 +424,8 @@ fn dump(src: &str, target: Target) -> String {
     }
 }
 
-/// Every shape from the classification table, passed and returned by value on the
-/// executable x86-64 model: `T id(T x)` must return what it got, and must not let a
-/// change to its parameter reach the caller's object.
-#[test]
-fn every_shape_round_trips_by_value() {
-    let shapes: &[(&str, &str)] = &[
-        ("int a;", "{ 7 }"),
-        ("char a;", "{ 'x' }"),
-        ("short a; char b;", "{ -3, 'y' }"),
-        ("int a, b;", "{ 1, -2 }"),
-        ("long a, b;", "{ 1L << 40, -5 }"),
-        ("long a, b, c;", "{ 11, 22, 33 }"),
-        ("double a;", "{ 2.5 }"),
-        ("float a;", "{ 1.5f }"),
-        ("float a, b;", "{ 1.5f, -2.25f }"),
-        ("float a, b, c;", "{ 1.5f, -2.25f, 8.0f }"),
-        ("float a, b, c, d;", "{ 1.5f, -2.25f, 8.0f, 0.125f }"),
-        ("double a, b;", "{ 1.5, -2.25 }"),
-        ("double a, b, c;", "{ 1.5, -2.25, 1e100 }"),
-        ("int a; double b;", "{ -9, 0.75 }"),
-        ("double a; int b;", "{ 0.75, -9 }"),
-        ("float a; int b;", "{ 0.5f, 123456 }"),
-        ("char a[3];", "{ { 1, 2, 3 } }"),
-        ("char a[5];", "{ { 1, 2, 3, 4, 5 } }"),
-        ("char a[7];", "{ \"sixsix\" }"),
-        ("char a[16];", "{ \"fifteen chars..\" }"),
-        ("char a[17];", "{ \"sixteen chars...\" }"),
-        ("int a, b, c;", "{ 1, 2, 3 }"),
-        ("struct { int x, y; } in; double d;", "{ { 4, 5 }, 6.5 }"),
-        ("double a[2];", "{ { 3.5, 4.5 } }"),
-        (
-            "unsigned a : 3; unsigned b : 20; short c;",
-            "{ 5, 99999, -7 }",
-        ),
-        (
-            "char bytes[64];",
-            "{ \"sixty-four bytes of struct passed through memory, by value....\" }",
-        ),
-    ];
-    let source_for = |skip_bit_fields: bool| -> String {
-        let mut src = String::from(
-            "int memcmp(const void *, const void *, unsigned long);\n\
-             static void scribble(void *p, unsigned long n) { unsigned char *b = p; while (n--) *b++ ^= 0x5a; }\n",
-        );
-        for (i, (members, init)) in shapes.iter().enumerate() {
-            if skip_bit_fields && has(members, " : ") {
-                continue;
-            }
-            let _ = write!(
-                src,
-                "struct T{i} {{ {members} }};\n\
-                 static struct T{i} id{i}(struct T{i} x) {{ struct T{i} copy = x; scribble(&x, sizeof x); return copy; }}\n\
-                 static struct T{i} (*const indirect{i})(struct T{i}) = id{i};\n\
-                 int check{i}(void) {{\n\
-                     struct T{i} original = {init}, before = original;\n\
-                     struct T{i} back = id{i}(original);\n\
-                     struct T{i} again = indirect{i}(id{i}(back));\n\
-                     return memcmp(&back, &before, sizeof back) == 0 && memcmp(&original, &before, sizeof before) == 0 && memcmp(&again, &before, sizeof again) == 0;\n\
-                 }}\n",
-            );
-        }
-        src
-    };
-    let src = source_for(false);
-    checked(&src);
-    // The same source compiles for the other ABIs.
-    for target in [LINUX_ARM64, MAC_ARM64] {
-        let text = dump(&src, target);
-        assert!(has(&text, "func"), "{text}");
-    }
-    // Win64 too, minus the bit-field shape (no MSVC bit-field layout yet).
-    assert!(has(&dump(&source_for(true), WINDOWS_X64), "func"));
-}
-
-#[test]
-fn register_exhaustion_and_mixed_arguments() {
-    checked(
-        "struct P { long a, b; }; struct D { double a, b; }; struct M { int i; double d; }; struct Big { long v[3]; };
-         static long after_seven(int a, int b, int c, int d, int e, int f, int g, struct P p, int h) { return a + b + c + d + e + f + g + p.a * 1000 + p.b * 100000 + h * 10000000; }
-         long ints_then_struct(void) { struct P p = { 3, 4 }; return after_seven(1, 1, 1, 1, 1, 1, 1, p, 5); }
-         static long one_register_left(int a, int b, int c, int d, int e, struct P p, int h) { return a + b + c + d + e + p.a * 1000 + p.b * 100000 + h * 10000000; }
-         long split_is_not_allowed(void) { struct P p = { 3, 4 }; return one_register_left(1, 1, 1, 1, 1, p, 5); }
-         static double after_nine(double a, double b, double c, double d, double e, double f, double g, double h, double i, struct D p, double z) { return a + b + c + d + e + f + g + h + i + p.a * 100 + p.b * 1000 + z * 10000; }
-         double doubles_then_struct(void) { struct D p = { 1.5, 2.5 }; return after_nine(1, 1, 1, 1, 1, 1, 1, 1, 1, p, 3.0); }
-         static double seven_then_pair(double a, double b, double c, double d, double e, double f, double g, struct D p, double z) { return a + b + c + d + e + f + g + p.a * 100 + p.b * 1000 + z * 10000; }
-         double one_float_register_left(void) { struct D p = { 1.5, 2.5 }; return seven_then_pair(1, 1, 1, 1, 1, 1, 1, p, 3.0); }
-         static double mixed(struct M m, int a, struct D d, struct Big big, struct P p, double x, struct M m2) { return m.i + m.d + a + d.a + d.b + (double)(big.v[0] + big.v[1] + big.v[2]) + (double)(p.a + p.b) + x + m2.i * m2.d; }
-         double all_kinds(void) { struct M m = { 1, 0.5 }, m2 = { 4, 0.25 }; struct D d = { 2.0, 3.0 }; struct Big big = { { 10, 20, 30 } }; struct P p = { 100, 200 }; return mixed(m, 7, d, big, p, 0.125, m2); }
-         struct Big make_big(long a, long b, long c) { struct Big r = { { a, b, c } }; return r; }
-         long big_result(void) { struct Big r = make_big(7, 8, 9); return r.v[0] * 100 + r.v[1] * 10 + r.v[2] + make_big(1, 2, 3).v[1] * 1000; }
-         static struct Big shifted(struct Big in, long by) { for (int i = 0; i < 3; i++) in.v[i] += by; return in; }
-         long chained(void) { struct Big r = make_big(1, 2, 3); return shifted(shifted(r, 10), 100).v[2] + r.v[2]; }",
-    );
-    // Aggregate signatures keep their exported flag but JS cannot call them.
-    let text = dump(
-        "struct P { long a, b; }; struct P make(long a) { struct P p = { a, a }; return p; } long use(void) { return make(2).b; }",
-        LINUX_X64,
-    );
-    assert!(
-        has(&text, " make (exported): sig")
-            && has(&text, "-> (i64, i64)")
-            && !has(&text, "export make"),
-        "{text}"
-    );
-    assert!(has(&text, "export use"), "{text}");
-}
-
 #[test]
 fn structs_through_variadics_and_callbacks() {
-    checked(
-        "#include <stdarg.h>
-         void qsort(void *base, unsigned long n, unsigned long size, int (*cmp)(const void *, const void *));
-         struct pair { double a, b; };
-         struct ipair { int a; long b; };
-         struct big { long v[4]; };
-         struct small { char c[3]; };
-         static double sum_pairs(int count, ...) { va_list ap; va_start(ap, count); double total = 0; for (int i = 0; i < count; i++) { struct pair p = va_arg(ap, struct pair); total += p.a + p.b; } va_end(ap); return total; }
-         double pairs(void) {
-             struct pair p1 = { 1, 2 }, p2 = { 3, 4 }, p3 = { 5, 6 }, p4 = { 7, 8 }, p5 = { 9, 10 }, p6 = { 11, 12 };
-             return sum_pairs(6, p1, p2, p3, p4, p5, p6);
-         }
-         static double mixed(int count, ...) {
-             va_list ap; va_start(ap, count); double total = 0;
-             for (int i = 0; i < count; i++) {
-                 struct ipair ip = va_arg(ap, struct ipair); total += ip.a + (double)ip.b;
-                 total += va_arg(ap, double);
-                 struct big b = va_arg(ap, struct big); total += (double)(b.v[0] + b.v[3]);
-                 struct small s = va_arg(ap, struct small); total += s.c[2];
-                 total += va_arg(ap, int);
-             }
-             va_end(ap);
-             return total;
-         }
-         double everything(void) {
-             struct ipair ip = { 1, 2 }; struct big b = { { 10, 0, 0, 20 } }; struct small s = { { 0, 0, 3 } };
-             return mixed(4, ip, 0.5, b, s, 100, ip, 0.5, b, s, 100, ip, 0.5, b, s, 100, ip, 0.5, b, s, 100);
-         }
-         static double odd_registers(int n, double lead, ...) { va_list ap; va_start(ap, lead); double total = lead; while (n--) { struct pair p = va_arg(ap, struct pair); total += p.a * 10 + p.b; } va_end(ap); return total; }
-         double split_case(void) { struct pair p = { 1, 2 }; return odd_registers(4, 0.5, p, p, p, p); }
-         struct item { int key; char name[12]; };
-         static int by_key(const void *a, const void *b) { struct item x = *(const struct item *)a, y = *(const struct item *)b; return x.key - y.key; }
-         static struct item smallest(struct item *items, int n) { qsort(items, (unsigned long)n, sizeof *items, by_key); return items[0]; }
-         int sorted(void) { struct item items[4] = { { 30, \"c\" }, { 10, \"a\" }, { 40, \"d\" }, { 20, \"b\" } }; struct item first = smallest(items, 4); return first.key + first.name[0] + items[3].key * 1000; }",
-    );
     // A memory-class variadic argument needs a call-site signature that lists it.
     let text = dump(
         "struct big { long v[4]; }; int take(int n, ...); int f(void) { struct big b = { { 1 } }; return take(1, b, 2); }",

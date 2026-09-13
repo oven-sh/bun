@@ -17,8 +17,10 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <setjmp.h>
+#if __has_include(<unistd.h>) // POSIX's, which MinGW has some of
 #include <unistd.h>
-#ifndef _WIN32 // POSIX's
+#endif
+#if __has_include(<pthread.h>)
 #include <pthread.h>
 #endif
 #include <wchar.h>

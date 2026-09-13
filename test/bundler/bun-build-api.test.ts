@@ -1484,6 +1484,64 @@ describe.concurrent("sourcemap positions", () => {
   });
 });
 
+// The comment is a URL on a `//` line. A line terminator written raw ends the
+// line, and the rest of the file name or publicPath runs as code when the
+// bundle is loaded.
+describe.concurrent("sourceMappingURL comment", () => {
+  // Builds once to disk and once in memory: the two paths append the comment
+  // separately. Returns everything from the comment to the end of each output.
+  async function linkedComments(entry: string, publicPath?: string) {
+    const comments: string[] = [];
+    for (const outdir of [join(path.dirname(entry), "out"), undefined]) {
+      const build = await Bun.build({ entrypoints: [entry], outdir, sourcemap: "linked", publicPath });
+      expect(build.outputs.map(o => o.kind).sort()).toEqual(["entry-point", "sourcemap"]);
+      const code = await build.outputs.find(o => o.kind === "entry-point")!.text();
+      comments.push(code.slice(code.indexOf("//# sourceMappingURL=")));
+    }
+    return { onDisk: comments[0], inMemory: comments[1] };
+  }
+
+  for (const [label, terminator, encoded] of [
+    ["LF", "\n", "%0A"],
+    ["CR", "\r", "%0D"],
+    ["U+2028", "\u2028", "%E2%80%A8"],
+    ["U+2029", "\u2029", "%E2%80%A9"],
+  ]) {
+    // A Windows file name cannot contain a control character.
+    test.skipIf(isWindows && terminator < " ")(`${label} in an entry file name is percent-encoded`, async () => {
+      const name = `page${terminator}globalThis.INJECTED=1,0`;
+      using dir = tempDir("sourcemap-url-file-name", { [`${name}.js`]: "export default 1;\n" });
+
+      const expected = `//# sourceMappingURL=page${encoded}globalThis.INJECTED=1,0.js.map\n`;
+      expect(await linkedComments(join(String(dir), `${name}.js`))).toEqual({ onDisk: expected, inMemory: expected });
+      // A consumer that decodes the URL finds the map next to the bundle.
+      const url = expected.slice("//# sourceMappingURL=".length, -1);
+      expect(await Bun.file(join(String(dir), "out", decodeURIComponent(url))).json()).toMatchObject({ version: 3 });
+    });
+  }
+
+  test("line terminators in publicPath are percent-encoded", async () => {
+    using dir = tempDir("sourcemap-url-public-path", { "plain.js": "export default 1;\n" });
+
+    const expected = "//# sourceMappingURL=https://cdn.example.com/a%0Ab%0Dc%E2%80%A8d%E2%80%A9e/plain.js.map\n";
+    expect(
+      await linkedComments(join(String(dir), "plain.js"), "https://cdn.example.com/a\nb\rc\u2028d\u2029e/"),
+    ).toEqual({ onDisk: expected, inMemory: expected });
+  });
+
+  test("a file name is encoded as a URL path and publicPath keeps its URL syntax", async () => {
+    // In a file name `#`, `%` and a space are literal. In publicPath, `[::1]`
+    // is a host and `%20` is already an escape.
+    using dir = tempDir("sourcemap-url-syntax", { "a b#c%20d.js": "export default 1;\n" });
+
+    const expected = "//# sourceMappingURL=http://[::1]:3000/my%20assets/a%20b%23c%2520d.js.map\n";
+    expect(await linkedComments(join(String(dir), "a b#c%20d.js"), "http://[::1]:3000/my%20assets/")).toEqual({
+      onDisk: expected,
+      inMemory: expected,
+    });
+  });
+});
+
 const originalCwd = process.cwd() + "";
 
 describe("tsconfig option", () => {

@@ -470,6 +470,56 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
+/// Returns `code` followed by `//# sourceMappingURL=<prefix><rel_path>\n`.
+///
+/// `prefix` is `publicPath` (or `./`) and `rel_path` is made of file names. Both
+/// are percent-encoded: written raw, a LF, CR, U+2028 or U+2029 in either ends
+/// the line comment and what follows it runs as code.
+pub(crate) fn with_source_mapping_url_comment(
+    code: &[u8],
+    prefix: &[u8],
+    rel_path: &[u8],
+) -> Box<[u8]> {
+    const START: &[u8] = b"//# sourceMappingURL=";
+    let mut comment: Vec<u8> =
+        Vec::with_capacity(START.len() + prefix.len() + rel_path.len() + b"\n".len());
+    comment.extend_from_slice(START);
+    // `publicPath` is the author's URL. Printable ASCII stays as written, so
+    // `?`, `#`, a `[::1]` host and `%XX` escapes keep their meaning. No URL can
+    // contain the rest: control characters, space and non-ASCII bytes.
+    percent_encode(&mut comment, prefix, |byte| byte.is_ascii_graphic());
+    percent_encode(&mut comment, rel_path, is_url_path_byte);
+    comment.push(b'\n');
+
+    let mut buf: Vec<u8> = Vec::with_capacity(code.len() + comment.len());
+    buf.extend_from_slice(code);
+    buf.extend_from_slice(&comment);
+    buf.into_boxed_slice()
+}
+
+fn percent_encode(out: &mut Vec<u8>, bytes: &[u8], keep: impl Fn(u8) -> bool) {
+    for &byte in bytes {
+        if keep(byte) {
+            out.push(byte);
+        } else {
+            let [high, low] = bun_core::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', high, low]);
+        }
+    }
+}
+
+/// In a file path only `/` is syntax. This is the set that Go's `URL.EscapedPath`
+/// keeps, which is what esbuild writes here, without `:` because a first path
+/// segment that has one parses as a URL scheme.
+fn is_url_path_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+        | b'-' | b'.' | b'_' | b'~'
+        | b'$' | b'&' | b'+' | b',' | b'/' | b';' | b'=' | b'@'
+    )
+}
+
 /// What the paths `code()` writes over a chunk's references to other outputs
 /// are relative to. A public path makes them outdir-relative either way.
 #[derive(Clone, Copy, PartialEq, Eq)]

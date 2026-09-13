@@ -3168,6 +3168,8 @@ test.concurrent("isolated: a dangling link in a store entry that points outside 
     expect(isSymlink(join(dir, dependent, name))).toBeTrue();
     expect(existsSync(join(dir, dependent, name))).toBeFalse();
   }
+  // The installer's own link into the store is the one that goes.
+  expect(isSymlink(join(dir, dependent, "test-postinstall-skip-native"))).toBeTrue();
 
   const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
   expect(lines(stdout)).toStrictEqual([BANNER, "", "- test-postinstall-skip-native@1.0.0", REMOVED(1, 3)]);

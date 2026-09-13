@@ -1526,7 +1526,7 @@ await Bun.build({
 });
 ```
 
-These paths are resolved like `compile.outfile`: a relative path is relative to `outdir` (or to the working directory when there is no `outdir`), and an absolute path is used as-is. The written files are also included in `result.outputs` (including with `compile`), with a `kind` of `"metafile-json"` or `"metafile-markdown"`. Unlike the CLI flags above, these paths are resolved against `outdir`.
+These paths are resolved like `compile.outfile`: a relative path is relative to `outdir` (or to the working directory when there is no `outdir`), and an absolute path is used as-is. The written files are also included in `result.outputs` (including with `compile`), with a `kind` of `"metafile-json"` or `"metafile-markdown"`. Unlike the CLI flags above, these paths use `outdir` as their base when it is set.
 
 The metafile structure contains:
 

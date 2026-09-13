@@ -1015,24 +1015,26 @@ describe("Bun.build metafile paths", () => {
     expect(result.success).toBe(false);
   });
 
-  test.concurrent.each([
+  describe.each([
     ["without outdir", false],
     // The unchecked join used to panic here: "range end index 100005 out of range for slice of length 4095".
     ["with outdir", true],
-  ])("a metafile path longer than the path buffer fails the build, %s", async (_name, withOutdir) => {
-    using dir = tempDir("metafile-path-too-long", files);
+  ])("%s", (_name, withOutdir) => {
+    test.concurrent("a metafile path longer than the path buffer fails the build", async () => {
+      using dir = tempDir("metafile-path-too-long", files);
 
-    const result = await Bun.build({
-      entrypoints: [`${dir}/entry.js`],
-      outdir: withOutdir ? `${dir}/dist` : undefined,
-      metafile: { markdown: Buffer.alloc(100_000, "a").toString() },
-      throw: false,
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        outdir: withOutdir ? `${dir}/dist` : undefined,
+        metafile: { markdown: Buffer.alloc(100_000, "a").toString() },
+        throw: false,
+      });
+
+      expect(result.logs.map(log => log.message)).toEqual([
+        expect.stringContaining("File name too long: writing metafile"),
+      ]);
+      expect(result.success).toBe(false);
     });
-
-    expect(result.logs.map(log => log.message)).toEqual([
-      expect.stringContaining("File name too long: writing metafile"),
-    ]);
-    expect(result.success).toBe(false);
   });
 
   test.concurrent("with compile, the written metafiles stay in result.outputs", async () => {

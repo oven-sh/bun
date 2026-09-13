@@ -178,6 +178,92 @@ describe("HTTP/3 header encoding", () => {
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
+
+  // A single header whose decoded size is well under the configured
+  // maxHeaderLength must decode cleanly; the QPACK decoder must not abort the
+  // whole connection at the lsxpack 16-bit buffer ceiling.
+  test("accepts a large header value under the configured limit and keeps the session alive", async () => {
+    const app = { maxHeaderPairs: 1000, maxHeaderLength: 1 << 20, maxFieldSectionSize: 1 << 20 };
+    let serverSessionError: any;
+    let received: number | undefined;
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onerror = (e: any) => {
+          serverSessionError = e;
+        };
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["h3"],
+        application: app,
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          received = headers["x-big"]?.length;
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      alpn: "h3",
+      verifyPeer: "manual",
+      application: app,
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    let clientSessionError: any;
+    client.onerror = (e: any) => {
+      clientSessionError = e;
+    };
+    client.closed.catch(() => {});
+    await client.opened;
+
+    const sessionDied = client.closed.then(
+      () => Promise.reject(new Error("session closed before the request was answered")),
+      e => Promise.reject(e),
+    );
+    sessionDied.catch(() => {});
+
+    // "A" Huffman-codes to 6 bits, and the QPACK decoder reserves 1.5x the
+    // encoded length before it decodes. 60000 bytes is ~45 KB encoded, ~67 KB
+    // reserved: past a 16-bit lsxpack length, which aborted the connection with
+    // H3_QPACK_DECOMPRESSION_FAILED. 70000 bytes is past 16 bits decoded too,
+    // and ~52 KB encoded still fits the 64 KB block lsquic's sender builds.
+    // The last request has no large header: the session must still carry it.
+    for (const size of [60000, 70000, 0]) {
+      received = undefined;
+      const headers: Record<string, string> = {
+        ":method": "GET",
+        ":path": "/" + size,
+        ":scheme": "https",
+        ":authority": "localhost",
+      };
+      if (size) headers["x-big"] = Buffer.alloc(size, "A").toString();
+      const status = Promise.withResolvers<string>();
+      const stream = await client.createBidirectionalStream({
+        headers,
+        onheaders(responseHeaders: Record<string, string>) {
+          status.resolve(responseHeaders[":status"]);
+        },
+      });
+      stream.closed.catch(() => {});
+
+      expect(await Promise.race([status.promise, sessionDied])).toBe("200");
+      expect(received).toBe(size || undefined);
+      expect(client.destroyed).toBe(false);
+    }
+
+    client.close();
+    await client.closed.catch(() => {});
+
+    expect(serverSessionError).toBeUndefined();
+    expect(clientSessionError).toBeUndefined();
+  });
 });
 
 describe("verifyClient", () => {

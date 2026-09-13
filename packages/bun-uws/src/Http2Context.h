@@ -99,6 +99,10 @@ static constexpr unsigned MAX_CONTINUATION_FRAMES = 32;
  * is closed rather than the stream answered 431. */
 static constexpr unsigned HEADER_BLOCK_HARD_CAP_FACTOR = 2;
 static constexpr uint32_t DEFAULT_MAX_HEADER_LIST_SIZE = 64 * 1024;
+/* ls-hpack's per-string bound: its decoder answers LSHPACK_ERR_TOO_LARGE for
+ * a longer name or value, whatever width LSXPACK_MAX_STRLEN gives
+ * lsxpack_strlen_t (32 bits in this build, for QPACK). */
+static constexpr size_t HPACK_MAX_STRLEN = UINT16_MAX;
 /* Stop generating DATA frames once this much is queued on the socket; the
  * remainder waits for on_writable like an HttpResponse<SSL> would. */
 static constexpr size_t SOCKET_BACKPRESSURE_HIGH_WATER = 256 * 1024;
@@ -1098,7 +1102,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
             p = buf.data() + used;
             end = buf.data() + buf.size();
         }
-        if (h.nameLen > LSXPACK_MAX_STRLEN / 2 || h.valueLen > LSXPACK_MAX_STRLEN / 2) {
+        if (h.nameLen > http2::HPACK_MAX_STRLEN / 2 || h.valueLen > http2::HPACK_MAX_STRLEN / 2) {
             /* Beyond ls-hpack's 16-bit lengths: literal without indexing, no Huffman. */
             *p++ = 0x00;
             p = http2::hpackEncodeInteger(p, 0x00, 7, h.nameLen);
@@ -1576,11 +1580,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     while (p < end) {
         lsxpack_header_t x;
         size_t room = buf.size() - used;
-        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > LSXPACK_MAX_STRLEN ? LSXPACK_MAX_STRLEN : room);
+        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > http2::HPACK_MAX_STRLEN ? http2::HPACK_MAX_STRLEN : room);
         int rc = lshpack_dec_decode(&dec, &p, end, &x);
         if (rc == LSHPACK_ERR_MORE_BUF) {
             size_t need = used + x.val_len + 64;
-            if (x.val_len > LSXPACK_MAX_STRLEN || buf.size() >= hardCap || room >= LSXPACK_MAX_STRLEN) {
+            if (x.val_len > http2::HPACK_MAX_STRLEN || buf.size() >= hardCap || room >= http2::HPACK_MAX_STRLEN) {
                 return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
             }
             buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));

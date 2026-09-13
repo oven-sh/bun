@@ -151,6 +151,20 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
+    /// [`from_js`](Self::from_js), with a buffer copied if [`StringOrBuffer::copy_if_can_change`] says so. A `Blob` owns its bytes.
+    pub(crate) fn from_js_stable(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
+        let mut parsed = Self::from_js(global, value)?;
+        if let Some(Self::StringOrBuffer(input)) = &mut parsed
+            && !input.copy_if_can_change()
+        {
+            return Err(global.throw_out_of_memory());
+        }
+        Ok(parsed)
+    }
+
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
     /// already-parsed [`Encoding`], so callers that must inspect the encoding
     /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
@@ -315,6 +329,22 @@ impl<'a> StringOrBuffer<'a> {
 }
 
 impl StringOrBuffer<'_> {
+    /// Replaces a borrowed buffer that [`can_change_under_borrow`](jsc::ArrayBuffer::can_change_under_borrow) with a private copy of its bytes. `false` if the copy cannot be allocated.
+    #[must_use]
+    pub(crate) fn copy_if_can_change(&mut self) -> bool {
+        let Self::Buffer(buffer) = self else {
+            return true;
+        };
+        if !buffer.buffer.can_change_under_borrow() {
+            return true;
+        }
+        let Some(copy) = buffer.buffer.try_copy_bytes() else {
+            return false;
+        };
+        *self = Self::owned(copy);
+        true
+    }
+
     pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Self::ThreadIsolatedString(str) | Self::String(str) => str.into_js(ctx),
@@ -452,6 +482,21 @@ impl StringOrBuffer<'static> {
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
+    }
+
+    /// [`from_js`](Self::from_js), with a buffer copied if [`copy_if_can_change`](Self::copy_if_can_change) says so.
+    #[inline]
+    pub(crate) fn from_js_stable(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
+        let mut parsed = Self::from_js(global, value)?;
+        if let Some(input) = &mut parsed
+            && !input.copy_if_can_change()
+        {
+            return Err(global.throw_out_of_memory());
+        }
+        Ok(parsed)
     }
 
     /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).

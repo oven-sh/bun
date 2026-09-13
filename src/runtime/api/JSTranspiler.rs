@@ -131,6 +131,24 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
 
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
+/// The `code` of `scan` and `transformSync`, with a buffer copied: a macro runs in the middle of the parse and can write, shrink or detach it. No parser reads a source over [`bun_ast::Source::MAX_PARSEABLE_LEN`], so that one stays borrowed.
+fn code_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<StringOrBuffer<'static>>> {
+    let parsed = StringOrBuffer::from_js(global, value)?;
+    let Some(StringOrBuffer::Buffer(buffer)) = &parsed else {
+        return Ok(parsed);
+    };
+    if buffer.slice().len() > bun_ast::Source::MAX_PARSEABLE_LEN {
+        return Ok(parsed);
+    }
+    match buffer.buffer.try_copy_bytes() {
+        Some(copy) => Ok(Some(StringOrBuffer::owned(copy))),
+        None => Err(global.throw_out_of_memory()),
+    }
+}
+
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
     let mut out = MacroMap::default();
     bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
@@ -1271,7 +1289,7 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         let code = code_holder.slice();
@@ -1412,7 +1430,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
@@ -1615,7 +1633,7 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = StringOrBuffer::from_js_stable(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "scanImports",
                 "code",

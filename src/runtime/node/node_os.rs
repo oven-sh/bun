@@ -227,24 +227,16 @@ mod _impl {
         #[cfg(windows)]
         let result = cpus_impl_windows(global);
 
-        cpus_result_to_js(global, result)
+        result.map_err(|_| throw_cpus_error(global))
     }
 
-    fn cpus_result_to_js(
-        global: &JSGlobalObject,
-        result: Result<JSValue, OsError>,
-    ) -> JsResult<JSValue> {
-        match result {
-            Ok(v) => Ok(v),
-            Err(_) => {
-                let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance(global)))
-            }
-        }
+    fn throw_cpus_error(global: &JSGlobalObject) -> bun_jsc::JsError {
+        let err = SystemError {
+            message: BunString::static_("Failed to get CPU information"),
+            code: BunString::static_("ERR_SYSTEM_ERROR"),
+            ..Default::default()
+        };
+        global.throw_value(err.to_error_instance(global))
     }
 
     /// `linuxCpusFromRoot(root)` in `bun:internal-for-testing`: `os.cpus()` with `/proc` and
@@ -258,7 +250,7 @@ mod _impl {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let root = frame.argument(0).to_utf8(global)?;
-            cpus_result_to_js(global, cpus_impl_linux(global, &root))
+            cpus_impl_linux(global, &root).map_err(|_| throw_cpus_error(global))
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {

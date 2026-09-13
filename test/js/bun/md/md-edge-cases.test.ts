@@ -764,6 +764,9 @@ describe("pathological bracket inputs", () => {
     );
     expect(Markdown.html("*[x [y [a](/i)] z](/u)*\n")).toBe('<p><em>[x [y <a href="/i">a</a>] z](/u)</em></p>\n');
     expect(Markdown.html("[![[![[![[![](u)](u)](u)](u)\n")).toBe('<p>[![[![[<img src="u" alt="" />](u)</p>\n');
+    // An escaped `!` is text, so the bracket after it is a link, not an image.
+    expect(Markdown.html("[\\![a](/i)](/u)\n")).toBe('<p>[!<a href="/i">a</a>](/u)</p>\n');
+    expect(Markdown.html("[\\\\![a](/i)](/u)\n")).toBe('<p><a href="/u">\\<img src="/i" alt="a" /></a></p>\n');
     // Controls: a bracket pair without a link, and an image, are still
     // allowed inside a link. Only the image's (url) / [ref] tail is skipped.
     expect(Markdown.html("[x [y] z](/u)\n")).toBe('<p><a href="/u">x [y] z</a></p>\n');

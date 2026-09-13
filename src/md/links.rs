@@ -802,6 +802,9 @@ impl Parser<'_> {
         // Image tails nest like the brackets do, so the innermost pending tail
         // is always on top.
         let mut image_tails: Vec<(usize, usize)> = Vec::new();
+        // End of the last backslash escape, so `\![a](/i)` is a link after a
+        // literal `!`, not an image.
+        let mut escape_end: usize = 0;
         while pos < label.len() {
             while let Some(&(tail_start, tail_end)) = image_tails.last() {
                 if pos < tail_start {
@@ -817,6 +820,7 @@ impl Parser<'_> {
             }
             if label[pos] == b'\\' && pos + 1 < label.len() {
                 pos += 2;
+                escape_end = pos;
                 continue;
             }
             // Skip code spans
@@ -849,7 +853,7 @@ impl Parser<'_> {
                 // opener (cmark deactivates every earlier `[` when a link
                 // forms). So the scan steps into every bracket pair and only
                 // skips the `(url)` / `[ref]` tail of an inner image.
-                let is_inner_image = pos > 0 && label[pos - 1] == b'!';
+                let is_inner_image = pos > 0 && label[pos - 1] == b'!' && pos != escape_end;
                 let inner = self.try_match_bracket_link(label, pos, brackets, base);
                 if inner.is_link {
                     if !is_inner_image {

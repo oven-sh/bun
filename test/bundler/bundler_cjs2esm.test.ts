@@ -360,7 +360,8 @@ describe("bundler", () => {
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toContain("__toESM(");
+      expect(code).not.toContain("__toESM(");
+      expect(code).toContain("require_react()");
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
@@ -400,6 +401,126 @@ describe("bundler", () => {
     },
     run: {
       stdout: "react\nreact",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/12463
+  //
+  // react/index.js is the two-branch `module.exports = require('./cjs/react.*.js')`
+  // redirect. Each `require()` becomes a star import, but the file and its
+  // targets stay CommonJS wrappers. A star import of a CommonJS module normally
+  // needs `__toESM`, but this import was a `require()`, so the result is the raw
+  // `module.exports` (no synthetic `default`), matching esbuild.
+  const reactProdDevRedirect = {
+    "/node_modules/react/index.js": /* js */ `
+      if (process.env.NODE_ENV === "production") {
+        module.exports = require("./cjs/react.prod.js");
+      } else {
+        module.exports = require("./cjs/react.dev.js");
+      }
+    `,
+    "/node_modules/react/cjs/react.prod.js": /* js */ `
+      (function () {
+        exports.useState = function () { return "prod"; };
+        exports.version = "18.0.0";
+      })();
+    `,
+    "/node_modules/react/cjs/react.dev.js": /* js */ `
+      (function () {
+        exports.useState = function () { return "dev"; };
+        exports.version = "18.0.0-dev";
+      })();
+    `,
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "18.0.0", "main": "index.js" }
+    `,
+  };
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedCjsNoToESM#12463", {
+    files: {
+      "/entry.js": /* js */ `
+        import react from "react";
+        console.log(JSON.stringify({
+          useState: react.useState(),
+          version: react.version,
+          hasDefault: "default" in react,
+          propKind: Object.getOwnPropertyDescriptor(react, "useState").get ? "getter" : "value",
+        }));
+      `,
+      ...reactProdDevRedirect,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/__toESM\(require_react_dev/);
+    },
+    run: {
+      stdout: '{"useState":"dev","version":"18.0.0-dev","hasDefault":false,"propKind":"value"}',
+    },
+  });
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedCjsEntryPoint#12463", {
+    files: reactProdDevRedirect,
+    entryPointsRaw: ["./node_modules/react/index.js"],
+    outdir: "/out",
+    entryNaming: "react.[ext]",
+    runtimeFiles: {
+      "/entry.js": /* js */ `
+        const compiled = await import("./out/react.js");
+        console.log(JSON.stringify({
+          useState: compiled.default.useState(),
+          hasDefault: "default" in compiled.default,
+        }));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out/react.js")).not.toContain("__toESM(");
+    },
+    run: {
+      file: "/entry.js",
+      stdout: '{"useState":"dev","hasDefault":false}',
+    },
+  });
+  itBundled("cjs2esm/UnwrappedRequireInCjsFunctionBody", {
+    files: {
+      "/entry.js": /* js */ `
+        const loader = require("react/loader");
+        const r = loader.load();
+        console.log(JSON.stringify({
+          useState: r.useState(),
+          hasDefault: "default" in r,
+        }));
+      `,
+      "/node_modules/react/loader.js": /* js */ `
+        exports.load = function () {
+          return require("./cjs/react.dev.js");
+        };
+      `,
+      ...reactProdDevRedirect,
+    },
+    run: {
+      stdout: '{"useState":"dev","hasDefault":false}',
+    },
+  });
+  // A record that was a `require()` is also exempt from TypeScript's
+  // unused-import trimming, so the side effects of the package still run
+  // when the binding is unused. esbuild keeps it too.
+  itBundled("cjs2esm/UnwrappedRequireUnusedBindingKeptForSideEffects", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const _unused = require("react");
+        console.log("__reactLoaded:" + globalThis.__reactLoaded);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        (function () {
+          globalThis.__reactLoaded = true;
+          exports.version = "18.0.0";
+        })();
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "18.0.0", "main": "index.js" }
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).toContain("require_react()");
+    },
+    run: {
+      stdout: "__reactLoaded:true",
     },
   });
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package
@@ -628,13 +749,15 @@ describe("bundler", () => {
   });
   // The re-exported file turns out to be CommonJS (its exports are not
   // statically known), so the linker keeps the converted file a CommonJS
-  // wrapper around `module.exports = require()`.
+  // wrapper around `module.exports = require()`. The assignment hands over
+  // the `module.exports` of the target, not an ES module view of it.
   itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsCommonJS", {
     files: {
       "/entry.js": /* js */ `
         import ReactDOM, { version } from "react-dom";
         import * as ns from "react-dom";
         console.log(version, typeof ReactDOM, ReactDOM.version, typeof ReactDOM.default, ns.version, typeof ns.default);
+        console.log(Object.keys(ReactDOM).join(","), ReactDOM(), ns.default === ReactDOM);
       `,
       "/node_modules/react-dom/index.js": /* js */ `
         console.log('side effect');
@@ -649,8 +772,61 @@ describe("bundler", () => {
       unhandled: ["/node_modules/react-dom/index.js", "/node_modules/react-dom/impl.js"],
     },
     minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("module.exports = require_impl();");
+    },
     run: {
-      stdout: "side effect\n19.0.0 object 19.0.0 function 19.0.0 object",
+      stdout: "side effect\n19.0.0 function 19.0.0 undefined 19.0.0 function\nversion rendered true",
+    },
+  });
+  // `require()` and `import()` of that file see the same `module.exports`.
+  itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsCommonJSRequireAndDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const viaRequire = require("react-dom");
+        console.log(typeof viaRequire, Object.keys(viaRequire).join(","), typeof viaRequire.default, viaRequire());
+        import("react-dom").then(viaImport => {
+          console.log(typeof viaImport.default, viaImport.default === viaRequire, viaImport.version);
+        });
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nfunction version undefined rendered\nfunction true 19.0.0",
+    },
+  });
+  // The same file shape, with the required value also read before the
+  // assignment: the variable holds the same `module.exports`.
+  itBundled("cjs2esm/ReactSpecificUnwrappingTargetIsCommonJSNamespaceStillUsed", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM from "react-dom";
+        console.log(typeof ReactDOM, Object.keys(ReactDOM).join(","), typeof ReactDOM.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var impl = require('./impl');
+        console.log('impl', typeof impl, impl.version);
+        module.exports = impl;
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM(require_impl())");
+    },
+    run: {
+      stdout: "impl function 19.0.0\nfunction version undefined",
     },
   });
   // Same when the re-exported file is external: the wrapper assigns the

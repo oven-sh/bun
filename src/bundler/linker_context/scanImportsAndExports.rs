@@ -1154,6 +1154,7 @@ pub(crate) fn scan_imports_and_exports(
                             // - The "default" and "__esModule" exports must not be accessed
                             //
                             if kind != ImportKind::Require
+                                && !rec_flags.contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
                                 && (kind != ImportKind::Stmt
                                     || rec_flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
                                     || rec_flags
@@ -1212,6 +1213,7 @@ pub(crate) fn scan_imports_and_exports(
                         // A same-chunk `import()` of a lifted CommonJS module needs it
                         // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
+                            && !rec_flags.contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
                             && (other_export_kind == ExportsKind::Cjs
                                 || (kind == ImportKind::Dynamic
                                     && other_flags.wrap == WrapKind::Esm

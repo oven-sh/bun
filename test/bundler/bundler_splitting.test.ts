@@ -2407,7 +2407,7 @@ describe("bundler", () => {
         try {
           m = require("react-dom");
         } catch {}
-        console.log(typeof m, m.version, m.default());
+        console.log(typeof m, m.version, typeof m.default, m());
       `,
       "/node_modules/react-dom/index.js": /* js */ `
         console.log('side effect');
@@ -2427,7 +2427,7 @@ describe("bundler", () => {
       const chunk = chunkContaining(api, "side effect");
       api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}").default`);
     },
-    run: { file: "/out/main.js", stdout: "side effect\nobject 19.0.0 rendered" },
+    run: { file: "/out/main.js", stdout: "side effect\nfunction 19.0.0 undefined rendered" },
   });
 
   // When the lift target is itself lifted, the chunk stays an ES module and

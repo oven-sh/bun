@@ -667,36 +667,47 @@ test("the first read of error.stack does not undo an integrity level that Error.
   expect(captured.names).toEqual(["message", "stack"]);
 });
 
-test("a first touch of error.stack by assignment, define or delete keeps a lock that Error.prepareStackTrace adds", () => {
-  // Each of these creates the lazy properties first, and so calls Error.prepareStackTrace. V8 calls it only on a read.
+// Each of these creates the lazy properties first, and so calls Error.prepareStackTrace. V8 calls it only on a read.
+test.each([
+  ["an assignment", error => Reflect.set(error, "stack", "touched")],
+  ["a define", error => Reflect.defineProperty(error, "stack", { value: "touched" })],
+  ["a delete", error => Reflect.deleteProperty(error, "stack")],
+])("a first touch of error.stack by %s keeps a lock that Error.prepareStackTrace adds", (_, touch) => {
   Error.prepareStackTrace = error => {
     Object.freeze(error);
     return "from-prepare";
   };
-  for (const touch of [
-    error => Reflect.set(error, "stack", "touched"),
-    error => Reflect.defineProperty(error, "stack", { value: "touched" }),
-    error => Reflect.deleteProperty(error, "stack"),
-  ]) {
-    const error = new Error("locked");
-    expect(touch(error)).toBe(false);
-    expect(Object.isFrozen(error)).toBe(true);
-    expect(error.stack).toStartWith("Error: locked\n    at ");
-  }
+  const error = new Error("locked");
+  expect(touch(error)).toBe(false);
+  expect(Object.isFrozen(error)).toBe(true);
+  expect(error.stack).toStartWith("Error: locked\n    at ");
 });
 
-test("the first read of error.stack keeps the attributes of a property that Error.prepareStackTrace made non-configurable", () => {
-  const getter = () => "from-getter";
-  const setter = mock(() => {});
-  for (const [name, defined, expected, expectedStack] of [
-    // A read-only property keeps its value.
-    ["stack", { value: "locked", writable: false }, { value: "locked", writable: false }, "locked"],
-    ["line", { value: -1, writable: false }, { value: -1, writable: false }, "from-prepare"],
-    // A writable property takes the result, as it does from an assignment.
-    ["stack", { value: "locked", writable: true }, { value: "from-prepare", writable: true }, "from-prepare"],
-    // An accessor stays, and its setter is not called.
-    ["stack", { get: getter, set: setter }, { get: getter, set: setter }, "from-getter"],
-  ]) {
+const lockedStackGetter = () => "from-getter";
+const lockedStackSetter = mock(() => {});
+test.each([
+  // A read-only property keeps its value.
+  ["a read-only stack", "stack", { value: "locked", writable: false }, { value: "locked", writable: false }, "locked"],
+  ["a read-only line", "line", { value: -1, writable: false }, { value: -1, writable: false }, "from-prepare"],
+  // A writable property takes the result, as it does from an assignment.
+  [
+    "a writable stack",
+    "stack",
+    { value: "locked", writable: true },
+    { value: "from-prepare", writable: true },
+    "from-prepare",
+  ],
+  // An accessor stays, and its setter is not called.
+  [
+    "an accessor stack",
+    "stack",
+    { get: lockedStackGetter, set: lockedStackSetter },
+    { get: lockedStackGetter, set: lockedStackSetter },
+    "from-getter",
+  ],
+])(
+  "the first read of error.stack keeps the attributes of %s that Error.prepareStackTrace made non-configurable",
+  (_, name, defined, expected, expectedStack) => {
     Error.prepareStackTrace = error => {
       Object.defineProperty(error, name, { ...defined, configurable: false });
       return "from-prepare";
@@ -710,9 +721,9 @@ test("the first read of error.stack keeps the attributes of a property that Erro
     });
     // The error is still extensible, so the properties that are not locked arrive.
     expect(Object.getOwnPropertyNames(error)).toEqual(expect.arrayContaining(["stack", "line", "column"]));
-  }
-  expect(setter).not.toHaveBeenCalled();
-});
+    expect(lockedStackSetter).not.toHaveBeenCalled();
+  },
+);
 
 test("an error that is non-extensible before the first read of error.stack still gets its lazy properties", () => {
   // In Node "stack" exists from construction. Here it counts as present from construction.

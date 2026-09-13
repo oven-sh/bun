@@ -915,6 +915,26 @@ describe("expect()", () => {
         expect([, 1]).toEqual([optionalFn(), 1]);
         expect([optionalFn(), 1]).toEqual([, 1]);
         expect([, 1]).not.toEqual([expect.any(Function), 1]);
+        expect({ x: [, 1] }).not.toEqual({ x: [expect.any(Date), 1] });
+        expect(Array(2)).not.toEqual([expect.any(Date), expect.any(Number)]);
+        expect(Array(2)).toEqual([optionalFn(), optionalFn()]);
+      });
+
+      it("does not crash when the side with the matcher is longer", () => {
+        expect([expect.any(Number)]).not.toEqual([]);
+        expect([]).not.toBeOneOf([[expect.any(Number)]]);
+        expect([[expect.any(Number)]]).not.toContainEqual([]);
+        expect(new Map([[expect.any(Number), 2]])).not.toContainEqual([]);
+        const withAccessor = [0];
+        Object.defineProperty(withAccessor, 0, { get: () => "s", enumerable: true });
+        expect(withAccessor).not.toEqual([expect.any(Number)]);
+      });
+
+      it("applies to the enumerable properties of an Error", () => {
+        const received = Object.assign(new Error("boom"), { code: "E1" });
+        expect(received).toEqual(Object.assign(new Error("boom"), { code: "E1", cb: optionalFn() }));
+        expect(Object.assign(new Error("boom"), { code: "E1", cb: optionalFn() })).toEqual(received);
+        expect(received).not.toEqual(Object.assign(new Error("boom"), { code: "E1", cb: expect.any(Function) }));
       });
 
       it("uses the verdict of a built-in matcher on undefined", () => {

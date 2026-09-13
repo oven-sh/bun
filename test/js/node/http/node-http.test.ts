@@ -7,6 +7,7 @@
  */
 import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
+import { X509Certificate } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -1468,6 +1469,40 @@ describe("node https server", async () => {
     } finally {
       existing?.destroy();
       renewed?.destroy();
+      server.close();
+    }
+  });
+
+  it("setSecureContext accepts a PFX-only replacement and its embedded CA", async () => {
+    const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+    const clientKey = nodefs.readFileSync(path.join(fixtures, "agent1-key.pem"));
+    const clientCert = nodefs.readFileSync(path.join(fixtures, "agent1-cert.pem"));
+    const server = createHttpsServer({ ...httpsOptions, requestCert: true, rejectUnauthorized: false }, (_req, res) =>
+      res.end("ok"),
+    );
+    const url = await listen(server, "https");
+    const controller = new AbortController();
+    const accepted = once(server, "secureConnection", { signal: controller.signal });
+    let client;
+    try {
+      server.setSecureContext({
+        pfx: nodefs.readFileSync(path.join(fixtures, "agent1.pfx")),
+        passphrase: "sample",
+      });
+      client = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        key: clientKey,
+        cert: clientCert,
+        rejectUnauthorized: false,
+      });
+      const [, [serverSocket]] = await Promise.all([once(client, "secureConnect"), accepted]);
+
+      expect(client.getPeerCertificate().fingerprint256).toBe(new X509Certificate(clientCert).fingerprint256);
+      expect(serverSocket.authorized).toBe(true);
+    } finally {
+      controller.abort();
+      client?.destroy();
       server.close();
     }
   });

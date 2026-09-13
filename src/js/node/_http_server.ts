@@ -541,16 +541,28 @@ Server.prototype[setSecureContextSymbol] = function (options) {
     throw $ERR_INVALID_ARG_VALUE("options", options, "server is not configured for TLS");
   }
 
-  const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = require("internal/tls");
+  const {
+    processPfxOptions,
+    validateSecureProtocol,
+    secureProtocolToVersionRange,
+    tlsStringToProtocolVersion,
+  } = require("internal/tls");
   // Match Node's synchronous option validation before publishing a replacement.
   require("node:tls").createSecureContext(options);
-  validateSecureProtocol(options.secureProtocol);
-  const range = secureProtocolToVersionRange(options.secureProtocol);
+  const tlsOptions = processPfxOptions(options);
+  let ca = tlsOptions.ca;
+  const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  }
+  validateSecureProtocol(tlsOptions.secureProtocol);
+  const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
   const next = {
-    ...options,
-    minVersion: range ? range[0] : tlsStringToProtocolVersion(options.minVersion),
-    maxVersion: range ? range[1] : tlsStringToProtocolVersion(options.maxVersion),
-    serverName: options.servername,
+    ...tlsOptions,
+    ca,
+    minVersion: range ? range[0] : tlsStringToProtocolVersion(tlsOptions.minVersion),
+    maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),
+    serverName: tlsOptions.servername,
     requestCert: current.requestCert,
     rejectUnauthorized: current.rejectUnauthorized,
   };

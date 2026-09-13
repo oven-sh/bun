@@ -89,6 +89,8 @@ pub struct ParseTask {
     // lifetime-erased `'static` — paths borrow from `DirnameStore`
     // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
     pub(crate) path: Fs::Path<'static>,
+    /// See `InputFile::ignored_suffix`.
+    pub(crate) ignored_suffix: &'static [u8],
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
     pub(crate) external_free_function: ExternalFreeFunction,
@@ -276,6 +278,7 @@ impl ParseTask {
             package_name,
             known_target,
             // defaults:
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
@@ -305,6 +308,7 @@ impl Default for ParseTask {
         ParseTask {
             ctx: None,
             path: Fs::Path::init(b""),
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
             external_free_function: ExternalFreeFunction::NONE,
@@ -590,6 +594,7 @@ pub mod parse_worker {
             loader: Some(Loader::Js),
             known_target: target,
             // defaults:
+            ignored_suffix: b"",
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {

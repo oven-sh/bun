@@ -177,6 +177,39 @@ describe("bundler metafile", () => {
     expect(imp.original).toBe("./lib/helper.js");
   });
 
+  test("metafile has one input for each query of an imported file", async () => {
+    using dir = tempDir("metafile-query-suffix-test", {
+      "entry.js": `
+        import one from "./a.txt?one";
+        import two from "./a.txt?two";
+        import plain from "./a.txt";
+        console.log(one, two, plain);
+      `,
+      "a.txt": `text`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+    // The keys are paths relative to the cwd.
+    const names = (paths: string[]) => paths.map(path => path.slice(path.lastIndexOf("/") + 1));
+    const [output] = Object.values(metafile.outputs);
+    const entryKey = Object.keys(metafile.inputs).find(key => key.endsWith("entry.js"))!;
+    expect({
+      inputs: names(Object.keys(metafile.inputs)).sort(),
+      imports: names(metafile.inputs[entryKey].imports.map(imp => imp.path)),
+      outputInputs: names(Object.keys(output.inputs)).sort(),
+    }).toEqual({
+      inputs: ["a.txt", "a.txt?one", "a.txt?two", "entry.js"],
+      imports: ["a.txt?one", "a.txt?two", "a.txt"],
+      outputInputs: ["a.txt", "a.txt?one", "a.txt?two", "entry.js"],
+    });
+  });
+
   test("metafile without option returns undefined", async () => {
     using dir = tempDir("metafile-disabled-test", {
       "test.js": `console.log("test");`,

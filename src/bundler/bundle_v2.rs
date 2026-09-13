@@ -2403,6 +2403,7 @@ pub mod bv2_impl {
                             .enqueue_parse_task(
                                 &file_map_result,
                                 &mut tmp_source,
+                                ignored_suffix.in_key(module_key),
                                 loader,
                                 import_record.original_target,
                             )
@@ -2657,6 +2658,7 @@ pub mod bv2_impl {
                     .enqueue_parse_task(
                         &resolve_result,
                         &mut tmp_source,
+                        ignored_suffix.in_key(module_key),
                         loader,
                         import_record.original_target,
                     )
@@ -3735,6 +3737,7 @@ pub mod bv2_impl {
             &mut self,
             resolve_result: &_resolver::Result,
             source: &mut bun_ast::Source,
+            ignored_suffix: &'static [u8],
             loader: Loader,
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
@@ -3743,6 +3746,7 @@ pub mod bv2_impl {
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
+                ignored_suffix,
                 loader,
                 side_effects: loader.side_effects(),
                 ..Default::default()
@@ -3758,6 +3762,7 @@ pub mod bv2_impl {
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
+            task.ignored_suffix = ignored_suffix;
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
@@ -6176,13 +6181,14 @@ pub mod bv2_impl {
         }
     }
 
-    /// The `?query` or `#hash` cut from an import specifier that resolves only without it.
+    /// The `?query` cut from an import specifier that resolves only without it.
     #[derive(Clone, Copy, Default)]
     struct IgnoredSuffix<'s>(&'s [u8]);
 
     impl<'s> IgnoredSuffix<'s> {
+        /// The same cut as the runtime makes (`normalize_specifier_for_resolution`).
         fn of(specifier: &'s [u8]) -> Option<Self> {
-            let start = strings::index_of_any(specifier, b"?#")?;
+            let start = strings::index_of_char_usize(specifier, b'?')?;
             (start > 0).then(|| Self(&specifier[start..]))
         }
 
@@ -6210,6 +6216,11 @@ pub mod bv2_impl {
             key[path_text.len()..].copy_from_slice(self.0);
             // SAFETY: the arena outlives the bundle pass.
             unsafe { interned_slice(key) }
+        }
+
+        /// The suffix as the end of `module_key`, for `InputFile::ignored_suffix`.
+        fn in_key(self, module_key: &'static [u8]) -> &'static [u8] {
+            &module_key[module_key.len() - self.0.len()..]
         }
 
         /// An import record finds its module in `PathToSourceIndexMap` through `path.text`.
@@ -6534,6 +6545,7 @@ pub mod bv2_impl {
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
+                        resolve_task.ignored_suffix = ignored_suffix.in_key(module_key);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
                         continue 'outer;
@@ -6924,6 +6936,7 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
+                resolve_task.ignored_suffix = ignored_suffix.in_key(module_key);
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
@@ -7002,6 +7015,7 @@ pub mod bv2_impl {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(new_task.path.text),
+                        ignored_suffix: new_task.ignored_suffix,
                         side_effects: new_task.side_effects,
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop

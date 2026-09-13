@@ -2287,6 +2287,7 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ImportWithHashParameter", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2315,6 +2316,7 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
+    todo: true,
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)

@@ -513,6 +513,50 @@ describe("bundler", async () => {
     run: { stdout: "main main module main" },
   });
 
+  // Each query is its own chunk. The chunks have the same content, so their names must still differ.
+  itBundled("bun/import-query-suffix-splitting", {
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        const a = await import("./x.js?v=1");
+        const b = await import("./x.js?v=2");
+        const plain = await import("./x.js");
+        console.log(a.x, b.x, plain.x, a === b, a === plain);
+      `,
+      "/x.js": "export const x = 1;",
+    },
+    run: { stdout: "1 1 1 false false" },
+  });
+
+  // The query starts at the first "?", like in the runtime. A "#" before it is part of the path.
+  itBundled("bun/import-query-suffix-after-hash-in-path", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import text from "./dir#1/a.txt?raw";
+        console.log(text);
+      `,
+      "/dir#1/a.txt": "the right file",
+      "/dir.js": `export default "the wrong file";`,
+    },
+    run: { stdout: "the right file" },
+  });
+
+  itBundled("bun/import-query-suffix-package-imports-alias", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import text from "#alias/a.txt?raw";
+        console.log(text);
+      `,
+      "/package.json": `{ "name": "app", "imports": { "#alias/*": "./src/*" } }`,
+      "/src/a.txt": "aliased",
+    },
+    run: { stdout: "aliased" },
+  });
+
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {

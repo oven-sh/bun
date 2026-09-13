@@ -285,6 +285,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 info.getter_fn_ref.map(|f| self.use_ref(f, l)),
             ),
         };
+        // A method reads as itself, `() => _m_fn`, and has no setter, so a write throws.
+        let getter = getter.or_else(|| {
+            let method = self.use_ref(info.method_fn_ref?, l);
+            let ret = self.s(
+                S::Return {
+                    value: Some(method),
+                },
+                l,
+            );
+            Some(self.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        stmts: bun_ast::StoreSlice::new_mut(self.arena.alloc_slice_copy(&[ret])),
+                        loc: l,
+                    },
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                l,
+            ))
+        });
         let mut args = BumpVec::<Expr>::with_capacity_in(4, self.arena);
         args.push(obj);
         args.push(storage);

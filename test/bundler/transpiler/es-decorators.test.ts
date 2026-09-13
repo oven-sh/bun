@@ -2269,7 +2269,8 @@ const extraSections = `
         caught(() => foreign.#f += (n++, 1)), caught(() => { [foreign.#f = (n++, 1)] = []; }),
       ];
       const typeErrors = thrown.every((name) => name === "TypeError") ? thrown.length : thrown;
-      return [typeErrors, typeof (this.#m ??= 1), typeof (this.#m ||= 1), n - before];
+      const self = () => this;
+      return [typeErrors, typeof (this.#m ??= 1), (self().#m ??= 1) === this.#m, (self().#m ||= 1) === this.#m, n - before];
     }
     field = (this.#init += 1, this.#init++, [this.#init] = [this.#init * 2], this.#init);
     static { W.#s += 1; W.#s++; [W.#s] = [W.#s * 2]; }
@@ -2640,7 +2641,7 @@ const extraExpected = {
     destructuring: [2, 1, 3, 4, 5, 6, 7, 8, 9, 13, [11, 12], { "x": 14 }, 13, 15, 16, 17, 18, 19, 1, 20, [21, 21]],
     loopHeads: [1, 2, "x", "y", 4, 3, 5, 6, 7, { "z": 8 }, 9, 10, "z", 13, 12],
     nested: [1, 3, 13, [23, 24], 46, ["0", "v"]],
-    errors: [16, "function", "function", 1],
+    errors: [16, "function", true, true, 1],
     receiverEvals: 1115,
   },
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],

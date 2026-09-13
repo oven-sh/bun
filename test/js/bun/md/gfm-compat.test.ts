@@ -573,6 +573,35 @@ describe("autolink parentheses and trailing punctuation", () => {
     const expected = `<p>Contact <a href="mailto:foo@bar.baz">foo@bar.baz</a> for info</p>`;
     expect(normalize(render(md, { autolinks: true }))).toBe(normalize(expected));
   });
+
+  test("email autolink with underscore in the local part (GFM spec example 631)", () => {
+    const md = `a.b-c_d@a.b
+
+a.b-c_d@a.b.
+
+a.b-c_d@a.b-
+
+a.b-c_d@a.b_`;
+    const expected = `<p><a href="mailto:a.b-c_d@a.b">a.b-c_d@a.b</a></p>
+<p><a href="mailto:a.b-c_d@a.b">a.b-c_d@a.b</a>.</p>
+<p>a.b-c_d@a.b-</p>
+<p>a.b-c_d@a.b_</p>`;
+    expect(normalize(render(md, { autolinks: true }))).toBe(normalize(expected));
+  });
+
+  test.each([
+    ["john_doe@example.com", `<p><a href="mailto:john_doe@example.com">john_doe@example.com</a></p>`],
+    ["a_b_c@d.e", `<p><a href="mailto:a_b_c@d.e">a_b_c@d.e</a></p>`],
+    ["x a+b_c@d.e y", `<p>x <a href="mailto:a+b_c@d.e">a+b_c@d.e</a> y</p>`],
+    ["*john_doe@example.com*", `<p><em><a href="mailto:john_doe@example.com">john_doe@example.com</a></em></p>`],
+    ["_john_doe@example.com_", `<p><em><a href="mailto:john_doe@example.com">john_doe@example.com</a></em></p>`],
+    [
+      "mail first_last@company.com, or\nother_one@company.com.",
+      `<p>mail <a href="mailto:first_last@company.com">first_last@company.com</a>, or\n<a href="mailto:other_one@company.com">other_one@company.com</a>.</p>`,
+    ],
+  ])("email autolink prints the local part once: %j", (md, expected) => {
+    expect(normalize(render(md, { autolinks: true }))).toBe(normalize(expected));
+  });
 });
 
 // ============================================================================

@@ -775,7 +775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ =
+                        let (_, body_scope) =
                             p.visit_class(s2_loc, &mut class.class, data.default_name.ref_, false);
 
                         if p.is_control_flow_dead {
@@ -831,7 +831,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
-                        let class_stmts = p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy));
+                        let class_stmts =
+                            p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy), body_scope);
 
                         // Find the s_class statement in the returned list
                         let mut class_stmt_idx: usize = 0;
@@ -1060,7 +1061,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
+        let (_, body_scope) = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();
@@ -1069,7 +1070,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Lower class field syntax for browsers that don't support it
-        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
+        let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt), body_scope);
 
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it

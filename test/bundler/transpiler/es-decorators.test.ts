@@ -1393,6 +1393,103 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("the initializer of a lowered member that is the last instance field stays in a field", async () => {
+      // Not in the constructor: there \`new.target\` is the class, and a name
+      // the constructor declares too is the constructor's.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const y = ["outer"];
+        class U { x = 0; #p = typeof new.target; get p() { return this.#p } }
+        class D { x = 0; @dec #p = typeof new.target; get p() { return this.#p } }
+        class E { x = 0; accessor p = typeof new.target; }
+        class F { accessor p = typeof new.target; x = 0; }
+        console.log(JSON.stringify([new U().p, new D().p, new E().p, new F().p]));
+        class G { @dec accessor p = () => typeof new.target; }
+        class H {
+          @dec m() {}
+          @dec accessor #p = class { static t = typeof new.target; [typeof new.target]() {} };
+          get p() { return [this.#p.t, Object.getOwnPropertyNames(this.#p.prototype)[1]] }
+        }
+        console.log(JSON.stringify([new G().p(), new H().p]));
+        class I { constructor(y) { var z = y; } x = 0; @dec #p = y; get p() { return this.#p } }
+        class J { constructor(y) {} x = 0; accessor p = y; }
+        class K { constructor(y) {} accessor p = () => y; }
+        class M { constructor(y) {} accessor p = eval("typeof new.target + ':' + y"); }
+        console.log(JSON.stringify([new I("param").p, new J("param").p, new K("param").p(), new M("param").p]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["undefined","undefined","undefined","undefined"]\n' +
+          '["undefined",["undefined","undefined"]]\n' +
+          '[["outer"],["outer"],["outer"],"undefined:outer"]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a derived constructor with no super() statement runs what follows the last field", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const L = (s) => (log.push(s), s);
+        const dec = (v, ctx) => {};
+        const init = (v, ctx) => { ctx.addInitializer(function () { L("extra " + String(ctx.name)) }) };
+        class B { constructor() { L("base") } }
+        class P extends B { accessor a = L("a"); constructor() { const self = super(); L(self === this ? "body" : "not this") } }
+        class Q extends B { @init m() {} @dec #n() { return "n" } constructor(c) { if (c) super(); else super(); L("body " + this.#n()) } }
+        class R extends B { @init x = L("x"); constructor() { L("pre"); void super(); L("body") } }
+        class S extends B { @init accessor y = L("y"); constructor() { L("pre"); super(); L("body") } }
+        new P(); new Q(true); new R(); new S();
+        console.log(log.join(" | "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "base | a | body | base | extra m | body n | pre | base | x | extra x | body | pre | base | y | extra y | body\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("what follows the last field stays in the constructor when it means the same there", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const inConstructor = transpiler.transformSync(
+        "class A extends B { @dec m() {} @dec #n() {} @dec x = 1; accessor p; @dec accessor q; accessor r = 0; constructor() { super(); } }",
+      );
+      expect(inConstructor).not.toContain("#_tail");
+      expect(inConstructor).toContain("super();\n    __runInitializers");
+      const inField = transpiler.transformSync("class A { accessor p = []; }");
+      expect(inField).toContain("#_tail = (__privateAdd");
+      expect(inField).not.toContain("constructor");
+    });
+
+    test.concurrent("the field the lowering adds has a private name no class around it uses", async () => {
+      using dir = tempDir("es-dec-tail-name", {
+        "entry.js": `
+          class O {
+            #_tail = "user";
+            accessor inner = class I {
+              #_tail2 = "user too";
+              accessor names = (o) => [o.#_tail, this.#_tail2, #_tail2 in this, typeof new.target];
+            };
+            accessor own = () => this.#_tail;
+          }
+          const o = new O();
+          console.log(JSON.stringify([o.own(), new o.inner().names(o)]));
+        `,
+      });
+      const expected = { stdout: '["user",["user","user too",true,"undefined"]]\n', stderr: "", exitCode: 0 };
+      const run = async (args: string[]) => {
+        const { stdout, stderr, exitCode } = await runIn(String(dir), args);
+        return { stdout, stderr: filterStderr(stderr), exitCode };
+      };
+      expect(await run(["entry.js"])).toEqual(expected);
+      for (const [flag, out] of [
+        ["--no-bundle", "transpiled.js"],
+        ["--target=bun", "bundled.js"],
+        ["--minify", "minified.js"],
+      ]) {
+        expect(await run(["build", flag, "entry.js", `--outfile=${out}`])).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await run([out])).toEqual(expected);
+      }
+    });
+
     test.concurrent("super resolves from the class as written when a class decorator replaces it", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
@@ -2391,6 +2488,27 @@ const extraSections = `
   const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
   out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
 }
+
+// A lowered member that is the last instance field: its initializer stays in
+// a field, where \`new.target\` is undefined and no name is the constructor's,
+// and runs when \`super()\` returns, wherever the constructor calls it.
+{
+  const y = ["outer"];
+  class LB { constructor() { L("base"); } }
+  class L1 { x = 0; @dec #p = typeof new.target; get p() { return this.#p; } }
+  class L2 { x = 0; accessor p = typeof new.target; }
+  class L3 { @dec m() {} @dec accessor p = () => typeof new.target; }
+  class L4 { constructor(y) { var z = y; } x = 0; @dec #p = y; get p() { return this.#p; } }
+  class L5 { constructor(y) {} accessor p = () => y; }
+  class L6 extends LB {
+    accessor p = L("p");
+    @dec accessor #q = L("q:" + this.p);
+    constructor() { L("pre"); const self = super(); L(self === this && this.#q === "q:p" ? "post" : "not this"); }
+  }
+  log.length = 0;
+  new L6();
+  out.lastMember = [new L1().p, new L2().p, new L3().p(), new L4("param").p, new L5("param").p(), log.slice()];
+}
 `;
 
 const extraExpected = {
@@ -2434,6 +2552,7 @@ const extraExpected = {
   accessorKeys: [11, 2, 3, 4],
   issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
   accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
+  lastMember: ["undefined", "undefined", "undefined", ["outer"], ["outer"], ["pre", "base", "p", "q:p", "post"]],
 };
 
 function buildFixture() {

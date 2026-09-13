@@ -7314,7 +7314,11 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
+    pub(crate) fn lower_class(
+        &mut self,
+        stmtorexpr: js_ast::StmtOrExpr,
+        body_scope: js_ast::StoreRef<Scope>,
+    ) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
@@ -7329,7 +7333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
                     // keep this function's slice contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
-                    self.lower_standard_decorators_stmt(stmt, &mut out);
+                    self.lower_standard_decorators_stmt(stmt, &mut out, body_scope);
                     return out.into_bump_slice_mut();
                 }
 
@@ -8412,6 +8416,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
+        ref_
+    }
+
+    /// A lowering's own `#private` name for a class body. No `#private` name
+    /// the class can refer to has it: those are its own and the ones of the
+    /// classes around it.
+    pub(crate) fn generate_private_name(
+        &mut self,
+        name: &'a [u8],
+        mut class_body: js_ast::StoreRef<Scope>,
+    ) -> Ref {
+        debug_assert!(class_body.kind == js_ast::scope::Kind::ClassBody);
+        let is_taken = |name: &[u8]| {
+            let mut scope = Some(class_body);
+            while let Some(current) = scope {
+                if current.members.contains_key(name) {
+                    return true;
+                }
+                scope = current.parent;
+            }
+            false
+        };
+        let mut unique = name;
+        let mut count = 1;
+        while is_taken(unique) {
+            count += 1;
+            unique = bun_alloc::arena_format!(in self.arena, "{}{}", bstr::BStr::new(name), count)
+                .into_bump_str()
+                .as_bytes();
+        }
+        let ref_ = self.new_symbol(js_ast::symbol::Kind::PrivateField, unique);
+        VecExt::append(&mut class_body.generated, ref_);
         ref_
     }
 

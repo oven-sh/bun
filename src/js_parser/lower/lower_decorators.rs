@@ -101,22 +101,35 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-/// Puts `inserted` in `constructor` right after a top-level `super()`
-/// statement returns, which is after the last instance field.
+/// Whether an initializer can mean something else in the constructor than in
+/// a field: anything but a literal may read `new.target` or a name.
+fn reads_its_context(initializer: Option<Expr>) -> bool {
+    initializer.is_some_and(|value| !value.is_primitive_literal())
+}
+
+/// The top-level `super()` statement of `constructor`. The instance fields
+/// are defined when it returns.
+fn super_statement(constructor: &Property) -> Option<usize> {
+    let Some(js_ast::ExprData::EFunction(func)) = constructor.value.map(|value| value.data) else {
+        unreachable!()
+    };
+    let body: &[Stmt] = func.func.body.stmts.slice();
+    body.iter().position(|stmt| stmt.is_super_call())
+}
+
+/// Puts `inserted` in `constructor` right after the last instance field is
+/// defined: after the `super()` statement of a derived class, first in a base class.
 fn insert_after_super<'a>(
     constructor: &mut Property,
     inserted: &[Stmt],
     arena: &'a bun_alloc::Arena,
 ) {
+    let after_super = super_statement(constructor).map_or(0, |i| i + 1);
     let func = match &mut constructor.value.as_mut().unwrap().data {
         js_ast::ExprData::EFunction(f) => &mut **f,
         _ => unreachable!(),
     };
     let body: &[Stmt] = func.func.body.stmts.slice();
-    let after_super = body
-        .iter()
-        .position(|stmt| stmt.is_super_call())
-        .map_or(0, |i| i + 1);
     let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
     stmts.extend_from_slice(&body[..after_super]);
     stmts.extend_from_slice(inserted);
@@ -722,12 +735,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmt: Stmt,
         out: &mut BumpVec<'a, Stmt>,
+        body_scope: js_ast::StoreRef<js_ast::Scope>,
     ) {
         let mut s_class = match stmt.data {
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
+        let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None, body_scope);
         out.extend(lowered.temps);
         let Some(decorators) = lowered.class_decorators else {
             out.push(stmt);
@@ -750,8 +764,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: Expr,
         class: &mut G::Class,
         name_from_context: Option<&'a [u8]>,
+        body_scope: js_ast::StoreRef<js_ast::Scope>,
     ) -> Expr {
-        let lowered = self.lower_class_body(class, expr.loc, name_from_context);
+        let lowered = self.lower_class_body(class, expr.loc, name_from_context, body_scope);
         if let Some(decl) = lowered.temps
             && let Some(stmt_list) = self.nearest_stmt_list_mut()
         {
@@ -776,7 +791,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// native behavior; what the runtime helpers need is added around them.
     /// Decorator lists are evaluated in the key of their member and applied by
     /// a leading `static {}`. What has to run between two instance fields rides
-    /// in the initializer of the next one, or the constructor after the last.
+    /// in the initializer of the next one. After the last one it goes into the
+    /// constructor, or rides in a `#private` field of the lowering's own when
+    /// the constructor would change what it means or when it runs.
     /// A `#private` name with a decorated member becomes a WeakMap or WeakSet,
     /// which is how the helpers reach it; its methods become function expressions.
     #[allow(clippy::too_many_lines)]
@@ -785,6 +802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class: &mut G::Class,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
+        body_scope: js_ast::StoreRef<js_ast::Scope>,
     ) -> LoweredClass {
         let p = self;
         let bump = p.arena;
@@ -831,6 +849,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut members = BumpVec::<Property>::with_capacity_in(class.properties.len() + 4, bump);
         let mut key_effects = BumpVec::<Expr>::new_in(bump);
         let mut instance_effects = BumpVec::<Expr>::new_in(bump);
+        let mut effects_read_their_context = false;
         let mut first_instance_host: Option<(usize, FieldName)> = None;
         let mut last_key_host: Option<(usize, Option<Expr>)> = None;
         let mut constructor: Option<usize> = None;
@@ -983,6 +1002,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     members.push(p.make_static_block(&effects, loc));
                 } else {
                     instance_effects.extend_from_slice(&effects);
+                    effects_read_their_context |= reads_its_context(prop.initializer);
                 }
                 continue;
             }
@@ -1045,6 +1065,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     members.push(p.make_static_block(&effects, loc));
                 } else {
                     instance_effects.extend_from_slice(&effects);
+                    effects_read_their_context |= reads_its_context(prop.initializer);
                 }
                 continue;
             }
@@ -1102,6 +1123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     instance_effects.push(p.hosted_initializer(prop.initializer, field_name, loc));
                     prop.initializer = Some(Expr::join_all_with_comma(&instance_effects));
                     instance_effects.clear();
+                    effects_read_their_context = false;
                 }
                 first_instance_host.get_or_insert((members.len(), field_name));
             }
@@ -1222,6 +1244,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !decorate[1].is_empty() {
             let this = p.new_expr(E::This {}, loc);
             instance_prologue.push(p.run_initializers(init_ref, 5.0, this, loc));
+        }
+
+        // ── What runs after the last instance field ──
+        // An initializer in the constructor reads its `new.target` and the
+        // names it declares, and a derived constructor with no `super()`
+        // statement has no place that is after the fields. Then one more
+        // field holds it.
+        let runs_after_fields = !instance_effects.is_empty()
+            || (first_instance_host.is_none() && !instance_prologue.is_empty());
+        let constructor_can_run_it = !effects_read_their_context
+            && constructor.is_none_or(|constructor| {
+                class.extends.is_none() || super_statement(&members[constructor]).is_some()
+            });
+        if runs_after_fields && !constructor_can_run_it {
+            instance_effects.push(p.new_expr(E::Undefined {}, loc));
+            let name = p.generate_private_name(b"#_tail", body_scope);
+            first_instance_host.get_or_insert((members.len(), FieldName::Unknown));
+            members.push(Property {
+                key: Some(p.new_expr(E::PrivateIdentifier { ref_: name }, loc)),
+                initializer: Some(Expr::join_all_with_comma(&instance_effects)),
+                ..Default::default()
+            });
+            instance_effects.clear();
         }
         let mut constructor_effects = BumpVec::<Expr>::new_in(bump);
         if let Some((host, field_name)) = first_instance_host {

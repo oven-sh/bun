@@ -986,13 +986,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
+    /// Returns the shadowing name and the scope of the class body.
     pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
         default_name_ref: Ref,
         is_expr: bool,
-    ) -> Ref {
+    ) -> (Ref, js_ast::StoreRef<js_ast::Scope>) {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1049,9 +1050,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.visit_expr(extends);
         }
 
+        let body_scope;
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
+            body_scope = self.current_scope;
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -1478,7 +1481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // class name scope
         self.pop_scope();
 
-        shadow_ref
+        (shadow_ref, body_scope)
     }
 
     // Try separating the list for appending, so that it's not a pointer.

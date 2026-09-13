@@ -446,11 +446,19 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
     // With a browser map in scope, each specifier gets "./" and "/index"
     // variants built in path buffers before the map is read. Six bytes under
     // the limit is the first length at which "<specifier>/index" does not
-    // fit; one byte less still goes through the map.
+    // fit. One byte less still goes through the map, which remaps it here;
+    // the longer ones are in the map too and are not remapped.
+    const specifier = (length: number) => Buffer.alloc(length, "x").toString();
     const lengths = [MAX_PATH_BYTES - 7, MAX_PATH_BYTES - 6, MAX_PATH_BYTES + 300];
+    const notResolved = ['Could not resolve: "<specifier>". Maybe you need to "bun install"?'];
     expect(
       await run({
-        "package.json": JSON.stringify({ name: "test", version: "0.0.0", browser: { "./a.js": "./b.js" } }),
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "0.0.0",
+          browser: Object.fromEntries(lengths.map(length => [specifier(length), "./shim.js"])),
+        }),
+        "shim.js": `console.log("remapped by the browser map");`,
         "main.cjs": `
           const fs = require("fs");
           (async () => {
@@ -459,18 +467,19 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
               const specifier = Buffer.alloc(length, "x").toString();
               fs.writeFileSync("entry.js", "import " + JSON.stringify(specifier) + ";");
               const build = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
-              out[length] = [build.success, build.logs.map(log => log.message.replace(specifier, "<specifier>"))];
+              out[length] = build.success
+                ? "bundled: " + ((await build.outputs[0].text()).includes("remapped by the browser map") ? "shim.js" : "something else")
+                : build.logs.map(log => log.message.replace(specifier, "<specifier>"));
             }
             console.log(JSON.stringify(out));
           })();`,
       }),
     ).toEqual({
-      result: Object.fromEntries(
-        lengths.map(length => [
-          length,
-          [false, ['Could not resolve: "<specifier>". Maybe you need to "bun install"?']],
-        ]),
-      ),
+      result: {
+        [MAX_PATH_BYTES - 7]: "bundled: shim.js",
+        [MAX_PATH_BYTES - 6]: notResolved,
+        [MAX_PATH_BYTES + 300]: notResolved,
+      },
       stderr: "",
       exitCode: 0,
     });

@@ -242,10 +242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A new `#private` field for the value of an undecorated `accessor #x`.
-    /// `taken` has the `#private` names of the class. A name that a class
-    /// around this one declares is not free either: code in this class that
-    /// refers to it would reach the new field.
+    /// A new `#private` field that neither the class (`taken`) nor a class around it declares.
     fn accessor_storage_field(
         &mut self,
         accessor_name: &'a [u8],
@@ -287,10 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// An undecorated `accessor #x` is the getter and setter `#x` over a
-    /// `#private` field of its own. The object has the pair before its first
-    /// field runs, so `#x in this` is true from the start. `prop` becomes the
-    /// field, which stays where the accessor is written. Returns the pair.
+    /// Turns `prop`, an `accessor #x`, into the field under it. Returns `get #x` and `set #x`.
     fn split_plain_private_accessor(
         &mut self,
         prop: &mut Property,
@@ -976,6 +970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
+            // Not the field `#x`: `#x in this` is true before the first field runs.
             if is_plain_private_accessor(&prop) {
                 members.extend(p.split_plain_private_accessor(&mut prop, &mut private_names, loc));
             }
@@ -1023,9 +1018,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.symbols[private_index as usize].original_name.slice();
                 let name_expr = p.new_expr(E::EString::init(private_name), loc);
                 let existing = private_lowered_map.get(&private_index).copied();
-                // A method, getter, setter or accessor is on the object before
-                // its first field runs: a WeakSet the object joins up front. A
-                // field is there once it is defined: the WeakMap of its value.
+                // Like a method, an accessor is there before the first field: a WeakSet brand.
                 let is_branded = is_method || kind == 4;
                 let storage = if let Some(existing) = existing {
                     existing.storage_ref
@@ -1649,8 +1642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `function() { return __privateGet(this, storage) }`, or
-    /// `function() { return this.#storage }`
+    /// `function() { return value }`, for the value in `storage`
     fn accessor_getter(&mut self, storage: AccessorStorage, loc: bun_ast::Loc) -> Expr {
         let get = match storage {
             AccessorStorage::WeakMap(map) => {
@@ -1673,8 +1665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(E::Function { func }, loc)
     }
 
-    /// `function(v) { __privateSet(this, storage, v) }`, or
-    /// `function(v) { this.#storage = v }`
+    /// `function(v) { value = v }`, for the value in `storage`
     fn accessor_setter(&mut self, storage: AccessorStorage, loc: bun_ast::Loc) -> Expr {
         let param = self.new_sym(js_ast::symbol::Kind::Other, b"v");
         let value = self.use_ref(param, loc);

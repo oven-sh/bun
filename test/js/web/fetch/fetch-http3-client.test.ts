@@ -694,34 +694,37 @@ test.each(["POST", "PATCH"])("does not replay a %s that was already sent", async
       return new Response("a");
     },
   });
-  const port = a.port;
-  expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
-  const inflight = fetch(`https://127.0.0.1:${port}/`, { ...h3, method, body: "payload" });
-  await received.promise;
-  // This continuation runs in the microtask drain of A's handler, with A's
-  // lsquic engine still on the stack. Stop A from a fresh event-loop turn.
-  await new Promise<void>(resolve => setImmediate(resolve));
-  const b = Bun.serve({
-    port,
-    reusePort: true,
-    tls,
-    http3: true,
-    http1: false,
-    fetch: req => {
-      hits.push(`b ${req.method}`);
-      return new Response("b");
-    },
-  });
-  a.stop(true);
-  release.resolve();
+  let b: Server | undefined;
   try {
+    const port = a.port;
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
+    const inflight = fetch(`https://127.0.0.1:${port}/`, { ...h3, method, body: "payload" });
+    await received.promise;
+    // This continuation runs in the microtask drain of A's handler, with A's
+    // lsquic engine still on the stack. Stop A from a fresh event-loop turn.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    b = Bun.serve({
+      port,
+      reusePort: true,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: req => {
+        hits.push(`b ${req.method}`);
+        return new Response("b");
+      },
+    });
+    a.stop(true);
+    release.resolve();
     const outcome = await inflight.then(r => r.text()).catch(e => e.code);
     expect(outcome).toBe("HTTP3StreamReset");
     // The origin is reachable: a new request lands on B, the first one never did.
     expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("b");
     expect(hits).toEqual(["a GET", `a ${method}`, "b GET"]);
   } finally {
-    void b.stop(true);
+    release.resolve();
+    void a.stop(true);
+    void b?.stop(true);
   }
 });
 

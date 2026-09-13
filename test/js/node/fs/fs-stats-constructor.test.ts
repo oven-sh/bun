@@ -56,6 +56,126 @@ test("Stats instances share Stats.prototype", () => {
   expect(bigint instanceof Object.getPrototypeOf(bigint).constructor).toBe(true);
 });
 
+// Node.js computes the four `*Ms` fields of BigIntStats in JS: `this.atimeMs = atimeNs / 1_000_000n`.
+// That is BigInt division: the result is a BigInt, truncated toward zero, with no 64-bit limit, and
+// an operand that does not convert to a BigInt throws a TypeError. The native constructor used to
+// divide `BigInt.asIntN(64, atimeNs)` as a double and store a Number, which the date getters reject.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L619-L632
+describe("BigIntStats constructor", () => {
+  const BigIntStats = Object.getPrototypeOf(statSync(import.meta.path, { bigint: true })).constructor;
+  class Subclass extends BigIntStats {}
+  // BigIntStats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeNs, mtimeNs, ctimeNs, birthtimeNs)
+  const fields = [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n];
+  const constructors: [string, (...args: unknown[]) => any][] = [
+    ["new BigIntStats(...)", (...args) => new BigIntStats(...args)],
+    ["new (class extends BigIntStats)(...)", (...args) => new Subclass(...args)],
+    // Node.js throws for a call without new. Bun accepts it, for Stats too.
+    ["BigIntStats(...)", (...args) => BigIntStats(...args)],
+  ];
+
+  test.each(constructors)("%s divides the *Ns arguments into BigInt *Ms fields", (_, construct) => {
+    const stats = construct(...fields, 2_500_000n, 3_999_999n, -2_500_000n, -1n);
+    expect({ ...stats }).toEqual({
+      dev: 0n,
+      mode: 1n,
+      nlink: 2n,
+      uid: 3n,
+      gid: 4n,
+      rdev: 5n,
+      blksize: 6n,
+      ino: 7n,
+      size: 8n,
+      blocks: 9n,
+      atimeMs: 2n,
+      mtimeMs: 3n,
+      ctimeMs: -2n,
+      birthtimeMs: 0n,
+      atimeNs: 2_500_000n,
+      mtimeNs: 3_999_999n,
+      ctimeNs: -2_500_000n,
+      birthtimeNs: -1n,
+    });
+    expect({
+      atime: stats.atime,
+      mtime: stats.mtime,
+      ctime: stats.ctime,
+      birthtime: stats.birthtime,
+    }).toEqual({
+      atime: new Date(2),
+      mtime: new Date(3),
+      ctime: new Date(-2),
+      birthtime: new Date(0),
+    });
+  });
+
+  test.each(constructors)("%s keeps the precision of *Ns arguments outside the int64 range", (_, construct) => {
+    const stats = construct(...fields, 2n ** 70n, -(2n ** 70n), 2n ** 63n, -(2n ** 63n) - 1n);
+    expect({
+      atimeMs: stats.atimeMs,
+      mtimeMs: stats.mtimeMs,
+      ctimeMs: stats.ctimeMs,
+      birthtimeMs: stats.birthtimeMs,
+    }).toEqual({
+      atimeMs: 1_180_591_620_717_411n,
+      mtimeMs: -1_180_591_620_717_411n,
+      ctimeMs: 9_223_372_036_854n,
+      birthtimeMs: -9_223_372_036_854n,
+    });
+    expect(stats.atime).toEqual(new Date(1_180_591_620_717_411));
+
+    // A *Ms value outside the int64 range is outside the Date range too. The getter must not wrap it into a valid date.
+    const wide = construct(...fields, 2n ** 64n * 1_000_000n, -(2n ** 64n) * 1_000_000n, 0n, 0n);
+    expect({ atimeMs: wide.atimeMs, mtimeMs: wide.mtimeMs }).toEqual({ atimeMs: 2n ** 64n, mtimeMs: -(2n ** 64n) });
+    expect({ atime: wide.atime.getTime(), mtime: wide.mtime.getTime() }).toEqual({ atime: NaN, mtime: NaN });
+  });
+
+  test.each(constructors)("%s throws a TypeError if a *Ns argument does not convert to a BigInt", (_, construct) => {
+    for (const notBigInt of [2_500_000, "2500000", true, null, undefined, { valueOf: () => 2_500_000 }]) {
+      for (let i = 0; i < 4; i++) {
+        const times: unknown[] = [0n, 0n, 0n, 0n];
+        times[i] = notBigInt;
+        expect(() => construct(...fields, ...times)).toThrow(TypeError);
+      }
+    }
+  });
+
+  test.each(constructors)("%s converts object *Ns arguments with valueOf, once each, in order", (_, construct) => {
+    const order: string[] = [];
+    const argument = (name: string, value: unknown) => ({
+      valueOf() {
+        order.push(name);
+        return value;
+      },
+    });
+    const atimeNs = argument("atimeNs", 1_999_999n);
+    const mtimeNs = argument("mtimeNs", 2_000_000n);
+    const ctimeNs = argument("ctimeNs", 3_000_000n);
+    const birthtimeNs = argument("birthtimeNs", 4_000_000n);
+    const stats = construct(...fields, atimeNs, mtimeNs, ctimeNs, birthtimeNs);
+    expect(order).toEqual(["atimeNs", "mtimeNs", "ctimeNs", "birthtimeNs"]);
+    expect({
+      atimeMs: stats.atimeMs,
+      mtimeMs: stats.mtimeMs,
+      ctimeMs: stats.ctimeMs,
+      birthtimeMs: stats.birthtimeMs,
+    }).toEqual({ atimeMs: 1n, mtimeMs: 2n, ctimeMs: 3n, birthtimeMs: 4n });
+    // The *Ns fields hold the arguments as given.
+    expect(stats.atimeNs).toBe(atimeNs);
+    expect(stats.mtimeNs).toBe(mtimeNs);
+    expect(stats.ctimeNs).toBe(ctimeNs);
+    expect(stats.birthtimeNs).toBe(birthtimeNs);
+
+    // The first argument that does not convert to a BigInt ends the conversion.
+    order.length = 0;
+    const notBigInt = argument("mtimeNs", 2_000_000);
+    expect(() => construct(...fields, atimeNs, notBigInt, ctimeNs, birthtimeNs)).toThrow(TypeError);
+    expect(order).toEqual(["atimeNs", "mtimeNs"]);
+
+    // A BigInt wrapper object converts too.
+    expect(construct(...fields, Object(2_500_000n), 0n, 0n, 0n).atimeMs).toBe(2n);
+  });
+});
+
 // A call resolved through a binding that a closure captures is compiled with the scope object
 // itself in the this slot, and native functions see it raw. isFile() and friends used to read
 // `mode` out of that scope object (the date getters, once pulled out of their property descriptor,

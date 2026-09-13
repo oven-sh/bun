@@ -2074,15 +2074,18 @@ describe("Error.stackTraceLimit in a new context", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return { exitCode, result: JSON.parse(stdout) };
   }
 
   test.concurrent("defaults to 10, like the main context", async () => {
-    expect(await run()).toEqual({ main: 10, vm: 10, frames: 10 });
+    const { exitCode, result } = await run();
+    expect(result).toEqual({ main: 10, vm: 10, frames: 10 });
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("--stack-trace-limit applies to the new context", async () => {
-    expect(await run("--stack-trace-limit=50")).toEqual({ main: 50, vm: 50, frames: 50 });
+    const { exitCode, result } = await run("--stack-trace-limit=50");
+    expect(result).toEqual({ main: 50, vm: 50, frames: 50 });
+    expect(exitCode).toBe(0);
   });
 });

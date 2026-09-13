@@ -2727,6 +2727,10 @@ fn matcher_context_equals(global_this: &JSGlobalObject, callframe: &CallFrame) -
 /// `jest-matcher-utils` exports, and matchers call them unbound
 /// (`const { matcherHint, printReceived } = this.utils`), so it is a table of host functions.
 ///
+/// Vitest exposes 14 of Jest's names, and this table has 6 of them. Not implemented yet:
+/// `diff`, `printDiffOrStringify`, `printWithType`, `iterableEquality`, `subsetEquality`,
+/// `DIM_COLOR`, `INVERTED_COLOR`, `BOLD_WEIGHT`. Each one is a row in the table.
+///
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 mod matcher_utils {
     use super::*;

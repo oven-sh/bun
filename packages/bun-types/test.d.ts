@@ -1973,6 +1973,10 @@ declare module "bun:test" {
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      /** Returns `text` in the color of an expected value. It does not quote or format `text`. */
+      EXPECTED_COLOR: MatcherHintColor;
+      /** Returns `text` in the color of a received value. It does not quote or format `text`. */
+      RECEIVED_COLOR: MatcherHintColor;
       /**
        * Returns the one-line call signature that starts a failure message, for example
        * `expect(received).toBeFoo(expected)`.

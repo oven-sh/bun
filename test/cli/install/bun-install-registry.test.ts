@@ -244,8 +244,14 @@ describe("certificate authority", () => {
       sockets.add(client);
       client.on("error", () => {});
       client.on("close", () => sockets.delete(client));
-      client.once("data", head => {
-        const target = head.toString("latin1").split(" ")[1];
+      let head = "";
+      client.on("data", function onData(chunk: Buffer) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        client.off("data", onData);
+        // `pipe()` below resumes the socket once the upstream is connected.
+        client.pause();
+        const target = head.split(" ")[1];
         targets.push(target);
         const [host, port] = target.split(":");
         const upstream = tcpConnect(Number(port), host, () => {

@@ -1698,12 +1698,17 @@ declare module "bun:test" {
     toBeNegative(): void;
 
     /**
-     * Asserts that a value is a number between a start and end value.
+     * Asserts that a value is a `number` or a `bigint` between a start and end value.
+     *
+     * @example
+     * expect(3).toBeWithin(1, 5);
+     * expect(5).not.toBeWithin(1, 5);
+     * expect(3n).toBeWithin(1, 5);
      *
      * @param start the start number (inclusive)
      * @param end the end number (exclusive)
      */
-    toBeWithin(start: number, end: number): void;
+    toBeWithin(start: number | bigint, end: number | bigint): void;
 
     /**
      * Asserts that a value is equal to the expected string, ignoring any whitespace.

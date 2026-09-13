@@ -757,7 +757,10 @@ function shCommand(script: string, ...args: string[]) {
 test.concurrent("a git config entry in the project's .env does not reach the git of the install", async () => {
   using dir = tempDir("git-dep-dotenv-config", {
     // git runs the `core.fsmonitor` command when it checks a commit out.
-    "fsmonitor.js": `require("fs").writeFileSync(process.argv[2], "");`,
+    "fsmonitor.js": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync(process.argv[2], "");
+    `,
   });
   const root = String(dir);
   const repoUrl = `git+${pathToFileURL(sharedBare)}`;
@@ -785,7 +788,11 @@ test.concurrent("a git config entry in the project's .env does not reach the git
 test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the user's ssh command", async () => {
   using dir = tempDir("git-dep-dotenv-ssh", {
     // Stands in for ssh: records that git ran it and fails, so that the clone ends there.
-    "ssh.js": `require("fs").writeFileSync(process.argv[2], ""); process.exit(255);`,
+    "ssh.js": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync(process.argv[2], "");
+      process.exit(255);
+    `,
   });
   const root = String(dir);
   const project = writeProject(root, { "pkg": "git+ssh://git@localhost/scope/pkg.git" });

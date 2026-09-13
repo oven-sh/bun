@@ -1874,9 +1874,10 @@ impl<'a> DependencyCollectionContext<'a> {
                 continue;
             }
             let scope = &env.scopes[scope_id.0 as usize];
-            let already_declared = scope.declarations.iter().any(|(_, d)| {
-                env.identifiers[d.identifier.0 as usize].declaration_id == decl_id
-            });
+            let already_declared = scope
+                .declarations
+                .iter()
+                .any(|(_, d)| env.identifiers[d.identifier.0 as usize].declaration_id == decl_id);
             if !already_declared {
                 let new_decl = crate::hir::ReactiveScopeDeclaration {
                     identifier,

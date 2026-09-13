@@ -28,9 +28,11 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
 
+#include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorHandlingScope.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
+#include <JavaScriptCore/Interpreter.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include "headers.h"
@@ -111,6 +113,30 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     return errorMessage;
 }
 
+// JSC::addErrorInfo() would make these enumerable (JSDOMException is not an ErrorInstance); ZigException.cpp reads them back.
+static void addDOMExceptionErrorInfo(JSGlobalObject* lexicalGlobalObject, JSObject* exception)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto stackTrace = getStackTrace(vm, exception, /* useCurrentFrame */ true);
+    if (!stackTrace)
+        return;
+
+    constexpr unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
+    if (stackTrace->isEmpty()) {
+        exception->putDirect(vm, vm.propertyNames->stack, vm.smallStrings.emptyString(), attributes);
+        return;
+    }
+
+    LineColumn lineColumn;
+    String sourceURL;
+    getLineColumnAndSource(vm, stackTrace.get(), lineColumn, sourceURL);
+    exception->putDirect(vm, vm.propertyNames->line, jsNumber(lineColumn.line), attributes);
+    exception->putDirect(vm, vm.propertyNames->column, jsNumber(lineColumn.column), attributes);
+    if (!sourceURL.isEmpty())
+        exception->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(sourceURL)), attributes);
+    exception->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, *stackTrace)), attributes);
+}
+
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -180,7 +206,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
 
         ASSERT(errorObject);
-        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+        addDOMExceptionErrorInfo(lexicalGlobalObject, asObject(errorObject));
         return errorObject;
     }
     }

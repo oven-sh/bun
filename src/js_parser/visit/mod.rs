@@ -1457,6 +1457,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            self.visited_class_body = Some(self.current_scope);
+
             // manual restore for the block-level `defer`
             self.pop_scope();
             self.enclosing_class_keyword = old_enclosing_class_keyword;

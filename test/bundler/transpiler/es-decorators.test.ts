@@ -1393,6 +1393,41 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("the field added after the last one gets a #private name of its own", async () => {
+      // A derived constructor without a `super();` statement: what follows the
+      // last field rides in one more `#private` field. The class, and a class
+      // around it that the body refers to, already use the names it would take.
+      using dir = tempDir("es-dec-added-private-name", {
+        "entry.js": `
+          const dec = (v, ctx) => { ctx.addInitializer(function () { this.ran = true; }); };
+          class Base {}
+          class Outer {
+            #_ = "outer";
+            static make() {
+              return class extends Base {
+                #_2 = "own";
+                @dec x = "x";
+                constructor() { const made = super(); }
+                read(o) { return [o.#_, this.#_2, this.x, this.ran]; }
+              };
+            }
+          }
+          console.log(JSON.stringify(new (Outer.make())().read(new Outer())));
+        `,
+      });
+      const expected = '["outer","own","x",true]\n';
+      const ran = await runIn(String(dir), ["entry.js"]);
+      expect(filterStderr(ran.stderr)).toBe("");
+      expect(ran.stdout).toBe(expected);
+      expect(ran.exitCode).toBe(0);
+      const build = await runIn(String(dir), ["build", "--target=bun", "--minify", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const minified = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(minified.stderr)).toBe("");
+      expect(minified.stdout).toBe(expected);
+      expect(minified.exitCode).toBe(0);
+    });
+
     test.concurrent("super resolves from the class as written when a class decorator replaces it", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const dec = (v, ctx) => {};
@@ -2391,6 +2426,30 @@ const extraSections = `
   const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
   out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
 }
+
+// What follows the last instance field runs when \`super()\` returns,
+// wherever that call is written, and not at all when it is never called.
+{
+  const seen = [];
+  const see = (tag) => (seen.push(tag), tag);
+  const extra = (value, ctx) => { ctx.addInitializer(function () { seen.push("extra " + String(ctx.name) + ":" + (this instanceof Base3)); }); };
+  class Base3 {}
+  const classes = [
+    class extends Base3 { @extra accessor p = see("accessor"); constructor() { const made = super(); seen.push("body"); } },
+    class extends Base3 { accessor p = see("plain accessor"); constructor(x) { if (x) { super(); } else { super(); } seen.push("body"); } },
+    class extends Base3 { @extra #p = see("#field"); constructor() { (() => super())(); seen.push("body"); } },
+    class extends Base3 { @extra accessor #p = see("#accessor"); constructor() { void super(); seen.push("body"); } },
+    class extends Base3 { @extra p = see("field"); constructor() { const made = super(); seen.push("body"); } },
+    class extends Base3 { @extra m() {} constructor() { const made = super(); seen.push("body"); } },
+    class extends Base3 { @extra #m() {} constructor() { const made = super(); seen.push("body"); } },
+    class extends Base3 { @extra p = see("never"); constructor() { return { made: true }; } },
+    class extends Base3 { #_ = see("own #_"); @extra p = see("next to #_"); constructor() { const made = super(); seen.push(this.#_); } },
+  ];
+  for (const C of classes) {
+    try { new C(1); } catch (e) { seen.push(e.constructor.name); }
+  }
+  out.superNotAStatement = seen;
+}
 `;
 
 const extraExpected = {
@@ -2434,6 +2493,30 @@ const extraExpected = {
   accessorKeys: [11, 2, 3, 4],
   issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
   accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
+  superNotAStatement: [
+    "accessor",
+    "extra p:true",
+    "body",
+    "plain accessor",
+    "body",
+    "#field",
+    "extra #p:true",
+    "body",
+    "#accessor",
+    "extra #p:true",
+    "body",
+    "field",
+    "extra p:true",
+    "body",
+    "extra m:true",
+    "body",
+    "extra #m:true",
+    "body",
+    "own #_",
+    "next to #_",
+    "extra p:true",
+    "own #_",
+  ],
 };
 
 function buildFixture() {

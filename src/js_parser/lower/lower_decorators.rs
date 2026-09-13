@@ -101,27 +101,34 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-/// Puts `inserted` in `constructor` right after a top-level `super()`
-/// statement returns, which is after the last instance field.
-fn insert_after_super<'a>(
+/// Puts `inserted` in `constructor` where the last instance field is defined:
+/// at the top of a base class, after the `super()` statement of a derived one.
+/// Returns false when a derived constructor has no such statement.
+fn insert_after_fields<'a>(
     constructor: &mut Property,
+    is_derived: bool,
     inserted: &[Stmt],
     arena: &'a bun_alloc::Arena,
-) {
+) -> bool {
     let func = match &mut constructor.value.as_mut().unwrap().data {
         js_ast::ExprData::EFunction(f) => &mut **f,
         _ => unreachable!(),
     };
     let body: &[Stmt] = func.func.body.stmts.slice();
-    let after_super = body
-        .iter()
-        .position(|stmt| stmt.is_super_call())
-        .map_or(0, |i| i + 1);
+    let after_fields = if is_derived {
+        match body.iter().position(|stmt| stmt.is_super_call()) {
+            Some(super_call) => super_call + 1,
+            None => return false,
+        }
+    } else {
+        0
+    };
     let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
-    stmts.extend_from_slice(&body[..after_super]);
+    stmts.extend_from_slice(&body[..after_fields]);
     stmts.extend_from_slice(inserted);
-    stmts.extend_from_slice(&body[after_super..]);
+    stmts.extend_from_slice(&body[after_fields..]);
     func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+    true
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -209,6 +216,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.bump_name3(b"_", &s.data, b"");
         }
         b"_accessor_storage"
+    }
+
+    /// A `#private` name for `class_body` that no class around it declares.
+    fn new_private_name(
+        &mut self,
+        mut class_body: js_ast::StoreRef<js_ast::Scope>,
+        base: &'a [u8],
+        kind: js_ast::symbol::Kind,
+    ) -> Ref {
+        let mut name = base;
+        let mut count = 1u32;
+        'unique: loop {
+            let mut scope = Some(class_body);
+            while let Some(current) = scope {
+                let declares = current.kind == js_ast::scope::Kind::ClassBody
+                    && (current.members.contains_key(name)
+                        || current.generated.slice().iter().any(|generated| {
+                            self.symbols[generated.inner_index() as usize]
+                                .original_name
+                                .slice()
+                                == name
+                        }));
+                if declares {
+                    count += 1;
+                    name = bun_alloc::arena_format!(in self.arena, "{}{}", bstr::BStr::new(base), count)
+                        .into_bump_str()
+                        .as_bytes();
+                    continue 'unique;
+                }
+                scope = current.parent;
+            }
+            break;
+        }
+        let ref_ = self.new_symbol(kind, name);
+        VecExt::append(&mut class_body.generated, ref_);
+        ref_
     }
 
     // ── Private access rewriting ─────────────────────────
@@ -776,7 +819,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// native behavior; what the runtime helpers need is added around them.
     /// Decorator lists are evaluated in the key of their member and applied by
     /// a leading `static {}`. What has to run between two instance fields rides
-    /// in the initializer of the next one, or the constructor after the last.
+    /// in the initializer of the next one. After the last one it goes in the
+    /// constructor, or in one more `#private` field where a derived
+    /// constructor has no `super()` statement to put it after.
     /// A `#private` name with a decorated member becomes a WeakMap or WeakSet,
     /// which is how the helpers reach it; its methods become function expressions.
     #[allow(clippy::too_many_lines)]
@@ -789,6 +834,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let bump = p.arena;
         let temps_before = p.temp_refs_to_declare.len();
+        let class_body = p
+            .visited_class_body
+            .take()
+            .expect("visit_class ran for this class");
 
         let class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let has_class_decorators = class_decorators.len_u32() > 0;
@@ -1247,14 +1296,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut new_constructor = None;
         if !constructor_effects.is_empty() {
+            let is_derived = class.extends.is_some();
             match constructor {
                 Some(constructor) => {
                     let stmts = p.effect_stmts(&constructor_effects, loc);
-                    insert_after_super(&mut members[constructor], &stmts, p.arena);
+                    if !insert_after_fields(&mut members[constructor], is_derived, &stmts, p.arena)
+                    {
+                        // `super()` is inside an expression or a block, or missing:
+                        // one more field runs where it returns.
+                        let host = p.new_private_name(
+                            class_body,
+                            b"#_",
+                            js_ast::symbol::Kind::PrivateField,
+                        );
+                        p.record_usage(host);
+                        constructor_effects.push(p.new_expr(E::Undefined {}, loc));
+                        members.push(Property {
+                            key: Some(p.new_expr(E::PrivateIdentifier { ref_: host }, loc)),
+                            initializer: Some(Expr::join_all_with_comma(&constructor_effects)),
+                            ..Default::default()
+                        });
+                    }
                 }
                 None => {
                     new_constructor =
-                        Some(p.new_constructor(class.extends.is_some(), &constructor_effects, loc));
+                        Some(p.new_constructor(is_derived, &constructor_effects, loc));
                 }
             }
         }

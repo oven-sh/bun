@@ -143,6 +143,7 @@ describe("fs result prototypes have no Symbol.toStringTag", () => {
     BigIntStats: statSync(import.meta.path, { bigint: true }),
     Dirent: readdirSync(import.meta.dir, { withFileTypes: true })[0],
     StatFs: statfsSync(import.meta.dir),
+    BigIntStatFs: statfsSync(import.meta.dir, { bigint: true }),
   });
 
   test.each(Object.keys(values()))("%s", name => {

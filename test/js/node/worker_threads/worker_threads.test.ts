@@ -760,6 +760,82 @@ describe("error event", () => {
     expect(err.message).toBe("oh no");
   });
 
+  test("preserves Error cause and enumerable metadata", async () => {
+    const worker = new Worker(
+      `const cause = new RangeError("root cause", { cause: new URIError("deep cause") });
+       cause.code = "E_CAUSE";
+       cause.details = { stage: "inner" };
+       const error = new TypeError("outer", { cause });
+       error.code = "E_WORKER";
+       error.details = { retryable: true, attempts: 2 };
+       error.requestId = 42;
+       error[0] = "numeric metadata";
+       throw error;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("outer");
+    expect(err.code).toBe("E_WORKER");
+    expect(err.cause).toBeInstanceOf(RangeError);
+    expect(err.cause.message).toBe("root cause");
+    expect(err.cause.code).toBe("E_CAUSE");
+    expect(err.cause.details).toEqual({ stage: "inner" });
+    expect(err.cause.cause).toBeInstanceOf(URIError);
+    expect(err.cause.cause.message).toBe("deep cause");
+    expect(err.details).toEqual({ retryable: true, attempts: 2 });
+    expect(err.requestId).toBe(42);
+    expect(err[0]).toBe("numeric metadata");
+    expect(Object.getOwnPropertyDescriptor(err, "cause")?.enumerable).toBe(false);
+  });
+
+  test("preserves an assigned cause as enumerable", async () => {
+    const worker = new Worker(
+      `const error = new Error("outer");
+       error.cause = "assigned cause";
+       throw error;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err.cause).toBe("assigned cause");
+    expect(Object.getOwnPropertyDescriptor(err, "cause")?.enumerable).toBe(true);
+    expect(Object.keys(err)).toContain("cause");
+  });
+
+  test("an uncloneable cause does not suppress cloneable metadata", async () => {
+    const worker = new Worker(
+      `const { MessageChannel } = require("node:worker_threads");
+       const error = new Error("outer", { cause: new MessageChannel().port1 });
+       error.details = { preserved: true };
+       throw error;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("outer");
+    expect(err.details).toEqual({ preserved: true });
+  });
+
+  test("bounds deeply nested cause metadata", async () => {
+    const worker = new Worker(
+      `let error = new Error("leaf");
+       for (let i = 0; i < 10_000; i++) error = new Error("level " + i, { cause: error });
+       throw error;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("level 9999");
+    let cause = err;
+    let depth = 0;
+    while (cause instanceof Error) {
+      cause = cause.cause;
+      depth++;
+    }
+    expect(depth).toBeGreaterThan(1);
+    expect(depth).toBeLessThan(100);
+  });
+
   test("falls back to string when the error cannot be serialized", async () => {
     const worker = new Worker(
       /* js */ `

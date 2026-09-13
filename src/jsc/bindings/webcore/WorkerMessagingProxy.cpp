@@ -40,6 +40,9 @@
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <wtf/HashSet.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -510,6 +513,133 @@ static String errorCodeOf(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
     return code;
 }
 
+class SerializedWorkerErrorMetadata final : public ThreadSafeRefCounted<SerializedWorkerErrorMetadata> {
+public:
+    static Ref<SerializedWorkerErrorMetadata> create() { return adoptRef(*new SerializedWorkerErrorMetadata); }
+
+    RefPtr<SerializedScriptValue> properties;
+    RefPtr<SerializedScriptValue> cause;
+    RefPtr<SerializedWorkerErrorMetadata> causeMetadata;
+    bool causeEnumerable { false };
+
+private:
+    SerializedWorkerErrorMetadata() = default;
+};
+
+static constexpr unsigned maxWorkerErrorMetadataDepth = 32;
+
+static RefPtr<SerializedWorkerErrorMetadata> serializeWorkerErrorMetadata(Zig::GlobalObject& globalObject, JSC::ErrorInstance& error, HashSet<JSC::JSObject*>& seen, bool includeCode, unsigned depth)
+{
+    if (!seen.add(&error).isNewEntry)
+        return nullptr;
+
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto metadata = SerializedWorkerErrorMetadata::create();
+
+    auto* propertiesObject = JSC::constructEmptyObject(&globalObject);
+    JSC::Strong<JSC::JSObject> protectedProperties(vm, propertiesObject);
+    JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    error.methodTable()->getOwnPropertyNames(&error, &globalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
+    if (!scope.exception()) {
+        for (const auto& property : properties) {
+            if (property == vm.propertyNames->cause || (!includeCode && property == WebCore::builtinNames(vm).codePublicName()))
+                continue;
+            JSC::JSValue propertyValue = error.get(&globalObject, property);
+            if (scope.exception()) {
+                scope.clearException();
+                continue;
+            }
+            if (!propertyValue.isCallable() && !propertyValue.isSymbol()) {
+                propertiesObject->putDirectMayBeIndex(&globalObject, property, propertyValue);
+                if (scope.exception())
+                    scope.clearException();
+            }
+        }
+        metadata->properties = SerializedScriptValue::create(globalObject, propertiesObject, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    }
+    CLEAR_IF_EXCEPTION(scope);
+
+    JSC::PropertyDescriptor causeDescriptor;
+    bool hasCause = error.getOwnPropertyDescriptor(&globalObject, vm.propertyNames->cause, causeDescriptor);
+    if (scope.exception()) {
+        scope.clearException();
+        return metadata;
+    }
+    if (!hasCause)
+        return metadata;
+
+    JSC::JSValue cause = error.get(&globalObject, vm.propertyNames->cause);
+    if (scope.exception()) {
+        scope.clearException();
+        return metadata;
+    }
+    if (cause.isCallable() || cause.isSymbol())
+        return metadata;
+
+    metadata->cause = SerializedScriptValue::create(globalObject, cause, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    CLEAR_IF_EXCEPTION(scope);
+    if (!metadata->cause)
+        return metadata;
+    metadata->causeEnumerable = causeDescriptor.enumerable();
+    if (depth + 1 < maxWorkerErrorMetadataDepth) {
+        if (auto* causeError = dynamicDowncast<JSC::ErrorInstance>(cause))
+            metadata->causeMetadata = serializeWorkerErrorMetadata(globalObject, *causeError, seen, true, depth + 1);
+    }
+    return metadata;
+}
+
+static void applyWorkerErrorMetadata(JSC::JSGlobalObject& globalObject, JSC::JSObject& error, const SerializedWorkerErrorMetadata& metadata)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    if (metadata.properties) {
+        JSC::JSValue propertiesValue = metadata.properties->deserialize(globalObject, &globalObject, SerializationErrorMode::NonThrowing);
+        if (scope.exception()) {
+            scope.clearException();
+        } else if (auto* properties = propertiesValue.getObject()) {
+            JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            properties->methodTable()->getOwnPropertyNames(properties, &globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+            if (!scope.exception()) {
+                for (const auto& name : names) {
+                    JSC::JSValue propertyValue = properties->get(&globalObject, name);
+                    if (scope.exception()) {
+                        scope.clearException();
+                        continue;
+                    }
+                    error.putDirectMayBeIndex(&globalObject, name, propertyValue);
+                    if (scope.exception())
+                        scope.clearException();
+                }
+            }
+            CLEAR_IF_EXCEPTION(scope);
+        }
+    }
+
+    if (!metadata.cause)
+        return;
+    JSC::JSValue cause = metadata.cause->deserialize(globalObject, &globalObject, SerializationErrorMode::NonThrowing);
+    if (scope.exception()) {
+        scope.clearException();
+        return;
+    }
+    JSC::PropertyDescriptor descriptor;
+    descriptor.setValue(cause);
+    descriptor.setWritable(true);
+    descriptor.setEnumerable(metadata.causeEnumerable);
+    descriptor.setConfigurable(true);
+    error.methodTable()->defineOwnProperty(&error, &globalObject, vm.propertyNames->cause, descriptor, false);
+    if (scope.exception()) {
+        scope.clearException();
+        return;
+    }
+    if (metadata.causeMetadata) {
+        if (auto* causeError = dynamicDowncast<JSC::ErrorInstance>(cause))
+            applyWorkerErrorMetadata(globalObject, *causeError, *metadata.causeMetadata);
+    }
+}
+
 bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value)
 {
     // Top of the worker's error-dispatch stack: neither the structured clone (which can run script
@@ -537,7 +667,16 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     // preserves a string `error.code` (lib/internal/error_serdes.js).
     String errorCode = errorCodeOf(workerGlobalObject, value);
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
+    // Node's worker error serializer preserves an Error's own enumerable metadata and recursively
+    // serializes `cause`. The ordinary structured-clone Error path intentionally keeps only
+    // standard Error fields, so carry these worker-only additions separately.
+    RefPtr<SerializedWorkerErrorMetadata> serializedMetadata;
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
+        HashSet<JSC::JSObject*> seen;
+        serializedMetadata = serializeWorkerErrorMetadata(workerGlobalObject, *errorInstance, seen, false, 0);
+    }
+
+    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), serializedMetadata = WTF::move(serializedMetadata), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -549,6 +688,10 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         if (!errorCode.isNull()) {
             if (auto* errorObject = deserialized.getObject())
                 errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
+        }
+        if (serializedMetadata) {
+            if (auto* errorObject = deserialized.getObject())
+                applyWorkerErrorMetadata(*globalObject, *errorObject, *serializedMetadata);
         }
         ErrorEvent::Init init;
         init.error = deserialized;

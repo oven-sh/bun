@@ -1,6 +1,6 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -159,4 +159,108 @@ describe.each([
       expect({ protocol, hostname, port, pathname }).toMatchObject(url);
     });
   });
+});
+
+// A name that cannot be a host name (a space, a colon, an empty label,
+// brackets around anything but an IPv6 literal) is rejected in-process with the
+// resolver's ENOTFOUND, the error Bun.connect reports for the same name. The
+// system resolver is never asked: some DNS servers never answer a query for
+// such a label, and the synchronous getaddrinfo behind listen() then blocks
+// startup for its full timeout.
+describe.each([
+  ["http", {}],
+  ["https", { tls }],
+] as const)("Bun.serve() %s with a hostname that is not a hostname", (_, options) => {
+  test.each(["this is not a hostname", "localhost:80", "a..b", "[not-an-ipv6]"])(
+    "%p throws getaddrinfo ENOTFOUND",
+    hostname => {
+      let error: any;
+      try {
+        serve({ ...options, hostname, port: 0, fetch: () => new Response() }).stop(true);
+      } catch (e) {
+        error = e;
+      }
+      const { name, code, syscall, hostname: errHostname, message } = error ?? {};
+      expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
+        name: "Error",
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname,
+        message: `getaddrinfo ENOTFOUND ${hostname}`,
+      });
+    },
+  );
+
+  test("a later Bun.serve() still binds", () => {
+    using server = serve({ ...options, port: 0, fetch: () => new Response() });
+    expect(server.port).toBeInteger();
+  });
+});
+
+test.skipIf(!hasIPv6)("Bun.serve() binds a bracketed IPv6 literal hostname", () => {
+  using server = serve({ hostname: "[::1]", port: 0, fetch: () => new Response() });
+  expect({ hostname: server.hostname, urlHostname: server.url.hostname }).toEqual({
+    hostname: "[::1]",
+    urlHostname: "[::1]",
+  });
+});
+
+// Linux-only: uses /proc/self/fd to find the listen socket and close it from
+// under the server so getsockname() fails with EBADF.
+test.skipIf(!isLinux)("server.address / server.port do not panic when getsockname() fails", async () => {
+  const script = /* js */ `
+    import { readdirSync, readlinkSync, closeSync } from "node:fs";
+
+    function socketFds() {
+      const out = new Set();
+      for (const e of readdirSync("/proc/self/fd")) {
+        let link = "";
+        try { link = readlinkSync("/proc/self/fd/" + e); } catch {}
+        if (link.startsWith("socket:")) out.add(Number(e));
+      }
+      return out;
+    }
+
+    const before = socketFds();
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const boundPort = server.port;
+    const after = socketFds();
+    const newFds = [...after].filter(fd => !before.has(fd));
+
+    if (newFds.length === 0) {
+      console.log(JSON.stringify({ skipped: true }));
+      server.stop(true);
+      process.exit(0);
+    }
+
+    for (const fd of newFds) closeSync(fd);
+
+    // These property reads must not abort the process.
+    const address = server.address;
+    const port = server.port;
+    const url = String(server.url);
+
+    console.log(JSON.stringify({ address, port, url, boundPort }));
+    server.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  const out = JSON.parse(stdout.trim());
+  if (out.skipped) return;
+
+  // getsockname() failed, so the live query returns nothing; the configured
+  // port (0) is all that's left. The important guarantees are: no crash, and
+  // no out-of-range garbage (e.g. -1 or 65535) leaking through.
+  expect({ address: out.address, port: out.port }).toEqual({ address: null, port: 0 });
+  expect(out.url).not.toContain("65535");
+  expect(out.url).not.toContain(":-1");
 });

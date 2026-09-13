@@ -13,7 +13,6 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-use crate::strings_impl::latin1_to_codepoint_bytes_assume_not_ascii;
 use bun_simdutf_sys::simdutf;
 
 crate::declare_scope!(strings, hidden);
@@ -45,15 +44,14 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 // ───── canonical WTF-8 single-rune decode ─────
 // Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
 // through the inline `pub mod unicode` in immutable.rs and onward as
-// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
+// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte}`.
 //
 // Visibility promoted pub(super) → pub so the inline shim mod can re-export
 // instead of carrying a second body, and so md/glob/parsers can call directly.
 
 /// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
 /// Sealed to two instantiations (`i32` aka `CodePoint`, and `u32`);
-/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
-/// (`-1` for i32, `0` for u32).
+/// every caller in-tree is one of these.
 ///
 /// Bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
@@ -67,8 +65,6 @@ pub trait CodePointZero:
     + core::ops::BitOr<Output = Self>
     + core::ops::BitAnd<Output = Self>
 {
-    const ZERO_VALUE: Self;
-    const MAX: Self;
     fn from_u32(v: u32) -> Self;
     /// Alias kept for `decode_wtf8_rune_t_multibyte` integer-literal compares.
     #[inline]
@@ -78,8 +74,6 @@ pub trait CodePointZero:
 }
 
 impl CodePointZero for CodePoint {
-    const ZERO_VALUE: Self = -1;
-    const MAX: Self = CodePoint::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v as i32
@@ -87,8 +81,6 @@ impl CodePointZero for CodePoint {
 }
 
 impl CodePointZero for u32 {
-    const ZERO_VALUE: Self = 0;
-    const MAX: Self = u32::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v
@@ -110,8 +102,6 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 
     decode_wtf8_rune_t_multibyte::<T>(p, len, zero)
 }
-
-pub use crate::strings_impl::codepoint_size;
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //
@@ -149,16 +139,11 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
         let count: usize = replacement.utf8_width() as usize;
         #[cfg(not(target_family = "wasm"))]
-        {
-            let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-            list.reserve_exact((i + count + list.len() + extra).saturating_sub(list.len()));
-        }
+        let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
         #[cfg(target_family = "wasm")]
-        {
-            list.reserve_exact(
-                (i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()),
-            );
-        }
+        let extra = utf16_remaining.len() + 4;
+        list.try_reserve_exact(i + count + extra)
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
@@ -177,8 +162,8 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     }
 
     if !utf16_remaining.is_empty() {
-        let need = utf16_remaining.len() + list.len();
-        list.reserve_exact(need.saturating_sub(list.len()));
+        list.try_reserve_exact(utf16_remaining.len())
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, utf16_remaining);
     }
 
@@ -225,8 +210,8 @@ pub struct UTF16Replacement {
     /// and a genuine error.
     pub fail: bool,
 
-    pub can_buffer: bool,
-    pub is_lead: bool,
+    pub(crate) can_buffer: bool,
+    pub(crate) is_lead: bool,
 }
 
 impl Default for UTF16Replacement {
@@ -253,7 +238,7 @@ impl UTF16Replacement {
     }
 }
 
-pub(super) fn convert_utf8_bytes_into_utf16_with_length(
+fn convert_utf8_bytes_into_utf16_with_length(
     sequence: [u8; 4],
     len: U3Fast,
     remaining_len: usize,
@@ -430,17 +415,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
 // `immutable.rs` keeps resolving.
 pub use crate::strings_impl::copy_latin1_into_utf8_stop_on_non_ascii;
 
-pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
-    let mut latin1: &mut [u8] = buf_;
-    while let Some(i) = first_non_ascii(latin1) {
-        let i = i as usize;
-        let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[i]);
-        latin1[i..i + 2].copy_from_slice(&two);
-
-        latin1 = &mut latin1[i + 2..];
-    }
-}
-
 pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoResult {
     let buf_total = buf_.len();
     let latin1_total = latin1_.len();
@@ -523,7 +497,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
         }
     }
 
-    if to.len() >= 16 && crate::Environment::ENABLE_SIMD {
+    if to.len() >= 16 {
         const VECTOR_SIZE: usize = 16;
         let remain_in_u64_len = remain.len() - (remain.len() % VECTOR_SIZE);
         let to_in_u64_len = to.len() - (to.len() % VECTOR_SIZE);
@@ -561,17 +535,11 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
 pub enum BOM {
     Utf8,
     Utf16Le,
-    Utf16Be,
-    Utf32Le,
-    Utf32Be,
 }
 
 impl BOM {
     pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
-    pub const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
-    pub const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
-    pub const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
-    pub const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
+    pub(crate) const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
 
     pub fn detect(bytes: &[u8]) -> Option<BOM> {
         if bytes.len() < 3 {
@@ -581,12 +549,8 @@ impl BOM {
             return Some(BOM::Utf8);
         }
         if eql_ignore_len(bytes, &Self::UTF16_LE_BYTES) {
-            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
-            //   return .utf32_le;
             return Some(BOM::Utf16Le);
         }
-        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
-        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
         None
     }
 
@@ -598,17 +562,14 @@ impl BOM {
         }
     }
 
-    pub fn get_header(self) -> &'static [u8] {
+    pub(crate) fn get_header(self) -> &'static [u8] {
         match self {
             BOM::Utf8 => &Self::UTF8_BYTES,
             BOM::Utf16Le => &Self::UTF16_LE_BYTES,
-            BOM::Utf16Be => &Self::UTF16_BE_BYTES,
-            BOM::Utf32Le => &Self::UTF32_LE_BYTES,
-            BOM::Utf32Be => &Self::UTF32_BE_BYTES,
         }
     }
 
-    pub fn length(self) -> usize {
+    pub(crate) fn length(self) -> usize {
         self.get_header().len()
     }
 
@@ -616,9 +577,6 @@ impl BOM {
         match self {
             BOM::Utf8 => "utf8",
             BOM::Utf16Le => "utf16_le",
-            BOM::Utf16Be => "utf16_be",
-            BOM::Utf32Le => "utf32_le",
-            BOM::Utf32Be => "utf32_be",
         }
     }
 
@@ -638,11 +596,6 @@ impl BOM {
                 let out = crate::strings_impl::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
                 out
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                crate::vec::drain_front(&mut bytes, self.get_header().len());
-                bytes
             }
         }
     }
@@ -671,19 +624,12 @@ impl BOM {
                 // "always points to the base of the input" doc comment.
                 &list[..]
             }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                let n = self.get_header().len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
-            }
         }
     }
 }
 
 // https://github.com/WebKit/WebKit/blob/443e796d1538654c34f2690e39600c70c8052b63/Source/WebCore/PAL/pal/text/TextCodecUTF8.cpp#L69
-pub(super) fn non_ascii_sequence_length(first_byte: u8) -> U3Fast {
+fn non_ascii_sequence_length(first_byte: u8) -> U3Fast {
     match first_byte {
         0..=193 => 0,
         194..=223 => 2,
@@ -920,26 +866,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
     }
 }
 
-/// Alias for the `$crate::w!("...")` macro.
-#[macro_export]
-macro_rules! to_utf16_literal {
-    ($s:literal) => {
-        $crate::w!($s)
-    };
-}
-
-/// `b"..."` for u8, `$crate::w!("...")` for u16.
-/// New callers should use byte/wide literals directly.
-#[macro_export]
-macro_rules! literal {
-    (u8, $s:literal) => {
-        concat!($s, "\0").as_bytes()
-    };
-    (u16, $s:literal) => {
-        $crate::w!($s)
-    };
-}
-
 pub(super) use crate::strings_impl::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's
@@ -997,7 +923,7 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
     0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
 ];
 
-pub(super) fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
+fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
     CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]
 }
 
@@ -1018,14 +944,8 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
                 written: 0,
             };
         }
-        // `trim::utf16` strips a single trailing lone high surrogate so simdutf's
-        // length estimate never sees invalid input. If that empties the input, it
-        // was exactly one unpaired surrogate: 3 bytes of U+FFFD, not nothing.
-        let trimmed = simdutf::trim::utf16(utf16);
-        let out_len = if trimmed.is_empty() {
-            3
-        } else if buf.len() <= (trimmed.len() * 3 + 2) {
-            simdutf::length::utf8::from::utf16::le(trimmed)
+        let out_len = if buf.len() <= utf16.len().saturating_mul(3) {
+            simdutf::length::utf8::from::utf16::le(utf16)
         } else {
             buf.len()
         };
@@ -1053,7 +973,7 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
 /// buffer.fill("Ȣ");
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
-pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
+fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     buf: &mut [u8],
     utf16: &[u16],
     out_len: usize,

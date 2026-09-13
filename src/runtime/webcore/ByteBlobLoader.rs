@@ -1,24 +1,24 @@
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RefPtr;
 
 use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
+use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
-    pub store: Option<StoreRef>,
-    pub chunk_size: blob::SizeType,
-    pub remain: blob::SizeType,
-    pub done: bool,
-    pub pulled: bool,
+    pub(crate) store: Option<RefPtr<Store>>,
+    pub(crate) chunk_size: blob::SizeType,
+    pub(crate) remain: blob::SizeType,
+    pub(crate) done: bool,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    pub content_type: blob::BlobContentType,
+    pub(crate) content_type: blob::BlobContentType,
 }
 
 impl Default for ByteBlobLoader {
@@ -29,7 +29,6 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
-            pulled: false,
             content_type: blob::BlobContentType::default(),
         }
     }
@@ -51,7 +50,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         Self::on_pull(self, buf, view)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
@@ -71,10 +70,10 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
-    pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
+    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
@@ -95,20 +94,18 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: size,
             done: false,
-            pulled: false,
             content_type,
         };
     }
 
-    pub fn on_start(&mut self) -> streams::Start {
+    pub(crate) fn on_start(&mut self) -> streams::Start {
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
     }
 
-    pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+    pub(crate) fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        self.pulled = true;
         let Some(store) = self.store.clone() else {
             return streams::Result::Done;
         };
@@ -146,14 +143,14 @@ impl ByteBlobLoader {
         })
     }
 
-    pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
+    pub(crate) fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
-            // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
+            // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
             if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
-                drop(store); // defer store.deref()
+                drop(store);
                 return Some(blob);
             }
         }
@@ -170,11 +167,11 @@ impl ByteBlobLoader {
             blob.content_type.set(ct);
         }
 
-        self.parent_const().is_closed.set(true);
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 
-    pub fn detach_store(&mut self) -> Option<StoreRef> {
+    pub(crate) fn detach_store(&mut self) -> Option<RefPtr<Store>> {
         if let Some(store) = self.store.take() {
             self.done = true;
             return Some(store);
@@ -182,7 +179,7 @@ impl ByteBlobLoader {
         None
     }
 
-    pub fn on_cancel(&mut self) {
+    pub(crate) fn on_cancel(&mut self) {
         self.clear_data();
     }
 
@@ -190,7 +187,7 @@ impl ByteBlobLoader {
     // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
     // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
     // parent here would deallocate the storage backing `&mut self` (dangling UAF).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.clear_data();
     }
 
@@ -202,7 +199,7 @@ impl ByteBlobLoader {
         }
     }
 
-    pub fn drain(&mut self) -> Vec<u8> {
+    pub(crate) fn drain(&mut self) -> Vec<u8> {
         let Some(store) = self.store.clone() else {
             return Vec::new();
         };
@@ -219,7 +216,7 @@ impl ByteBlobLoader {
         cloned
     }
 
-    pub fn to_buffered_value(
+    pub(crate) fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
         action: streams::BufferActionTag,
@@ -227,7 +224,7 @@ impl ByteBlobLoader {
         if let Some(mut blob) = self.to_any_blob(global) {
             let result = blob.to_promise(global, action);
             blob.detach();
-            return Ok(result?);
+            return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
@@ -239,7 +236,7 @@ impl ByteBlobLoader {
             .reject())
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
         if let Some(store) = &self.store {
             return store.memory_cost();

@@ -6,8 +6,6 @@ use crate::css_values::ident::{DashedIdent, Ident};
 use crate::{Parser, PrintErr, Printer, Result};
 use bun_alloc::ArenaPtr;
 
-pub use crate::Error;
-
 // Strings here borrow parser input/arena memory but the structs carry no lifetime
 // params (crate-wide `&'static`/raw-slice placeholder convention); see lib.rs.
 
@@ -142,11 +140,11 @@ impl Default for MediaList {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaQuery {
     /// The qualifier (`not` / `only`).
-    pub qualifier: Option<Qualifier>,
+    pub(crate) qualifier: Option<Qualifier>,
     /// The media type (`screen`, `print`, `all`, ...).
-    pub media_type: MediaType,
+    pub(crate) media_type: MediaType,
     /// The media condition.
-    pub condition: Option<MediaCondition>,
+    pub(crate) condition: Option<MediaCondition>,
 }
 
 /// `not` / `and` / `or` boolean combiner.
@@ -207,11 +205,11 @@ bitflags::bitflags! {
 
 impl QueryConditionFlags {
     #[inline]
-    pub(crate) fn allow_or(self) -> bool {
+    fn allow_or(self) -> bool {
         self.contains(Self::ALLOW_OR)
     }
     #[inline]
-    pub(crate) fn allow_style(self) -> bool {
+    fn allow_style(self) -> bool {
         self.contains(Self::ALLOW_STYLE)
     }
 }
@@ -391,7 +389,7 @@ pub enum MediaFeatureType {
 }
 
 impl MediaFeatureType {
-    pub fn allows_ranges(self) -> bool {
+    pub(crate) fn allows_ranges(self) -> bool {
         use MediaFeatureType as T;
         matches!(
             self,
@@ -541,7 +539,7 @@ pub enum MediaFeatureId {
 }
 
 impl MediaFeatureId {
-    pub(crate) fn value_type(self) -> MediaFeatureType {
+    fn value_type(self) -> MediaFeatureType {
         use MediaFeatureId::*;
         use MediaFeatureType as T;
         match self {
@@ -664,13 +662,13 @@ impl FeatureIdTrait for MediaFeatureId {
 
 impl MediaList {
     /// Returns whether the media query list always matches.
-    pub fn always_matches(&self) -> bool {
+    pub(crate) fn always_matches(&self) -> bool {
         // If the media list is empty, it always matches.
         self.media_queries.is_empty() || self.media_queries.iter().all(MediaQuery::always_matches)
     }
 
     /// Returns whether the media query list never matches.
-    pub fn never_matches(&self) -> bool {
+    pub(crate) fn never_matches(&self) -> bool {
         !self.media_queries.is_empty() && self.media_queries.iter().all(MediaQuery::never_matches)
     }
 
@@ -691,14 +689,14 @@ impl crate::generic::ToCss for MediaList {
 
 impl MediaQuery {
     /// Returns whether the media query is guaranteed to always match.
-    pub fn always_matches(&self) -> bool {
+    pub(crate) fn always_matches(&self) -> bool {
         self.qualifier.is_none()
             && matches!(self.media_type, MediaType::All)
             && self.condition.is_none()
     }
 
     /// Returns whether the media query is guaranteed to never match.
-    pub fn never_matches(&self) -> bool {
+    pub(crate) fn never_matches(&self) -> bool {
         matches!(self.qualifier, Some(Qualifier::Not))
             && matches!(self.media_type, MediaType::All)
             && self.condition.is_none()
@@ -725,7 +723,7 @@ impl MediaQuery {
             MediaType::Screen => dest.write_str("screen")?,
             MediaType::Custom(desc) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_str(unsafe { crate::arena_str(*desc) })?;
+                dest.serialize_identifier(unsafe { crate::arena_str(*desc) })?;
             }
         }
 
@@ -750,7 +748,7 @@ impl MediaQuery {
 
 /// Wraps `v.to_css()` in parentheses when the
 /// caller's grammar position requires it.
-pub(crate) fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
+fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
     v: &T,
     dest: &mut Printer,
     needs_parens: bool,
@@ -766,7 +764,7 @@ pub(crate) fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
 }
 
 /// Serialize `a OP b OP c ...` with per-child parens.
-pub(crate) fn operation_to_css<C: QueryCondition>(
+fn operation_to_css<C: QueryCondition>(
     operator: Operator,
     conditions: &[C],
     dest: &mut Printer,
@@ -937,14 +935,14 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 }
 
 impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
-    pub(crate) fn value_type(&self) -> MediaFeatureType {
+    fn value_type(&self) -> MediaFeatureType {
         match self {
             MediaFeatureName::Standard(standard) => standard.value_type(),
             _ => MediaFeatureType::Unknown,
         }
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureName::Standard(v) => v.to_css(dest),
             MediaFeatureName::Custom(d) => d.to_css(dest),
@@ -952,7 +950,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
         }
     }
 
-    pub(crate) fn to_css_with_prefix(
+    fn to_css_with_prefix(
         &self,
         prefix: &str,
         dest: &mut Printer,
@@ -973,7 +971,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// Parses a media feature name. Returns `(name, legacy_comparator)` —
     /// `legacy_comparator` is `Some` when the ident carried a `min-`/`max-`
     /// prefix (lowered to `>=`/`<=`).
-    pub(crate) fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
+    fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
         use bun_core::strings;
         let ident = input.expect_ident_cloned()?;
 
@@ -1031,7 +1029,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 }
 
 impl MediaFeatureComparison {
-    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             // Suspect but intentional: emits '-' for `Equal`, diverging from
             // the spec `=` and from this enum's strum tag. Preserved
@@ -1052,7 +1050,7 @@ impl MediaFeatureComparison {
         }
     }
 
-    pub(crate) fn opposite(self) -> Self {
+    fn opposite(self) -> Self {
         match self {
             MediaFeatureComparison::GreaterThan => MediaFeatureComparison::LessThan,
             MediaFeatureComparison::GreaterThanEqual => MediaFeatureComparison::LessThanEqual,
@@ -1064,7 +1062,7 @@ impl MediaFeatureComparison {
 }
 
 impl MediaFeatureValue {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureValue::Length(len) => len.to_css(dest),
             MediaFeatureValue::Number(num) => css::to_css::float32(*num, dest),
@@ -1085,7 +1083,7 @@ impl MediaFeatureValue {
 
     /// Adjust by `other` for strict-inequality → min/max
     /// boundary lowering. Consumes `self`.
-    pub(crate) fn add_f32(self, other: f32) -> MediaFeatureValue {
+    fn add_f32(self, other: f32) -> MediaFeatureValue {
         match self {
             MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
             MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
@@ -1104,7 +1102,7 @@ impl MediaFeatureValue {
         }
     }
 
-    pub(crate) fn value_type(&self) -> MediaFeatureType {
+    fn value_type(&self) -> MediaFeatureType {
         use MediaFeatureValue as V;
         match self {
             V::Length(_) => MediaFeatureType::Length,
@@ -1118,7 +1116,7 @@ impl MediaFeatureValue {
         }
     }
 
-    pub(crate) fn check_type(&self, expected_type: MediaFeatureType) -> bool {
+    fn check_type(&self, expected_type: MediaFeatureType) -> bool {
         let vt = self.value_type();
         if expected_type == MediaFeatureType::Unknown || vt == MediaFeatureType::Unknown {
             return true;
@@ -1128,7 +1126,7 @@ impl MediaFeatureValue {
 
     /// Parses a single media query feature value, with an expected type.
     /// If the type is unknown, pass `MediaFeatureType::Unknown` instead.
-    pub(crate) fn parse(
+    fn parse(
         input: &mut Parser,
         expected_type: MediaFeatureType,
         options: &css::ParserOptions,
@@ -1139,7 +1137,7 @@ impl MediaFeatureValue {
         MediaFeatureValue::parse_unknown(input, options)
     }
 
-    pub(crate) fn parse_known(
+    fn parse_known(
         input: &mut Parser,
         expected_type: MediaFeatureType,
     ) -> Result<MediaFeatureValue> {
@@ -1165,7 +1163,7 @@ impl MediaFeatureValue {
         })
     }
 
-    pub(crate) fn parse_unknown(
+    fn parse_unknown(
         input: &mut Parser,
         options: &css::ParserOptions,
     ) -> Result<MediaFeatureValue> {
@@ -1251,17 +1249,11 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
 impl MediaList {
     /// Element-wise clone of `media_queries`.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         let mut media_queries =
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
         Self { media_queries }
-    }
-
-    /// Alias for `deep_clone`.
-    #[inline]
-    pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
-        self.deep_clone(bump)
     }
 
     /// `MediaList` carries no
@@ -1284,7 +1276,7 @@ impl MediaList {
 
 impl MediaQuery {
     /// Field-wise.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             qualifier: self.qualifier,
             media_type: self.media_type.deep_clone(bump),
@@ -1296,14 +1288,14 @@ impl MediaQuery {
 impl MediaType {
     /// `Custom` is an arena-owned slice (identity copy).
     #[inline]
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         *self
     }
 }
 
 impl MediaCondition {
     /// Variant-wise recursion.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         let alloc = ArenaPtr::new(bump);
         match self {
             MediaCondition::Feature(f) => {
@@ -1329,7 +1321,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// All payloads are `Copy` /
     /// arena-slice idents; `derive(Clone)` is the faithful deep clone.
     #[inline]
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         self.clone()
     }
 }
@@ -1374,7 +1366,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
 impl MediaFeatureValue {
     /// Variant-wise.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
             V::Length(l) => V::Length(l.clone()),
@@ -1398,12 +1390,12 @@ impl MediaFeatureValue {
 // ───────────────────────── parse impl bodies ─────────────────────────
 
 impl MediaType {
-    pub(crate) fn parse(input: &mut Parser) -> Result<MediaType> {
+    fn parse(input: &mut Parser) -> Result<MediaType> {
         let name = input.expect_ident()?;
         Ok(MediaType::from_str(name))
     }
 
-    pub(crate) fn from_str(name: &[u8]) -> MediaType {
+    fn from_str(name: &[u8]) -> MediaType {
         use bun_core::eql_case_insensitive_ascii_check_length as eq;
         if eq(name, b"all") {
             return MediaType::All;
@@ -1493,7 +1485,7 @@ impl MediaQuery {
 
 impl MediaCondition {
     #[inline]
-    pub(crate) fn parse_with_flags(
+    fn parse_with_flags(
         input: &mut Parser,
         flags: QueryConditionFlags,
         options: &css::ParserOptions,
@@ -1507,7 +1499,7 @@ impl MediaCondition {
 /// Forwarder kept for callers that don't yet thread `ParserOptions`
 /// (e.g. `rules::container`); routes through `ParserOptions::default(None)`.
 #[inline]
-pub fn parse_query_condition<C: QueryCondition>(
+pub(crate) fn parse_query_condition<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
 ) -> Result<C> {
@@ -1516,7 +1508,7 @@ pub fn parse_query_condition<C: QueryCondition>(
 
 /// Parse a single query condition with `ParserOptions` threaded so the
 /// `env()` arm of `MediaFeatureValue::parse_unknown` is reachable.
-pub fn parse_query_condition_with_options<C: QueryCondition>(
+pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
@@ -1524,7 +1516,7 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
     use bun_core::strings;
     let location = input.current_source_location();
     let (is_negation, is_style) = 'brk: {
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match &tok {
             css::Token::OpenParen => break 'brk (false, false),
             css::Token::Ident(ident) => {
@@ -1587,14 +1579,14 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
 }
 
 /// Parse a media condition in parentheses, or a style() function.
-pub fn parse_parens_or_function<C: QueryCondition>(
+pub(crate) fn parse_parens_or_function<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
     use bun_core::strings;
     let location = input.current_source_location();
-    let t = input.next()?.clone();
+    let t = *input.next()?;
     match &t {
         css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
         css::Token::Function(f) => {
@@ -1635,10 +1627,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
     /// `QueryFeature.parse` with `ParserOptions` threaded so the `env()`
     /// arm of `MediaFeatureValue::parse_unknown` is reachable.
-    pub(crate) fn parse_with_options(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_with_options(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         match input.try_parse(|i| Self::parse_name_first(i, options)) {
             Ok(res) => Ok(res),
             Err(e) => {
@@ -1653,10 +1642,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    pub(crate) fn parse_name_first(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_name_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
 
         let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
@@ -1688,10 +1674,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    pub(crate) fn parse_value_first(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> Result<Self> {
+    fn parse_value_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
         // Skip tokens (matching lightningcss) until the name is found;
@@ -1783,7 +1766,7 @@ fn consume_operation_or_colon(
     let location = input.current_source_location();
     let first_delim: u32 = {
         let loc = input.current_source_location();
-        let next_token = input.next()?.clone();
+        let next_token = *input.next()?;
         match next_token {
             css::Token::Colon if allow_colon => return Ok(None),
             css::Token::Delim(oper) => oper,

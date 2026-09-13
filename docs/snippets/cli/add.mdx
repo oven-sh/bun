@@ -38,6 +38,15 @@ bun add <package> <@version>
   Only add dependencies to <code>package.json</code> if they are not already present
 </ParamField>
 
+<ParamField path="--catalog" type="string">
+  Add the resolved version to the root <code>package.json</code> catalog and depend on it as <code>catalog:</code>;{" "}
+  <code>--catalog=NAME</code> targets <code>catalogs.NAME</code>
+</ParamField>
+
+<ParamField path="--filter" type="string">
+  Add the package(s) to the matching workspaces instead of the current package. Alias: <code>-F</code>
+</ParamField>
+
 ### Project Files & Lockfiles
 
 <ParamField path="--yarn" type="boolean">
@@ -71,7 +80,8 @@ bun add <package> <@version>
 ### Installation Control
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Resolve the packages but don't install them, update <code>package.json</code>, or save a lockfile (the project's own
+  lifecycle scripts still run)
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -83,7 +93,7 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--analyze" type="boolean">
@@ -112,9 +122,9 @@ bun add <package> <@version>
 
 ### Performance &amp; Resource
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. One of <code>clonefile</code>, <code>hardlink</code>,{" "}
-  <code>symlink</code>, or <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">

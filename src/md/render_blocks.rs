@@ -3,21 +3,26 @@ use super::parser::{Error as ParserError, Parser};
 use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
 
 impl Parser<'_> {
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub(crate) fn enter_block(
+        &mut self,
+        block_type: BlockType,
+        data: u32,
+        flags: u32,
+    ) -> JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.enter_block(block_type, data, flags)
     }
 
-    pub fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.leave_block(block_type, data)
     }
 
-    pub fn process_code_block(
+    pub(crate) fn process_code_block(
         &mut self,
         block_lines: &[VerbatimLine],
         data: u32,
@@ -46,7 +51,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
+    pub(crate) fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
         for (i, vline) in block_lines.iter().enumerate() {
             if i > 0 {
                 self.emit_text(TextType::Html, b"\n")?;
@@ -63,7 +68,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn process_table_block(
+    pub(crate) fn process_table_block(
         &mut self,
         block_lines: &[VerbatimLine],
         col_count: u32,
@@ -91,7 +96,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn process_table_row(
+    pub(crate) fn process_table_row(
         &mut self,
         vline: VerbatimLine,
         is_header: bool,

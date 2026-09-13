@@ -14,13 +14,14 @@ socket.on('listening', common.mustCall(() => {
   }, {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^The "ttl" argument must be of type number. Received type string \(["']foo["']\)$/,
+    message: 'The "ttl" argument must be of type number. Received type string' +
+             " ('foo')"
   });
 
   // TTL must be a number from > 0 to < 256
   assert.throws(() => {
     socket.setTTL(1000);
-  }, /^Error: .*EINVAL.*/);
+  }, /^Error: setTTL EINVAL$/);
 
   socket.close();
 }));

@@ -5,11 +5,11 @@ const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProx
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
+const { kDestroyOnRead } = require("internal/net/symbols");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
-const { AsyncResource } = require("node:async_hooks");
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -77,6 +77,15 @@ function Agent(options): void {
       return;
     }
 
+    // Bytes a freed socket holds or receives have no request: the next request
+    // would parse them as its response (https://hackerone.com/reports/3582376).
+    // Destroy it here if they are buffered, in node:net if they arrive later.
+    if (socket.readableLength > 0) {
+      $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
+      socket.destroy();
+      return;
+    }
+
     const requests = this.requests[name];
     if (requests?.length) {
       const req = requests.shift();
@@ -122,6 +131,7 @@ function Agent(options): void {
     this.removeSocket(socket, options);
 
     socket.once("error", freeSocketErrorListener);
+    socket[kDestroyOnRead] = true;
     freeSockets.push(socket);
   });
 
@@ -257,7 +267,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     // Used to create sockets for pending requests from different origin
     req[kRequestOptions] = options;
     // Used to capture the original async context.
-    req[kRequestAsyncResource] = new AsyncResource("QueuedRequest");
+    req[kRequestAsyncResource] = new (require("node:async_hooks").AsyncResource)("QueuedRequest");
 
     this.requests[name].push(req);
   }
@@ -283,17 +293,21 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
+    // `cb` is onSocketCreated.bind(this, req); release it from this closure's
+    // scope so retaining this arrow past its call cannot retain req.
+    const done = cb;
+    cb = undefined;
     // Pass the socket along with the error: proxy-tunnel failures with a
     // statusCode deliberately skip destroy in cleanupAndPropagate so
     // req.onSocket can destroy the connection - dropping it here would leak
     // a proxy socket that holds its end open after a non-200 CONNECT.
-    if (err) return cb(err, s);
+    if (err) return done(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
     installListeners(this, s, options);
-    cb(null, s);
+    done(null, s);
   });
   const keepAlive = this.keepAlive;
   if (keepAlive) {
@@ -482,6 +496,7 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
 Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
   $debug("have free socket");
   socket.removeListener("error", freeSocketErrorListener);
+  socket[kDestroyOnRead] = false;
   req.reusedSocket = true;
   socket.ref();
 };

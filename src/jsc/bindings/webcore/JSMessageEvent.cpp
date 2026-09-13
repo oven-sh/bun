@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSMessageEvent.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -42,10 +41,11 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSMessagePort.h"
-#include "JSServiceWorker.h"
-#include "JSWindowProxy.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+
+extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -152,16 +152,35 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!portsValue.isUndefined()) {
-        result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(
-            lexicalGlobalObject,
-            portsValue,
-            [](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-                Bun::ERR::INVALID_ARG_TYPE(throwScope,
-                    &lexicalGlobalObject,
-                    "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort."_s);
-            },
-            "MessageEvent constructor"_s,
-            "eventInitDict.ports"_s);
+        // node-compatible validation messages (with the offending value inspected).
+        // Single Symbol.iterator walk: Proxy/getter elements are read once, and the
+        // detailed ports[i] message covers every iterable shape (Array/Set/generator).
+        JSValue iterFn;
+        bool iterable = portsValue.isObject();
+        if (iterable) {
+            iterFn = portsValue.get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            iterable = iterFn.isCallable();
+        }
+        if (!iterable) {
+            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, portsValue).transferToWTFString();
+            RETURN_IF_EXCEPTION(throwScope, {});
+            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
+            return {};
+        }
+        unsigned i = 0;
+        forEachInIterable(lexicalGlobalObject, asObject(portsValue), iterFn, [&result, &i](JSC::VM& vm, JSC::JSGlobalObject& g, JSC::JSValue item) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* wrapped = item.isCell() ? JSMessagePort::toWrapped(vm, item) : nullptr;
+            if (!wrapped) {
+                auto inspected = Bun__inspect_singleline(&g, item).transferToWTFString();
+                RETURN_IF_EXCEPTION(scope, );
+                throwTypeError(&g, scope, makeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+                return;
+            }
+            result.ports.append(wrapped);
+            ++i;
+        });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.ports = Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {};
@@ -174,7 +193,10 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
     }
     if (!sourceValue.isUndefinedOrNull()) {
         result.source = convert<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, sourceValue, [&sourceValue](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-            Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "eventInitDict.source"_s, "MessagePort"_s, sourceValue);
+            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, sourceValue).transferToWTFString();
+            if (throwScope.exception()) [[unlikely]]
+                return;
+            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
         });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
@@ -201,7 +223,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessageEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessageEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessageEventPrototype>(vm)) JSMessageEventPrototype(vm, globalObject, structure);
+        JSMessageEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageEventPrototype))) JSMessageEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -215,7 +237,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -266,11 +288,7 @@ template<> JSValue JSMessageEventDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSMessageEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessageEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessageEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "MessageEvent"_s, JSMessageEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -290,8 +308,8 @@ const ClassInfo JSMessageEventPrototype::s_info = { "MessageEvent"_s, &Base::s_i
 void JSMessageEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessageEvent::s_info = { "MessageEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageEvent) };
@@ -440,12 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGl
 
 JSC::GCClient::IsoSubspace* JSMessageEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageEvent, m_subspaceForMessageEvent));
 }
 
 template<typename Visitor>

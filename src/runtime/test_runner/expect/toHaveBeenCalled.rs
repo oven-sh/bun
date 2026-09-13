@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::throw;
 
 pub(crate) fn to_have_been_called(
     this: &Expect,
@@ -30,31 +31,29 @@ pub(crate) fn to_have_been_called(
     // handle failure
     if not {
         let signature = Expect::get_signature("toHaveBeenCalled", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected number of calls: <green>0<r>\n",
-                    "Received number of calls: <red>{}<r>\n",
-                ),
-                calls_length
+            concat!(
+                "\n\n",
+                "Expected number of calls: <green>0<r>\n",
+                "Received number of calls: <red>{}<r>\n",
             ),
+            calls_length
         );
     }
 
     let signature = Expect::get_signature("toHaveBeenCalled", "", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            concat!(
-                "\n\n",
-                "Expected number of calls: \\>= <green>1<r>\n",
-                "Received number of calls: <red>{}<r>\n",
-            ),
-            calls_length
+        concat!(
+            "\n\n",
+            "Expected number of calls: \\>= <green>1<r>\n",
+            "Received number of calls: <red>{}<r>\n",
         ),
+        calls_length
     )
 }

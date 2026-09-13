@@ -37,7 +37,7 @@ assert.deepStrictEqual(Object.keys(e._events), []);
 
 e.on('foo', assert.fail);
 fl = e.listeners('foo');
-assert.deepEqual(e._events.foo, [assert.fail]);
+assert.strictEqual(e._events.foo, assert.fail);
 assert(Array.isArray(fl));
 assert.strictEqual(fl.length, 1);
 assert.strictEqual(fl[0], assert.fail);

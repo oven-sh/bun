@@ -100,9 +100,12 @@ async function getDevServerURL() {
 beforeAll(async () => {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
+  // Skip the browser download inside `bun i`: puppeteer is default-trusted so
+  // install.mjs would otherwise run twice against the same cache, and the first
+  // (silent) run has left a half-extracted chrome-headless-shell on macOS CI.
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install"), ...puppeteerInstallEnv },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install"), PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
@@ -110,6 +113,18 @@ beforeAll(async () => {
   if (!install.success) {
     const reason = install.signalCode || `code ${install.exitCode}`;
     throw new Error(`Failed to install dependencies: ${reason}`);
+  }
+
+  const browserInstall = Bun.spawnSync([bunExe(), join("node_modules", "puppeteer", "install.mjs")], {
+    cwd: root,
+    env: { ...bunEnv, ...puppeteerInstallEnv },
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+  if (!browserInstall.success) {
+    const reason = browserInstall.signalCode || `code ${browserInstall.exitCode}`;
+    throw new Error(`Failed to install puppeteer browser: ${reason}`);
   }
 
   try {

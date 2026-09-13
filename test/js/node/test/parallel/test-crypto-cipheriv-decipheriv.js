@@ -208,7 +208,9 @@ assert.throws(
 
 // But all other IV lengths should be accepted.
 const minIvLength = hasOpenSSL3 ? 8 : 1;
-const maxIvLength = hasOpenSSL3 ? 64 : 256;
+// Bun: BoringSSL has no upper bound, but Bun enforces the OpenSSL 3 cap of
+// 128 bytes (1024 bits) for Node.js compatibility.
+const maxIvLength = hasOpenSSL3 ? 64 : 129;
 for (let n = minIvLength; n < maxIvLength; n += 1) {
   if (isFipsEnabled && n < 12) continue;
   crypto.createCipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(n));

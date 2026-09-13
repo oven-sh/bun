@@ -77,6 +77,8 @@ describe("minimum-release-age", () => {
     return Bun.gzipSync(tarball);
   };
 
+  let manyVersionsManifest: string | undefined;
+
   beforeAll(async () => {
     // Start mock registry server
     mockRegistryServer = Bun.serve({
@@ -791,6 +793,43 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE: many-versions-package (large version count, time entries
+        // in reverse order relative to versions). Exercises the publish-time
+        // index built during manifest parse.
+        if (url.pathname === "/many-versions-package") {
+          if (manyVersionsManifest === undefined) {
+            const N = 2000;
+            const versions: Record<string, unknown> = {};
+            const timeEntries: Array<[string, string]> = [];
+            for (let i = 0; i < N; i++) {
+              const v = `1.${i}.0`;
+              versions[v] = {
+                name: "many-versions-package",
+                version: v,
+                dist: {
+                  tarball: `${mockRegistryUrl}/many-versions-package/-/many-versions-package-${v}.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              };
+              // Newest few versions are 1 day old; everything else is 30 days old.
+              timeEntries.push([v, i >= N - 3 ? daysAgo(1) : daysAgo(30)]);
+            }
+            // Reverse the time entries so the per-version lookup cannot rely on
+            // matching array positions between `versions` and `time`.
+            timeEntries.reverse();
+            timeEntries.unshift(["created", daysAgo(30)], ["modified", daysAgo(1)]);
+            manyVersionsManifest = JSON.stringify({
+              name: "many-versions-package",
+              "dist-tags": { latest: `1.${N - 1}.0` },
+              versions,
+              time: Object.fromEntries(timeEntries),
+            });
+          }
+          return new Response(manyVersionsManifest, {
+            headers: { "content-type": "application/json" },
+          });
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -1213,10 +1252,13 @@ describe("minimum-release-age", () => {
             "regular-package": "*",
           },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-minimumReleaseAgeExcludes = ["excluded-package"]
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            minimumReleaseAgeExcludes: ["excluded-package"],
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1246,9 +1288,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1272,9 +1317,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // CLI says 5 days, bunfig says 10 days
@@ -1301,9 +1349,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1325,9 +1376,12 @@ registry = "${mockRegistryUrl}"`,
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {
-        ".bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        ".bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // Create project directory (no local bunfig)
@@ -1361,9 +1415,12 @@ registry = "${mockRegistryUrl}"`,
     test("local bunfig overrides global bunfig", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config-override", {
-        ".bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        ".bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // Create project directory with local bunfig
@@ -1371,9 +1428,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1501,9 +1561,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1553,6 +1616,34 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).toContain("bugfix-package@1.0.0");
       expect(lockfile).toContain("canary-package@");
+    });
+
+    test("large manifest: per-version publish times resolve independent of time-object order", async () => {
+      // The mock registry serves 2000 versions with the `time` object reversed
+      // relative to `versions`. The newest 3 versions are 1 day old; the rest
+      // are 30 days old. With a 5-day threshold the resolver must pick 1.1996.0.
+      using dir = tempDir("many-versions", {
+        "package.json": JSON.stringify({
+          dependencies: { "many-versions-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("many-versions-package@1.1996.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1999.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1997.0");
     });
   });
 
@@ -1629,9 +1720,12 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "^2.0.0" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // First install
@@ -1905,10 +1999,11 @@ registry = "${mockRegistryUrl}"`,
           name: "my-monorepo",
           workspaces: ["packages/*"],
         }),
-        "bunfig.toml": `
-[install]
-linker = "${linker}"
-`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            linker,
+          },
+        }),
         "packages/app/package.json": JSON.stringify({
           name: "app",
           version: "1.0.0",
@@ -2312,18 +2407,16 @@ linker = "${linker}"
 
   describe("security scanner integration", () => {
     // Helper to create common scanner configuration files
-    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => {
-      // Normalize extraConfig to ensure proper newline separation
-      const normalizedExtra = extraConfig ? (extraConfig.endsWith("\n") ? extraConfig : extraConfig + "\n") : "";
+    const createScannerConfig = (extraInstallConfig: Record<string, unknown> = {}, scannerImpl?: string) => {
       return {
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-${normalizedExtra}
-[install.security]
-scanner = "./scanner.ts"
-`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: mockRegistryUrl,
+            ...extraInstallConfig,
+            security: { scanner: "./scanner.ts" },
+          },
+        }),
         "scanner.ts":
           scannerImpl ??
           `
@@ -2426,7 +2519,7 @@ export const scanner = {
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        ...createScannerConfig("", advisoryScannerImpl),
+        ...createScannerConfig({}, advisoryScannerImpl),
       });
 
       await using proc = Bun.spawn({
@@ -2454,9 +2547,10 @@ export const scanner = {
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        ...createScannerConfig(`minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-minimumReleaseAgeExcludes = ["regular-package"]
-`),
+        ...createScannerConfig({
+          minimumReleaseAge: 5 * SECONDS_PER_DAY,
+          minimumReleaseAgeExcludes: ["regular-package"],
+        }),
       });
 
       await using proc = Bun.spawn({

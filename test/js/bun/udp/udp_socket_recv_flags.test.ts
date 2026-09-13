@@ -29,7 +29,7 @@ describe("udpSocket() receive flags", () => {
     sendRec();
     try {
       const flags = await promise;
-      expect(flags).toEqual({ truncated: false });
+      expect(flags).toEqual({ truncated: false, ipv6: false });
     } finally {
       client.close();
       server.close();

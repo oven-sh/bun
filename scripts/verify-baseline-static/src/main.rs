@@ -153,9 +153,10 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
     }
 
     // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
-    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Newer
-    // UCRT string routines (e.g. strpbrk) emit it unconditionally as a cache
-    // hint; on Nehalem it NOPs and the routine behaves identically.
+    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Only
+    // ever observed as a data-in-.text misdecode (the CRT strspn family's
+    // switch-table RVAs, same as RTM below), but the hint-space encoding
+    // makes it harmless regardless of provenance.
     if insn.mnemonic() == Mnemonic::Cldemote {
         return true;
     }
@@ -172,9 +173,15 @@ fn is_allowed(feat: CpuidFeature) -> bool {
 /// instruction from a defunct or privileged ISA extension.
 ///
 /// 3DNow! was removed from silicon by 2010. SMM's RSM is ring-0. Cyrix/Geode/
-/// Padlock never had a mainstream toolchain. No compiler targeting x86-64 in
-/// any configuration emits these — their presence in a scan means a linear
-/// sweep walked through inline data.
+/// Padlock never had a mainstream toolchain. TSX (RTM XBEGIN/XABORT/XEND,
+/// and XTEST which iced tags HLE_or_RTM) is never compiler-emitted without
+/// `_xbegin()` intrinsics, no Bun dependency uses it, and Intel deprecated it
+/// (SDM vol. 1 2.5: future parts drop it; existing parts disable it via
+/// microcode for TAA). When a scan sees RTM it is the MSVC CRT's inline RVA
+/// jump tables decoding as `C7 F8` XBEGIN / `C6 F8` XABORT — see the
+/// strcspn/strspn/strpbrk note in allowlist-x64-windows.txt. No compiler
+/// targeting x86-64 in any configuration emits these — their presence in a
+/// scan means a linear sweep walked through inline data.
 ///
 /// MSVC inlines jump tables in .text (LLVM puts them in .rodata), so this
 /// matters on PE more than ELF.
@@ -200,6 +207,8 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
             | F::PADLOCK_RNG
             | F::PADLOCK_GMI
             | F::PADLOCK_UNDOC
+            | F::RTM
+            | F::HLE_or_RTM
     )
 }
 

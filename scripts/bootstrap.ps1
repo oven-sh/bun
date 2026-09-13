@@ -1,4 +1,4 @@
-# Version: 21
+# Version: 22
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -665,6 +665,7 @@ function Install-Buildkite {
 
 function Optimize-System {
   Disable-Windows-Defender
+  Disable-Smart-App-Control
   Disable-Windows-Threat-Protection
   Disable-Windows-Services
   Disable-Power-Management
@@ -678,6 +679,24 @@ function Disable-Windows-Defender {
   Write-Output "Disabling Windows Defender..."
   Set-MpPreference -DisableRealtimeMonitoring $true
   Add-MpPreference -ExclusionPath "C:\", "D:\"
+}
+
+# Windows 11 ships Smart App Control in evaluation mode (Server has no such
+# policy). It hashes every unsigned executable on its first launch and asks the
+# cloud for its reputation: 2 to 3.5 seconds per `bun build --compile` output,
+# which the compile test suites launch by the dozen. Defender exclusions do not
+# cover it, and tamper protection does not guard this key. The change takes
+# effect after `CiTool --refresh` or a reboot, and cannot be undone without a
+# reinstall, which is fine for a CI image.
+function Disable-Smart-App-Control {
+  $itemPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+  if (Test-Path $itemPath) {
+    Write-Output "Disabling Smart App Control..."
+    Set-ItemProperty -Path $itemPath -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWORD
+    if (Get-Command CiTool -ErrorAction SilentlyContinue) {
+      CiTool --refresh -json | Out-Null
+    }
+  }
 }
 
 function Disable-Windows-Threat-Protection {
@@ -814,7 +833,6 @@ function Prefetch-Build-Deps {
   } finally {
     Pop-Location
   }
-  Remove-Item -Recurse -Force $cloneDir
 
   # Read-only: download.ts only ever copies FROM here, and a writable baked
   # input is something a misbehaving job could corrupt for later jobs on the
@@ -822,6 +840,38 @@ function Prefetch-Build-Deps {
   & attrib +R "$prefetchDir\*" /S /D
 
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+
+  # Warm a shared `bun install` download cache so every test shard's
+  # `bun install` (root + test/) hits disk instead of npm. Keyed by
+  # name@version, so a test/package.json bump after the bake just misses for
+  # that one package. Left writable: bun install extracts new tarballs into the
+  # cache dir itself, so a read-only cache would fail on the first unseen
+  # package rather than fall through. The agent runs as SYSTEM, which can
+  # write here by default.
+  $installCacheDir = "C:\bun-install-cache"
+  New-Item -ItemType Directory -Force -Path $installCacheDir | Out-Null
+  $env:BUN_INSTALL_CACHE_DIR = $installCacheDir
+  try {
+    foreach ($dir in @($cloneDir, (Join-Path $cloneDir "test"))) {
+      Push-Location $dir
+      try { & bun install --ignore-scripts } finally { Pop-Location }
+      if ($LASTEXITCODE -ne 0) { throw "bun install in $dir failed" }
+    }
+    Set-Env "BUN_INSTALL_CACHE_DIR" $installCacheDir
+  } catch {
+    Write-Output "warning: bun install prefetch failed; baking without warm install cache: $_"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installCacheDir
+  } finally {
+    Remove-Item Env:\BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+  }
+
+  # The installs leave ~2 GB of node_modules in the clone (test/ uses the
+  # isolated linker); cmd's rmdir handles the junctions/deep paths that
+  # Remove-Item -Recurse trips over. Redirect inside cmd so 5.1's
+  # NativeCommandError-under-Stop quirk never sees stderr. The clone lives
+  # under $env:TEMP so a leftover is wiped at sysprep anyway.
+  & cmd /c "rmdir /s /q `"$cloneDir`" 2>nul"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
 }
 
 if ($CI) {

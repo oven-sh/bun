@@ -24,6 +24,9 @@
 #define LIBUS_SOCKET_READABLE UV_READABLE
 #define LIBUS_SOCKET_WRITABLE UV_WRITABLE
 
+/* Defined in eventing/libuv.c; used by the sweep escalation in loop.c. */
+int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
+
 struct us_loop_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;
 

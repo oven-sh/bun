@@ -39,16 +39,8 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-// #include "HTMLBodyElement.h"
-// #include "HTMLHtmlElement.h"
-// #include "InspectorInstrumentation.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
-// #include "Logging.h"
-// #include "Quirks.h"
-// #include "ScriptController.h"
-// #include "ScriptDisallowedScope.h"
-// #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -74,21 +66,6 @@ EventTarget::~EventTarget()
         data->clear();
 }
 
-bool EventTarget::isNode() const
-{
-    return false;
-}
-
-bool EventTarget::isContextStopped() const
-{
-    return !scriptExecutionContext();
-}
-
-bool EventTarget::isPaymentRequest() const
-{
-    return false;
-}
-
 bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
 #if ASSERT_ENABLED
@@ -103,7 +80,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
     //     passive = true;
 
-    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once });
+    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once, options.resistStopPropagation });
     if (!registeredListener)
         return false;
 
@@ -201,7 +178,7 @@ JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType
             continue;
 
         auto& jsListener = downcast<JSEventListener>(listener);
-        if (jsListener.isAttribute() && &jsListener.isolatedWorld() == &isolatedWorld)
+        if (jsListener.isAttribute() && jsListener.isolatedWorld() == &isolatedWorld)
             return &jsListener;
     }
 
@@ -242,7 +219,6 @@ void EventTarget::dispatchEvent(Event& event)
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
-    event.resetBeforeDispatch();
     event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
@@ -251,12 +227,6 @@ void EventTarget::dispatchEvent(Event& event)
 
 void EventTarget::uncaughtExceptionInEventHandler()
 {
-}
-
-static const AtomString& legacyType(const Event& event)
-{
-
-    return nullAtom();
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
@@ -270,24 +240,8 @@ void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
 
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 
-    if (auto* listenersVector = data->eventListenerMap.find(event.type())) {
+    if (auto* listenersVector = data->eventListenerMap.find(event.type()))
         innerInvokeEventListeners(event, *listenersVector, phase);
-        return;
-    }
-
-    // Only fall back to legacy types for trusted events.
-    if (!event.isTrusted())
-        return;
-
-    const AtomString& legacyTypeName = legacyType(event);
-    if (!legacyTypeName.isNull()) {
-        if (auto* legacyListenersVector = data->eventListenerMap.find(legacyTypeName)) {
-            AtomString typeName = event.type();
-            event.setType(legacyTypeName);
-            innerInvokeEventListeners(event, *legacyListenersVector, phase);
-            event.setType(typeName);
-        }
-    }
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
@@ -300,9 +254,6 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(scriptExecutionContext());
 
     auto& context = *scriptExecutionContext();
-    // bool contextIsDocument = is<Document>(context);
-    // if (contextIsDocument)
-    //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]
@@ -316,10 +267,11 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         // if (InspectorInstrumentation::isEventListenerDisabled(*this, event.type(), registeredListener->callback(), registeredListener->useCapture()))
         //     continue;
 
-        // If stopImmediatePropagation has been called, we just break out immediately, without
-        // handling any more events on this target.
-        if (event.immediatePropagationStopped())
-            break;
+        // If stopImmediatePropagation has been called, skip the remaining listeners. Listeners
+        // registered with resistStopPropagation still run: they are how internal modules attach
+        // teardown that unrelated code sharing the event target must not be able to suppress.
+        if (event.immediatePropagationStopped() && !registeredListener->resistsStopPropagation())
+            continue;
 
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,

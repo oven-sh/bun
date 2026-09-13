@@ -71,10 +71,26 @@ declare module "bun" {
 
     interface BunRequestOverride extends LibOrFallbackRequest {
       headers: BunHeadersOverride;
+      /**
+       * Returns a {@link ReadableStream} of the body decoded as UTF-8 text.
+       *
+       * Multi-byte characters split across chunk boundaries are joined
+       * correctly. Throws a {@link TypeError} if the body has already been
+       * consumed or is locked.
+       */
+      textStream(): ReadableStream<string>;
     }
 
     interface BunResponseOverride extends LibOrFallbackResponse {
       headers: BunHeadersOverride;
+      /**
+       * Returns a {@link ReadableStream} of the body decoded as UTF-8 text.
+       *
+       * Multi-byte characters split across chunk boundaries are joined
+       * correctly. Throws a {@link TypeError} if the body has already been
+       * consumed or is locked.
+       */
+      textStream(): ReadableStream<string>;
     }
   }
 }

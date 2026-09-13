@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "../../../harness";
+import { isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -398,10 +398,72 @@ describe("Bun.serve hostname and port validation", () => {
       });
     }
   });
+
+  describe("invalid port values throw RangeError", () => {
+    const invalidPorts: { port: unknown; received: string }[] = [
+      { port: 65536, received: "65536" },
+      { port: 70000, received: "70000" },
+      { port: 2 ** 32 + 8080, received: "4294975376" },
+      { port: -1, received: "-1" },
+      { port: 1.5, received: "1.5" },
+      { port: "abc", received: "NaN" },
+      { port: NaN, received: "NaN" },
+      { port: Infinity, received: "Infinity" },
+      { port: -Infinity, received: "-Infinity" },
+      { port: "65536", received: "65536" },
+      { port: Number.MAX_SAFE_INTEGER, received: String(Number.MAX_SAFE_INTEGER) },
+    ];
+
+    for (const { port, received } of invalidPorts) {
+      test(`port: ${typeof port === "string" ? JSON.stringify(port) : port}`, () => {
+        let thrown: unknown;
+        try {
+          const server = serve({
+            // @ts-expect-error - Testing invalid port values
+            port,
+            fetch() {
+              return new Response("ok");
+            },
+          });
+          server.stop(true);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain("options.port");
+        expect((thrown as RangeError).message).toContain(received);
+      });
+    }
+
+    test("server.reload() rejects an out-of-range port", () => {
+      using server = serve({
+        port: 0,
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      let thrown: unknown;
+      try {
+        server.reload({
+          // @ts-expect-error - Testing invalid port values
+          port: 65536,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as RangeError).message).toContain("options.port");
+      expect((thrown as RangeError).message).toContain("65536");
+    });
+  });
 });
 
 describe("Bun.serve hostname coercion", () => {
-  test.todo("number hostnames coerce to string", () => {
+  // Windows can't bind to hostname "0" (POSIX resolves it to 0.0.0.0).
+  test.skipIf(isWindows)("number hostnames coerce to string", () => {
     using server = serve({
       // @ts-expect-error - Testing runtime coercion
       hostname: 0, // Should coerce to "0"

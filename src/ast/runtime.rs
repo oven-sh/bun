@@ -9,7 +9,6 @@
 // `bun_options_types → bun_ast → bun_options_types` cycle.
 
 use bun_collections::StringArrayHashMap;
-use bun_wyhash::Wyhash11;
 
 use crate::{Expr, Ref};
 
@@ -20,11 +19,6 @@ pub struct Runtime;
 impl Runtime {
     pub fn source_code() -> &'static [u8] {
         bun_core::runtime_embed_file!(Codegen, "runtime.out.js").as_bytes()
-    }
-
-    pub fn version_hash() -> u32 {
-        let hash = Wyhash11::hash(0, Self::source_code());
-        hash as u32 // @truncate
     }
 }
 
@@ -82,10 +76,6 @@ impl ReplaceableExportMap {
     #[inline]
     pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
         self.entries.get(key)
-    }
-    #[inline]
-    pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
-        self.entries.get_ptr_mut(key)
     }
     #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
@@ -147,11 +137,6 @@ impl ServerComponentsMode {
             Self::WrapExportsForClientReference | Self::WrapExportsForServerReference
         )
     }
-
-    #[inline]
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, Self::None)
-    }
 }
 
 // ─────────────────────────── Runtime.Imports ───────────────────────────
@@ -160,36 +145,34 @@ impl ServerComponentsMode {
 #[allow(non_snake_case)]
 #[derive(Default, Clone)]
 pub struct Imports {
-    pub __name: Ref,
+    pub(crate) __name: Ref,
     pub __require: Ref,
-    pub __export: Ref,
-    pub __reExport: Ref,
-    pub __exportValue: Ref,
-    pub __exportDefault: Ref,
-    // __refreshRuntime: ?GeneratedSymbol = null,
-    // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-    pub __merge: Ref,
-    pub __legacyDecorateClassTS: Ref,
-    pub __legacyDecorateParamTS: Ref,
-    pub __legacyMetadataTS: Ref,
-    pub __publicField: Ref,
-    pub __privateIn: Ref,
-    pub __privateGet: Ref,
-    pub __privateAdd: Ref,
-    pub __privateSet: Ref,
-    pub __privateMethod: Ref,
-    pub __decoratorStart: Ref,
-    pub __decoratorMetadata: Ref,
-    pub __runInitializers: Ref,
-    pub __decorateElement: Ref,
+    pub(crate) __export: Ref,
+    pub(crate) __reExport: Ref,
+    pub(crate) __exportValue: Ref,
+    pub(crate) __exportDefault: Ref,
+    pub(crate) __merge: Ref,
+    pub(crate) __legacyDecorateClassTS: Ref,
+    pub(crate) __legacyDecorateParamTS: Ref,
+    pub(crate) __legacyMetadataTS: Ref,
+    pub(crate) __publicField: Ref,
+    pub(crate) __privateIn: Ref,
+    pub(crate) __privateGet: Ref,
+    pub(crate) __privateAdd: Ref,
+    pub(crate) __privateSet: Ref,
+    pub(crate) __privateMethod: Ref,
+    pub(crate) __decoratorStart: Ref,
+    pub(crate) __decoratorMetadata: Ref,
+    pub(crate) __runInitializers: Ref,
+    pub(crate) __decorateElement: Ref,
     /// The `$$typeof` runtime import (`$$typeof` is not a valid Rust identifier).
-    pub dollar_dollar_typeof: Ref,
-    pub __using: Ref,
-    pub __callDispose: Ref,
-    pub __jsonParse: Ref,
-    pub __promiseAll: Ref,
-    pub __MEMO_CACHE_SENTINEL: Ref,
-    pub __EARLY_RETURN_SENTINEL: Ref,
+    pub(crate) dollar_dollar_typeof: Ref,
+    pub(crate) __using: Ref,
+    pub(crate) __callDispose: Ref,
+    pub(crate) __jsonParse: Ref,
+    pub(crate) __promiseAll: Ref,
+    pub(crate) __MEMO_CACHE_SENTINEL: Ref,
+    pub(crate) __EARLY_RETURN_SENTINEL: Ref,
 }
 
 impl Imports {
@@ -377,15 +360,6 @@ impl Imports {
             .is_some()
     }
 
-    pub fn has_any(&self) -> bool {
-        for i in 0..Self::ALL.len() {
-            if self.field(i).is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Callers that know the key statically can assign the field directly;
     /// this is the runtime-keyed equivalent.
     pub fn put(&mut self, key: &[u8], ref_: Ref) {
@@ -413,27 +387,16 @@ impl Imports {
             None
         }
     }
-
-    pub fn count(&self) -> usize {
-        let mut n: usize = 0;
-        for i in 0..Self::ALL.len() {
-            if self.field(i).is_some() {
-                n += 1;
-            }
-        }
-        n
-    }
 }
 
 pub struct ImportsIterator<'a> {
     pub i: usize,
-    pub runtime_imports: &'a Imports,
+    pub(crate) runtime_imports: &'a Imports,
 }
 
 #[derive(Clone, Copy)]
 pub struct ImportsIteratorEntry {
     pub key: u16,
-    pub value: Ref,
 }
 
 impl ImportsIterator<'_> {
@@ -441,10 +404,9 @@ impl ImportsIterator<'_> {
         while self.i < Imports::ALL.len() {
             let t = self.i;
             self.i += 1;
-            if let Some(val) = self.runtime_imports.field(t) {
+            if self.runtime_imports.field(t).is_some() {
                 return Some(ImportsIteratorEntry {
                     key: u16::try_from(t).expect("int cast"),
-                    value: val,
                 });
             }
         }

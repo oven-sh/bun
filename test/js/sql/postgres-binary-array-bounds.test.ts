@@ -9,7 +9,7 @@
 // The binary array parser must validate `len` against the column's byte length
 // before iterating; otherwise slice() reads and writes past the read buffer.
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -40,32 +40,39 @@ function binaryArrayHeader(opts: {
   return Buffer.concat([i32(opts.ndim), i32(opts.flags), i32(opts.elemtype), i32(opts.len), i32(opts.lbound)]);
 }
 
-async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unknown> {
-  const { port, server } = await listeningServer(socket => {
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        return;
-      }
-      if (data[0] !== 0x51 /* 'Q' */) return;
-      // Column name length is chosen so the column payload lands on a
-      // 4-byte boundary within the response buffer; this lets the
-      // unpatched parser reach slice() (the actual overflow) instead of
-      // tripping the debug-only @alignCast in init() first.
-      socket.write(
-        Buffer.concat([
-          pgRowDescription([{ name: "arr", typeOid, format: 1 /* binary */ }]),
-          pgDataRow([columnBytes]),
-          pgCommandComplete("SELECT 1"),
-          pgReadyForQuery(),
-        ]),
-      );
-    });
-    socket.on("error", () => {});
+// One mock server for the file; each test sets `current` before connecting and
+// the accept handler latches it per connection. A per-test server flaked on
+// Windows CI with ERR_POSTGRES_CONNECTION_REFUSED (loopback SYN not retransmitted).
+let current!: { col: Buffer; oid: number };
+const { port, server } = await listeningServer(socket => {
+  const { col, oid } = current;
+  let startup = true;
+  socket.on("data", data => {
+    if (startup) {
+      startup = false;
+      socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      return;
+    }
+    if (data[0] !== 0x51 /* 'Q' */) return;
+    // Column name length is chosen so the column payload lands on a
+    // 4-byte boundary within the response buffer; this lets the
+    // unpatched parser reach slice() (the actual overflow) instead of
+    // tripping the debug-only @alignCast in init() first.
+    socket.write(
+      Buffer.concat([
+        pgRowDescription([{ name: "arr", typeOid: oid, format: 1 /* binary */ }]),
+        pgDataRow([col]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ]),
+    );
   });
+  socket.on("error", () => {});
+});
+afterAll(() => new Promise<void>(r => server.close(() => r())));
 
+async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unknown> {
+  current = { col: columnBytes, oid: typeOid };
   const sql = new SQL({
     url: `postgres://u@127.0.0.1:${port}/db`,
     max: 1,
@@ -77,7 +84,6 @@ async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unkno
     return await sql`select x`.simple();
   } finally {
     await sql.close().catch(() => {});
-    await new Promise<void>(r => server.close(() => r()));
   }
 }
 

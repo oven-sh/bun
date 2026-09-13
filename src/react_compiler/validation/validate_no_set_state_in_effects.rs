@@ -22,11 +22,11 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     BlockId, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue,
     PlaceOrSpread, PropertyLiteral, SourceLocation, Terminal, Type, is_ref_value_type,
-    is_set_state_type, is_use_effect_event_type, is_use_effect_hook_type,
+    is_set_state_identifier, is_use_effect_event_type, is_use_effect_hook_type,
     is_use_insertion_effect_hook_type, is_use_layout_effect_hook_type, is_use_ref_type, visitors,
 };
 
-pub fn validate_no_set_state_in_effects(
+pub(crate) fn validate_no_set_state_in_effects(
     func: &HirFunction,
     env: &Environment,
 ) -> Result<CompilerError, CompilerDiagnostic> {
@@ -61,7 +61,7 @@ pub fn validate_no_set_state_in_effects(
                     // Check if any context capture references a setState
                     let inner_func = &functions[lowered_func.func.0 as usize];
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
-                        is_set_state_type_by_id(ctx_place.identifier, identifiers, types)
+                        is_set_state_identifier(ctx_place.identifier, identifiers, types)
                             || set_state_functions.contains_key(&ctx_place.identifier)
                     });
 
@@ -178,16 +178,6 @@ fn get_identifier_name_with_loc(
         }
     }
     None
-}
-
-fn is_set_state_type_by_id(
-    identifier_id: IdentifierId,
-    identifiers: &[Identifier],
-    types: &[Type],
-) -> bool {
-    let ident = &identifiers[identifier_id.0 as usize];
-    let ty = &types[ident.type_.0 as usize];
-    is_set_state_type(ty)
 }
 
 fn push_error(errors: &mut CompilerError, info: &SetStateInfo, enable_verbose: bool) {
@@ -533,7 +523,7 @@ fn get_set_state_call(
                     }
                 }
                 InstructionValue::CallExpression { callee, args, .. } => {
-                    if is_set_state_type_by_id(callee.identifier, identifiers, types)
+                    if is_set_state_identifier(callee.identifier, identifiers, types)
                         || set_state_functions.contains_key(&callee.identifier)
                     {
                         if enable_allow_set_state_from_refs {

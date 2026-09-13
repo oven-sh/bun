@@ -2,6 +2,7 @@
 #include "JSCookieMap.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http2Context.h>
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -14,12 +15,9 @@ namespace WebCore {
 template<typename Res>
 static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
 {
-    auto& vm = JSC::getVM(global_this);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     // Loop over modified cookies and write Set-Cookie headers to the response
     for (auto& cookie : cookie_map->getAllChanges()) {
         auto utf8 = cookie->toString(global_this->vm()).utf8();
-        RETURN_IF_EXCEPTION(scope, );
         res->writeHeader("Set-Cookie", utf8.data());
     }
 }
@@ -31,6 +29,9 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
         break;
     case UWSResponseKind::SSL:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        break;
+    case UWSResponseKind::H2:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http2Response*>(arg2));
         break;
     case UWSResponseKind::H3:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
@@ -51,11 +52,6 @@ extern "C" void CookieMap__deref(CookieMap* cookie_map)
 CookieMap::~CookieMap() = default;
 
 CookieMap::CookieMap()
-{
-}
-
-CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(WTF::move(cookies))
 {
 }
 
@@ -149,19 +145,6 @@ std::optional<String> CookieMap::get(const String& name) const
         return std::optional<String>(m_originalCookies[originalCookieIndex].value);
     }
     return std::nullopt;
-}
-
-Vector<KeyValuePair<String, String>> CookieMap::getAll() const
-{
-    Vector<KeyValuePair<String, String>> all;
-    for (const auto& cookie : m_modifiedCookies) {
-        if (cookie->value().isEmpty()) continue;
-        all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
-    }
-    for (const auto& cookie : m_originalCookies) {
-        all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
-    }
-    return all;
 }
 
 bool CookieMap::has(const String& name) const

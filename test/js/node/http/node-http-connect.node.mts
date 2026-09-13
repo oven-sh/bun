@@ -304,41 +304,53 @@ describe("HTTP server CONNECT", () => {
   });
 
   test("should handle partial writes and buffering", async () => {
+    // Write each chunk, wait for its write callback, then yield one I/O poll so
+    // the peer sees a fragmented stream without any fixed-delay timers.
+    async function writeChunked(sock: net.Socket, chunks: string[]) {
+      for (const chunk of chunks) {
+        await new Promise<void>((res, rej) => sock.write(chunk, e => (e ? rej(e) : res())));
+        await new Promise<void>(res => setImmediate(res));
+      }
+    }
+
     await using proxyServer = http.createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     let bufferReceived = "";
 
     proxyServer.on("connect", (req, socket, head) => {
+      let sentTestData = false;
+      socket.on("error", reject);
       socket.on("data", chunk => {
         bufferReceived += chunk.toString();
+        // End only once the client's tunneled bytes have arrived so the
+        // assertion on bufferReceived is not racing the server's FIN.
+        if (!sentTestData && bufferReceived.includes("Client data")) {
+          sentTestData = true;
+          socket.write("Test data", () => socket.end());
+        }
       });
 
-      // Send response in small chunks
-      socket.write("HTTP/1.1 ");
-      setTimeout(() => socket.write("200 "), 10);
-      setTimeout(() => socket.write("Connection "), 20);
-      setTimeout(() => socket.write("established\r\n\r\n"), 30);
-      setTimeout(() => {
-        socket.write("Test data");
-        socket.end();
-      }, 40);
+      writeChunked(socket, ["HTTP/1.1 ", "200 ", "Connection ", "established\r\n\r\n"]).catch(reject);
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
     const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      // Send request in chunks
-      client.write("CONNECT example.com:80 ");
-      setTimeout(() => client.write("HTTP/1.1\r\n"), 5);
-      setTimeout(() => client.write("Host: example.com\r\n\r\n"), 10);
-      setTimeout(() => client.write("Client data"), 35);
+      writeChunked(client, ["CONNECT example.com:80 ", "HTTP/1.1\r\n", "Host: example.com\r\n\r\n"]).catch(reject);
     });
 
-    const { promise, resolve } = Promise.withResolvers<string>();
     const received: string[] = [];
+    let sentClientData = false;
 
+    client.on("error", reject);
     client.on("data", data => {
       received.push(data.toString());
+      // Send the client bytes once the tunnel is up.
+      if (!sentClientData && received.join("").includes("Connection established\r\n\r\n")) {
+        sentClientData = true;
+        client.write("Client data");
+      }
     });
 
     client.on("end", () => {

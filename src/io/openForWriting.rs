@@ -49,19 +49,6 @@ impl OpenForWritingInput for &ZStr {
     }
 }
 
-impl OpenForWritingInput for &mut ZStr {
-    fn open_for_writing_result(
-        &self,
-        dir: Fd,
-        input_flags: i32,
-        mode: Mode,
-        _is_nonblocking: &mut bool,
-        openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
-    ) -> bun_sys::Result<Fd> {
-        openat(dir, self, input_flags, mode)
-    }
-}
-
 pub fn open_for_writing<P, C>(
     dir: Fd,
     input_path: &P,

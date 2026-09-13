@@ -1,6 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
@@ -12,7 +11,7 @@ use crate::repository::Repository;
 use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
 
 use super::package::scripts::Scripts as PackageScripts;
-use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
+use super::tree::IteratorPathStyle;
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
@@ -25,7 +24,7 @@ fn json_stringify_dependency<W>(
     dep_id: DependencyID,
     dep: &Dependency,
     res: PackageID,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: JsonWriter,
 {
@@ -180,7 +179,7 @@ where
     Ok(())
 }
 
-pub fn json_stringify<W>(this: &Lockfile, w: &mut W) -> Result<(), bun_core::Error>
+pub fn json_stringify<W>(this: &Lockfile, w: &mut W) -> Result<(), crate::Error>
 where
     W: JsonWriter,
 {
@@ -229,8 +228,8 @@ where
         let dependencies = this.buffers.dependencies.as_slice();
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
-        let mut depth_buf: DepthBuf = [0; MAX_DEPTH];
-        let mut path_buf = PathBuffer::uninit();
+        let mut depth_buf = tree::depth_buf_uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
         for tree_id in 0..this.buffers.trees.as_slice().len() {
@@ -547,16 +546,16 @@ fn origin_name(o: Origin) -> &'static str {
 /// bounded over [`JsonScalar`] so the concrete [`WriteStream`] impl can encode
 /// bool / integer / byte-string uniformly.
 pub trait JsonWriter {
-    fn begin_object(&mut self) -> Result<(), bun_core::Error>;
-    fn end_object(&mut self) -> Result<(), bun_core::Error>;
-    fn begin_array(&mut self) -> Result<(), bun_core::Error>;
-    fn end_array(&mut self) -> Result<(), bun_core::Error>;
-    fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error>;
-    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error>;
-    fn write_null(&mut self) -> Result<(), bun_core::Error>;
+    fn begin_object(&mut self) -> Result<(), crate::Error>;
+    fn end_object(&mut self) -> Result<(), crate::Error>;
+    fn begin_array(&mut self) -> Result<(), crate::Error>;
+    fn end_array(&mut self) -> Result<(), crate::Error>;
+    fn object_field(&mut self, name: &[u8]) -> Result<(), crate::Error>;
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), crate::Error>;
+    fn write_null(&mut self) -> Result<(), crate::Error>;
     /// Emits the formatted bytes verbatim as a complete value (caller is
     /// responsible for any quoting / escaping).
-    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error>;
+    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error>;
 }
 
 /// Each impl emits the JSON encoding of `self` into `out` (no leading/trailing
@@ -635,15 +634,12 @@ pub struct WriteStreamOptions {
     /// would be `.minified`; the binding always passes `2`.
     pub indent: usize,
     pub emit_nonportable_numbers_as_strings: bool,
-    // `emit_null_optional_fields` is a no-op here: the stringifier is
-    // hand-rolled and emits `write_null()` explicitly.
-    pub emit_null_optional_fields: bool,
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
 /// `bun_install_js_bindings::jsParseLockfile`.
 pub struct WriteStream {
-    pub out: Vec<u8>,
+    pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,
     depth: usize,
     /// Per open container: have we emitted ≥1 element yet (i.e. does the next
@@ -699,14 +695,14 @@ impl WriteStream {
 }
 
 impl JsonWriter for WriteStream {
-    fn begin_object(&mut self) -> Result<(), bun_core::Error> {
+    fn begin_object(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.push(b'{');
         self.depth += 1;
         self.had_element.push(false);
         Ok(())
     }
-    fn end_object(&mut self) -> Result<(), bun_core::Error> {
+    fn end_object(&mut self) -> Result<(), crate::Error> {
         let had = self.had_element.pop().unwrap_or(false);
         self.depth -= 1;
         if had {
@@ -715,14 +711,14 @@ impl JsonWriter for WriteStream {
         self.out.push(b'}');
         Ok(())
     }
-    fn begin_array(&mut self) -> Result<(), bun_core::Error> {
+    fn begin_array(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.push(b'[');
         self.depth += 1;
         self.had_element.push(false);
         Ok(())
     }
-    fn end_array(&mut self) -> Result<(), bun_core::Error> {
+    fn end_array(&mut self) -> Result<(), crate::Error> {
         let had = self.had_element.pop().unwrap_or(false);
         self.depth -= 1;
         if had {
@@ -731,7 +727,7 @@ impl JsonWriter for WriteStream {
         self.out.push(b']');
         Ok(())
     }
-    fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error> {
+    fn object_field(&mut self, name: &[u8]) -> Result<(), crate::Error> {
         self.value_start();
         encode_json_string(name, &mut self.out);
         self.out
@@ -739,17 +735,17 @@ impl JsonWriter for WriteStream {
         self.after_field = true;
         Ok(())
     }
-    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error> {
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), crate::Error> {
         self.value_start();
         value.write_json(&mut self.out, self.opts);
         Ok(())
     }
-    fn write_null(&mut self) -> Result<(), bun_core::Error> {
+    fn write_null(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.extend_from_slice(b"null");
         Ok(())
     }
-    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
         use std::io::Write as _;
         self.value_start();
         let _ = self.out.write_fmt(args);

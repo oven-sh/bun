@@ -6,6 +6,7 @@ interface MetafileImport {
   path: string;
   kind: string;
   original?: string;
+  entryPoint?: string;
   external?: boolean;
   with?: { type: string };
 }
@@ -458,6 +459,66 @@ describe("bundler metafile", () => {
     expect(outputPaths).toContain(dynamicImport!.path);
   });
 
+  describe.each(["browser", "bun"] as const)("target %s", target => {
+    test.each([
+      { kind: "dynamic-import", call: `import("./lazy.js").then(m => console.log(m.value))` },
+      ...(target === "bun"
+        ? [{ kind: "require-call", call: `export const load = () => require("./lazy.js").value` }]
+        : []),
+    ])("metafile names the input a split $kind loads as entryPoint", async ({ kind, call }) => {
+      using dir = tempDir("metafile-split-import-test", {
+        "entry.js": `import { shared } from "./shared.js"; console.log(shared); ${call};`,
+        "lazy.js": `import { shared } from "./shared.js"; export const value = shared + 1;`,
+        "shared.js": `export const shared = 123;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        metafile: true,
+        splitting: true,
+        target,
+      });
+
+      expect(result.success).toBe(true);
+      const { inputs, outputs } = result.metafile as Metafile;
+      const [lazyInput] = Object.keys(inputs).filter(path => path.endsWith("lazy.js"));
+      const [entryInput] = Object.keys(inputs).filter(path => path.endsWith("entry.js"));
+      const [lazyOutput] = Object.keys(outputs).filter(path => outputs[path].entryPoint === lazyInput);
+      expect(lazyInput).toBeString();
+      expect(lazyOutput).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === kind)).toEqual([
+        { path: lazyOutput, kind, original: "./lazy.js", entryPoint: lazyInput, external: true },
+      ]);
+      // A static import has no chunk of its own to name.
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === "import-statement")).toEqual([
+        {
+          path: Object.keys(inputs).find(path => path.endsWith("shared.js"))!,
+          kind: "import-statement",
+          original: "./shared.js",
+        },
+      ]);
+    });
+  });
+
+  test("metafile names the same input as entryPoint when two entry points import() it", async () => {
+    using dir = tempDir("metafile-split-import-two-entries", {
+      "a.js": `import("./lazy.js").then(m => console.log("a", m.value));`,
+      "b.js": `import("./lazy.js").then(m => console.log("b", m.value));`,
+      "lazy.js": `export const value = 1;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [`${dir}/a.js`, `${dir}/b.js`],
+      metafile: true,
+      splitting: true,
+    });
+    expect(result.success).toBe(true);
+    const { inputs } = result.metafile as Metafile;
+    const input = (name: string) => Object.keys(inputs).find(path => path.endsWith(name))!;
+    const split = (name: string) =>
+      inputs[input(name)].imports.filter(imp => imp.kind === "dynamic-import").map(imp => imp.entryPoint);
+    expect({ a: split("a.js"), b: split("b.js") }).toEqual({ a: [input("lazy.js")], b: [input("lazy.js")] });
+  });
+
   test("metafile includes cssBundle for CSS outputs", async () => {
     using dir = tempDir("metafile-css-bundle-test", {
       "entry.js": `import "./styles.css"; console.log("styled");`,
@@ -486,6 +547,95 @@ describe("bundler metafile", () => {
     }
 
     expect(foundCssBundle).toBe(true);
+  });
+
+  test("metafile import paths match input keys for all importers of a shared module", async () => {
+    // When the same module is imported from many files, every import record must emit the
+    // resolved pretty path (matching the "inputs" key), not the raw "./b/shared.js" specifier.
+    const N = 30;
+    const files: Record<string, string> = { "b/shared.js": `export const s = 1;` };
+    for (let i = 0; i < N; i++) {
+      files[`mid${i}.js`] = `import { s } from "./b/shared.js"; export const m${i} = s;`;
+    }
+    files["entry.js"] = Array.from({ length: N }, (_, i) => `export * from "./mid${i}.js";`).join("\n");
+
+    using dir = tempDir("metafile-shared-import", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const inputKeys = Object.keys(metafile.inputs);
+    const sharedKey = inputKeys.find(k => k.endsWith("b/shared.js") || k.endsWith("b\\shared.js"));
+    expect(sharedKey).toBeDefined();
+
+    // Every midN.js must report its import of shared.js using the exact input key,
+    // and must carry the original specifier.
+    const midImports: Array<{ from: string; path: string; original?: string }> = [];
+    for (const [key, input] of Object.entries(metafile.inputs)) {
+      if (!/[\\/]mid\d+\.js$/.test(key)) continue;
+      expect(input.imports.length).toBe(1);
+      midImports.push({ from: key, path: input.imports[0].path, original: input.imports[0].original });
+    }
+    expect(midImports.length).toBe(N);
+
+    const bad = midImports.filter(m => m.path !== sharedKey);
+    expect(bad).toEqual([]);
+    for (const m of midImports) {
+      expect(m.original).toBe("./b/shared.js");
+    }
+
+    // Also verify entry.js imports of midN.js all resolve to input keys.
+    const entryKey = inputKeys.find(k => k.endsWith("entry.js"))!;
+    for (const imp of metafile.inputs[entryKey].imports) {
+      expect(imp.path in metafile.inputs).toBe(true);
+    }
+  });
+
+  test("metafile import paths are deterministic across repeated builds", async () => {
+    const N = 30;
+    const files: Record<string, string> = { "b/shared.js": `export const s = 1;` };
+    for (let i = 0; i < N; i++) {
+      files[`mid${i}.js`] = `import { s } from "./b/shared.js"; export const m${i} = s;`;
+    }
+    files["entry.js"] = Array.from({ length: N }, (_, i) => `export * from "./mid${i}.js";`).join("\n");
+
+    using dir = tempDir("metafile-determinism", files);
+
+    async function collectImportPaths() {
+      const r = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+      expect(r.success).toBe(true);
+      const m = r.metafile as Metafile;
+      return Object.keys(m.inputs)
+        .sort()
+        .map(k => [k, m.inputs[k].imports.map(i => ({ path: i.path, original: i.original }))]);
+    }
+
+    const first = await collectImportPaths();
+    for (let i = 0; i < 4; i++) {
+      expect(await collectImportPaths()).toEqual(first);
+    }
+  });
+
+  test("metafile does not leak internal runtime source name for runtime-helper imports", async () => {
+    using dir = tempDir("metafile-runtime-helper", {
+      "entry.js": `using x = { [Symbol.dispose]() {} };\nconsole.log(x);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const entryKey = Object.keys(metafile.inputs).find(k => k.endsWith("entry.js"))!;
+    const importPaths = metafile.inputs[entryKey].imports.map(i => i.path);
+    expect(importPaths).toEqual(["bun:wrap"]);
+    expect("runtime" in metafile.inputs).toBe(false);
   });
 
   test("metafile handles circular imports", async () => {
@@ -711,7 +861,7 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
@@ -1199,5 +1349,42 @@ describe("bun build --metafile-md", () => {
     // Should have node_modules marker in raw data
     expect(content).toContain("[NODE_MODULES:");
     expect(content).toContain("node_modules/lodash");
+  });
+});
+
+describe("bun build --metafile", () => {
+  // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
+  // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
+  test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {
+    using dir = tempDir("metafile-wtf8", {
+      "index.js": `console.log(1);`,
+    });
+
+    // "\355\240\200" is U+D800 in WTF-8, "\377" is not valid UTF-8 at all.
+    // No --outdir: the bundle goes to stdout and only the metafile is written.
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `"$1" build index.js --metafile=meta.json --entry-naming "x$(printf '\\355\\240\\200\\377')-[name].[ext]"`,
+        "sh",
+        bunExe(),
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("console.log(1);");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const bytes = await Bun.file(`${dir}/meta.json`).bytes();
+    // Throws on invalid UTF-8.
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const metafile = JSON.parse(text) as Metafile;
+    expect(Object.keys(metafile.outputs)).toEqual(["./x\uD800\uFFFD-index.js"]);
   });
 });

@@ -356,6 +356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
+                        // `const { a } = x` reads `x.a` and drops `x`.
+                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
                     },
                 );

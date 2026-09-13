@@ -60,7 +60,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
 /// Version 31: Standard decorator lowering temporaries have a per-file counter in their name (`_init$1`).
 /// Version 32: Standard decorator lowering keeps class members in place.
-const EXPECTED_VERSION: u32 = 32;
+/// Version 33: `({ f: () => {} }).f` is no longer folded to the bare function, which lost the name `f`.
+const EXPECTED_VERSION: u32 = 33;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

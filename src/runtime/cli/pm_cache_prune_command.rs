@@ -96,7 +96,7 @@ impl Prune {
                     self.prune_dir(&sub, &sub_prefix, true);
                     drop(sub);
                     if !self.dry_run {
-                        let _ = bun_sys::rmdirat(dir.fd(), &entry.name);
+                        self.remove_if_empty(dir, entry, &sub_prefix);
                     }
                 }
                 Kind::Index | Kind::Other => {}
@@ -120,8 +120,18 @@ impl Prune {
                     continue;
                 }
             }
-            // Fails with ENOTEMPTY when versions remain.
-            let _ = bun_sys::rmdirat(dir.fd(), &entry.name);
+            self.remove_if_empty(dir, entry, &display);
+        }
+    }
+
+    fn remove_if_empty(&mut self, dir: &Dir, entry: &Entry, display: &[u8]) {
+        match bun_sys::rmdirat(dir.fd(), &entry.name) {
+            Ok(()) => {}
+            Err(err) if matches!(err.get_errno(), E::ENOTEMPTY | E::EEXIST | E::ENOENT) => {}
+            Err(err) => {
+                Output::err(err, "Could not delete {s}", (BStr::new(display),));
+                self.failed += 1;
+            }
         }
     }
 

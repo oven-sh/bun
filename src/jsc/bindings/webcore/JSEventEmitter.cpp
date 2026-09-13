@@ -481,7 +481,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "listeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "listenerCount");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)

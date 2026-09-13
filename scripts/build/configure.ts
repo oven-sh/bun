@@ -326,12 +326,16 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  emitGeneratorRule(n, cfg, input);
+  // emitBun writes configure-time files into the build dir (dep `headers`,
+  // the Windows .rc); it exists before anything is emitted.
+  mkdirSync(cfg.buildDir, { recursive: true });
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
+  emitGeneratorRule(n, cfg, input);
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.
+  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
+  // smoke test rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
@@ -339,7 +343,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // auto-trigger).
   if (output.exe !== undefined) {
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
-    const targets = [defaultTarget, "check"];
+    const targets = [defaultTarget];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     n.default(targets);

@@ -777,7 +777,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
   // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
-  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  // libclang_rt.asan (and there's no -asan WebKit prebuilt for it).
   // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
@@ -806,7 +806,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android, FreeBSD: not enabled (bun was never built that way; untested).
+  // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.

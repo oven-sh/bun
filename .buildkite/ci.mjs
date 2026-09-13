@@ -1666,15 +1666,15 @@ async function getPipeline(options = {}) {
 
   // verify-baseline / trace-order: checks that run on a built binary on a
   // test-fleet host. They are drawn in that host's test group (or a
-  // lane-style group of their own when the target has no test lane there,
-  // e.g. android) rather than in the build group — Buildkite's canvas draws
-  // every edge into a group as leaving after the whole group, so nesting them
-  // with build-bun made test-bun look like it waited on them — and rather than
-  // top-level, where a step still waiting on its depends_on renders greyed out
-  // like a skipped one. Emitted after the test groups so the same-label merge
-  // below folds them into the test group and that group keeps its own
-  // depends_on. Scheduling is by step key either way: each depends on
-  // <target>-build-bun.
+  // lane-style group of their own when the target has no test lane, e.g.
+  // android) rather than in
+  // the build group — Buildkite's canvas draws every edge into a group as
+  // leaving after the whole group, so nesting them with build-bun made
+  // test-bun look like it waited on them — and rather than top-level, where
+  // a step still waiting on its depends_on renders greyed out like a skipped
+  // one. Emitted after the test groups so the same-label merge below folds
+  // them into the test group and that group keeps its own depends_on.
+  // Scheduling is by step key either way: each depends on <target>-build-bun.
   /** @type {Step[]} */
   const binaryCheckSteps = [];
   /**

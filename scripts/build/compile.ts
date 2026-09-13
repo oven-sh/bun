@@ -150,10 +150,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
 
   // ─── Link executable ───
   // Uses response file because object lists get long (>32k args breaks on
-  // windows). Not in the console pool: that pool has depth 1, so a link
-  // holding it would serialize against every other console edge (cargo,
-  // regen) and silence ninja's status line for its 30s+; lld's only output
-  // is diagnostics, which ninja shows when the edge finishes.
+  // windows). Not in the console pool: that pool has depth 1; lld's only
+  // output is diagnostics, which ninja shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -480,7 +478,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   // and does not create the directory; link-only and rust-and-link compile
   // no objects, so nothing else would have made it.
   if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
-  if (opts.validations?.length) node.validations = opts.validations;
+  if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 
   return absOut;

@@ -702,7 +702,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // alone when it already exists.
   n.rule("dep_check_undefined", {
     command: `${cfg.jsRuntime} ${fetchCli} check-undefined $name $nm $out.rsp $out $symbols`,
-    description: "check undefined symbols in $name",
+    description: "check $name undefined symbols",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
     restat: true,

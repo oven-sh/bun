@@ -223,15 +223,15 @@ export const profiles = {
   },
 } as const satisfies Record<string, PartialConfig>;
 
+/**
+ * Look up a profile by name.
+ */
 /** Profiles that were removed, with what replaces them — a build dir configured under one says so on its next regen. */
 const retiredProfiles: Record<string, string> = {
   btg: "--profile=release (LTO is on by default now)",
   "ci-release": "--profile=release --ci=on --buildkite=on (LTO is on by default now)",
 };
 
-/**
- * Look up a profile by name.
- */
 export function getProfile(name: string): PartialConfig {
   if (name in retiredProfiles) {
     throw new BuildError(`Profile "${name}" no longer exists; use ${retiredProfiles[name]}`, {

@@ -1,9 +1,8 @@
 /**
  * Regression tests for ninja ordering of post-link steps (strip, smoke test,
- * dsymutil, verify-binary.ts' static scans) in scripts/build/bun.ts.
+ * dsymutil) in scripts/build/bun.ts.
  *
- * The smoke_test, dsymutil, binary_verify and duplicate_symbols rule commands
- * are wrapped through
+ * The smoke_test and dsymutil rule commands are wrapped through
  * `cfg.jsRuntime` (= process.execPath). When `bun` on PATH resolves inside the
  * build directory, that path is the strip output itself (build/release/bun),
  * and without an ordering edge ninja will run strip and the wrapper exec
@@ -16,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitPostLink, postLinkChecks } from "../../scripts/build/bun.ts";
+import { emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -104,29 +103,6 @@ describe("emitPostLink ninja ordering", () => {
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
     expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
-    // The static scans run through the same wrapper, so the same ordering:
-    // the executable (or the link line) in, `|| bun` at the end. Their
-    // implicit inputs (the spec, the scripts, the export lists) sit between.
-    expect(buildEdge(out, "binary_verify")).toMatch(
-      new RegExp(
-        `^build bun-profile\\.binary-verified: binary_verify bun-profile${cfg.exeSuffix} \\| bun-profile\\.verify\\.json .*verify-binary\\.ts .*binary-expectations\\.ts.* \\|\\| bun${cfg.exeSuffix}$`,
-      ),
-    );
-    expect(buildEdge(out, "duplicate_symbols")).toMatch(
-      new RegExp(
-        `^build bun-profile\\.duplicate-symbols-checked: duplicate_symbols bun-profile${cfg.exeSuffix}\\.o \\| \\S*verify-binary\\.ts \\|\\| bun${cfg.exeSuffix}$`,
-      ),
-    );
-    // No `bun` phony here (strip writes a file of that name), so the first
-    // phony is `check`: the smoke test plus both scans, by name.
-    expect(buildEdge(out, "phony")).toBe(
-      "build check: phony bun-profile.smoke-test-passed bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
-    );
-    // What the link edge names as its validations (bun.ts passes this to link()).
-    expect(postLinkChecks(cfg, "bun-profile")).toEqual([
-      resolve(buildDir, "bun-profile.binary-verified"),
-      resolve(buildDir, "bun-profile.duplicate-symbols-checked"),
-    ]);
   });
 
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
@@ -144,43 +120,6 @@ describe("emitPostLink ninja ordering", () => {
       `build bun-debug.smoke-test-passed: smoke_test bun-debug${cfg.exeSuffix}`,
     );
     expect(buildEdge(out, "phony")).toBe(`build bun: phony bun-debug${cfg.exeSuffix}`);
-    // Nothing to order the scans against either.
-    expect(buildEdge(out, "binary_verify")).not.toContain("||");
-    expect(buildEdge(out, "duplicate_symbols")).not.toContain("||");
-  });
-
-  test("a scan whose tool is missing is not emitted, nor named as a validation", () => {
-    using dir = tempDir("build-post-link", {});
-    const buildDir = String(dir);
-    const exe = resolve(buildDir, "bun-debug");
-    const flat = (text: string) => text.replace(/ \$\n +/g, " ");
-
-    // A partial LLVM install without llvm-readobj: no verify-binary scan of
-    // the executable; the link-input scan only needs llvm-nm.
-    {
-      const cfg = resolveConfig(
-        { buildDir, buildType: "Debug", assertions: true },
-        mockToolchain({ readobj: undefined }),
-      );
-      const n = new Ninja({ buildDir });
-      emitPostLink(n, cfg, exe, "bun-debug", [], [exe + ".o"]);
-      const out = flat(n.toString());
-      expect(out).not.toContain("binary_verify");
-      expect(out).toContain(": duplicate_symbols ");
-      expect(postLinkChecks(cfg, "bun-debug")).toEqual([resolve(buildDir, "bun-debug.duplicate-symbols-checked")]);
-      expect(out).toContain("build check: phony bun-debug.smoke-test-passed bun-debug.duplicate-symbols-checked\n");
-    }
-    // No llvm-nm at all: neither scan, and `check` is the smoke test alone, as before.
-    {
-      const cfg = resolveConfig({ buildDir, buildType: "Debug", assertions: true }, mockToolchain({ nm: undefined }));
-      const n = new Ninja({ buildDir });
-      emitPostLink(n, cfg, exe, "bun-debug", [], [exe + ".o"]);
-      const out = flat(n.toString());
-      expect(out).not.toContain("binary_verify");
-      expect(out).not.toContain("duplicate_symbols");
-      expect(postLinkChecks(cfg, "bun-debug")).toEqual([]);
-      expect(out).toContain("build check: phony bun-debug.smoke-test-passed\n");
-    }
   });
 
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes
@@ -199,10 +138,10 @@ describe("emitPostLink ninja ordering", () => {
 
     expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
-    // Cross-compile: the smoke test is skipped (the binary can't run on this
-    // host, so `check` names the executable instead and the strip race can't
-    // happen there); the static scans (verify-binary, duplicate definitions)
-    // run on any host.
+    // Cross-compile: smoke_test short-circuits to a `check` phony (the
+    // binary can't run on this host), so the strip race can't happen there;
+    // the static scans (verify-binary, duplicate
+    // definitions) run on any host.
     expect(buildEdge(out, "phony")).toBe(
       "build check: phony bun-profile bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
     );

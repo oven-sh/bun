@@ -80,9 +80,9 @@ pub(crate) fn to_contain_equal(
         if expected_type.is_string_object_like() && value_type.is_string() {
             pass = false;
         } else {
-            let value_view = value.to_js_string_view(global)?;
-            let expected_view = expected.to_js_string_view(global)?;
-            pass = match CodeUnitPair::new(&value_view, &expected_view) {
+            let value_string = value.to_bun_string(global)?;
+            let expected_string = expected.to_bun_string(global)?;
+            pass = match CodeUnitPair::new(&value_string, &expected_string) {
                 CodeUnitPair::Latin1(units, code_point) => has_code_point(units, code_point),
                 CodeUnitPair::Utf16(units, code_point) => has_code_point(&units, &code_point),
             };

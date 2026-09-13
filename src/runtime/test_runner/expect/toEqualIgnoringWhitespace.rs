@@ -43,9 +43,9 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        let value_view = value.to_js_string_view(global)?;
-        let expected_view = expected.to_js_string_view(global)?;
-        pass = match CodeUnitPair::new(&value_view, &expected_view) {
+        let value_string = value.to_bun_string(global)?;
+        let expected_string = expected.to_bun_string(global)?;
+        pass = match CodeUnitPair::new(&value_string, &expected_string) {
             CodeUnitPair::Latin1(left, right) => {
                 without_whitespace(left).eq(without_whitespace(right))
             }

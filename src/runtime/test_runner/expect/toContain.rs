@@ -46,9 +46,9 @@ impl Expect {
                 }
             }
         } else if value.is_string_literal() && expected.is_string_literal() {
-            let value_view = value.to_js_string_view(global)?;
-            let expected_view = expected.to_js_string_view(global)?;
-            pass = CodeUnitPair::new(&value_view, &expected_view).includes();
+            let value_string = value.to_bun_string(global)?;
+            let expected_string = expected.to_bun_string(global)?;
+            pass = CodeUnitPair::new(&value_string, &expected_string).includes();
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
                 global: std::ptr::from_ref(global),

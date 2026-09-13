@@ -116,9 +116,9 @@ pub(crate) fn to_throw(
 
             // partial match
             {
-                let expected_view = expected_value.to_js_string_view(global)?;
-                let received_view = received_message.to_js_string_view(global)?;
-                if !CodeUnitPair::new(&received_view, &expected_view).includes() {
+                let expected_string = expected_value.to_bun_string(global)?;
+                let received_string = received_message.to_bun_string(global)?;
+                if !CodeUnitPair::new(&received_string, &expected_string).includes() {
                     return Ok(JSValue::UNDEFINED);
                 }
             }
@@ -221,9 +221,9 @@ pub(crate) fn to_throw(
         if expected_value.is_string() {
             if let Some(received_message) = received_message_opt {
                 // partial match
-                let expected_view = expected_value.to_js_string_view(global)?;
-                let received_view = received_message.to_js_string_view(global)?;
-                if CodeUnitPair::new(&received_view, &expected_view).includes() {
+                let expected_string = expected_value.to_bun_string(global)?;
+                let received_string = received_message.to_bun_string(global)?;
+                if CodeUnitPair::new(&received_string, &expected_string).includes() {
                     return Ok(JSValue::UNDEFINED);
                 }
             }

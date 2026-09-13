@@ -2040,9 +2040,9 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_view = value.to_js_string_view(global)?;
-            let expected_view = expected.to_js_string_view(global)?;
-            pass = pred(&CodeUnitPair::new(&value_view, &expected_view));
+            let value_string = value.to_bun_string(global)?;
+            let expected_string = expected.to_bun_string(global)?;
+            pass = pred(&CodeUnitPair::new(&value_string, &expected_string));
         }
 
         let not = this.flags.get().not();

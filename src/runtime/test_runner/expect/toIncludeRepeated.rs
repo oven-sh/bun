@@ -58,16 +58,16 @@ impl Expect {
 
         let not = this.flags.get().not();
 
-        let expect_string_view = expect_string.to_js_string_view(global)?;
-        let substring_view = substring.to_js_string_view(global)?;
+        let received = expect_string.to_bun_string(global)?;
+        let needle = substring.to_bun_string(global)?;
 
-        if substring_view.is_empty() {
+        if needle.is_empty() {
             return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the first argument to be a non-empty string"
             )));
         }
 
-        let actual_count = CodeUnitPair::new(&expect_string_view, &substring_view).count();
+        let actual_count = CodeUnitPair::new(&received, &needle).count();
         let mut pass = actual_count == count_as_num as usize;
 
         if not {

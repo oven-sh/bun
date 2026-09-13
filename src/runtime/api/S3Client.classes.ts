@@ -7,6 +7,7 @@ export default [
     finalize: true,
     configurable: false,
     klass: {
+      getTags: { fn: "staticGetTags", length: 1 },
       file: {
         fn: "staticFile",
         length: 2,
@@ -47,6 +48,7 @@ export default [
     },
     JSType: "0b11101110",
     proto: {
+      getTags: { fn: "getTags", length: 1 },
       file: {
         fn: "file",
         length: 2,

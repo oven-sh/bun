@@ -54,6 +54,81 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
+/// Capture tags once, before starting the write. Only Rust-owned, encoded bytes
+/// escape this function, including when a stream outlives its options object.
+pub(crate) fn get_write_tags(
+    options: Option<JSValue>,
+    global: &JSGlobalObject,
+) -> JsResult<Option<Box<[u8]>>> {
+    let Some(options) = options.filter(|value| value.is_object()) else {
+        return Ok(None);
+    };
+    let Some(tags) = options
+        .get(global, "tags")?
+        .filter(|value| !value.is_undefined())
+    else {
+        return Ok(None);
+    };
+    if !tags.is_object() || tags.is_array() || tags.is_callable() || tags.is_string() {
+        return Err(global
+            .throw_invalid_arguments(format_args!("tags must be an object with string values")));
+    }
+    let keys = tags.keys(global)?;
+    let mut encoded = Vec::new();
+    for index in 0..keys.get_length(global)? {
+        let key = keys.get_index(global, index as u32)?;
+        let Some(value) = tags.get_own_by_value(global, key)? else {
+            continue;
+        };
+        if !value.is_string_literal() {
+            return Err(global.throw_invalid_arguments(format_args!("tags values must be strings")));
+        }
+        if !encoded.is_empty() {
+            encoded.push(b'&');
+        }
+        for (index, item) in [key, value].into_iter().enumerate() {
+            if index == 1 {
+                encoded.push(b'=');
+            }
+            let text = item.to_bun_string(global)?;
+            if text.is_utf16()
+                && char::decode_utf16(text.utf16().iter().copied()).any(|unit| unit.is_err())
+            {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("tags must contain valid Unicode"))
+                );
+            }
+            let text = text.into_utf8();
+            let start = encoded.len();
+            encoded.resize(start + text.len() * 3, 0);
+            let written = bun_s3_signing::credentials::encode_uri_component::<true>(
+                text.slice(),
+                &mut encoded[start..],
+            )
+            .expect("buffer holds three bytes per input byte")
+            .len();
+            encoded.truncate(start + written);
+        }
+    }
+    keys.ensure_still_alive();
+    tags.ensure_still_alive();
+    Ok((!encoded.is_empty()).then(|| encoded.into_boxed_slice()))
+}
+
+pub(crate) fn reject_write_tags(options: Option<JSValue>, global: &JSGlobalObject) -> JsResult<()> {
+    if let Some(options) = options.filter(|value| value.is_object()) {
+        if options
+            .get(global, "tags")?
+            .is_some_and(|value| !value.is_undefined())
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "tags are only supported when writing an S3 object"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,

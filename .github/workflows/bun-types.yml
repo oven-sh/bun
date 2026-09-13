@@ -10,13 +10,13 @@ on:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
-      - "src/cli/init/tsconfig.default.json"
+      - "src/runtime/cli/init/tsconfig.default.json"
       - ".github/workflows/bun-types.yml"
   pull_request:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
-      - "src/cli/init/tsconfig.default.json"
+      - "src/runtime/cli/init/tsconfig.default.json"
       - ".github/workflows/bun-types.yml"
 
 env:

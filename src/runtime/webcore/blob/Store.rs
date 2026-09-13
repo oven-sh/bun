@@ -323,6 +323,7 @@ impl S3Ext for S3 {
             .env_mut()
             .get_http_proxy(true, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
+        crate::webcore::s3::credentials_jsc::reject_write_tags(extra_options, global_this)?;
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -409,6 +410,7 @@ impl S3Ext for S3 {
             .env_mut()
             .get_http_proxy(true, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
+        crate::webcore::s3::credentials_jsc::reject_write_tags(extra_options, global_this)?;
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 

@@ -18,11 +18,14 @@ setDefaultTimeout(1000 * 60 * 2);
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
-const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
+const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/runtime/cli/init/tsconfig.default.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
 const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
-const { config: sourceTsconfig } = ts.readConfigFile(TSCONFIG_SOURCE_PATH, ts.sys.readFile);
+const { config: sourceTsconfig, error: tsconfigError } = ts.readConfigFile(TSCONFIG_SOURCE_PATH, ts.sys.readFile);
+if (tsconfigError) {
+  throw new Error(ts.flattenDiagnosticMessageText(tsconfigError.messageText, "\n"));
+}
 
 const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
   sourceTsconfig,

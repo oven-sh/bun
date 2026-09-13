@@ -165,6 +165,34 @@ impl ServerConfig {
 
         cost
     }
+
+    /// The string `server.fetch()` prepends to a relative URL.
+    ///
+    /// `from_js` formats `base_uri` before anything is bound, so a server
+    /// configured with `port: 0` (via the option, `PORT`, or `--port`) carries a
+    /// literal `:0`. Once the listener is up, pass the port it reports and that
+    /// placeholder is replaced; a base URI with any other port is returned as
+    /// written.
+    pub(crate) fn base_url_string_for_joining(&self, listening_port: Option<u16>) -> Box<[u8]> {
+        let base = bun_core::trim(&self.base_uri, b"/");
+        let Some(listening_port) = listening_port else {
+            return Box::from(base);
+        };
+        let port = URL::parse(base).port;
+        if port != b"0" {
+            return Box::from(base);
+        }
+        let Some([start, len]) = bun_alloc::range_of_slice_in_buffer(port, base) else {
+            return Box::from(base);
+        };
+        let (before, rest) = base.split_at(start as usize);
+        let after = &rest[len as usize..];
+        let mut buf: Vec<u8> = Vec::with_capacity(base.len() + 5);
+        buf.extend_from_slice(before);
+        let _ = write!(&mut buf, "{listening_port}");
+        buf.extend_from_slice(after);
+        buf.into_boxed_slice()
+    }
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.

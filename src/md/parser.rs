@@ -23,7 +23,7 @@ use crate::RenderOptions;
 
 // Rust has no struct-scoped type
 // aliases, so these live at module scope as `parser::EmphDelim` etc.
-pub(crate) use super::inlines::{EmphDelim, HtmlScanMemo};
+pub(crate) use super::inlines::{BacktickRuns, EmphDelim, HtmlScanMemo};
 pub(crate) use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
@@ -67,6 +67,8 @@ pub(crate) struct Parser<'a> {
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    // Built by find_code_span_end (inlines.rs) when a code-span opener has no closer.
+    pub(crate) backtick_runs: BacktickRuns,
 
     // Number of active containers
     pub(crate) n_containers: u32,
@@ -278,6 +280,7 @@ impl<'a> Parser<'a> {
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            backtick_runs: BacktickRuns::new(),
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

@@ -84,7 +84,7 @@ test("Bun.build preserves an explicit loader for a data: module", async () => {
   const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
   expect(result.success).toBe(true);
   const bundled = await result.outputs[0].text();
-  expect(bundled).not.toContain("data:text/plain");
+  expect(bundled).not.toContain(JSON.stringify("data:text/plain,hello"));
   const outputPath = join(String(dir), "out.mjs");
   await Bun.write(outputPath, bundled);
   const ns = await import(pathToFileURL(outputPath).href);

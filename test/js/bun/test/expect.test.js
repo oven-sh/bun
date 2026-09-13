@@ -4704,6 +4704,32 @@ describe("expect()", () => {
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
       });
+
+      test("expect.resolvesTo.any and expect.rejectsTo.any match primitives by constructor type", async () => {
+        await expect(Promise.resolve("s")).toEqual(expect.resolvesTo.any(String));
+        await expect(Promise.resolve(5)).toEqual(expect.resolvesTo.any(Number));
+        await expect(Promise.resolve(true)).toEqual(expect.resolvesTo.any(Boolean));
+        await expect(Promise.resolve(1n)).toEqual(expect.resolvesTo.any(BigInt));
+        await expect(Promise.resolve(Symbol())).toEqual(expect.resolvesTo.any(Symbol));
+        await expect(Promise.resolve({})).toEqual(expect.resolvesTo.any(Object));
+        await expect(Promise.resolve(5)).not.toEqual(expect.resolvesTo.any(String));
+
+        await expect(Promise.reject("s")).toEqual(expect.rejectsTo.any(String));
+        await expect(Promise.reject(5)).toEqual(expect.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).not.toEqual(expect.rejectsTo.any(String));
+
+        // .not is the complement
+        await expect(Promise.resolve(5)).not.toEqual(expect.not.resolvesTo.any(Number));
+        await expect(Promise.resolve(5)).toEqual(expect.not.resolvesTo.any(String));
+        await expect(Promise.reject(5)).not.toEqual(expect.not.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).toEqual(expect.not.rejectsTo.any(String));
+
+        // nested in an object, and as a mock call argument
+        await expect({ a: Promise.resolve("s") }).toEqual({ a: expect.resolvesTo.any(String) });
+        const fn = jest.fn();
+        fn(Promise.resolve("s"));
+        expect(fn).toHaveBeenCalledWith(expect.resolvesTo.any(String));
+      });
     }
   });
 

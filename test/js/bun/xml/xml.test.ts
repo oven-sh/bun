@@ -1,5 +1,6 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
 // the JS-facing API surface, the two result shapes, Bun-specific input types,
@@ -935,8 +936,8 @@ describe("XML.stringify", () => {
     );
     expect(XML.stringify(value, null, "\t")).toBe(XML.stringify(value, null, 2).replaceAll("  ", "\t"));
     expect(XML.stringify(value, null, 100)).toBe(XML.stringify(value, null, 10));
-    expect(XML.stringify(value, null, "abcdefghijklmnop")).toBe(
-      XML.stringify(value, null, 10).replaceAll("          ", "abcdefghij"),
+    expect(XML.stringify(value, null, "\t\t\t\t\t\t\t\t\t\t      ")).toBe(
+      XML.stringify(value, null, 10).replaceAll("          ", "\t\t\t\t\t\t\t\t\t\t"),
     );
     for (const minified of [0, -1, NaN, "", null, undefined, true, {}]) {
       expect(XML.stringify(value, null, minified as any)).toBe(XML.stringify(value));
@@ -948,6 +949,46 @@ describe("XML.stringify", () => {
     expect(XML.stringify(spaced, null, 4)).toBe(`<a>\n  <b/>\n</a>`);
     // Compact values keep their text exactly too, so leaf padding survives a round trip.
     expect(XML.parse(XML.stringify({ a: { v: "  x  ", w: "   " } }, null, 2))).toEqual({ a: { v: "  x  ", w: "   " } });
+  });
+
+  test("a string space must be XML whitespace", () => {
+    const value = { order: { item: ["Tea", "Mug"], paid: null } };
+    // It is written between elements as is: markup in it makes the output
+    // ill-formed, and any other character becomes character data.
+    const rejected = [
+      "x",
+      "--",
+      " x",
+      "<b>",
+      "&",
+      "</order>",
+      "]]>",
+      "<!-- -->",
+      "\0",
+      "\x01",
+      "\x0B",
+      "\x0C",
+      "\x85",
+      "\xA0",
+      "\u2003",
+      "\u2028",
+      "\uFEFF",
+      "\uD800",
+      "         <",
+    ];
+    for (const space of rejected) {
+      expect(() => XML.stringify(value, null, space)).toThrow("a 'space' string can only contain XML whitespace");
+      expect(() => XML.stringify(value, null, new String(space) as any)).toThrow("XML whitespace");
+      // In both shapes, and up front: not only when something gets indented.
+      expect(() => XML.stringify({ name: "a", children: ["1"] }, null, space)).toThrow("XML whitespace");
+    }
+    for (const space of [" ", "\t", "\n", "\r", "\r\n", " \t\r\n"]) {
+      const text = XML.stringify(value, null, space)!;
+      expect(text).toBe(`<order>\n${space}<item>Tea</item>\n${space}<item>Mug</item>\n${space}<paid/>\n</order>`);
+      expect(XML.parse(text)).toEqual({ order: { item: ["Tea", "Mug"], paid: "" } });
+    }
+    // Only the first 10 characters are written, so only they are checked.
+    expect(XML.stringify(value, null, "          <")).toBe(XML.stringify(value, null, 10));
   });
 
   test("parse(stringify(x)) round-trips both shapes", () => {
@@ -975,8 +1016,10 @@ describe("XML.stringify", () => {
 
   test("deep values are a catchable error", () => {
     // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // debug/ASAN ones, so use a depth no native stack survives. A debug build
+    // overflows below depth 3,000 (release: below 30,000) and builds each
+    // level about 50 times slower, so it gets a smaller depth.
+    const depth = isDebug ? 100_000 : 1_000_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);

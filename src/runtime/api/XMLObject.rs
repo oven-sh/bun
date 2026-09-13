@@ -212,7 +212,10 @@ enum Space {
 }
 
 impl Space {
-    /// Same interpretation as `JSON.stringify`'s `space`.
+    /// How many code units of a string `space` are written per level.
+    const MAX_STR_LEN: usize = 10;
+
+    /// `JSON.stringify`'s `space`, except that a string must be XML whitespace.
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
@@ -226,6 +229,12 @@ impl Space {
             let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
+            }
+            let written = str.trunc(Self::MAX_STR_LEN);
+            if !(0..written.length()).all(|i| xml::is_whitespace(u32::from(written.char_at(i)))) {
+                return Err(global.throw(format_args!(
+                    "XML.stringify: a 'space' string can only contain XML whitespace (space, tab, newline, carriage return)"
+                )));
             }
             return Ok(Space::Str(str));
         }
@@ -925,7 +934,7 @@ impl Stringifier {
             }
             Space::Str(s) => {
                 self.builder.append_lchar(b'\n');
-                let clamped = s.trunc(10);
+                let clamped = s.trunc(Space::MAX_STR_LEN);
                 for _ in 0..self.indent {
                     self.builder.append_string(&clamped);
                 }

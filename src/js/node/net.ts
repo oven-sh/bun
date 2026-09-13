@@ -138,6 +138,7 @@ const { owner_symbol } = require("internal/async_hooks").symbols;
 // native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
+const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
 // the SNI dispatch (below) can recognize a raw native context the way Node's
@@ -1826,10 +1827,19 @@ Socket.prototype._onTimeout = function () {
   }
 
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (handle) {
+    // Suppress only while the write queue is actually DRAINING. Comparing
+    // against the previous tick's size rather than merely checking for a
+    // non-empty queue matters twice over: a queue that has not moved since the
+    // last tick is a stalled peer, which is precisely what the timeout exists
+    // to surface, and this[kTimeout] is one-shot, so returning without
+    // _unrefTimer() consumed the timer and no later tick ever ran.
+    const writeQueueSize = getBufferedAmount(handle);
+    if (writeQueueSize > 0 && writeQueueSize !== this[kLastWriteQueueSize]) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };

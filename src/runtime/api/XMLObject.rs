@@ -212,7 +212,12 @@ enum Space {
 }
 
 impl Space {
-    /// Same interpretation as `JSON.stringify`'s `space`.
+    /// How many code units of a string `space` are written per level.
+    const MAX_STR_LEN: usize = 10;
+
+    /// Same interpretation as `JSON.stringify`'s `space`, except that a
+    /// string must be XML whitespace: it is written between elements as is,
+    /// so anything else would be markup or character data.
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
@@ -227,6 +232,12 @@ impl Space {
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
+            let written = str.trunc(Self::MAX_STR_LEN);
+            if !(0..written.length()).all(|i| is_xml_space(written.char_at(i))) {
+                return Err(global.throw(format_args!(
+                    "XML.stringify: a 'space' string can only contain XML whitespace (space, tab, newline, carriage return)"
+                )));
+            }
             return Ok(Space::Str(str));
         }
         Ok(Space::Minified)
@@ -235,6 +246,11 @@ impl Space {
     fn is_pretty(&self) -> bool {
         !matches!(self, Space::Minified)
     }
+}
+
+/// `S` (XML 1.0 §2.3 [3]).
+fn is_xml_space(unit: u16) -> bool {
+    matches!(unit, 0x20 | 0x09 | 0x0A | 0x0D)
 }
 
 /// How a JS value is written as element content or an attribute value.
@@ -925,7 +941,7 @@ impl Stringifier {
             }
             Space::Str(s) => {
                 self.builder.append_lchar(b'\n');
-                let clamped = s.trunc(10);
+                let clamped = s.trunc(Space::MAX_STR_LEN);
                 for _ in 0..self.indent {
                     self.builder.append_string(&clamped);
                 }

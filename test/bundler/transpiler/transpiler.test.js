@@ -4444,6 +4444,10 @@ console.log(foo, array);
       expectPrinted("x = (0, () => y)()", "x = (() => y)()");
       expectPrinted("x = (true && function() {})()", "x = function() {}()");
       expectPrinted("x = (true ? function() {} : 0)()", "x = function() {}()");
+
+      // A test that is dropped for its side effects leaves the same comma as a constant test.
+      expectPrinted("([] ? obj.m : 0)()", "(0, obj.m)()");
+      expectPrinted("(1 ? obj.m : 0)()", "(0, obj.m)()");
     });
 
     it("constant folding", () => {

@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_ptr::RefPtr;
@@ -75,12 +76,13 @@ pub struct HttpThread {
     /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
     /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`) until the first
-    /// SSL connect actually arrives via [`HttpThread::connect`]`::<true>`. A
-    /// fully-cached `bun install` never makes one, so the cost is skipped
+    /// use: an SSL connect via [`HttpThread::connect`]`::<true>`, or a proxy
+    /// tunnel via [`HttpThread::default_ssl_ctx`]. A fully-cached
+    /// `bun install` makes neither, so the cost is skipped
     /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
     /// init eagerly so a bad CA file crashes at thread start (the long-standing
     /// test contract) and this stays `None`. HTTP-thread-only after `on_start`;
-    /// `Option::take` is the once-guard (no atomics needed — `connect` is never
+    /// `Option::take` is the once-guard (no atomics needed — neither caller is
     /// reentrant).
     lazy_https_init: Option<InitOpts>,
 
@@ -366,7 +368,8 @@ impl HttpThread {
 
     /// One-shot lazy init of the default HTTPS context. See
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
-    /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
+    /// thread from [`HttpThread::connect`]`::<true>` and
+    /// [`HttpThread::default_ssl_ctx`]; the `Option::take`
     /// is the once-guard. On failure, `on_init_error` diverges.
     #[inline]
     fn ensure_https_context_init(&mut self) {
@@ -382,6 +385,19 @@ impl HttpThread {
         }
     }
 
+    /// A new reference to the default HTTPS context's `SSL_CTX`, the one built
+    /// from [`InitOpts`] (`ca` / `abs_ca_file_name`). For TLS that does not run
+    /// on a socket of `https_context` itself: an `http://` proxy reaches this
+    /// without any `connect::<true>` call, so it runs the lazy init too.
+    /// HTTP-thread-only.
+    pub(crate) fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
+        self.ensure_https_context_init();
+        self.https_context
+            .secure
+            .clone()
+            .expect("init_with_thread_opts sets `secure` or diverges")
+    }
+
     pub(crate) fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
@@ -389,8 +405,10 @@ impl HttpThread {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
-            // SSL request — including unix-socket and proxy paths below —
+            // SSL socket — including unix-socket and proxy paths below —
             // funnels through here before touching `https_context.{group,secure}`.
+            // A tunnel through an `http://` proxy opens no SSL socket; it reads
+            // `secure` through `default_ssl_ctx()`, which runs the same init.
             self.ensure_https_context_init();
 
             'custom_ctx: {
@@ -1217,10 +1235,10 @@ mod _event_loop_draft {
         // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
         // which reads the OpenSSL default cert file/dir where present, whether
         // or not an HTTPS request ever happens. When there is no user-supplied
-        // CA config we stash `opts` and let the first `connect::<true>` call
-        // run it (see `HttpThread::lazy_https_init`) — a fully-cached
-        // `bun install` (which makes zero network requests) then skips the
-        // cost entirely.
+        // CA config we stash `opts` and let the first `connect::<true>` or
+        // `default_ssl_ctx` call run it (see `HttpThread::lazy_https_init`) —
+        // a fully-cached `bun install` (which makes zero network requests)
+        // then skips the cost entirely.
         if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
             // User passed --cafile / --ca: validate now so a bad CA file fails
             // the process at thread start (test contract:
@@ -1232,8 +1250,8 @@ mod _event_loop_draft {
             }
         } else {
             // No CA config — safe to defer the ~0.7 ms / ~400 KB root-cert
-            // parse to the first SSL connect (warm-cache `bun install` makes
-            // none).
+            // parse to the first SSL connect or proxy tunnel (warm-cache
+            // `bun install` makes neither).
             thread.lazy_https_init = Some(opts);
         }
         // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`

@@ -561,27 +561,38 @@ impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: &SSLConfig,
+        ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) {
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        let custom_options = ssl_options.as_usockets_for_client_verification();
-        let wrapper = match ProxyTunnelWrapper::init_from_options(
-            &custom_options,
-            true,
-            SSLWrapperHandlers {
-                on_open,
-                on_data,
-                on_handshake,
-                on_close,
-                write: write_encrypted,
-                // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
-                // opting out keeps its SSL off the parked queues entirely.
-                on_session: None,
-                on_keylog: None,
-                ctx: this.as_erased_ptr().as_ptr(),
-            },
-        ) {
+        let handlers = SSLWrapperHandlers {
+            on_open,
+            on_data,
+            on_handshake,
+            on_close,
+            write: write_encrypted,
+            // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
+            // opting out keeps its SSL off the parked queues entirely.
+            on_session: None,
+            on_keylog: None,
+            ctx: this.as_erased_ptr().as_ptr(),
+        };
+        let wrapper = match ssl_options {
+            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+            Some(ssl_options) => ProxyTunnelWrapper::init_from_options(
+                &ssl_options.as_usockets_for_client_verification(),
+                true,
+                handlers,
+            ),
+            // No TLS options on the request: handshake in the thread's default
+            // `SSL_CTX`, as a direct connection to the origin does, so the
+            // thread-wide CA (`bun install --ca` / `--cafile`) applies here too.
+            None => ProxyTunnelWrapper::init_with_ctx(
+                crate::http_thread().default_ssl_ctx(),
+                true,
+                handlers,
+            ),
+        };
+        let wrapper = match wrapper {
             Ok(w) => w,
             Err(e) => {
                 if e == InitError::OutOfMemory {

@@ -1,6 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { once } from "events";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
@@ -25,7 +26,9 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
 import { join, resolve } from "path";
+import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({
@@ -232,6 +235,138 @@ describe("certificate authority", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  /** A forward proxy that only speaks CONNECT. `targets` holds the `host:port` of each tunnel it opened. */
+  async function startConnectProxy(protocol: "http" | "https") {
+    const targets: string[] = [];
+    const sockets = new Set<Socket>();
+    const onClient = (client: Socket) => {
+      sockets.add(client);
+      client.on("error", () => {});
+      client.on("close", () => sockets.delete(client));
+      client.once("data", head => {
+        const target = head.toString("latin1").split(" ")[1];
+        targets.push(target);
+        const [host, port] = target.split(":");
+        const upstream = tcpConnect(Number(port), host, () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        sockets.add(upstream);
+        upstream.on("error", () => client.destroy());
+        upstream.on("close", () => sockets.delete(upstream));
+        client.on("close", () => upstream.destroy());
+      });
+    };
+    const server = protocol === "https" ? createTlsServer(tls, onClient) : createTcpServer(onClient);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      targets,
+      url: `${protocol}://127.0.0.1:${(server.address() as { port: number }).port}`,
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  /** Runs `bun install <args>` with `HTTPS_PROXY` set, for a project whose one dependency is a tarball on `server`. */
+  async function installThroughProxy(
+    server: { port: number },
+    proxyUrl: string,
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+          },
+        }),
+      ),
+    ]);
+
+    const proxyEnv = { ...env, ...extraEnv, HTTPS_PROXY: proxyUrl };
+    for (const key of ["https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"]) delete proxyEnv[key];
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env: proxyEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  // The TLS handshake with the registry runs inside the CONNECT tunnel, not on the socket to the proxy.
+  test.each([
+    { flag: "--cafile", protocol: "http" },
+    { flag: "--ca", protocol: "http" },
+    { flag: "--cafile", protocol: "https" },
+  ] as const)("valid $flag through an $protocol:// proxy", async ({ flag, protocol }) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy(protocol);
+    await write(join(packageDir, "cafile"), tls.cert);
+
+    const { out, err, exitCode } = await installThroughProxy(server, proxy.url, [
+      flag,
+      flag === "--cafile" ? "cafile" : tls.cert,
+    ]);
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(proxy.targets).toContain(`localhost:${server.port}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--cafile replaces the default trust store through a proxy", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await using proxy = await startConnectProxy("http");
+    // NODE_EXTRA_CA_CERTS puts the registry's certificate in the default trust store.
+    await write(join(packageDir, "extra-ca"), tls.cert);
+    const extraCaEnv = { NODE_EXTRA_CA_CERTS: join(packageDir, "extra-ca"), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+
+    // The CA in `--cafile` did not sign the certificate: the install can only succeed if the tunnel ignores `--cafile`.
+    const unrelatedCa = join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem");
+    let { out, err, exitCode } = await installThroughProxy(server, proxy.url, ["--cafile", unrelatedCa], extraCaEnv);
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(out).not.toContain("+ no-deps@");
+    expect(exitCode).toBe(1);
+
+    // now without --cafile: the default trust store does accept the registry
+    ({ out, err, exitCode } = await installThroughProxy(server, proxy.url, [], extraCaEnv));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(exitCode).toBe(0);
+    expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+  });
+
   test(`non-existent --cafile`, async () => {
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 

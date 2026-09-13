@@ -57,9 +57,7 @@ public:
     ExceptionOr<void> setHref(const String&);
 
     URLSearchParams& searchParams();
-    // URLSearchParams calls this after each change. The URL takes the new query at its next read, see
-    // flushPendingSearchParamsUpdate(). A read cannot throw, so when the URL may then not fit in a String it takes the
-    // query now, and this gives the exception if it does not fit. addedLength is at least what the change adds to the query.
+    // URLSearchParams calls this after a change that adds at most addedLength characters. Fails if the URL does not fit in a String.
     ExceptionOr<void> searchParamsDidChange(uint64_t addedLength);
     bool canDeferSearchParamsUpdate(uint64_t addedLength) const;
 

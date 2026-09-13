@@ -56,8 +56,7 @@ unsafe extern "C" {
     safe fn Bun__setURLMaximumLengthForTesting(limit: usize);
 }
 
-/// Stores the limit for each of its readers: Rust, Bun's C++, and WTF's URL
-/// parser, which keeps its own copy. Returns the limit it replaces.
+/// Sets the limit for Rust, Bun's C++ and WTF's URL parser. Returns the previous limit.
 pub(crate) fn set_synthetic_allocation_limit(limit: usize) -> usize {
     let previous = SYNTHETIC_ALLOCATION_LIMIT.swap(limit, core::sync::atomic::Ordering::Relaxed);
     STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);

@@ -51,8 +51,7 @@ extern "C" bool URLSearchParams__toString(WebCore::URLSearchParams* urlSearchPar
     return true;
 }
 
-// At least what the string adds to toString(). A code unit is at most 3 UTF-8 bytes, 2 in an 8-bit string, and a byte is at
-// most 3 characters.
+// A code unit is at most 3 UTF-8 bytes (2 in an 8-bit string), and toString() gives at most 3 characters for a byte.
 static uint64_t serializedLengthBound(const String& string)
 {
     return static_cast<uint64_t>(string.length()) * (string.is8Bit() ? 6 : 9);

@@ -33,8 +33,7 @@
 
 extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
-// WTF's URL parser has its own copy of the limit. setSyntheticAllocationLimitForTesting keeps it equal to Bun's, so that a
-// test reaches it with small input.
+// WTF's URL parser keeps its own copy of the limit that setSyntheticAllocationLimitForTesting lowers.
 extern "C" void Bun__setURLMaximumLengthForTesting(size_t limit)
 {
     WTF::URLParser::setMaximumLengthForTesting(static_cast<unsigned>(std::min<size_t>(limit, String::MaxLength)));
@@ -42,8 +41,7 @@ extern "C" void Bun__setURLMaximumLengthForTesting(size_t limit)
 
 namespace WebCore {
 
-// WTF::URL gives the null URL for a URL that does not fit in a String. Input that is not a URL gives an invalid URL that
-// keeps the input as its string.
+// WTF::URL gives the null URL when the URL does not fit in a String. When the input is not a URL it keeps the input.
 static bool isTooLong(const URL& parsed, const String& input)
 {
     return parsed.isNull() && !input.isNull();
@@ -198,8 +196,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     return {};
 }
 
-// The URL component setters ignore a value that does not give a valid URL, per the URL spec. A URL that does not fit in a
-// String is the one failure they report.
+// Per the URL spec the setters ignore a value that is not valid. They only report a URL that does not fit in a String.
 ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
 {
     if (fullURL.isNull()) [[unlikely]]
@@ -215,12 +212,14 @@ static size_t maximumURLLength()
     return std::min<size_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit);
 }
 
-// The URL takes the pairs at a read only if it is sure to fit in a String then. The query it has now can be 4 times as long
-// when the pairs are serialized again ("(" gives "%28="). Half of the limit leaves WTF::URLParser the room it reserves. The
-// bounds are crude, but past them the URL takes the pairs at once, and that is exact.
+// "(" in the query of the URL is "%28=" when the params serialize it.
+static constexpr uint64_t maximumGrowthOfSerializedQuery = 4;
+
 bool DOMURL::canDeferSearchParamsUpdate(uint64_t addedLength) const
 {
-    return 4 * static_cast<uint64_t>(m_url.string().length()) + m_pendingSearchParamsLength + addedLength <= maximumURLLength() / 2;
+    uint64_t lengthBound = maximumGrowthOfSerializedQuery * m_url.string().length() + m_pendingSearchParamsLength + addedLength;
+    // Half of the limit leaves WTF::URLParser the room it reserves. Past it the URL takes the pairs at once, which is exact.
+    return lengthBound <= maximumURLLength() / 2;
 }
 
 ExceptionOr<void> DOMURL::searchParamsDidChange(uint64_t addedLength)
@@ -239,8 +238,7 @@ ExceptionOr<void> DOMURL::searchParamsDidChange(uint64_t addedLength)
 // m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
 // that N appends through url.searchParams stay O(N) instead of O(N^2). All
 // reads of m_url (href/fullURL) call this first to reconcile.
-// False when the URL does not fit in a String with the new query. The URL then keeps its query. searchParamsDidChange()
-// has the query taken before that can happen at a read.
+// False when the URL does not fit in a String with the new query. It then keeps the query it has.
 bool DOMURL::flushPendingSearchParamsUpdate() const
 {
     if (!m_searchParamsDirty) [[likely]]

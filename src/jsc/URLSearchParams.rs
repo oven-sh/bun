@@ -28,8 +28,7 @@ impl URLSearchParams {
         URLSearchParams__fromJS(value)
     }
 
-    /// `false`, and no call of `callback`, when the serialized params do not fit
-    /// in a `WTF::String`.
+    /// Returns false, without a call of `callback`, when the result does not fit in a `WTF::String`.
     #[must_use]
     pub fn to_string<Ctx>(
         &mut self,

@@ -8,6 +8,7 @@ interface MetafileImport {
   path: string;
   kind: string;
   original?: string;
+  entryPoint?: string;
   external?: boolean;
   with?: { type: string };
 }
@@ -458,6 +459,66 @@ describe("bundler metafile", () => {
     const outputs = (result.metafile as Metafile).outputs as Record<string, MetafileOutput>;
     const outputPaths = Object.keys(outputs);
     expect(outputPaths).toContain(dynamicImport!.path);
+  });
+
+  describe.each(["browser", "bun"] as const)("target %s", target => {
+    test.each([
+      { kind: "dynamic-import", call: `import("./lazy.js").then(m => console.log(m.value))` },
+      ...(target === "bun"
+        ? [{ kind: "require-call", call: `export const load = () => require("./lazy.js").value` }]
+        : []),
+    ])("metafile names the input a split $kind loads as entryPoint", async ({ kind, call }) => {
+      using dir = tempDir("metafile-split-import-test", {
+        "entry.js": `import { shared } from "./shared.js"; console.log(shared); ${call};`,
+        "lazy.js": `import { shared } from "./shared.js"; export const value = shared + 1;`,
+        "shared.js": `export const shared = 123;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        metafile: true,
+        splitting: true,
+        target,
+      });
+
+      expect(result.success).toBe(true);
+      const { inputs, outputs } = result.metafile as Metafile;
+      const [lazyInput] = Object.keys(inputs).filter(path => path.endsWith("lazy.js"));
+      const [entryInput] = Object.keys(inputs).filter(path => path.endsWith("entry.js"));
+      const [lazyOutput] = Object.keys(outputs).filter(path => outputs[path].entryPoint === lazyInput);
+      expect(lazyInput).toBeString();
+      expect(lazyOutput).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === kind)).toEqual([
+        { path: lazyOutput, kind, original: "./lazy.js", entryPoint: lazyInput, external: true },
+      ]);
+      // A static import has no chunk of its own to name.
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === "import-statement")).toEqual([
+        {
+          path: Object.keys(inputs).find(path => path.endsWith("shared.js"))!,
+          kind: "import-statement",
+          original: "./shared.js",
+        },
+      ]);
+    });
+  });
+
+  test("metafile names the same input as entryPoint when two entry points import() it", async () => {
+    using dir = tempDir("metafile-split-import-two-entries", {
+      "a.js": `import("./lazy.js").then(m => console.log("a", m.value));`,
+      "b.js": `import("./lazy.js").then(m => console.log("b", m.value));`,
+      "lazy.js": `export const value = 1;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [`${dir}/a.js`, `${dir}/b.js`],
+      metafile: true,
+      splitting: true,
+    });
+    expect(result.success).toBe(true);
+    const { inputs } = result.metafile as Metafile;
+    const input = (name: string) => Object.keys(inputs).find(path => path.endsWith(name))!;
+    const split = (name: string) =>
+      inputs[input(name)].imports.filter(imp => imp.kind === "dynamic-import").map(imp => imp.entryPoint);
+    expect({ a: split("a.js"), b: split("b.js") }).toEqual({ a: [input("lazy.js")], b: [input("lazy.js")] });
   });
 
   test("metafile includes cssBundle for CSS outputs", async () => {
@@ -1475,5 +1536,42 @@ describe("bun build --metafile-md", () => {
     // Should have node_modules marker in raw data
     expect(content).toContain("[NODE_MODULES:");
     expect(content).toContain("node_modules/lodash");
+  });
+});
+
+describe("bun build --metafile", () => {
+  // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
+  // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
+  test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {
+    using dir = tempDir("metafile-wtf8", {
+      "index.js": `console.log(1);`,
+    });
+
+    // "\355\240\200" is U+D800 in WTF-8, "\377" is not valid UTF-8 at all.
+    // No --outdir: the bundle goes to stdout and only the metafile is written.
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `"$1" build index.js --metafile=meta.json --entry-naming "x$(printf '\\355\\240\\200\\377')-[name].[ext]"`,
+        "sh",
+        bunExe(),
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("console.log(1);");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const bytes = await Bun.file(`${dir}/meta.json`).bytes();
+    // Throws on invalid UTF-8.
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const metafile = JSON.parse(text) as Metafile;
+    expect(Object.keys(metafile.outputs)).toEqual(["./x\uD800\uFFFD-index.js"]);
   });
 });

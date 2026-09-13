@@ -2,12 +2,8 @@ use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-#[allow(improper_ctypes)] // `Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-    safe fn Bun__EventLoopTaskNoContext__vmHandle(
-        task: &EventLoopTaskNoContext,
-    ) -> *const crate::vm_handle::Shared;
 }
 
 bun_opaque::opaque_ffi! {
@@ -53,54 +49,46 @@ impl EventLoopTaskNoContext {
         // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
-
-    /// The handle of the VM this task was created in (a reference the C++
-    /// task holds for its lifetime).
-    pub(crate) fn vm_handle(&self) -> crate::vm_handle::BorrowedRef {
-        // SAFETY: C++ stores a `BunVmHandleRef` from `Bun__VmHandle__retainRef`
-        // for the task's whole lifetime.
-        unsafe { crate::VmHandle::borrow_ref(Bun__EventLoopTaskNoContext__vmHandle(self)) }
-    }
 }
 
-/// A task created from C++ code that runs inside the workpool, usually via ScriptExecutionContext.
+/// A task created from C++ code that runs inside the workpool (WebCrypto's
+/// `PhonyWorkQueue`). Holds the creating VM's ticket: the C++ closure captures
+/// context-affine objects and posts its result back by context id.
 #[repr(C)]
 pub struct ConcurrentCppTask {
     pub(crate) cpp_task: *mut EventLoopTaskNoContext,
+    pub(crate) ticket: crate::Ticket,
     pub(crate) workpool_task: WorkPoolTask,
 }
 
 bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
 
 impl ConcurrentCppTask {
+    #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
     fn run_owned(self: Box<Self>) {
-        // Extract all the info we need from `self` and `cpp_task` before we call functions that
-        // free them.
-        let cpp_task = self.cpp_task;
-        // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
-        // is the centralised non-null deref proof. Valid until `run` consumes it.
-        // Clone before `run` consumes (and frees) the C++ task that holds the reference.
-        let handle: crate::VmHandle = EventLoopTaskNoContext::opaque_ref(cpp_task)
-            .vm_handle()
-            .clone();
-        drop(self);
+        let ConcurrentCppTask {
+            cpp_task, ticket, ..
+        } = *self;
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
-        // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
+        // `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        handle.unref_keep_alive(crate::LoopKind::Regular);
+        ticket.unref_keep_alive();
     }
 }
 
+/// JS thread (`PhonyWorkQueue::dispatch`).
 #[unsafe(no_mangle)]
-extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+extern "C" fn ConcurrentCppTask__createAndRun(
+    global: &JSGlobalObject,
+    cpp_task: *mut EventLoopTaskNoContext,
+) {
     crate::mark_binding!();
-    // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
-    // the centralised non-null deref proof. C++ just handed it over.
-    EventLoopTaskNoContext::opaque_ref(cpp_task)
-        .vm_handle()
-        .ref_keep_alive(crate::LoopKind::Regular);
+    let vm = global.bun_vm();
+    vm.event_loop_shared().ref_keep_alive();
+    let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
+        ticket,
         workpool_task: WorkPoolTask::default(),
     });
 }

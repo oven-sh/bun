@@ -80,13 +80,6 @@ pub(crate) fn to_have_been_last_called_with(
         );
     }
 
-    let diff_format = DiffFormatter {
-        expected: Some(expected_args_js_array),
-        received: Some(last_call_value),
-        expected_string: None,
-        received_string: None,
-        global_this: Some(global),
-        not: false,
-    };
+    let diff_format = DiffFormatter::new(global, last_call_value, expected_args_js_array, false)?;
     throw!(this, global, signature, "\n\n{}\n", diff_format)
 }

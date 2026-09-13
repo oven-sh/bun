@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -49,7 +49,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         "@types/bun": "latest",
       },
       "peerDependencies": {
-        "typescript": "^6",
+        "typescript": "^7",
       },
     });
     const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
@@ -89,6 +89,53 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
+
+  // Ctrl-D is EOF only on a POSIX tty; the Windows console has no equivalent
+  // key that ends a cooked-mode read.
+  test.skipIf(isWindows)("bun init exits quietly on Ctrl-D at a text prompt", async () => {
+    await using temp = tempDir("bun-init-ctrl-d", {});
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const menu = Promise.withResolvers<void>();
+    const namePrompt = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Select a project template")) menu.resolve();
+        if (output.includes("package name")) namePrompt.resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    // Fail with the child's output if it exits before a prompt we wait for.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun init exited before the prompt (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([menu.promise, exitedEarly]);
+    // "3" picks the third entry (Library) and submits it. Library is the
+    // template that asks text questions.
+    terminal.write("3");
+    await Promise.race([namePrompt.promise, exitedEarly]);
+    // The menu left raw mode before the text prompt printed, so Ctrl-D on the
+    // empty line is EOF.
+    terminal.write("\x04");
+
+    const exitCode = await proc.exited;
+    expect(output).not.toContain("An internal error occurred");
+    expect(output).not.toContain("EndOfStream");
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+  });
 
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
@@ -226,7 +273,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "module": "index.ts",
       "name": "my edited package.json",
       "peerDependencies": {
-        "typescript": "^6",
+        "typescript": "^7",
       },
       "private": true,
       "type": "module",
@@ -236,6 +283,33 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       `"my edited tsconfig.json"`,
     );
   });
+
+  test("bun init replaces a non-object dependencies field in an existing package.json", async () => {
+    // A dependencies field that is not an object is garbage for every package
+    // manager. `bun init` used to crash on it instead of filling in its own
+    // entries.
+    await using temp = tempDir("bun-init-non-object-deps", {
+      "package.json": JSON.stringify({ name: "x", devDependencies: "nope", peerDependencies: null }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      name: "x",
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
+      module: "index.ts",
+      type: "module",
+      private: true,
+    });
+  }, 30_000);
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
@@ -254,7 +328,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
@@ -279,7 +353,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("devDependencies.@types/react");
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
@@ -304,7 +378,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.class-variance-authority");
     expect(pkg).toHaveProperty("dependencies.clsx");
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
-    expect(pkg.peerDependencies).toEqual({ typescript: "^6" });
+    expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
@@ -312,13 +386,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
 
-  // Every template declares `typescript: "^6"`, so the `bun install` that
-  // `bun init` runs installs TypeScript 6. Typecheck and build with that
+  // Every template declares `typescript: "^7"`, so the `bun install` that
+  // `bun init` runs installs TypeScript 7. Typecheck and build with that
   // exact install. https://github.com/oven-sh/bun/issues/33050
   test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
-    "bun init %s installs TypeScript 6, typechecks, and builds",
+    "bun init %s installs TypeScript 7, typechecks, and builds",
     async flag => {
-      await using temp = tempDir(`bun-init-ts6${flag.replace(/[^a-z]+/g, "-")}`, {});
+      await using temp = tempDir(`bun-init-ts7${flag.replace(/[^a-z]+/g, "-")}`, {});
 
       await using init = Bun.spawn({
         cmd: [bunExe(), "init", flag],
@@ -334,12 +408,14 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ initStdout, initStderr, initExited }).toMatchObject({ initExited: 0 });
 
       const tsPkg = JSON.parse(fs.readFileSync(path.join(temp, "node_modules/typescript/package.json"), "utf8"));
-      expect(tsPkg.version).toStartWith("6.");
+      expect(tsPkg.version).toStartWith("7.");
 
-      // What matters is that the template typechecks, not which runtime runs
-      // the compiler, and tsc under a debug+ASAN bun is 10-50x slower.
+      // TypeScript 7's bin/tsc is a small ESM shim that execs the native
+      // compiler from @typescript/typescript-<os>-<arch>, so running it under
+      // the bun build under test is cheap, and it is what `bunx tsc` runs on a
+      // machine without node.
       await using tsc = Bun.spawn({
-        cmd: [nodeExe() ?? bunExe(), "node_modules/typescript/bin/tsc", "--noEmit"],
+        cmd: [bunExe(), "node_modules/typescript/bin/tsc", "--noEmit"],
         cwd: temp,
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,

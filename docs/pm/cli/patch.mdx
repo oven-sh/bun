@@ -12,11 +12,11 @@ Sometimes you need a small change to a package in `node_modules/` to fix a bug o
 Features:
 
 - Generates `.patch` files that Bun applies to dependencies in `node_modules` on install
-- `.patch` files can be committed to your repository and reused across installs, projects, and machines
+- You can commit `.patch` files to your repository and reuse them across installs, projects, and machines
 - `"patchedDependencies"` in `package.json` keeps track of patched packages
 - Patches packages in `node_modules/` while preserving the integrity of Bun's [Global Cache](/pm/global-cache)
 - Test your changes locally before committing them with `bun patch --commit <pkg>`
-- To preserve disk space and keep `bun install` fast, patched packages are committed to the Global Cache and shared across projects where possible
+- To preserve disk space and keep `bun install` fast, Bun commits patched packages to the Global Cache and shares them across projects where possible
 
 #### Step 1. Prepare the package for patching
 
@@ -34,7 +34,7 @@ bun patch node_modules/react
 ```
 
 <Note>
-Don't skip `bun patch <pkg>`. It ensures the package folder in `node_modules/` contains a fresh copy of the package with no symlinks or hardlinks to Bun's cache.
+Always run `bun patch <pkg>` first. It ensures the package folder in `node_modules/` contains a fresh copy of the package with no symlinks or hardlinks to Bun's cache.
 
 If you skip it, you might end up editing the package globally in the cache.
 
@@ -42,7 +42,7 @@ If you skip it, you might end up editing the package globally in the cache.
 
 #### Step 2. Test your changes locally
 
-`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/` and diffing it against the original package in the Global Cache.
+`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/`. `bun patch --commit <pkg>` then diffs that clone against the original package in the Global Cache.
 
 #### Step 3. Commit your changes
 

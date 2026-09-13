@@ -13,6 +13,7 @@
 #![warn(unused_must_use)]
 
 pub mod hive_array;
+pub mod index_sort;
 pub mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
@@ -58,14 +59,6 @@ pub trait PriorityCompare<T> {
 pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
     pub(crate) context: C,
-}
-impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            context: C::default(),
-        }
-    }
 }
 impl<T, C> PriorityQueue<T, C> {
     pub fn init(context: C) -> Self {
@@ -478,5 +471,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

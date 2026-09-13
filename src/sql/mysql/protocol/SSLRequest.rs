@@ -18,18 +18,6 @@ pub struct SSLRequest {
     pub has_connection_attributes: bool,
 }
 
-impl Default for SSLRequest {
-    fn default() -> Self {
-        Self {
-            capability_flags: Capabilities::default(),
-            mariadb_capability_flags: MariaDBCapabilities::default(),
-            max_packet_size: 0xFFFFFF, // 16MB default
-            character_set: CharacterSet::default(),
-            has_connection_attributes: false,
-        }
-    }
-}
-
 impl SSLRequest {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,

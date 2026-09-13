@@ -12,12 +12,14 @@ const buf = await Bun.readableStreamToArrayBuffer(stream);
 const uint8 = new Uint8Array(buf);
 ```
 
-`Bun.readableStreamToBytes` converts to a `Uint8Array` directly.
+The stream's `bytes()` method converts to a `Uint8Array` directly.
 
 ```ts
 const stream = new ReadableStream();
-const uint8 = await Bun.readableStreamToBytes(stream);
+const uint8 = await stream.bytes();
 ```
+
+`Bun.readableStreamToBytes(stream)` does the same thing, but is deprecated in favor of `stream.bytes()`.
 
 ---
 

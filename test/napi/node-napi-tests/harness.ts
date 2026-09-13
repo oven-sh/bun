@@ -149,6 +149,28 @@ async function tryBuildFast(dir: string): Promise<boolean> {
   return results.every(Boolean);
 }
 
+// `bun x node-gyp@11` installs node-gyp into the shared bunx cache on first use and
+// links its bin dependencies (nopt, which, glob, semver) into the shared bin dir.
+// Several addon builds doing that at once race on those links (EEXIST) and fail,
+// so callers that build concurrently warm the cache once, serially, first.
+export async function warmNodeGyp() {
+  // Best effort: a failed warm-up must never stop the addon builds, which
+  // install node-gyp themselves if the cache is cold.
+  try {
+    const child = spawn({
+      cmd: [bunExe(), "--bun", "x", "node-gyp@11", "--version"],
+      stderr: "pipe",
+      stdout: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+    if (exitCode !== 0) console.warn(`warming node-gyp failed (builds will install it themselves):\n${stderr}`);
+  } catch (error) {
+    console.warn(`warming node-gyp failed (builds will install it themselves): ${error}`);
+  }
+}
+
 export async function buildWithNodeGyp(dir: string) {
   const child = spawn({
     // `configure build` instead of `rebuild`: `clean` is pure waste (CI checkouts are always

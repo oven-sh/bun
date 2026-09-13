@@ -40,9 +40,6 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::RSA_OAEP;
     static Ref<CryptoAlgorithm> create();
 
-    static ExceptionOr<Vector<uint8_t>> platformEncryptWithHash(const CryptoAlgorithmRsaOaepParams&, const CryptoKeyRSA&, const Vector<uint8_t>&, CryptoAlgorithmIdentifier hashIdentifier);
-    static ExceptionOr<Vector<uint8_t>> platformDecryptWithHash(const CryptoAlgorithmRsaOaepParams&, const CryptoKeyRSA&, const Vector<uint8_t>&, CryptoAlgorithmIdentifier hashIdentifier);
-
 private:
     CryptoAlgorithmRSA_OAEP() = default;
     CryptoAlgorithmIdentifier identifier() const final;

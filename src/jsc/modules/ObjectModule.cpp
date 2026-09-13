@@ -22,13 +22,8 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         gcUnprotectNullTolerant(object);
 
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) [[unlikely]] {
-                if (!scope.tryClearException())
-                    return; // termination: leave it pending
-                value = jsUndefined();
-            }
+            RETURN_IF_EXCEPTION(throwScope, void());
             exportNames.append(entry);
             exportValues.append(value);
         }

@@ -112,6 +112,23 @@ describe("Bun.deepEquals strict mode", () => {
     expect(Bun.deepEquals(new Foo(), { a: 1 }, true)).toBe(false);
   });
 
+  it("ignores class names when the fourth argument is true", () => {
+    class Foo {
+      a = 1;
+    }
+    class Bar {
+      a = 1;
+    }
+    class S extends String {}
+    // The fourth argument is not in the public types.
+    const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+    expect(deepEquals(new Foo(), new Bar(), true)).toBe(false);
+    expect(deepEquals(new Foo(), new Bar(), true, true)).toBe(true);
+    expect(deepEquals(new Foo(), { a: 2 }, true, true)).toBe(false);
+    expect(deepEquals(new String("a"), new S("a"), true)).toBe(false);
+    expect(deepEquals(new String("a"), new S("a"), true, true)).toBe(true);
+  });
+
   it("is symmetric", () => {
     const a = { entries: [1, 2] };
     const b = { entries: [1, 2], extra: undefined };

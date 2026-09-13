@@ -5,8 +5,6 @@
 #include "JavaScriptCore/AbstractModuleRecord.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
-#include "../vm/SigintReceiver.h"
-
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -22,7 +20,7 @@ private:
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;
 };
 
-class NodeVMModule : public JSC::JSDestructibleObject, public SigintReceiver {
+class NodeVMModule : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
@@ -43,6 +41,9 @@ public:
     static NodeVMModule* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args);
 
     const WTF::String& identifier() const { return m_identifier; }
+    // The context's own module loader (its global object's), or `globalObject`'s without a context: the
+    // loader this module's record is created against.
+    JSC::JSModuleLoader* moduleLoader(JSC::JSGlobalObject*);
 
     Status status() const { return m_status; }
     void status(Status value) { m_status = value; }

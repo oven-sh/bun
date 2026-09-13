@@ -30,7 +30,7 @@ use crate::api::html_rewriter;
 use crate::api::server;
 
 // Request contexts are a single generic
-// `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
+// `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
 // concrete monomorphizations here so the tag↔type mapping stays readable.
 type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
 type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
@@ -38,9 +38,13 @@ type DebugHTTPServerRequestContext =
     server::NewRequestContext<server::DebugHTTPServer, false, true, false>;
 type DebugHTTPSServerRequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, false>;
-type HTTPSServerH3RequestContext =
+type HTTPServerMuxRequestContext =
+    server::NewRequestContext<server::HTTPServer, false, false, true>;
+type HTTPSServerMuxRequestContext =
     server::NewRequestContext<server::HTTPSServer, true, false, true>;
-type DebugHTTPSServerH3RequestContext =
+type DebugHTTPServerMuxRequestContext =
+    server::NewRequestContext<server::DebugHTTPServer, false, true, true>;
+type DebugHTTPSServerMuxRequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
 
 /// Must match Bun::NativePromiseContext::Tag in NativePromiseContext.h.
@@ -54,17 +58,18 @@ pub enum Tag {
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
     DebugHTTPSServerRequestContext,
-    HTTPSServerH3RequestContext,
-    DebugHTTPSServerH3RequestContext,
+    HTTPServerMuxRequestContext,
+    HTTPSServerMuxRequestContext,
+    DebugHTTPServerMuxRequestContext,
+    DebugHTTPSServerMuxRequestContext,
     HTMLRewriterSuspension,
-    /// Task-only tag (never a context cell): frees a `RewriterPipe` whose
-    /// last claim was released from a GC destructor; see
-    /// `RewriterPipe::release_pump_claim`.
+    /// Task-only tag (never a context cell): drops the last ref of a
+    /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
 }
 
 impl Tag {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 10;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -73,10 +78,12 @@ impl Tag {
             1 => Tag::HTTPSServerRequestContext,
             2 => Tag::DebugHTTPServerRequestContext,
             3 => Tag::DebugHTTPSServerRequestContext,
-            4 => Tag::HTTPSServerH3RequestContext,
-            5 => Tag::DebugHTTPSServerH3RequestContext,
-            6 => Tag::HTMLRewriterSuspension,
-            7 => Tag::HTMLRewriterPipeFree,
+            4 => Tag::HTTPServerMuxRequestContext,
+            5 => Tag::HTTPSServerMuxRequestContext,
+            6 => Tag::DebugHTTPServerMuxRequestContext,
+            7 => Tag::DebugHTTPSServerMuxRequestContext,
+            8 => Tag::HTMLRewriterSuspension,
+            9 => Tag::HTMLRewriterPipeFree,
             _ => unreachable!(),
         }
     }
@@ -90,24 +97,23 @@ pub(crate) trait NativePromiseContextType {
 
 // Layering note: blanket-impl over `ThisServer` so that ANY server
 // type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, H3), never on the server type.
-const fn npc_tag_for(ssl: bool, dbg: bool, h3: bool) -> Tag {
-    match (ssl, dbg, h3) {
+// the tag depends only on (SSL, DBG, MUX), never on the server type.
+const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
+    match (ssl, dbg, mux) {
         (false, false, false) => Tag::HTTPServerRequestContext,
         (true, false, false) => Tag::HTTPSServerRequestContext,
         (false, true, false) => Tag::DebugHTTPServerRequestContext,
         (true, true, false) => Tag::DebugHTTPSServerRequestContext,
-        (true, false, true) => Tag::HTTPSServerH3RequestContext,
-        (true, true, true) => Tag::DebugHTTPSServerH3RequestContext,
-        // H3 requires TLS; (false, _, true) is never instantiated. Map to a
-        // valid tag so const-eval succeeds; runtime never observes this.
-        (false, _, true) => Tag::HTTPServerRequestContext,
+        (false, false, true) => Tag::HTTPServerMuxRequestContext,
+        (true, false, true) => Tag::HTTPSServerMuxRequestContext,
+        (false, true, true) => Tag::DebugHTTPServerMuxRequestContext,
+        (true, true, true) => Tag::DebugHTTPSServerMuxRequestContext,
     }
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromiseContextType
-    for server::NewRequestContext<ThisServer, SSL, DBG, H3>
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
+    for server::NewRequestContext<ThisServer, SSL, DBG, MUX>
 {
-    const TAG: Tag = npc_tag_for(SSL, DBG, H3);
+    const TAG: Tag = npc_tag_for(SSL, DBG, MUX);
 }
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
@@ -158,21 +164,61 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// defer that work to the event loop.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
-    DeferredDerefTask::schedule(ctx, Tag::from_raw(tag));
+    let tag = Tag::from_raw(tag);
+    clear_remembered_cell(ctx, tag);
+    DeferredDerefTask::schedule(ctx, tag);
+}
+
+/// The cell dies with its claim intact, so the context's `promise_cell` field
+/// still points at it and is about to dangle. Clear it before `on_abort` can
+/// read it again. A plain field write, safe during sweep; the unreleased
+/// claim keeps `ctx` alive through this call.
+fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
+    // SAFETY: `tag` names the concrete type `ctx` was created with, and the
+    // claim being released is a live ref on it.
+    unsafe {
+        match tag {
+            Tag::HTTPServerRequestContext => {
+                (*ctx.cast::<HTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerRequestContext => {
+                (*ctx.cast::<HTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPServerRequestContext => {
+                (*ctx.cast::<DebugHTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerRequestContext => {
+                (*ctx.cast::<DebugHTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPServerMuxRequestContext => {
+                (*ctx.cast::<HTTPServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerMuxRequestContext => {
+                (*ctx.cast::<HTTPSServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPServerMuxRequestContext => {
+                (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerMuxRequestContext => {
+                (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+        }
+    }
 }
 
 /// Defers the GC-triggered deref to the next event-loop tick so it runs
 /// outside the sweep phase.
 ///
 /// Zero-allocation: the ctx pointer and our Tag are packed into the task's
-/// `ptr` slot (pointer in high bits, tag in low 3 bits — the target types
-/// are all >= 8-byte aligned). See PosixSignalTask for the same trick with
+/// `ptr` slot (pointer in high bits, tag in low 4 bits — the target types
+/// are all 16-byte aligned, see their `#[repr(align(16))]`). See PosixSignalTask for the same trick with
 /// signal numbers.
 ///
 /// Layout of `Task.ptr` (read back as `usize` in dispatch):
 ///
 /// ```text
-/// bits 63..3           bits 2..0
+/// bits 63..4           bits 3..0
 /// ┌────────────────────┬─────────┐
 /// │ ctx ptr (aligned)  │ our Tag │
 /// └────────────────────┴─────────┘
@@ -192,15 +238,33 @@ impl Taskable for DeferredDerefTask {
 }
 
 impl DeferredDerefTask {
-    const TAG_MASK: usize = 0b111;
+    const TAG_MASK: usize = 0b1111;
 
     pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
-        // Process is dying; the leak no longer matters and the task
-        // queue won't drain.
-        if vm.is_shutting_down() {
+        if vm.event_loop_ref().is_closed_for_tasks() {
+            // Teardown has forbidden script and released the queue; from here on only GC destructors
+            // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
+            // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
+            // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
+            match tag {
+                // SAFETY: the destroyed context held the suspension's ref on this live pipe.
+                Tag::HTMLRewriterSuspension => unsafe {
+                    html_rewriter::RewriterPipe::abandon_suspension(bun_ptr::BackRef::from(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    ))
+                },
+                // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
+                // trailing `finalize` is a no-op for this sink).
+                Tag::HTMLRewriterPipeFree => unsafe {
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    )
+                },
+                _ => {}
+            }
             return;
         }
 
@@ -221,13 +285,11 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live pointer of the
-        // type indicated by `tag`. The request-context tags hold an intrusive
-        // refcount released here. The HTMLRewriter tags point at a
-        // claim-counted `RewriterPipe`: the suspension task owns the claim
-        // taken in `begin_suspension`, and `HTMLRewriterPipeFree` is
-        // scheduled only by the release of the last claim, so this task is
-        // the sole owner of the allocation it frees. We are on the JS thread.
+        // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
+        // of the type indicated by `tag`, and this task owns one ref on it,
+        // released below (for the HTMLRewriter tags: the ref taken in
+        // `begin_suspension`, or the last ref handed over by
+        // `deref_outside_caller`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -240,11 +302,17 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerRequestContext => {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
-                Tag::HTTPSServerH3RequestContext => {
-                    (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
+                Tag::HTTPServerMuxRequestContext => {
+                    (*ctx.cast::<HTTPServerMuxRequestContext>()).deref()
                 }
-                Tag::DebugHTTPSServerH3RequestContext => {
-                    (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
+                Tag::HTTPSServerMuxRequestContext => {
+                    (*ctx.cast::<HTTPSServerMuxRequestContext>()).deref()
+                }
+                Tag::DebugHTTPServerMuxRequestContext => {
+                    (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).deref()
+                }
+                Tag::DebugHTTPSServerMuxRequestContext => {
+                    (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).deref()
                 }
                 Tag::HTMLRewriterSuspension => {
                     let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
@@ -253,14 +321,16 @@ impl DeferredDerefTask {
                     html_rewriter::RewriterPipe::abandon_suspension(back);
                 }
                 Tag::HTMLRewriterPipeFree => {
-                    bun_core::heap::destroy(ctx.cast::<html_rewriter::RewriterPipe>());
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    );
                 }
             }
         }
     }
 }
 
-// Low 3 bits hold the tag; verify both capacity and alignment slack so adding
+// Low 4 bits hold the tag; verify both capacity and alignment slack so adding
 // a tag or a packed field can't silently break the packing.
 const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
 const _: () =
@@ -271,5 +341,15 @@ const _: () =
     assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () =
+    assert!(core::mem::align_of::<HTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<DebugHTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
+);
+const _: () =
+    assert!(core::mem::align_of::<HTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<DebugHTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
+);
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);

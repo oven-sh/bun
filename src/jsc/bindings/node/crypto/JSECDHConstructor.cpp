@@ -24,7 +24,7 @@ static const JSC::HashTableValue JSECDHConstructorTableValues[] = {
 void JSECDHConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
     Base::finishCreation(vm, 2, "ECDH"_s);
-    reifyStaticProperties(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 

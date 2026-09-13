@@ -10,11 +10,9 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
 use crate::Command;
@@ -112,11 +110,14 @@ impl OutdatedCommand {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             LoadResult::Err(cause) => {
-                if not_silent {
+                if not_silent
+                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     match cause.step {
                         LoadStep::OpenFile => Output::err_generic(
                             "failed to open lockfile: {s}",
@@ -163,147 +164,37 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> crate::Result<()> {
-        if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
-        } else if manager.options.do_.recursive() {
-            let all_workspaces = Self::get_all_workspaces(manager);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&all_workspaces),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            let ids = [root_pkg_id];
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
-        }
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // Borrow the field in-place so the returned slice (which may
-                                    // point into the inline small-string storage) stays valid.
-                                    res.workspace().slice(string_buf)
-                                }
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
+        let (workspace_pkg_ids, was_filtered) =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                let ids = WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                );
+                (ids, true)
             } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                (vec![root_pkg_id], false)
+            };
+        populate_manifest_cache::populate_manifest_cache(
+            manager,
+            populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
+        )?;
+        // The table covers what could be checked; what could not follows it.
+        Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
+            manager,
+            &workspace_pkg_ids,
+            was_filtered,
+        )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
         }
-
-        workspace_pkg_ids
+        Ok(())
     }
 
     fn group_catalog_dependencies(
@@ -525,7 +416,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -724,7 +614,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;

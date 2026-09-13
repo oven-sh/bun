@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -260,12 +260,20 @@ impl Handlers {
         false
     }
 
-    pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
+    /// Route an error a socket handler produced to the `error` handler, or —
+    /// with none registered — to the VM's uncaught-exception path. The `error`
+    /// handler is a top-level call of its own: what *it* throws is reported here
+    /// and the socket handler goes on (it still has state to settle, and often a
+    /// close to deliver). `Err` is only a termination pending from the preceding
+    /// callback, which nothing may run over.
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<()> {
         let global_object = self.global_object;
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
         if global_object.has_exception() {
-            return false;
+            return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
 
@@ -276,14 +284,16 @@ impl Handlers {
                     .bun_vm()
                     .as_mut()
                     .uncaught_exception(&global_object, args[1], false);
-            return false;
+            return Ok(());
         }
 
-        if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
-        }
-
-        true
+        global_object.bun_vm().event_loop_mut().run_callback(
+            on_error,
+            &global_object,
+            this_value,
+            args,
+        );
+        Ok(())
     }
 
     pub fn from_js(
@@ -432,7 +442,7 @@ impl Scope {
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub struct SocketConfig {
-    pub(crate) hostname_or_unix: ZigStringSlice,
+    pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
     pub(crate) ssl: Option<SSLConfig>,
@@ -442,6 +452,8 @@ pub struct SocketConfig {
     pub(crate) allow_half_open: bool,
     pub(crate) reuse_port: bool,
     pub(crate) ipv6_only: bool,
+    /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
+    pub(crate) pause_on_connect: bool,
 }
 
 impl SocketConfig {
@@ -462,6 +474,9 @@ impl SocketConfig {
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
         }
+        if self.pause_on_connect {
+            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
+        }
 
         flags
     }
@@ -469,7 +484,7 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: &GeneratedSocketConfig,
+        generated: GeneratedSocketConfig,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
@@ -485,9 +500,18 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
-                hostname_or_unix: ZigStringSlice::empty(),
+                hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(|v| {
+                    #[cfg(windows)]
+                    {
+                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Fd::from_uv(v)
+                    }
+                }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
                 default_data: if generated.data.is_undefined() {
@@ -499,33 +523,40 @@ impl SocketConfig {
                 allow_half_open: false,
                 reuse_port: false,
                 ipv6_only: false,
+                pause_on_connect: false,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
 
+        result.exclusive = generated.exclusive;
+        result.allow_half_open = generated.allow_half_open;
+        result.reuse_port = generated.reuse_port;
+        result.ipv6_only = generated.ipv6_only;
+        result.pause_on_connect = generated.pause_on_connect;
+
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.get() {
+        } else if let Some(unix) = generated.unix_.into_inner() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
-            result.hostname_or_unix = unix.to_utf8();
+            result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
                 || slice.starts_with(b"unix://")
                 || slice.starts_with(b"sock://")
             {
                 let without_prefix = slice[7..].to_vec();
-                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
+                result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.get() {
+        } else if let Some(hostname) = generated.hostname.into_inner() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
-            result.hostname_or_unix = hostname.to_utf8();
+            result.hostname_or_unix = hostname.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -543,10 +574,6 @@ impl SocketConfig {
                     }
                 },
             });
-            result.exclusive = generated.exclusive;
-            result.allow_half_open = generated.allow_half_open;
-            result.reuse_port = generated.reuse_port;
-            result.ipv6_only = generated.ipv6_only;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""
@@ -562,7 +589,7 @@ impl SocketConfig {
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, &generated, mode)
+        Self::from_generated(vm, global_object, generated, mode)
     }
 }
 

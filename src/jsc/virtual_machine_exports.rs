@@ -171,6 +171,23 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
         .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
 }
 
+/// Drive the event loop until `promise` settles. False means execution was
+/// stopped, with a TerminationException left pending for the caller.
+// HOST_EXPORT(Bun__VirtualMachine__waitForPromise, c)
+pub fn wait_for_promise(global: &JSGlobalObject, promise: JSValue) -> bool {
+    crate::mark_binding!();
+    let Some(promise) = promise.as_any_promise() else {
+        return true;
+    };
+    match global.bun_vm().as_mut().wait_for_promise(promise) {
+        Ok(()) => true,
+        Err(stopped) => {
+            let _ = stopped.throw(global);
+            false
+        }
+    }
+}
+
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)
 pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
     if jsc_vm.plugin_runner.is_some() {

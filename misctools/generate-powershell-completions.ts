@@ -38,7 +38,7 @@ const data = JSON.parse(readFileSync("completions/bun-cli.json", "utf8")) as {
 const PATH_VALUE_FLAGS = new Set([
   "cwd", "config", "cache-dir", "cafile", "env-file", "preload", "require",
   "import", "outdir", "outfile", "root", "patches-dir", "coverage-dir",
-  "coverage-reporter", "reporter-outfile",
+  "reporter-outfile",
 ]);
 
 // Descriptions the help-text parser could not capture.
@@ -120,6 +120,7 @@ choiceEntries.push(
   ["--shell", "bun system"],
   ["--packages", "bundle external"],
   ["--audit-level", "low moderate high critical"],
+  ["--coverage-reporter", "text lcov"],
   ["--access", "public restricted"],
 );
 
@@ -206,6 +207,7 @@ const pmLines = Object.values(data.commands.pm?.subcommands ?? {})
 parts.push("$script:BunPmSubcommands = @{\n" + pmLines + "\n}");
 
 parts.push("$script:BunPackageCommands = @(" + PACKAGE_COMPLETION_COMMANDS.map(psQuote).join(", ") + ")");
+parts.push("$script:BunSharedCommands = @(" + SHARED_GROUP.concat(["i", "a", "rm", "up"]).map(psQuote).join(", ") + ")");
 parts.push("$script:BunCreateTemplates = @('next', 'react')");
 
 parts.push(readFileSync("misctools/powershell-completions-logic.ps1", "utf8"));

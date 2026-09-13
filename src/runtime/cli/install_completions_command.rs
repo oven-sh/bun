@@ -241,46 +241,65 @@ impl InstallCompletionsCommand {
             }
         }
 
-        for dir in &candidates {
-            if bun_sys::open_dir_absolute(dir).is_err()
-                && bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), dir, 0o755).is_err()
-            {
-                continue;
-            }
-            let Ok(output_dir) = bun_sys::open_dir_absolute(dir) else {
-                continue;
-            };
-            let output_file = match File::create(output_dir, b"bun.ps1", true) {
-                Ok(f) => f,
-                Err(_) => {
-                    let _ = bun_sys::close(output_dir);
-                    continue;
-                }
-            };
-            if output_file.write_all(completions).is_err() {
-                let _ = bun_sys::close(output_dir);
-                continue;
-            }
-            let _ = bun_sys::close(output_dir);
+        // Prefer an existing profile directory over creating one: on Windows,
+        // PowerShell 5.1 only reads Documents\WindowsPowerShell, so creating
+        // Documents\PowerShell on a 5.1-only machine would install a script
+        // that edition never loads.
+        let dir = candidates
+            .iter()
+            .find(|dir| bun_sys::open_dir_absolute(dir).is_ok())
+            .or_else(|| {
+                candidates.iter().find(|dir| {
+                    bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), dir, 0o755).is_ok()
+                })
+            });
+        let Some(dir) = dir else {
             pretty_errorln!(
-                "<r><d>Installed completions to {}/bun.ps1<r>\n",
-                bstr::BStr::new(dir),
+                "<r><red>error:<r> Could not find a directory to install completions in.
+",
             );
             print_errorln!(
-                "To enable them, add this line to your PowerShell profile:\n      . \"{}/bun.ps1\"",
-                bstr::BStr::new(dir),
-            );
-            Output::flush();
-            Global::exit(0);
-        }
+                "Please either pipe it:
+   bun completions > bun.ps1
 
+ Or pass a directory:
+
+   bun completions /my/completions/dir
+",
+            );
+            Global::exit(fail_exit_code);
+        };
+
+        let output_dir = bun_sys::open_dir_absolute(dir).expect("dir was just opened or created");
+        let output_file = match File::create(output_dir, b"bun.ps1", true) {
+            Ok(f) => f,
+            Err(err) => {
+                let _ = bun_sys::close(output_dir);
+                pretty_errorln!(
+                    "<r><red>error:<r> Could not open bun.ps1 for writing: {}",
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(fail_exit_code);
+            }
+        };
+        if output_file.write_all(completions).is_err() {
+            let _ = bun_sys::close(output_dir);
+            pretty_errorln!("<r><red>error:<r> Could not write to bun.ps1",);
+            Global::exit(fail_exit_code);
+        }
+        let _ = bun_sys::close(output_dir);
         pretty_errorln!(
-            "<r><red>error:<r> Could not find a directory to install completions in.\n",
+            "<r><d>Installed completions to {}/bun.ps1<r>
+",
+            bstr::BStr::new(dir),
         );
         print_errorln!(
-            "Please either pipe it:\n   bun completions > bun.ps1\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
+            "To enable them, add this line to your PowerShell profile:
+      . \"{}/bun.ps1\"",
+            bstr::BStr::new(dir),
         );
-        Global::exit(fail_exit_code);
+        Output::flush();
+        Global::exit(0);
     }
 
     pub(crate) fn exec() -> Result<(), crate::Error> {
@@ -371,6 +390,24 @@ impl InstallCompletionsCommand {
 
         #[cfg(not(windows))]
         {
+            // Piped stdout prints the script for any shell with completions,
+            // before the interactive install paths below.
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
+                && !bun_sys::isatty(stdout.handle)
+            {
+                let completions = shell.completions();
+                if !completions.is_empty() {
+                    if let Err(err) = stdout.write_all(completions) {
+                        if err.get_errno() == E::EPIPE {
+                            Global::exit(0);
+                        } else {
+                            return Err(err.into());
+                        }
+                    }
+                    Global::exit(0);
+                }
+            }
+
             let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(
@@ -400,19 +437,6 @@ impl InstallCompletionsCommand {
                 Shell::Zsh => b"_bun",
                 Shell::Bash => b"bun.completion.bash",
             };
-
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-                if !bun_sys::isatty(stdout.handle) {
-                    if let Err(err) = stdout.write_all(shell.completions()) {
-                        if err.get_errno() == E::EPIPE {
-                            Global::exit(0);
-                        } else {
-                            return Err(err.into());
-                        }
-                    }
-                    Global::exit(0);
-                }
-            }
 
             let mut completions_dir: &[u8];
             let output_dir: bun_sys::Fd = 'found: {

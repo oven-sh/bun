@@ -51,6 +51,7 @@ $script:BunFlagChoices = @{
     '--shell' = 'bun system';
     '--packages' = 'bundle external';
     '--audit-level' = 'low moderate high critical';
+    '--coverage-reporter' = 'text lcov';
     '--access' = 'public restricted';
 }
 
@@ -223,7 +224,7 @@ $script:BunFlags = @{
     '--only' = 'Only run tests that are marked with "test.only()"';
     '--todo' = 'Include tests that are marked with "test.todo()"';
     '--coverage' = 'Generate a coverage profile';
-    '--coverage-reporter' = 'Report coverage in ''text'' and/or ''lcov''. Defaults to ''text''. <path>';
+    '--coverage-reporter' = 'Report coverage in ''text'' and/or ''lcov''. Defaults to ''text''.';
     '--coverage-dir' = 'Directory for coverage files. Defaults to ''coverage''. <path>';
     '--bail' = 'Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.';
     '--test-name-pattern' = 'Run only tests with a name that matches the given regex.';
@@ -368,7 +369,7 @@ $script:BunValueFlags = @{
     '--timeout' = 'Set the per-test timeout in milliseconds, default is 5000.';
     '--rerun-each' = 'Re-run each test file <NUMBER> times, helps catch certain bugs';
     '--retry' = 'Default retry count for all tests, overridden by per-test { retry: N }';
-    '--coverage-reporter' = 'Report coverage in ''text'' and/or ''lcov''. Defaults to ''text''. <path>';
+    '--coverage-reporter' = 'Report coverage in ''text'' and/or ''lcov''. Defaults to ''text''.';
     '--coverage-dir' = 'Directory for coverage files. Defaults to ''coverage''. <path>';
     '--bail' = 'Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.';
     '--test-name-pattern' = 'Run only tests with a name that matches the given regex.';
@@ -433,6 +434,8 @@ $script:BunPmSubcommands = @{
 
 $script:BunPackageCommands = @('install', 'add', 'i', 'a')
 
+$script:BunSharedCommands = @('install', 'add', 'remove', 'update', 'dedupe', 'outdated', 'link', 'unlink', 'publish', 'patch', 'info', 'i', 'a', 'rm', 'up')
+
 $script:BunCreateTemplates = @('next', 'react')
 
 # Static completer logic appended to the generated data tables by
@@ -440,8 +443,10 @@ $script:BunCreateTemplates = @('next', 'react')
 # Windows PowerShell 5.1 and PowerShell 7+.
 
 function script:__bunFlagTable([string]$cmd) {
+    # The shared package-manager flag table only applies to the package-manager
+    # commands; other commands get just their own flags plus the globals.
     $table = $script:BunFlags[$cmd]
-    if (-not $table) { $table = $script:BunFlags['*'] }
+    if (-not $table -and $script:BunSharedCommands -contains $cmd) { $table = $script:BunFlags['*'] }
     if (-not $table) { $table = @{} }
     foreach ($key in $script:BunGlobalFlags.Keys) { if (-not $table.ContainsKey($key)) { $table[$key] = $script:BunGlobalFlags[$key] } }
     return $table
@@ -451,6 +456,7 @@ function script:__bunWantsValue([string]$cmd, [string]$flag) {
     if ($flag -notmatch '^--[a-zA-Z0-9][a-zA-Z0-9-]*$' -and $flag -notmatch '^-[a-zA-Z0-9]$') { return $false }
     $table = $script:BunValueFlags[$cmd]
     if ($table -and $table.ContainsKey($flag)) { return $true }
+    if ($script:BunSharedCommands -notcontains $cmd) { return $false }
     $shared = $script:BunValueFlags['*']
     return $shared -and $shared.ContainsKey($flag)
 }
@@ -500,7 +506,7 @@ Register-ArgumentCompleter -CommandName bun, bunx -Native -ScriptBlock {
             if (-not $isCurrent -and $token -notmatch '=' -and (__bunWantsValue $cmd ($token -replace '=.*$', ''))) { $pendingFlag = $token }
             continue
         }
-        if (-not $isCurrent -and ($cmd -eq '' -or $cmd -eq 'x')) { $cmd = $token }
+        if (-not $isCurrent -and $cmd -eq '') { $cmd = $token }
     }
 
     # A flag is waiting for its value: return known choices; for everything else

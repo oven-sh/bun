@@ -25,7 +25,6 @@ const {
 const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ObjectDefineProperty = Object.defineProperty;
-const ArrayPrototypeSlice = Array.prototype.slice;
 
 const kHeaders = Symbol("kHeaders");
 // Cache slot for the server dispatcher's keep-alive decision (stamped once
@@ -218,13 +217,6 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
       const source = this[kHeaderSource];
       let built = source != null ? source.takeRawHeaders() : undefined;
       if (built === undefined) built = [];
-      // Node.js's parser keeps at most server.maxHeadersCount header pairs
-      // (parser.maxHeaderPairs); the native parser does not enforce it, so
-      // truncate here.
-      const maxHeadersCount = this[fakeSocketSymbol]?.server?.maxHeadersCount;
-      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && built.length > maxHeadersCount * 2) {
-        built = ArrayPrototypeSlice.$call(built, 0, maxHeadersCount * 2);
-      }
       raw = this[kRawHeaders] = built;
       this[kHeadersCount] = built.length;
     }

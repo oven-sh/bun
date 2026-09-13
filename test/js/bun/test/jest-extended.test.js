@@ -640,8 +640,8 @@ describe("jest-extended", () => {
     expect(() => tstErr(1.23)).toThrow();
     expect(() => tstErr(Infinity)).toThrow();
     expect(() => tstErr(NaN)).toThrow();
-    expect(() => tstErr(-0)).toThrow(); // -0 and below (-1, -2, ...)
-    // These fail the assertion. They are not argument errors.
+    expect(() => tstErr(-0)).toThrow();
+    // -1 and -2 fail the assertion. They are not argument errors.
     expect(() => tstErr(-1)).toThrow(/Expected (string )?to include/);
     expect(() => tstErr(-2)).toThrow(/Expected (string )?to include/);
     expect(() => tstErr(null)).toThrow();

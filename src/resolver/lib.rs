@@ -348,9 +348,8 @@ pub mod fs {
             MAX_FD.load(Ordering::Relaxed)
         }
 
-        /// Joins `parts` against `top_level_dir` into `buf`, returning the
-        /// absolute path slice. Unchecked: only for parts known to fit, such as the
-        /// `dir` and `base` of a listing entry (see `DirEntry::add_entry_with_store`).
+        /// Joins `parts` against `top_level_dir` into `buf`. Unchecked: only for parts
+        /// known to fit, like the `dir` and `base` of a listing entry.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
             join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)

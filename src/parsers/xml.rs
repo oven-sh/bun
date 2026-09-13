@@ -362,8 +362,7 @@ pub fn is_xml_char(cp: u32) -> bool {
     matches!(cp, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
 }
 
-/// `S` (§2.3 [3]) for any code point; used by `XML.stringify` to refuse
-/// indentation the parser would read as content.
+/// `S` (§2.3 [3]) for any code point.
 pub fn is_whitespace(cp: u32) -> bool {
     cp < 0x80 && is_ws(cp as u8)
 }

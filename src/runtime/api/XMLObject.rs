@@ -215,9 +215,7 @@ impl Space {
     /// How many code units of a string `space` are written per level.
     const MAX_STR_LEN: usize = 10;
 
-    /// Same interpretation as `JSON.stringify`'s `space`, except that a
-    /// string must be XML whitespace: it is written between elements as is,
-    /// so anything else would be markup or character data.
+    /// `JSON.stringify`'s `space`, except that a string must be XML whitespace.
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {

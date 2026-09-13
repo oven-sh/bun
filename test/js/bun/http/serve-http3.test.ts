@@ -28,7 +28,18 @@ const DEAD_PORT_ABORT_MS = 1000;
 // onto the dead conn. us_quic_listen_socket_close() flushes CONNECTION_CLOSE
 // synchronously during stop(true); the trailing setTimeout gives the kernel a
 // tick to deliver the loopback datagram before the process exits.
-const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });`;
+//
+// stdin is read through Bun.stdin.stream() rather than process.stdin: the first
+// access to process.stdin (or process.stdout) initializes node's stream stack,
+// which takes over a second per fixture, i.e. per test, in a debug build.
+const STDIN_HELPERS = `
+async function readStdin(onChunk = () => {}) {
+  for await (const chunk of Bun.stdin.stream()) onChunk(new TextDecoder().decode(chunk));
+}
+function stopOnStdinEnd(onChunk) {
+  readStdin(onChunk).then(() => { server.stop(true); setTimeout(() => process.exit(0), 100); });
+}
+`;
 
 const fixture = `
 import { serve } from "bun";
@@ -109,8 +120,15 @@ const server = serve({
       });
     }
     if (url.pathname === "/spawn") {
+      // 40 lines of 1000 "x", one pipe write each. Bun.write rather than
+      // process.stdout for the reason given at STDIN_HELPERS: the child is a
+      // second debug-build process, so it would pay that startup cost again.
       const p = Bun.spawn({
-        cmd: [process.execPath, "-e", "for(let i=0;i<40;i++)process.stdout.write('x'.repeat(1000)+String.fromCharCode(10))"],
+        cmd: [
+          process.execPath,
+          "-e",
+          "const line = Buffer.alloc(1001, 'x'); line[1000] = 10; for (let i = 0; i < 40; i++) await Bun.write(Bun.stdout, line);",
+        ],
         stdout: "pipe",
       });
       return new Response(p.stdout, { headers: { "content-type": "text/plain" } });
@@ -167,8 +185,8 @@ const server = serve({
 });
 
 console.error("PORT=" + server.port);
-process.stdin.on("data", () => {});
-${STOP_ON_STDIN_END}
+${STDIN_HELPERS}
+stopOnStdinEnd();
 `;
 
 async function withServer(
@@ -315,7 +333,8 @@ describe("Bun.serve HTTP/3", () => {
       const url = new URL(server.url);
       console.error("URLPORT=" + url.port);
       console.error("ADDR=" + JSON.stringify(server.address));
-      process.stdin.on("data", async () => {
+      ${STDIN_HELPERS}
+      readStdin(async () => {
         await server.stop();
         console.error("STOPPED");
       });
@@ -349,8 +368,8 @@ describe("Bun.serve HTTP/3", () => {
         },
       });
       console.error("PORT=" + server.port);
-      process.stdin.on("data", () => {});
-      ${STOP_ON_STDIN_END}
+      ${STDIN_HELPERS}
+      stopOnStdinEnd();
     `;
     await withCustomServer(script, async port => {
       // 256 KB body via ReadableStream → no Content-Length on the wire.
@@ -408,8 +427,8 @@ describe("Bun.serve HTTP/3", () => {
         fetch: req => new Response("from-fetch:" + req.method),
       });
       console.error("PORT=" + server.port);
-      process.stdin.on("data", () => {});
-      ${STOP_ON_STDIN_END}
+      ${STDIN_HELPERS}
+      stopOnStdinEnd();
     `;
     await withCustomServer(script, async port => {
       expect(await fetchH3(port, "/anything").then(r => r.text())).toBe("from-route");
@@ -890,8 +909,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         fetch: () => new Response("fallback", { status: 404 }),
       });
       console.error("PORT=" + server.port);
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", line => {
+      ${STDIN_HELPERS}
+      stopOnStdinEnd(line => {
         if (line.includes("reload")) {
           server.reload({
             routes: { "/new": new Response("new-route") },
@@ -900,7 +919,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           console.error("RELOADED");
         }
       });
-      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/old").then(r => r.text())).toBe("old-route");
@@ -939,8 +957,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         console.error("PORT=" + server.port);
       };
       start(0);
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", async line => {
+      ${STDIN_HELPERS}
+      stopOnStdinEnd(async line => {
         if (line.includes("stop")) {
           // Let the delayed-ACK timer fire so send_ctl has nothing scheduled
           // when listen_socket_close runs; that's the state in which the old
@@ -952,7 +970,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           console.error("RESTARTED");
         }
       });
-      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       // Warm the pooled client session.
@@ -996,8 +1013,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         fetch: () => new Response("alive"),
       });
       console.error("PORT=" + server.port);
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", async line => {
+      ${STDIN_HELPERS}
+      readStdin(async line => {
         if (line.includes("stop")) {
           server.stop(true);
           // give the timer one tick to prove it doesn't deref freed peer_ctx
@@ -1135,8 +1152,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         },
       });
       console.error("PORT=" + server.port);
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", line => {
+      ${STDIN_HELPERS}
+      readStdin(line => {
         if (line.includes("stop")) { stopping = true; server.stop(); }
         if (line.includes("exit")) process.exit(0);
       });
@@ -1170,7 +1187,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           fetch: () => new Response("ok"),
         });
         console.error("PORT=" + server.port);
-        process.stdin.once("data", () => server.stop());
+        ${STDIN_HELPERS}
+        readStdin(() => server.stop());
       `,
     });
     const proc = Bun.spawn({
@@ -1217,8 +1235,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         },
       });
       console.error("PORT=" + server.port);
-      process.stdin.on("data", () => {});
-      ${STOP_ON_STDIN_END}
+      ${STDIN_HELPERS}
+      stopOnStdinEnd();
     `;
     await withCustomServer(script, async port => {
       // Warm the QUIC connection so the /hang stream is actually bound
@@ -1310,8 +1328,8 @@ describe("Bun.serve HTTP/3 production", () => {
         },
       });
       console.error("PORT=" + server.port);
-      process.stdin.on("data", () => {});
-      ${STOP_ON_STDIN_END}
+      ${STDIN_HELPERS}
+      stopOnStdinEnd();
     `;
     await withCustomServer(script, async port => {
       const res = await fetchH3(port, "/");

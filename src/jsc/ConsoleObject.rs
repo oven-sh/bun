@@ -1608,6 +1608,12 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Byte budget for one `ZigFormatter` (`Display`) render of a value.
+        /// Wide object graphs (e.g. DOM trees) can otherwise expand to
+        /// gigabytes — past `WTF::String::MaxLength` the resulting error
+        /// message cannot even be materialized as a JS string. Output is cut
+        /// at the budget with a truncation marker. `usize::MAX` = unlimited.
+        pub max_output_bytes: usize,
     }
 
     impl<'a> Formatter<'a> {
@@ -1638,6 +1644,7 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                max_output_bytes: usize::MAX,
             }
         }
 
@@ -1673,6 +1680,7 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                max_output_bytes: self.max_output_bytes,
             }
         }
 
@@ -1755,6 +1763,48 @@ pub mod formatter {
                 formatter: Cell::new(Some(formatter)),
                 value,
             }
+        }
+    }
+
+    /// Byte sink that forwards to `inner` until a byte budget is exhausted,
+    /// then silently discards further writes and reports `is_truncated()`.
+    /// It never fails because of the cap, so the formatter's infallible-write
+    /// call sites (`.expect("unreachable")`) hold; `print_as_prelude` polls
+    /// `is_truncated()` and sets `Formatter.failed`, which is what stops the
+    /// walk over the value graph shortly after the cap.
+    struct TruncatingWriter<'a> {
+        inner: &'a mut dyn bun_io::Write,
+        remaining: usize,
+        truncated: bool,
+    }
+
+    impl bun_io::Write for TruncatingWriter<'_> {
+        fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+            if self.truncated {
+                return Ok(());
+            }
+            if buf.len() <= self.remaining {
+                self.remaining -= buf.len();
+                return self.inner.write_all(buf);
+            }
+            // Keep the prefix that fits, backed off to a UTF-8 boundary so
+            // the fmt bridge doesn't emit a replacement char for a split
+            // code point.
+            let mut take = self.remaining;
+            while take > 0 && buf[take] & 0b1100_0000 == 0b1000_0000 {
+                take -= 1;
+            }
+            self.remaining = 0;
+            self.truncated = true;
+            if take > 0 {
+                self.inner.write_all(&buf[..take])?;
+            }
+            Ok(())
+        }
+
+        #[inline]
+        fn is_truncated(&self) -> bool {
+            self.truncated
         }
     }
 
@@ -3214,6 +3264,12 @@ pub mod formatter {
             remove_before_recurse: &mut bool,
         ) -> JsResult<bool> {
             if self.failed {
+                return Ok(false);
+            }
+            if writer_.is_truncated() {
+                // A byte-budgeted sink hit its cap; stop walking the value
+                // graph instead of rendering into a discarding writer.
+                self.failed = true;
                 return Ok(false);
             }
             if self.global_this.has_exception() {
@@ -5628,9 +5684,22 @@ pub mod formatter {
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
+            // Honor `max_output_bytes`: cap the rendered output and finish
+            // with a truncation marker when the budget is hit.
+            let mut sink = TruncatingWriter {
+                inner: &mut *writer,
+                remaining: self.max_output_bytes,
+                truncated: false,
+            };
             let result = Tag::get(value, global)
-                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, &mut sink, value, global));
+            let truncated = sink.truncated;
+            drop(sink);
             self.remaining_values = bun_ptr::RawSlice::EMPTY;
+            if truncated && result.is_ok() {
+                self.failed = false;
+                let _ = writer.write_all(b"... [value truncated]");
+            }
             result
         }
     }

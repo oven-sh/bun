@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -938,11 +938,11 @@ test("SourceTextModule accepts the cachedData it produced", () => {
 // lent JSC a span over a temporary WTF::Vector copy of the caller's buffer that died with
 // the call, so the first call of a function compiled from accepted cachedData read freed
 // memory. Keeping the caller's Buffer alive does not help: the dangling span is over bun's
-// copy of it. A release build prints the right answers and reports nothing, so the child
-// runs with Malloc=1, which routes WTF's allocator through the system allocator and lets
-// ASAN see the freed payload. Without the fix the child aborts at the first case.
-describe.skipIf(!isASAN)("a compile from cachedData keeps the payload alive", () => {
-  test("does not decode function bodies out of freed memory", async () => {
+// copy of it.
+describe("a compile from cachedData keeps the payload alive", () => {
+  // Malloc=1 routes WTF's allocator through the system allocator so ASAN sees the freed
+  // payload. Without the fix the child aborts at the first case.
+  test.skipIf(!isASAN)("does not decode function bodies out of freed memory", async () => {
     const fixture = String.raw`
       const vm = require("node:vm");
       const out = [];
@@ -1011,6 +1011,51 @@ describe.skipIf(!isASAN)("a compile from cachedData keeps the payload alive", ()
       ].join("\n"),
     );
     expect(exitCode).toBe(0);
+  });
+
+  // The same bug with no sanitizer. Work between the compile and the first call reuses the
+  // freed payload's memory, and roughly two unfixed processes in five then die with
+  // "Segmentation fault at address 0x0". It is down to heap layout (an ES module on disk
+  // shows it, `-e` and CommonJS do not), so several children run.
+  test.skipIf(isASAN)("runs the compiled functions after the payload's memory is reused", async () => {
+    const fixture = String.raw`
+      import vm from "node:vm";
+      const out = [];
+      for (let i = 0; i < 20; i++) {
+        const source = 'function inner(x){ return x * ' + (i + 2) + ' + 1 } return [inner(7), "k' + i + '".repeat(3)]';
+        const produced = vm.compileFunction(source, [], { produceCachedData: true });
+        const junk = Array.from({ length: 50 }, (_, j) => new Uint8Array(produced.cachedData.length).fill(j));
+        const fn = vm.compileFunction(source, [], { cachedData: produced.cachedData });
+        const want = JSON.stringify(produced());
+        let got;
+        try {
+          got = JSON.stringify(fn());
+        } catch (e) {
+          got = "threw " + e.message;
+        }
+        out.push(fn.cachedDataRejected + ":" + (got === want ? "ok" : "WRONG " + got));
+      }
+      console.log(out.join(" "));
+    `;
+
+    using dir = tempDir("vm-cached-data-reuse", { "reuse-fixture.mjs": fixture });
+    const children = 8;
+    const runs = await Promise.all(
+      Array.from({ length: children }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "reuse-fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
+
+    const clean = { stdout: Array(20).fill("false:ok").join(" ") + "\n", stderr: "", exitCode: 0, signalCode: null };
+    expect(runs).toEqual(Array(children).fill(clean));
   });
 });
 

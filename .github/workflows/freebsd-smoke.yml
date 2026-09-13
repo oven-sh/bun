@@ -64,6 +64,37 @@ jobs:
             $BUN -e 'console.log("hello from", process.platform, process.arch)'
             echo "=== os ==="
             $BUN -e 'const os=require("os"); console.log(os.type(), os.release(), os.cpus().length, "cpus")'
+            echo "=== cpus times probe (#42634) ==="
+            sysctl hw.ncpu kern.clockrate
+            echo "CLK_TCK: $(getconf CLK_TCK)"
+            cat > /tmp/check.js <<'EOF'
+            const os = require("os");
+            const readCpTimes = () =>
+              Bun.spawnSync(["sysctl", "-n", "kern.cp_times"]).stdout.toString().trim().split(/\s+/).map(Number);
+            const clkTck = Number(Bun.spawnSync(["getconf", "CLK_TCK"]).stdout.toString().trim());
+            const mult = Math.floor(1000 / clkTck);
+            const before = readCpTimes();
+            const cpus = os.cpus();
+            const after = readCpTimes();
+            console.log("clkTck:", clkTck, "mult:", mult);
+            console.log("cp_times before:", before.join(" "));
+            console.log("cp_times after: ", after.join(" "));
+            const fields = ["user", "nice", "sys", "irq", "idle"];
+            let ok = true;
+            for (let i = 0; i < cpus.length; i++) {
+              console.log("cpu", i, JSON.stringify(cpus[i].times));
+              for (let j = 0; j < fields.length; j++) {
+                const v = cpus[i].times[fields[j]];
+                const lo = before[i * 5 + j] * mult, hi = after[i * 5 + j] * mult;
+                if (!(v >= lo && v <= hi)) { ok = false; console.log("  MISMATCH", fields[j], v, "not in", [lo, hi]); }
+              }
+            }
+            const t = cpus[0].times, sum = t.user + t.nice + t.sys + t.irq + t.idle;
+            console.log("cpu0 sum / (uptime*1000):", (sum / (os.uptime() * 1000)).toFixed(3));
+            console.log(ok ? "RESULT: times are in milliseconds" : "RESULT: times are NOT scaled to milliseconds");
+            process.exit(ok ? 0 : 1);
+            EOF
+            $BUN /tmp/check.js
             echo "=== fs ==="
             $BUN -e 'require("fs").writeFileSync("/tmp/x","ok"); console.log(require("fs").readFileSync("/tmp/x","utf8"))'
             echo "=== http ==="

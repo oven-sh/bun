@@ -322,11 +322,15 @@ Example usage:
 Bun.stringWidth("hello"); // => 5
 Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
 Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
+Bun.stringWidth("👨‍👩‍👧‍👦"); // => 2
+Bun.stringWidth("👨‍👩‍👧‍👦", { perCodePoint: true }); // => 8
 ```
 
 Use it to align text in a terminal or to check whether a string contains ANSI escape codes.
 
 The API matches the "string-width" npm package, so you can port existing code to Bun and vice versa.
+
+By default, an emoji sequence (or any other grapheme cluster) is measured once, like `string-width` does. Pass `perCodePoint: true` to measure every code point individually instead, which is how Node.js measures strings when aligning `console.table` and `util.inspect` output. In that mode each emoji in a ZWJ sequence is counted, so the family emoji above measures 8 instead of 2. Use it when your output has to line up with output produced by Node.js. This option is specific to Bun: `string-width` has no equivalent, so code that uses it does not port back unchanged.
 
 [In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`.
 
@@ -440,6 +444,17 @@ namespace Bun {
        * @default true
        */
       ambiguousIsNarrow?: boolean;
+      /**
+       * If `true`, measure every Unicode code point individually (East Asian
+       * Width plus emoji presentation, the algorithm Node.js uses for
+       * `console.table` and `util.inspect` alignment), so each member of an
+       * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+       * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+       * measures 2.
+       *
+       * @default false
+       */
+      perCodePoint?: boolean;
     },
   ): number;
 }

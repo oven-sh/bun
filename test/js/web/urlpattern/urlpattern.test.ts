@@ -304,8 +304,9 @@ describe("URLPattern", () => {
       },
     ];
 
-    for (const { init, options, component, spec, names, inputs } of cases) {
-      test(`${JSON.stringify(init)} matches like the spec regexp`, () => {
+    test.each(cases.map(entry => [JSON.stringify(entry.init), entry] as const))(
+      "%s matches like the spec regexp",
+      (_, { init, options, component, spec, names, inputs }) => {
         const pattern = new URLPattern(init, options);
         const mismatches: unknown[] = [];
         let matched = 0;
@@ -317,8 +318,8 @@ describe("URLPattern", () => {
           if (!Bun.deepEquals(actual, expected)) mismatches.push({ input, actual, expected });
         }
         expect({ mismatches, matchedSome: matched > 0 }).toEqual({ mismatches: [], matchedSome: true });
-      });
-    }
+      },
+    );
 
     test("a group keeps a separator it has to contain", () => {
       const pattern = new URLPattern({ pathname: "/:a-:b-:c" });

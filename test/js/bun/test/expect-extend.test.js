@@ -7,7 +7,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
@@ -391,6 +391,82 @@ test("expect.extend with numeric index keys does not crash", () => {
 });
 
 describe("MatcherContext", () => {
+  const stripAnsi = (/** @type {string} */ text) => text.replace(/\x1b\[[0-9;]*m/g, "");
+  const utilNames = ["stringify", "printExpected", "printReceived", "EXPECTED_COLOR", "RECEIVED_COLOR", "matcherHint"];
+
+  /** @returns {any} the `this.utils` that a matcher sees */
+  function getUtils() {
+    let utils;
+    expect.extend({
+      _toExposeUtils() {
+        utils = this.utils;
+        return { pass: true };
+      },
+    });
+    expect(0)._toExposeUtils();
+    return utils;
+  }
+
+  // Jest gives a matcher plain functions, and published matchers call them without a receiver.
+  // jest-extended starts every matcher with `const { printReceived, matcherHint } = this.utils`
+  // and passes `this.equals` to its helpers as a callback.
+  test("equals works without a receiver", () => {
+    let results;
+    expect.extend({
+      _toUseDestructuredEquals(actual) {
+        const { equals } = this;
+        results = {
+          same: equals(actual, { a: 1 }),
+          different: equals(actual, { a: 2 }),
+          asymmetric: equals(actual, { a: expect.any(Number) }),
+          stable: this.equals === equals,
+        };
+        return { pass: true };
+      },
+    });
+
+    expect({ a: 1 })._toUseDestructuredEquals();
+    expect(results).toEqual({ same: true, different: false, asymmetric: true, stable: true });
+  });
+
+  test.skipIf(!isBun)("matchers from the jest-extended package run through expect.extend", async () => {
+    // The package replaces the built-in matchers of the same name, so it runs in a child process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { expect } from "bun:test";
+          import matchers from "jest-extended";
+          expect.extend(matchers);
+
+          expect([1, 2]).toIncludeAllMembers([2]);
+          expect({ a: 1 }).toContainEntry(["a", 1]);
+          let message;
+          try {
+            expect("zz").toBeHexadecimal();
+          } catch (e) {
+            message = e.message;
+          }
+          console.log(JSON.stringify(message));
+        `,
+      ],
+      env: bunEnv,
+      cwd: import.meta.dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ message: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      message:
+        "expect(received).toBeHexadecimal()\n\n" +
+        'expect(received).toBeHexadecimal()\n\nExpected value to be a hexadecimal, received:\n  "zz"',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {
       expect.extend({
@@ -401,6 +477,174 @@ describe("MatcherContext", () => {
       });
 
       expect(123).toBeCustomColor(456);
+    });
+
+    test("the failure message can use functions destructured from utils", () => {
+      expect.extend({
+        _toFailWithDestructuredUtils(actual, expected) {
+          const { matcherHint, printExpected, printReceived, stringify } = this.utils;
+          return {
+            pass: false,
+            message: () =>
+              matcherHint("._toFailWithDestructuredUtils") +
+              `\n\nExpected: ${printExpected(expected)}\nReceived: ${printReceived(actual)} (${stringify(actual)})`,
+          };
+        },
+      });
+
+      let message;
+      try {
+        expect("a")._toFailWithDestructuredUtils("b");
+      } catch (e) {
+        message = stripAnsi(e.message);
+      }
+      // bun:test puts its own signature line above the matcher's message. Jest does not.
+      expect(message).toBe(
+        (isBun ? "expect(received)._toFailWithDestructuredUtils(expected)\n\n" : "") +
+          'expect(received)._toFailWithDestructuredUtils(expected)\n\nExpected: "b"\nReceived: "a" ("a")',
+      );
+    });
+
+    test("every function works without a receiver", () => {
+      const withReceiver = {};
+      const withoutReceiver = {};
+      expect.extend({
+        _toCallUtilsWithoutReceiver(actual) {
+          for (const name of utilNames) {
+            const fn = this.utils[name];
+            withReceiver[name] = this.utils[name](actual);
+            withoutReceiver[name] = fn(actual);
+          }
+          return { pass: true };
+        },
+      });
+
+      expect("toFoo")._toCallUtilsWithoutReceiver();
+      expect(Object.keys(withoutReceiver)).toEqual(utilNames);
+      expect(withoutReceiver).toEqual(withReceiver);
+    });
+
+    test("is a plain object that owns its functions", () => {
+      const utils = getUtils();
+      expect(Object.getPrototypeOf(utils)).toBe(Object.prototype);
+      expect(Object.keys(utils)).toEqual(expect.arrayContaining(utilNames));
+      const copy = { ...utils };
+      expect(utilNames.map(name => typeof copy[name])).toEqual(utilNames.map(() => "function"));
+    });
+
+    describe("matcherHint", () => {
+      const E = (/** @type {string} */ text) => `<E:${text}>`;
+      const R = (/** @type {string} */ text) => `<R:${text}>`;
+      const S = (/** @type {string} */ text) => `<S:${text}>`;
+
+      // The expected values are the output of jest-matcher-utils 30.2.0 with colors off.
+      /** @type {[any[], string][]} */
+      const cases = [
+        [["toFoo"], "expect(received).toFoo(expected)"],
+        // A name with a period is the old format. jest-extended passes ".toX" and ".not.toX".
+        [[".toFoo"], "expect(received).toFoo(expected)"],
+        [[".not.toFoo"], "expect(received).not.toFoo(expected)"],
+        [[".toFoo", "received", ""], "expect(received).toFoo()"],
+        [[".not.toFoo", "received", ""], "expect(received).not.toFoo()"],
+        [["a.b.c"], "expect(received)a.b.c(expected)"],
+        // `received` and `expected` are labels.
+        [["toFoo", "a", "b"], "expect(a).toFoo(b)"],
+        [["toFoo", "", ""], "expect.toFoo()"],
+        [["toFoo", "", "x"], "expect.toFoo(x)"],
+        [["toFoo", 1, 2], "expect(1).toFoo(2)"],
+        [["toFoo", null, null], "expect(null).toFoo(null)"],
+        [["toFoo", undefined, undefined, {}], "expect(received).toFoo(expected)"],
+        [["toFoo", undefined, undefined, { isNot: true }], "expect(received).not.toFoo(expected)"],
+        [[".toFoo", undefined, undefined, { isNot: true }], "expect(received).not.toFoo(expected)"],
+        [["toFoo", undefined, undefined, { promise: "resolves" }], "expect(received).resolves.toFoo(expected)"],
+        [
+          ["toFoo", undefined, undefined, { promise: "rejects", isNot: true }],
+          "expect(received).rejects.not.toFoo(expected)",
+        ],
+        [
+          [".toFoo", undefined, undefined, { promise: "rejects", isNot: true }],
+          "expect(received).rejects.not.toFoo(expected)",
+        ],
+        [["toFoo", undefined, undefined, { isDirectExpectCall: true }], "expect.toFoo(expected)"],
+        [["toFoo", "a", "b", { secondArgument: "c" }], "expect(a).toFoo(b, c)"],
+        [["toFoo", "a", "", { secondArgument: "c" }], "expect(a).toFoo()"],
+        [
+          ["toFoo", undefined, undefined, { comment: "deep equality" }],
+          "expect(received).toFoo(expected) // deep equality",
+        ],
+        [["toFoo", undefined, "", { comment: "deep equality" }], "expect(received).toFoo() // deep equality"],
+        [
+          ["toFoo", "a", "b", { receivedColor: R, expectedColor: E, secondArgument: "c", secondArgumentColor: S }],
+          "expect(<R:a>).toFoo(<E:b>, <S:c>)",
+        ],
+        [["toFoo", 0, 0, { comment: 0, promise: 0, secondArgument: 0 }], "expect(0).0.toFoo(0) // 0"],
+        [
+          ["toFoo", undefined, undefined, { isNot: undefined, comment: undefined, promise: undefined }],
+          "expect(received).toFoo(expected)",
+        ],
+      ];
+
+      test("returns the one-line signature that Jest returns", () => {
+        const utils = getUtils();
+        expect(cases.map(([args]) => stripAnsi(utils.matcherHint(...args)))).toEqual(
+          cases.map(([, expected]) => expected),
+        );
+      });
+
+      test("a color option that is not a function is a TypeError", () => {
+        const utils = getUtils();
+        let error;
+        try {
+          utils.matcherHint("toFoo", "a", "b", { expectedColor: "green" });
+        } catch (e) {
+          error = e;
+        }
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error.message).toBe(
+          isBun ? "matcherHint: options.expectedColor must be a function" : "expectedColor is not a function",
+        );
+      });
+
+      test.skipIf(!isBun)("colors the labels and joins adjacent dim text", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              import { expect } from "bun:test";
+              expect.extend({
+                _toPrintHints() {
+                  const { matcherHint } = this.utils;
+                  console.log(
+                    JSON.stringify([
+                      matcherHint(".not.toFoo", "received", ""),
+                      matcherHint("toFoo", "a", "b", { isNot: true, secondArgument: "c", comment: "why" }),
+                      matcherHint("toFoo", "a", "b", { receivedColor: text => "<" + text + ">" }),
+                    ]),
+                  );
+                  return { pass: true };
+                },
+              });
+              expect(0)._toPrintHints();
+            `,
+          ],
+          env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
+        expect({ hints: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+          hints: [
+            `${dim}expect(${reset}${red}received${reset}${dim}).not.toFoo()${reset}`,
+            `${dim}expect(${reset}${red}a${reset}${dim}).${reset}not${dim}.${reset}toFoo${dim}(${reset}${green}b${reset}${dim}, ${reset}${green}c${reset}${dim}) // why${reset}`,
+            `${dim}expect(${reset}<a>${dim}).${reset}toFoo${dim}(${reset}${green}b${reset}${dim})${reset}`,
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 });

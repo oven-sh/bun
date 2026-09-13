@@ -372,7 +372,6 @@ mod _impl {
             let mut line_iter = strings::tokenize(contents, b"\n");
 
             const KEY_PROCESSOR: &[u8] = b"processor\t: ";
-            const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
 
             // `None` for a processor that /proc/stat did not list.
             let mut slot: Option<u32> = None;
@@ -383,10 +382,9 @@ mod _impl {
                     slot = parse_u32(digits)
                         .ok()
                         .and_then(|cpu_id| slot_by_cpu_id.get(&cpu_id).copied());
-                } else if line.starts_with(KEY_MODEL_NAME) {
-                    // If this is the model name, extract it and store on the current cpu
+                } else if let Some(model_name) = cpuinfo_model(line) {
+                    // If this line names the model, store it on the current cpu
                     let Some(slot) = slot else { continue };
-                    let model_name = &line[KEY_MODEL_NAME.len()..];
                     let cpu = values.get_index(global_this, slot)?;
                     cpu.put(
                         global_this,
@@ -412,6 +410,77 @@ mod _impl {
         }
 
         Ok(values)
+    }
+
+    /// The model that one `/proc/cpuinfo` line names. Node reads one of the two keys, by target arch: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1696-L1714
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn cpuinfo_model(line: &[u8]) -> Option<&[u8]> {
+        if let Some(model_name) = line.strip_prefix(b"model name\t: ") {
+            return Some(model_name);
+        }
+        // QEMU user mode prints both keys for arm64. A part with a name wins, as in Node. A part with none keeps `model name`, where Node says "unknown".
+        arm64_cpu_part_name(line.strip_prefix(b"CPU part\t: ")?)
+    }
+
+    /// libuv's names for the arm64 `CPU part` codes: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1715-L1736
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn arm64_cpu_part_name(part: &[u8]) -> Option<&'static [u8]> {
+        let name: &'static [u8] = match part {
+            b"0x811" => b"ARM810",
+            b"0x920" => b"ARM920",
+            b"0x922" => b"ARM922",
+            b"0x926" => b"ARM926",
+            b"0x940" => b"ARM940",
+            b"0x946" => b"ARM946",
+            b"0x966" => b"ARM966",
+            b"0xa20" => b"ARM1020",
+            b"0xa22" => b"ARM1022",
+            b"0xa26" => b"ARM1026",
+            b"0xb02" => b"ARM11 MPCore",
+            b"0xb36" => b"ARM1136",
+            b"0xb56" => b"ARM1156",
+            b"0xb76" => b"ARM1176",
+            b"0xc05" => b"Cortex-A5",
+            b"0xc07" => b"Cortex-A7",
+            b"0xc08" => b"Cortex-A8",
+            b"0xc09" => b"Cortex-A9",
+            b"0xc0d" => b"Cortex-A17",
+            b"0xc0f" => b"Cortex-A15",
+            b"0xc0e" => b"Cortex-A17",
+            b"0xc14" => b"Cortex-R4",
+            b"0xc15" => b"Cortex-R5",
+            b"0xc17" => b"Cortex-R7",
+            b"0xc18" => b"Cortex-R8",
+            b"0xc20" => b"Cortex-M0",
+            b"0xc21" => b"Cortex-M1",
+            b"0xc23" => b"Cortex-M3",
+            b"0xc24" => b"Cortex-M4",
+            b"0xc27" => b"Cortex-M7",
+            b"0xc60" => b"Cortex-M0+",
+            b"0xd01" => b"Cortex-A32",
+            b"0xd03" => b"Cortex-A53",
+            b"0xd04" => b"Cortex-A35",
+            b"0xd05" => b"Cortex-A55",
+            b"0xd06" => b"Cortex-A65",
+            b"0xd07" => b"Cortex-A57",
+            b"0xd08" => b"Cortex-A72",
+            b"0xd09" => b"Cortex-A73",
+            b"0xd0a" => b"Cortex-A75",
+            b"0xd0b" => b"Cortex-A76",
+            b"0xd0c" => b"Neoverse-N1",
+            b"0xd0d" => b"Cortex-A77",
+            b"0xd0e" => b"Cortex-A76AE",
+            b"0xd13" => b"Cortex-R52",
+            b"0xd20" => b"Cortex-M23",
+            b"0xd21" => b"Cortex-M33",
+            b"0xd41" => b"Cortex-A78",
+            b"0xd42" => b"Cortex-A78AE",
+            b"0xd4a" => b"Neoverse-E1",
+            b"0xd4b" => b"Cortex-A78C",
+            b"0xd4f" => b"Neoverse-V2",
+            _ => return None,
+        };
+        Some(name)
     }
 
     #[cfg(target_os = "freebsd")]

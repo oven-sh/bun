@@ -104,10 +104,7 @@ private:
     void finishCreation(JSC::VM&);
 };
 
-// Options of one Script#runIn*Context() call, parsed like Node's getRunInContextArgs:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L165-L194
-// Disjoint from ScriptOptions, as in Node. A run never reads filename, lineOffset or columnOffset, so this is
-// not a BaseVMOptions. `new Script()` never reads timeout, displayErrors or breakOnSigint.
+// Node's getRunInContextArgs: https://github.com/nodejs/node/blob/v26.3.0/lib/vm.js#L165-L194
 class RunningScriptOptions {
 public:
     bool displayErrors = true;

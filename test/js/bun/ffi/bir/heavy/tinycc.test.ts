@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { run, supported } from "../run-fixtures";
+import { meets, run, supported } from "../run-fixtures";
 
 // tinycc's own test programs, compiled by Bun's C compiler and run for real. They read the vendored
 // tinycc sources, so they only run when asked to (BUN_C_COMPILER_HEAVY_TESTS=1) and the sources exist.
@@ -95,7 +95,8 @@ const tcctestDifferences: [string, string][] = [
   ["res12 = ", "__builtin_constant_p(i && 0 ? i : 34), likewise"],
 ];
 
-describe.skipIf(!enabled || !Bun.which("gcc"))("tinycc tcctest.c", () => {
+// (Compared with what GNU C makes of it on x86-64: the file has per-target sections and its own idea of `long double`.)
+describe.skipIf(!enabled || !Bun.which("gcc") || !meets("glibc") || !meets("x87"))("tinycc tcctest.c", () => {
   test("prints what it prints when gcc compiles it", async () => {
     const config = join(repo, "build/release-local/deps/tinycc");
     // Without its inline assembly section, which is 32-bit and AT&T-only in places.
@@ -127,7 +128,8 @@ describe.skipIf(!enabled || !Bun.which("gcc"))("tinycc tcctest.c", () => {
   });
 });
 
-describe.skipIf(!enabled)("tinycc itself", () => {
+// (The compiler tcc.c makes is one for the machine it is built on; the expectations are the x86-64 Linux one's.)
+describe.skipIf(!enabled || !meets("glibc") || !meets("x87"))("tinycc itself", () => {
   const config = join(repo, "build/release-local/deps/tinycc");
   const macros = `#define ONE_SOURCE 1
 #define CONFIG_TCC_PREDEFS 1

@@ -1965,14 +1965,26 @@ declare module "bun:test" {
     //customTesters: Array<Tester>;
     //dontThrow(): void; // (internally used by jest snapshot)
     equals: EqualsFunction;
+    /**
+     * Helpers to build a failure message. They are plain functions, so a matcher can destructure them:
+     * `const { matcherHint, printReceived } = this.utils`.
+     */
     utils: Readonly<{
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      /**
+       * Returns the one-line call signature that starts a failure message, for example
+       * `expect(received).toBeFoo(expected)`.
+       *
+       * @param matcherName The matcher name. A name that contains a period (`".toBeFoo"`, `".not.toBeFoo"`) is printed as it is.
+       * @param received The label in `expect(...)`. The default is `"received"`. An empty string prints `expect` without parentheses.
+       * @param expected The label in the matcher call. The default is `"expected"`. An empty string prints `()`.
+       */
       matcherHint(
         matcherName: string,
-        received?: unknown,
-        expected?: unknown,
+        received?: string,
+        expected?: string,
         options?: {
           isNot?: boolean;
           promise?: string;

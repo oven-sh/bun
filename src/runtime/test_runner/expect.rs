@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
+    ConsoleObject, JSFunction, JSPropertyIterator,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
@@ -2703,27 +2703,47 @@ impl ExpectMatcherContext {
         JSValue::FALSE
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        if args.len() < 2 {
-            return Err(global_this.throw2(
-                "expect.extends matcher: this.util.equals expects at least 2 arguments",
-                (),
-            ));
-        }
-        Ok(JSValue::from(args[0].jest_deep_equals(args[1], global_this)?))
+    /// Jest puts the plain `equals` function of `@jest/expect-utils` on the context, and matchers
+    /// call it unbound (`const { equals } = this`). A prototype method would check its receiver.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_equals(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
+        JSFunction::create(global_this, "equals", __jsc_host_matcher_context_equals, 3, Default::default())
     }
 }
 
-/// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
-#[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectMatcherUtils {}
+#[bun_jsc::host_fn]
+fn matcher_context_equals(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let args = callframe.arguments();
+    if args.len() < 2 {
+        return Err(global_this.throw2(
+            "expect.extends matcher: this.util.equals expects at least 2 arguments",
+            (),
+        ));
+    }
+    Ok(JSValue::from(args[0].jest_deep_equals(args[1], global_this)?))
+}
 
-impl ExpectMatcherUtils {
+/// `this.utils` of a custom matcher. Jest builds it from the plain functions that
+/// `jest-matcher-utils` exports, and matchers call them unbound
+/// (`const { matcherHint, printReceived } = this.utils`), so it is a table of host functions.
+///
+/// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
+mod matcher_utils {
+    use super::*;
+
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
-        ExpectMatcherUtils {}.to_js(global_this)
+        bun_jsc::create_host_function_object(
+            global_this,
+            &[
+                ("stringify", __jsc_host_stringify, 1),
+                ("printExpected", __jsc_host_print_expected, 1),
+                ("printReceived", __jsc_host_print_received, 1),
+                ("EXPECTED_COLOR", __jsc_host_print_expected, 1),
+                ("RECEIVED_COLOR", __jsc_host_print_received, 1),
+                ("matcherHint", __jsc_host_matcher_hint, 1),
+            ],
+        )
     }
 
     fn print_value(
@@ -2751,106 +2771,168 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, None)
+    #[bun_jsc::host_fn]
+    fn stringify(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        print_value(global_this, callframe.argument(0), None)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, Some("<green>"))
+    #[bun_jsc::host_fn]
+    fn print_expected(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        print_value(global_this, callframe.argument(0), Some("<green>"))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, Some("<red>"))
+    #[bun_jsc::host_fn]
+    fn print_received(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        print_value(global_this, callframe.argument(0), Some("<red>"))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn matcher_hint(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
+    /// The hint under construction. Like Jest, it joins adjacent dim text in `dim` and writes
+    /// it as one span.
+    struct Hint {
+        out: Vec<u8>,
+        dim: Vec<u8>,
+        colors: bool,
+    }
 
-        if arguments.is_empty() || !arguments[0].is_string() {
+    impl Hint {
+        /// `hint += DIM_COLOR(dimString + tail); dimString = ''`
+        fn flush_dim(&mut self, tail: &[u8]) {
+            self.dim.extend_from_slice(tail);
+            if self.dim.is_empty() {
+                return;
+            }
+            if self.colors {
+                self.out.extend_from_slice(bun_core::pretty_fmt!("<d>", true).as_bytes());
+            }
+            self.out.append(&mut self.dim);
+            if self.colors {
+                self.out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
+            }
+        }
+
+        /// `hint += color(label)`. `color` is the caller's `option`, or `undefined` for `default_color`.
+        fn push_label(
+            &mut self,
+            global_this: &JSGlobalObject,
+            label: JSValue,
+            color: JSValue,
+            option: &'static str,
+            default_color: &'static str,
+        ) -> JsResult<()> {
+            if !color.is_undefined() {
+                if !color.is_callable() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "matcherHint: options.{option} must be a function",
+                    )));
+                }
+                let painted = color.call(global_this, JSValue::UNDEFINED, &[label])?;
+                self.out.extend_from_slice(&painted.to_utf8(global_this)?);
+                return Ok(());
+            }
+            let text = label.to_utf8(global_this)?;
+            if self.colors {
+                self.out.extend_from_slice(default_color.as_bytes());
+            }
+            self.out.extend_from_slice(&text);
+            if self.colors {
+                self.out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
+            }
+            Ok(())
+        }
+    }
+
+    /// `value === ''`
+    fn is_empty_string(value: JSValue) -> bool {
+        value.is_string_literal() && value.as_string().length() == 0
+    }
+
+    /// Port of `matcherHint` in `jest-matcher-utils`. It returns the one-line call signature.
+    /// `received` and `expected` are labels, not values.
+    /// https://github.com/jestjs/jest/blob/v30.2.0/packages/jest-matcher-utils/src/index.ts#L524-L587
+    #[bun_jsc::host_fn]
+    fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [matcher_name, received, expected, options] = callframe.arguments_as_array::<4>();
+
+        if !matcher_name.is_string() {
             return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
                 (),
             ));
         }
-        let matcher_name = arguments[0].to_bun_string(global_this)?;
+        let matcher_name = matcher_name.to_utf8(global_this)?;
 
-        let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::static_("received").to_js(global_this)? };
-        let expected = if arguments.len() > 2 { arguments[2] } else { bun_core::String::static_("expected").to_js(global_this)? };
-        let options = if arguments.len() > 3 { arguments[3] } else { JSValue::UNDEFINED };
+        let received = if received.is_undefined() { bun_core::String::static_("received").to_js(global_this)? } else { received };
+        let expected = if expected.is_undefined() { bun_core::String::static_("expected").to_js(global_this)? } else { expected };
 
-        let mut is_not = false;
-        let mut comment: Option<&JSString> = None; // TODO support
-        let mut promise: Option<&JSString> = None; // TODO support
-        let mut second_argument: Option<&JSString> = None; // TODO support
-        // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
-        //var second_argument_color: ?string = null;
-        //var expected_color: ?string = null;
-        //var received_color: ?string = null;
-
-        if !options.is_undefined_or_null() {
-            if !options.is_object() {
-                return Err(global_this.throw2(
-                    "matcherHint: options must be an object (or undefined)",
-                    (),
-                ));
-            }
-            if let Some(val) = options.get(global_this, "isNot")? {
-                is_not = val.to_boolean();
-            }
-            if let Some(val) = options.get(global_this, "comment")? {
-                comment = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "promise")? {
-                promise = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "secondArgument")? {
-                second_argument = Some(val.to_js_string(global_this)?);
-            }
+        if !options.is_undefined_or_null() && !options.is_object() {
+            return Err(global_this.throw2(
+                "matcherHint: options must be an object (or undefined)",
+                (),
+            ));
         }
-        let _ = (comment, promise, second_argument);
-
-        let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
-
-        // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
-        // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
-        // slots, then runs `Output.prettyFmt` over the *template* before
-        // substitution. `pretty_fmt!` rewrites only the `<tag>` markers in
-        // the static `RECEIVED`/`expected` literals — `matcher_name` and
-        // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
-        // render-then-rewrite ordering, since Display output here contains no
-        // `<tag>` literals).
-        let colors = Output::enable_ansi_colors_stderr();
-        let head: &'static str = if colors {
-            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", true)
-        } else {
-            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", false)
+        // A missing or `undefined` option reads as `undefined`, which selects the default.
+        let option = |name: &'static str| -> JsResult<JSValue> {
+            Ok(options.get(global_this, name)?.unwrap_or(JSValue::UNDEFINED))
         };
-        let not: &'static str = if is_not {
-            if colors {
-                bun_core::pretty_fmt!("not<d>.<r>", true)
-            } else {
-                bun_core::pretty_fmt!("not<d>.<r>", false)
+        let comment = option("comment")?;
+        let expected_color = option("expectedColor")?;
+        let is_direct_expect_call = option("isDirectExpectCall")?.to_boolean();
+        let is_not = option("isNot")?.to_boolean();
+        let promise = option("promise")?;
+        let received_color = option("receivedColor")?;
+        let second_argument = option("secondArgument")?;
+        let second_argument_color = option("secondArgumentColor")?;
+
+        let mut hint = Hint {
+            out: Vec::new(),
+            dim: b"expect".to_vec(),
+            colors: Output::enable_ansi_colors_stderr(),
+        };
+
+        if !is_direct_expect_call && !is_empty_string(received) {
+            hint.flush_dim(b"(");
+            hint.push_label(global_this, received, received_color, "receivedColor", bun_core::pretty_fmt!("<red>", true))?;
+            hint.dim.push(b')');
+        }
+
+        if !promise.is_undefined() && !is_empty_string(promise) {
+            hint.flush_dim(b".");
+            hint.out.extend_from_slice(&promise.to_utf8(global_this)?);
+        }
+
+        if is_not {
+            hint.flush_dim(b".");
+            hint.out.extend_from_slice(b"not");
+        }
+
+        if strings::contains_char(&matcher_name, b'.') {
+            // Old format: the name carries its own periods (`.toBe`, `.not.toBe`).
+            hint.dim.extend_from_slice(&matcher_name);
+        } else {
+            hint.flush_dim(b".");
+            hint.out.extend_from_slice(&matcher_name);
+        }
+
+        if is_empty_string(expected) {
+            hint.dim.extend_from_slice(b"()");
+        } else {
+            hint.flush_dim(b"(");
+            hint.push_label(global_this, expected, expected_color, "expectedColor", bun_core::pretty_fmt!("<green>", true))?;
+            if second_argument.to_boolean() {
+                hint.flush_dim(b", ");
+                hint.push_label(global_this, second_argument, second_argument_color, "secondArgumentColor", bun_core::pretty_fmt!("<green>", true))?;
             }
-        } else {
-            ""
-        };
-        let expected_hint: &'static str = if colors {
-            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", true)
-        } else {
-            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
-        };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+            hint.dim.push(b')');
+        }
+
+        if !comment.is_undefined() && !is_empty_string(comment) {
+            hint.dim.extend_from_slice(b" // ");
+            hint.dim.extend_from_slice(&comment.to_utf8(global_this)?);
+        }
+
+        hint.flush_dim(b"");
+
+        bun_string_jsc::create_utf8_for_js(global_this, &hint.out)
     }
 }
 

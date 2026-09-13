@@ -19,8 +19,7 @@ use crate::chunk::Content;
 use crate::{Chunk, LinkerContext};
 use std::io::Write as _;
 
-/// The export names of the entry point whose chunk declares a cross-chunk
-/// binding. The chunk exports both, so the binding must not repeat one.
+/// The names an entry chunk's `export {}` clause lists beside its cross-chunk exports.
 type ExportNames = [Box<[u8], bun_alloc::AstAlloc>];
 
 fn is_export_name(export_names: &ExportNames, name: &[u8]) -> bool {

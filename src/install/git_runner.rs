@@ -24,6 +24,7 @@ use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::install::{ExtractData, ExtractDataJson};
+use crate::package_manager_real::ProcessOnlyEnv;
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
@@ -886,6 +887,7 @@ impl GitSubprocess {
             }
         }
         Output::flush();
+        self.manager().note_dotenv_only_vars(ProcessOnlyEnv::Git);
     }
 
     /// Fails the task with `err`. Frees `this`.

@@ -319,6 +319,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
+    // Holds the project's `.env*` files too: git, proxy and TLS settings come from `process_env`.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
     /// The process environment with no `.env*` file merged in (git children, proxy, TLS).
     pub(crate) process_env: dot_env::Loader,
@@ -905,6 +906,31 @@ impl PackageManager {
         self.process_env.get_tls_reject_unauthorized()
     }
 
+    /// After a failed download or git command: names, once, the settings that only `.env*` has.
+    pub(crate) fn note_dotenv_only_vars(&self, kind: ProcessOnlyEnv) {
+        static NOTED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+        if NOTED[kind as usize].swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let mut names: Vec<u8> = Vec::new();
+        for key in self.env().map.map.keys() {
+            if kind.reads(key) && self.process_env.get(key).is_none() {
+                if !names.is_empty() {
+                    names.extend_from_slice(b", ");
+                }
+                names.extend_from_slice(key);
+            }
+        }
+        if names.is_empty() {
+            return;
+        }
+        bun_core::note!(
+            "bun install reads <b>{}<r> from the environment only, not from .env files.",
+            bstr::BStr::new(&names),
+        );
+        Output::flush();
+    }
+
     pub(crate) fn fail_root_resolution(
         &mut self,
         dependency: &Dependency,
@@ -1335,6 +1361,31 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // ──────────────────────────────────────────────────────────────────────────
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
+
+/// The settings that `PackageManager::process_env` serves.
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessOnlyEnv {
+    Network,
+    Git,
+}
+
+impl ProcessOnlyEnv {
+    fn reads(self, key: &[u8]) -> bool {
+        match self {
+            Self::Network => [
+                b"http_proxy" as &[u8],
+                b"HTTP_PROXY",
+                b"https_proxy",
+                b"HTTPS_PROXY",
+                b"no_proxy",
+                b"NO_PROXY",
+                b"NODE_TLS_REJECT_UNAUTHORIZED",
+            ]
+            .contains(&key),
+            Self::Git => key.starts_with(b"GIT_"),
+        }
+    }
+}
 
 fn load_process_env() -> Result<dot_env::Loader, bun_alloc::AllocError> {
     let mut env = dot_env::Loader::init();

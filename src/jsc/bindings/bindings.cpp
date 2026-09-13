@@ -626,8 +626,7 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     return result;
 }
 
-// The values matchAsymmetricMatcherAndGetFlags handles. Runs no user code, so it is safe
-// inside a Structure walk.
+// The values matchAsymmetricMatcherAndGetFlags handles. Runs no user code.
 static bool isAsymmetricMatcher(JSValue value)
 {
     if (value.isEmpty() || !value.isCell())
@@ -1020,8 +1019,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             if constexpr (!isStrict) {
-                // A hole or an index past the end reads as undefined, which is what an
-                // asymmetric matcher on the other side receives.
+                // a hole or an index past the end reads as undefined
                 if (left.isEmpty())
                     left = jsUndefined();
                 if (right.isEmpty())
@@ -1133,9 +1131,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             bool sameStructure = o2Structure->id() == o1Structure->id();
             // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
             MarkedArgumentBuffer pairs;
-            // Keys where one side holds an asymmetric matcher and the other side has no own
-            // property. Like Jest, the matcher receives an ordinary read of the missing side
-            // (undefined, or an inherited value), so these are looked up after the walks.
+            // Keys with an asymmetric matcher on one side and no own property on the other.
+            // Read with get() after the walks, as Jest does (undefined or an inherited value).
             Vector<Identifier, 4> matcherOnlyKeys;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

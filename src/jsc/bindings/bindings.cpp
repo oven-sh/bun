@@ -894,10 +894,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
-    // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
-    // jest's equals() (expect-utils jasmineUtils.ts) also starts with the tag comparison, so a
-    // Promise, WeakMap or DataView never equals {} even though none of them has own properties.
+    // node's objectComparisonStart and jest's equals() both start with the Object.prototype.toString
+    // tag comparison. The constructor / [[Prototype]] rule is node strict mode only.
     {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();

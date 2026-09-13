@@ -616,13 +616,11 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         obj = constructEmptyObject(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         RELEASE_AND_RETURN(throwScope, obj);
-    } else if (size < JSFinalObject::maxInlineCapacity) {
-        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size + 1);
+    } else if (size <= JSFinalObject::maxInlineCapacity) {
+        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
     } else {
         obj = constructEmptyObject(lexicalGlobalObject);
     }
-
-    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("FormData"_s)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     auto iter = impl.items();
     WTF::HashSet<String> seenKeys;

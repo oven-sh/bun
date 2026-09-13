@@ -4150,6 +4150,12 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
+                if crate::URLSearchParams::from_js(value).is_some() {
+                    self.add_for_new_line("URLSearchParams ".len());
+                    if writer_.write_all(b"URLSearchParams ").is_err() {
+                        self.failed = true;
+                    }
+                }
                 let result = func.call(self.global_this, value, &[])?;
                 let prev_quote_keys = self.quote_keys;
                 self.quote_keys = true;
@@ -4520,6 +4526,10 @@ pub mod formatter {
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
             if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
+                    self.add_for_new_line("FormData ".len());
+                    if writer_.write_all(b"FormData ").is_err() {
+                        self.failed = true;
+                    }
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;
                     let _r = defer_restore!(self.quote_keys, prev_quote_keys);

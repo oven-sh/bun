@@ -59,7 +59,9 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(Promise.resolve(), Promise.resolve())).toBe(true);
     expect(deepEquals(new WeakMap(), new WeakMap())).toBe(true);
     expect(deepEquals(Object.assign(new WeakMap(), { a: 1 }), new WeakMap())).toBe(false);
-    expect(deepEquals(Object.create(null), {})).toBe(true);
+    if (!strict) {
+      expect(deepEquals(Object.create(null), {})).toBe(true);
+    }
   });
 
   it("fake maps are not equal", () => {

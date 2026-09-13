@@ -1,6 +1,6 @@
 import { linuxCpusFromRoot } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { realpathSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
 import { bunEnv, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
@@ -296,19 +296,25 @@ describe.skipIf(!isLinux)("cpus model on Linux", () => {
     ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.uv"], env: bunEnv, stderr: "ignore" }).stdout.toString()
     : "";
 
-  // The two cases that differ from Node also differ here: a host with two core types, and QEMU user mode.
-  it.skipIf(!nodeUv.startsWith("1.52."))("reports the same models as Node on this host", async () => {
-    await using proc = Bun.spawn({
-      cmd: [node, "-p", "JSON.stringify(require('os').cpus().map(cpu => cpu.model))"],
-      env: bunEnv,
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ models: stdout.trim(), exitCode }).toEqual({
-      models: JSON.stringify(os.cpus().map(cpu => cpu.model)),
-      exitCode: 0,
-    });
-  });
+  // More than one distinct model line means two core types, or the two keys of QEMU user mode. Bun differs from Node there.
+  const hostModelLines = isLinux ? readFileSync("/proc/cpuinfo", "utf8").match(/^(model name|CPU part)\t: .*$/gm) : [];
+  const hostDiffersFromNode = new Set(hostModelLines).size > 1;
+
+  it.skipIf(!nodeUv.startsWith("1.52.") || hostDiffersFromNode)(
+    "reports the same models as Node on this host",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [node, "-p", "JSON.stringify(require('os').cpus().map(cpu => cpu.model))"],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ models: stdout.trim(), exitCode }).toEqual({
+        models: JSON.stringify(os.cpus().map(cpu => cpu.model)),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("networkInterfaces", () => {

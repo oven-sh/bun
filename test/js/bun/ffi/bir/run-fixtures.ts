@@ -81,10 +81,19 @@ export async function run(cwd: string, args: string[], env: Record<string, strin
   return { stdout, stderr, exitCode };
 }
 
+/** Runs the program at `exe` in `cwd`; what it printed and how it ended. */
+async function runProgram(exe: string, cwd: string) {
+  await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 /**
- * One test per `fixtures/<area>/<name>.c`: the file is run as a program (`bun name.c`) and must print
- * what `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file).
- * A `<name>.ts` next to it is run instead when the C file is easier to check by calling into it.
+ * Two tests per `fixtures/<area>/<name>.c`: the file is run as a program on the fly (`bun name.c`), and built
+ * into a standalone executable (`bun build --compile name.c`) that is then run. Either way it must print what
+ * `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file).
+ * A `<name>.ts` next to it is run (and built) instead when the C file is easier to check by calling into it.
+ * A fixture whose `<name>.requires` names something this machine is not is reported as skipped.
  * `failing` names the fixtures the real backend gets wrong today, with the reason.
  */
 export function runFixtures(area: string, failing: Record<string, string> = {}) {
@@ -95,15 +104,25 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
       const expectedPath = join(dir, `${name}.expected`);
       // A C file without an expectation is part of another fixture (a second translation unit, an include).
       if (!existsSync(expectedPath)) continue;
-      if (!meets(requirementIn(join(dir, `${name}.requires`)))) continue;
+      const applies = meets(requirementIn(join(dir, `${name}.requires`)));
       const declare = name in failing ? test.failing : test.concurrent;
-      declare(name in failing ? `${name} (${failing[name]})` : name, async () => {
-        const entry = existsSync(join(dir, `${name}.ts`)) ? `${name}.ts` : `${name}.c`;
-        const statusPath = join(dir, `${name}.status`);
-        const status = existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0;
-        const { stdout, stderr, exitCode } = await run(dir, [entry]);
-        expect(lines(stdout), stderr).toBe(lines(readFileSync(expectedPath, "utf8")));
-        expect(exitCode, stderr).toBe(status);
+      const title = name in failing ? `${name} (${failing[name]})` : name;
+      const entry = existsSync(join(dir, `${name}.ts`)) ? `${name}.ts` : `${name}.c`;
+      const statusPath = join(dir, `${name}.status`);
+      const check = (result: { stdout: string; stderr: string; exitCode: number | null }) => {
+        expect(lines(result.stdout), result.stderr).toBe(lines(readFileSync(expectedPath, "utf8")));
+        expect(result.exitCode, result.stderr).toBe(
+          existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0,
+        );
+      };
+      declare.skipIf(!applies)(title, async () => check(await run(dir, [entry])));
+      declare.skipIf(!applies)(`${title} (compiled)`, async () => {
+        using out = tempDir(`bir-${name}`, {});
+        const exe = join(String(out), isWindows ? "program.exe" : "program");
+        const build = await run(dir, ["build", "--compile", entry, "--outfile", exe]);
+        expect(build.stderr).not.toContain("error:");
+        expect(build.exitCode, build.stderr).toBe(0);
+        check(await runProgram(exe, dir));
       });
     }
   });
@@ -123,17 +142,16 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
   describe.skipIf(!supported)(`${area}: several files linked into one program`, () => {
     for (const name of names) {
       const dir = join(root, name);
-      if (!meets(requirementIn(join(dir, "requires")))) continue;
-      const declare = name in failing ? test.failing : test;
-      declare(name in failing ? `${name} (${failing[name]})` : name, async () => {
+      const applies = meets(requirementIn(join(dir, "requires")));
+      const declare = name in failing ? test.failing : test.concurrent;
+      declare.skipIf(!applies)(name in failing ? `${name} (${failing[name]})` : name, async () => {
         const units = [...new Bun.Glob("*.c").scanSync(dir)].filter(file => file !== "main.c").sort();
         using out = tempDir(`bir-${name}`, {});
-        const exe = join(String(out), "program");
+        const exe = join(String(out), isWindows ? "program.exe" : "program");
         const build = await run(dir, ["build", "--compile", "main.c", ...units, "--outfile", exe]);
-        expect(build.stderr).not.toContain("error");
+        expect(build.stderr).not.toContain("error:");
         expect(build.exitCode, build.stderr).toBe(0);
-        await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const { stdout, stderr, exitCode } = await runProgram(exe, dir);
         const statusPath = join(dir, "status");
         expect(lines(stdout), stderr).toBe(lines(readFileSync(join(dir, "expected"), "utf8")));
         expect(exitCode, stderr).toBe(existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0);

@@ -15,8 +15,7 @@ async function firstError(source: string) {
 describe.skipIf(!supported)("diagnostics", () => {
   cases.forEach(
     ({ about, source, line, column, message, requires }: (typeof cases)[number] & { requires?: string }, index) => {
-      if (!meets(requires)) return;
-      test.concurrent(`${index}: ${about}: ${message.slice(0, 60)}`, async () => {
+      test.concurrent.skipIf(!meets(requires))(`${index}: ${about}: ${message.slice(0, 60)}`, async () => {
         const { stdout, stderr, exitCode } = await firstError(source);
         expect(stderr).toContain(`error: ${message}\n    at test.c:${line}:${column}\n`);
         expect(stdout).toBe("");
@@ -74,8 +73,7 @@ int main(void) { puts("ran"); return 0; }
     ],
   ];
   for (const [what, source, expected, requires] of remarks) {
-    if (!meets(requires)) continue;
-    test.concurrent(`a warning for ${what}`, async () => {
+    test.concurrent.skipIf(!meets(requires))(`a warning for ${what}`, async () => {
       const { stdout, stderr, exitCode } = await firstError(source);
       for (const remark of expected) expect(stderr).toContain(remark);
       expect(stderr).not.toContain("skipped");

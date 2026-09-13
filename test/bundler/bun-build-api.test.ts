@@ -2173,3 +2173,203 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+describe("Bun.build while another build waits on its plugins", () => {
+  // Builds start in the order they were queued, one at a time. A build that is waiting for its
+  // plugins' JavaScript must not hold the queue, because that JavaScript may be awaiting a build
+  // queued behind it. Each case runs in a subprocess: a regression hangs that process (and every
+  // later Bun.build in it), not the bundle thread the rest of this file shares.
+  async function run(prefix: string, files: Record<string, string>) {
+    using dir = tempDir(prefix, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const prelude = /* ts */ `
+    import { join } from "node:path";
+    const here = import.meta.dir;
+    function ok(result: Awaited<ReturnType<typeof Bun.build>>, what: string) {
+      if (!result.success) throw new AggregateError(result.logs, what + " failed");
+      return result;
+    }
+  `;
+
+  test.concurrent("an onLoad plugin can await a nested Bun.build", async () => {
+    const result = await run("bun-build-nested-onload", {
+      "entry.ts": `import x from "virt:worker"; console.log(x);`,
+      "worker.ts": `export default "worker-code";`,
+      "run.ts": /* ts */ `
+        ${prelude}
+        const outer = ok(await Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "sub-bundle",
+            setup(b) {
+              b.onResolve({ filter: /^virt:worker$/ }, () => ({ path: join(here, "worker.ts"), namespace: "sub" }));
+              b.onLoad({ filter: /.*/, namespace: "sub" }, async args => {
+                const inner = ok(await Bun.build({ entrypoints: [args.path] }), "inner");
+                return { contents: "export default " + JSON.stringify(await inner.outputs[0].text()), loader: "js" };
+              });
+            },
+          }],
+        }), "outer");
+        console.log("outer embeds inner:", (await outer.outputs[0].text()).includes("worker-code"));
+        ok(await Bun.build({ entrypoints: [join(here, "worker.ts")] }), "later");
+        console.log("later done");
+      `,
+    });
+    expect(result).toEqual({ stdout: "outer embeds inner: true\nlater done\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("an onResolve plugin can await a nested Bun.build", async () => {
+    const result = await run("bun-build-nested-onresolve", {
+      "entry.ts": `import x from "virt:worker"; console.log(x);`,
+      "worker.ts": `export default "worker-code";`,
+      "run.ts": /* ts */ `
+        ${prelude}
+        ok(await Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "sub-bundle",
+            setup(b) {
+              b.onResolve({ filter: /^virt:worker$/ }, async () => {
+                ok(await Bun.build({ entrypoints: [join(here, "worker.ts")] }), "inner");
+                return { path: join(here, "worker.ts") };
+              });
+            },
+          }],
+        }), "outer");
+        console.log("outer done");
+      `,
+    });
+    expect(result).toEqual({ stdout: "outer done\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a build queued behind one whose onLoad is pending runs meanwhile", async () => {
+    const result = await run("bun-build-behind-pending-onload", {
+      "entry.ts": `import x from "slow:mod"; console.log(x);`,
+      "fast.ts": `export default "fast";`,
+      "run.ts": /* ts */ `
+        ${prelude}
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const slow = Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "slow",
+            setup(b) {
+              b.onResolve({ filter: /^slow:mod$/ }, () => ({ path: "slow", namespace: "slow" }));
+              b.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
+                entered.resolve();
+                await gate.promise;
+                return { contents: "export default 1", loader: "js" };
+              });
+            },
+          }],
+        });
+        await entered.promise;
+        // "slow" cannot finish until the gate opens, and the gate opens only after "fast" finished.
+        ok(await Bun.build({ entrypoints: [join(here, "fast.ts")] }), "fast");
+        console.log("fast done");
+        gate.resolve();
+        ok(await slow, "slow");
+        console.log("slow done");
+      `,
+    });
+    expect(result).toEqual({ stdout: "fast done\nslow done\n", stderr: "", exitCode: 0 });
+  });
+
+  const awaitsOtherBuild = (order: "earlier" | "later") => /* ts */ `
+    ${prelude}
+    let shared: ReturnType<typeof Bun.build>;
+    const startShared = () => (shared = Bun.build({ entrypoints: [join(here, "shared.ts")] }));
+    ${order === "earlier" ? "startShared();" : ""}
+    const app = Bun.build({
+      entrypoints: [join(here, "app.ts")],
+      plugins: [{
+        name: "embed",
+        setup(b) {
+          b.onResolve({ filter: /^embed:shared$/ }, () => ({ path: "shared", namespace: "embed" }));
+          b.onLoad({ filter: /.*/, namespace: "embed" }, async () => {
+            const text = await ok(await shared, "shared").outputs[0].text();
+            return { contents: "export default " + JSON.stringify(text), loader: "js" };
+          });
+        },
+      }],
+    });
+    ${order === "later" ? "startShared();" : ""}
+    console.log("app embeds shared:", (await ok(await app, "app").outputs[0].text()).includes("shared-code"));
+  `;
+  const awaitsOtherBuildFiles = {
+    "shared.ts": `export default "shared-code";`,
+    "app.ts": `import x from "embed:shared"; console.log(x);`,
+  };
+
+  test.concurrent("a plugin can await a build queued before its own", async () => {
+    const result = await run("bun-build-awaits-earlier", {
+      ...awaitsOtherBuildFiles,
+      "run.ts": awaitsOtherBuild("earlier"),
+    });
+    expect(result).toEqual({ stdout: "app embeds shared: true\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a plugin can await a build queued behind its own", async () => {
+    const result = await run("bun-build-awaits-later", {
+      ...awaitsOtherBuildFiles,
+      "run.ts": awaitsOtherBuild("later"),
+    });
+    expect(result).toEqual({ stdout: "app embeds shared: true\n", stderr: "", exitCode: 0 });
+  });
+
+  // Every build re-reads the directory listings that were cached before it was asked for.
+  test.concurrent("a nested build sees a file its plugin just wrote", async () => {
+    const result = await run("bun-build-nested-sees-new-file", {
+      "entry.ts": `import "./lib/listed"; import x from "virt:generated"; console.log(x);`,
+      "lib/listed.ts": `export {};`,
+      "run.ts": /* ts */ `
+        ${prelude}
+        const outer = ok(await Bun.build({
+          entrypoints: [join(here, "entry.ts")],
+          plugins: [{
+            name: "generate",
+            setup(b) {
+              b.onResolve({ filter: /^virt:generated$/ }, () => ({ path: "generated", namespace: "generated" }));
+              b.onLoad({ filter: /.*/, namespace: "generated" }, async () => {
+                // The outer build listed lib/ when it resolved "./lib/listed".
+                await Bun.write(join(here, "lib", "generated.ts"), 'export default "generated-code";');
+                await Bun.write(join(here, "inner-entry.ts"), 'export { default } from "./lib/generated";');
+                const inner = ok(await Bun.build({ entrypoints: [join(here, "inner-entry.ts")] }), "inner");
+                return { contents: "export default " + JSON.stringify(await inner.outputs[0].text()), loader: "js" };
+              });
+            },
+          }],
+        }), "outer");
+        console.log("outer embeds generated:", (await outer.outputs[0].text()).includes("generated-code"));
+      `,
+    });
+    expect(result).toEqual({ stdout: "outer embeds generated: true\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("the first build sees a file created after the runtime listed its directory", async () => {
+    const result = await run("bun-build-first-sees-new-file", {
+      "entry.ts": `import x from "./late"; console.log(x);`,
+      "helper.ts": `export const helper = 1;`,
+      "run.ts": /* ts */ `
+        ${prelude}
+        // Importing a sibling makes the runtime's resolver list this directory.
+        await import("./helper.ts");
+        await Bun.write(join(here, "late.ts"), 'export default "late-code";');
+        const first = ok(await Bun.build({ entrypoints: [join(here, "entry.ts")] }), "first");
+        console.log("first build sees late.ts:", (await first.outputs[0].text()).includes("late-code"));
+      `,
+    });
+    expect(result).toEqual({ stdout: "first build sees late.ts: true\n", stderr: "", exitCode: 0 });
+  });
+});

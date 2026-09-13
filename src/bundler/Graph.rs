@@ -62,6 +62,11 @@ pub struct Graph<'a> {
     /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
     /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
     pub(crate) cancelled: bool,
+    /// `onResolve` / `onLoad` requests `dispatch()`ed and not answered yet. Bundle thread only.
+    pub(crate) plugin_requests: u32,
+    /// What this `Bun.build` last told `BundleThread::Schedule`: it has nothing left to do but wait for
+    /// those answers, so it does not hold back the builds queued behind it. Bundle thread only.
+    pub(crate) waiting_on_plugins: bool,
 
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
@@ -168,6 +173,8 @@ impl<'a> Graph<'a> {
             deferred_pending: 0,
             defer_epoch: 0,
             cancelled: false,
+            plugin_requests: 0,
+            waiting_on_plugins: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),

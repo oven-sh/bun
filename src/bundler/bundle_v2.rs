@@ -1154,6 +1154,7 @@ pub mod bv2_impl {
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
+                        bv2.plugin_request_sent();
                         if bv2.graph.cancelled {
                             self.answer_cancelled();
                             return;
@@ -1291,6 +1292,7 @@ pub mod bv2_impl {
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
+                        bv2.plugin_request_sent();
                         if bv2.graph.cancelled {
                             self.answer_cancelled();
                             return;
@@ -1658,6 +1660,35 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2, PendingImport};
 
     impl<'a> BundleV2<'a> {
+        /// An `onResolve` / `onLoad` request is being `dispatch()`ed; exactly one answer follows
+        /// (`plugin_request_answered`). Bundle thread.
+        pub(crate) fn plugin_request_sent(&mut self) {
+            self.graph.plugin_requests += 1;
+        }
+
+        fn plugin_request_answered(&mut self) {
+            debug_assert!(self.graph.plugin_requests > 0);
+            self.graph.plugin_requests = self.graph.plugin_requests.saturating_sub(1);
+        }
+
+        /// A `Bun.build` with nothing left to do but wait for its plugins' answers waits on JavaScript,
+        /// which may itself be awaiting a `Bun.build` queued behind this one: tell the bundle-thread
+        /// schedule when that starts and stops being the case. Every outstanding request holds one unit of
+        /// `pending_items` (or of `deferred_pending`, once its plugin called `.defer()`), so the pass is
+        /// down to its plugins when those units are all there is.
+        fn report_waiting_on_plugins(&mut self) {
+            if self.completion.is_none() {
+                return;
+            }
+            let requests = self.graph.plugin_requests;
+            let waiting =
+                requests > 0 && self.graph.pending_items + self.graph.deferred_pending <= requests;
+            if waiting != self.graph.waiting_on_plugins {
+                self.graph.waiting_on_plugins = waiting;
+                singleton::waiting_on_plugins(waiting);
+            }
+        }
+
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
@@ -2195,6 +2226,8 @@ pub mod bv2_impl {
 
         fn is_done(&mut self) -> bool {
             self.thread_lock.assert_locked();
+            // Here the pass has run everything its event loop had for it and is about to wait.
+            self.report_waiting_on_plugins();
 
             if !self.graph.cancelled && self.completion.as_ref().is_some_and(|c| c.is_cancelled()) {
                 // The VM that owns the plugins is shutting down. It answers every request the plugins still
@@ -4586,6 +4619,7 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            this.plugin_request_answered();
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -4810,6 +4844,7 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+            this.plugin_request_answered();
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();

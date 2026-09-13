@@ -1,9 +1,11 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
+use bun_threading::{Condition, Guarded};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
@@ -44,12 +46,70 @@ pub enum BundleV2Result {
 // `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
 // provides the `CompletionStruct` impl for the forward-decl.
 pub(crate) struct BundleThread<C: Node> {
+    /// The primary thread waits on this between builds.
     pub(crate) waker: Async::Waker,
     pub(crate) ready_event: ResetEvent,
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
+    /// Pushed from any thread; popped only with `schedule` held.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
+    pub(crate) schedule: Guarded<Schedule<C>>,
+    /// Parked helper threads wait on this, with `schedule`.
+    pub(crate) helper_wake: Condition,
+}
+
+/// How many builds hold a bundle thread's attention at once.
+const MAX_RUNNING: u32 = 1;
+
+/// Which queued build starts when. Builds start in queue order and one at a
+/// time, on the primary thread, for as long as the one that is running has
+/// work of its own to do. A build with nothing left to do but wait for its
+/// plugins' answers waits for JavaScript, and that JavaScript may itself await
+/// a `Bun.build` queued behind it (a plugin that bundles a worker). So while a
+/// build only waits on its plugins it does not count as running: the next
+/// queued build starts, on a helper thread when the primary is the one waiting.
+///
+/// Helper threads are bundle threads like the primary: one is created when a
+/// build has to start and every existing thread is inside a build, and from
+/// then on it parks between builds and is handed the next one that needs a
+/// thread. None exits, so there are as many as builds have ever waited on
+/// their plugins at once, plus one.
+pub(crate) struct Schedule<C> {
+    /// Builds on a thread that are not only waiting on their plugins' VM.
+    running: u32,
+    /// Advanced for every build: the resolver re-reads a directory listing
+    /// cached at an older generation, so no build trusts what an earlier build
+    /// (or, at 0, the runtime's own resolver) listed before it was asked for.
+    generation: bun_core::Generation,
+    /// The primary thread has no build and waits on `waker`.
+    primary_parked: bool,
+    /// Handed to the primary thread while it was parked.
+    primary_next: Option<Taken<C>>,
+    /// Helper threads with no build, waiting on `helper_wake`.
+    helpers_parked: u32,
+    /// Handed to a parked helper thread; whichever wakes first takes it.
+    helper_next: Option<Taken<C>>,
+}
+
+/// A build taken off the queue and started ([`CompletionStruct::try_start`]),
+/// on its way to the thread that runs it.
+struct Taken<C> {
+    completion: NonNull<C>,
+    generation: bun_core::Generation,
+}
+impl<C> Clone for Taken<C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<C> Copy for Taken<C> {}
+// SAFETY: the pointer is owned by whichever thread holds the `Taken`, until
+// that thread posts the completion.
+unsafe impl<C: Send> Send for Taken<C> {}
+
+thread_local! {
+    /// The build this thread runs holds one of `Schedule::running`.
+    static COUNTED_AS_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -65,7 +125,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
     ) -> Result<(), crate::Error>;
-    /// Bundle thread, on dequeue: `false` if the owner released this build
+    /// Whichever thread dequeues it: `false` if the owner released this build
     /// while it was still queued ([`free_released_unstarted`] then frees it).
     fn try_start(&mut self) -> bool;
     fn free_released_unstarted(this: *mut Self);
@@ -128,8 +188,18 @@ impl<C: CompletionStruct> BundleThread<C> {
         Self {
             waker: Async::Waker::placeholder(),
             queue: UnboundedQueue::new(),
-            generation: 0,
             ready_event: ResetEvent::default(),
+            schedule: Guarded::new(Schedule {
+                running: 0,
+                generation: 0,
+                // Until `thread_main` first looks, so the first build is handed
+                // to it rather than to a helper.
+                primary_parked: true,
+                primary_next: None,
+                helpers_parked: 0,
+                helper_next: None,
+            }),
+            helper_wake: Condition::new(),
         }
     }
 
@@ -154,8 +224,8 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
-                // from other threads is sound.
+                // and is the sole writer of `waker`, so concurrent `enqueue()` from
+                // other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
         // SAFETY: field projection via raw ptr — the spawned thread is concurrently
@@ -171,16 +241,231 @@ impl<C: CompletionStruct> BundleThread<C> {
     pub(crate) unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
         // SAFETY: `completion` is a live, caller-owned task node (non-null).
         let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
-        // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
-        // accesses the same struct concurrently, so we never materialize `&mut Self`.
-        // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
-        // `&self` on all platforms and only reads a Copy field (eventfd, mach port,
-        // `WindowsLoop` pointer) to pass to a wake call that is safe from any thread
-        // (eventfd write, mach_msg send, uv_async_send), so the `&Waker` autoref is
-        // sound alongside `wait(&self)` in `thread_main` and other `enqueue` callers.
+        // SAFETY: field projection via raw ptr — bundle threads access the same
+        // struct concurrently, so we never materialize `&mut Self`.
+        // `UnboundedQueue::push` takes `&self` (lock-free, any number of
+        // producers).
         unsafe {
             (*instance).queue.push(completion);
-            (*instance).waker.wake();
+            Self::dispatch(instance);
+        }
+    }
+
+    /// The next queued build, if one may start now; it then counts as running.
+    ///
+    /// # Safety
+    /// `instance` is live and `s` is its `schedule`, held: the queue has one
+    /// consumer at a time.
+    unsafe fn take(instance: *mut Self, s: &mut Schedule<C>) -> Option<Taken<C>> {
+        while s.running < MAX_RUNNING {
+            // SAFETY: `UnboundedQueue::pop` takes `&self`; `schedule` serializes
+            // the consumers, concurrent `push` is the queue's intended use.
+            let completion = NonNull::new(unsafe { (*instance).queue.pop() })?;
+            // SAFETY: the queue stores live nodes pushed by `enqueue`; the owner
+            // keeps one alive until `complete_on_bundle_thread` — unless it
+            // released the build while it sat here (its VM went away).
+            if !unsafe { (*completion.as_ptr()).try_start() } {
+                C::free_released_unstarted(completion.as_ptr());
+                continue;
+            }
+            s.running += 1;
+            s.generation = s.generation.saturating_add(1);
+            return Some(Taken {
+                completion,
+                generation: s.generation,
+            });
+        }
+        None
+    }
+
+    /// Starts queued builds for as long as one may start: on the primary thread
+    /// if it is parked, else on a parked helper thread, else on a new one.
+    /// Called wherever that can have become true — a build was queued, or the
+    /// one running is down to waiting on its plugins. (A thread that finishes a
+    /// build takes the next one itself, see `finish`.)
+    ///
+    /// # Safety
+    /// `instance` is live with its primary thread spawned; `schedule` not held.
+    unsafe fn dispatch(instance: *mut Self) {
+        enum To<C> {
+            Primary,
+            ParkedHelper,
+            NewHelper(Taken<C>),
+        }
+        loop {
+            // SAFETY: fn contract; field projections via raw ptr.
+            let to = unsafe {
+                let mut s = (*instance).schedule.lock();
+                let Some(taken) = Self::take(instance, &mut s) else {
+                    return;
+                };
+                if s.primary_parked {
+                    s.primary_parked = false;
+                    s.primary_next = Some(taken);
+                    To::Primary
+                } else if s.helpers_parked > 0 && s.helper_next.is_none() {
+                    s.helper_next = Some(taken);
+                    To::ParkedHelper
+                } else {
+                    To::NewHelper(taken)
+                }
+            };
+            match to {
+                // SAFETY: `Waker::wake` takes `&self` on all platforms and only
+                // reads a Copy field (eventfd, mach port, `WindowsLoop` pointer)
+                // to pass to a wake call that is safe from any thread (eventfd
+                // write, mach_msg send, uv_async_send), so the `&Waker` autoref
+                // is sound alongside `wait(&self)` in `thread_main`.
+                To::Primary => unsafe { (*instance).waker.wake() },
+                // SAFETY: fn contract; `Condition::signal` takes `&self`.
+                To::ParkedHelper => unsafe { (*instance).helper_wake.signal() },
+                To::NewHelper(taken) => {
+                    // SAFETY: fn contract; `taken` is ours until a thread runs it.
+                    if let Err(err) = unsafe { Self::spawn_helper(instance, taken) } {
+                        // The build may be one a waiting build's plugin awaits,
+                        // and then nothing would ever take it off the queue: fail
+                        // it, so that its promise settles, and leave the rest
+                        // queued for whichever build finishes next.
+                        // SAFETY: as above; no thread took it.
+                        unsafe { Self::fail(instance, taken, &err) };
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A new bundle thread that runs `first`, then whatever `finish` or
+    /// `dispatch` hands it, for the rest of the process.
+    ///
+    /// # Safety
+    /// As `dispatch`; `first` came from `take` and no thread runs it yet.
+    unsafe fn spawn_helper(instance: *mut Self, first: Taken<C>) -> std::io::Result<()> {
+        struct SendPtr<T>(*mut T);
+        // SAFETY: the leaked `'static` singleton, only ever projected through.
+        unsafe impl<T> Send for SendPtr<T> {}
+        let instance = SendPtr(instance);
+        std::thread::Builder::new()
+            .name("Bundler".into())
+            .spawn(move || {
+                // Bind the whole `SendPtr` first: naming only `.0` would capture the bare pointer.
+                let instance = instance;
+                let instance = instance.0;
+                Output::Source::configure_named_thread(zstr!("Bundler"));
+                let mut taken = first;
+                loop {
+                    // SAFETY: from `take`, and this thread runs it: it is the
+                    // build's only mutator until it posts the completion. Then
+                    // `finish`'s contract.
+                    if let Some(next) = unsafe {
+                        Self::run(taken);
+                        Self::finish(instance, false)
+                    } {
+                        taken = next;
+                        continue;
+                    }
+                    // Parked (`schedule.helpers_parked`), as `thread_main` parks.
+                    crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
+                    bun_alloc::mimalloc::mi_collect(false);
+                    // SAFETY: field projections via raw ptr; `Condition` is
+                    // waited on with the `schedule` lock that guards `helper_next`.
+                    unsafe {
+                        let mut s = (*instance).schedule.lock();
+                        taken = loop {
+                            if let Some(next) = s.helper_next.take() {
+                                s.helpers_parked -= 1;
+                                break next;
+                            }
+                            (*instance).helper_wake.wait_guarded(&mut s);
+                        };
+                    }
+                }
+            })
+            .map(drop)
+    }
+
+    /// # Safety
+    /// `taken` came from `take` and this thread is the one that runs it.
+    unsafe fn run(taken: Taken<C>) {
+        COUNTED_AS_RUNNING.set(true);
+        // SAFETY: started ⇒ the owner keeps it alive and waits for us.
+        let completion = unsafe { &mut *taken.completion.as_ptr() };
+        // `panic = "abort"` → a Rust panic on this thread enters the
+        // crash-handler hook and aborts the whole process.
+        // No `catch_unwind` — there is nothing to catch.
+        match Self::generate_in_new_thread(completion, taken.generation) {
+            Ok(()) => {}
+            Err(err) => {
+                completion.set_result(BundleV2Result::Err(err));
+                completion.complete_on_bundle_thread();
+            }
+        }
+    }
+
+    /// The build this thread ran is over: gives its place back and takes the
+    /// next queued build, if one may start. With none, this thread is parked
+    /// from here on (under the same lock, so `dispatch` hands it the next build
+    /// that needs a thread instead of creating one).
+    ///
+    /// # Safety
+    /// `instance` is live; a bundle thread, after `run` returned.
+    unsafe fn finish(instance: *mut Self, primary: bool) -> Option<Taken<C>> {
+        // SAFETY: fn contract; field projection via raw ptr.
+        let mut s = unsafe { (*instance).schedule.lock() };
+        if COUNTED_AS_RUNNING.replace(false) {
+            s.running -= 1;
+        }
+        // SAFETY: fn contract; `s` is held.
+        let next = unsafe { Self::take(instance, &mut s) };
+        if next.is_none() {
+            if primary {
+                s.primary_parked = true;
+            } else {
+                s.helpers_parked += 1;
+            }
+        }
+        next
+    }
+
+    /// A build `take` started that no thread could be created for.
+    ///
+    /// # Safety
+    /// As `spawn_helper`.
+    unsafe fn fail(instance: *mut Self, taken: Taken<C>, err: &std::io::Error) {
+        // SAFETY: started and not handed to a thread ⇒ ours alone until posted.
+        let completion = unsafe { &mut *taken.completion.as_ptr() };
+        let mut log = bun_ast::Log::init();
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("Failed to start a thread for Bun.build: {err}"),
+        );
+        completion.set_log(log);
+        completion.set_result(BundleV2Result::Err(crate::Error::BuildFailed));
+        completion.complete_on_bundle_thread();
+        // SAFETY: fn contract; field projection via raw ptr.
+        unsafe { (*instance).schedule.lock().running -= 1 };
+    }
+
+    /// The build this thread runs has nothing left to do but wait for its
+    /// plugins' answers (`true`), or has work of its own again (`false`).
+    /// Bundle thread, between `run`'s start and end.
+    ///
+    /// # Safety
+    /// `instance` is live.
+    unsafe fn waiting_on_plugins(instance: *mut Self, waiting: bool) {
+        // SAFETY: fn contract; field projection via raw ptr.
+        unsafe {
+            if waiting {
+                if COUNTED_AS_RUNNING.replace(false) {
+                    (*instance).schedule.lock().running -= 1;
+                }
+                Self::dispatch(instance);
+            } else if !COUNTED_AS_RUNNING.replace(true) {
+                // May exceed `MAX_RUNNING` until a build finishes: one that was
+                // started meanwhile keeps running.
+                (*instance).schedule.lock().running += 1;
+            }
         }
     }
 
@@ -188,7 +473,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         Output::Source::configure_named_thread(zstr!("Bundler"));
 
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
-        // releases any thread that could call `enqueue` (which reads `waker`).
+        // releases any thread that could call `enqueue` (whose `dispatch` reads `waker`).
         unsafe {
             core::ptr::addr_of_mut!((*instance).waker)
                 .write(Async::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
@@ -209,58 +494,44 @@ impl<C: CompletionStruct> BundleThread<C> {
         {
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
-            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
+            // concurrent `dispatch()` (possible now that `ready_event.set()` has fired)
             // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
             timer.init(unsafe { (*instance).waker.uv_loop() });
             timer.start(u64::MAX, u64::MAX, Some(timer_callback));
         }
 
         let mut has_bundled = false;
+        let mut next: Option<Taken<C>> = None;
         loop {
-            loop {
-                // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
-                // `enqueue` is the lock-free queue's intended use.
-                let completion = unsafe { (*instance).queue.pop() };
-                if completion.is_null() {
-                    break;
-                }
-                // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
-                // until complete_on_bundle_thread() signals completion — unless it
-                // released the build while it sat here (its VM went away).
-                if !unsafe { (*completion).try_start() } {
-                    C::free_released_unstarted(completion);
-                    continue;
-                }
-                // SAFETY: as above; started ⇒ the owner waits for us.
-                let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
-                // `panic = "abort"` → a Rust panic on this thread enters the
-                // crash-handler hook and aborts the whole process.
-                // No `catch_unwind` — there is nothing to catch.
-                match Self::generate_in_new_thread(completion, generation) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        completion.set_result(BundleV2Result::Err(err));
-                        completion.complete_on_bundle_thread();
+            if next.is_none() {
+                // Parked (`schedule.primary_parked`): what `dispatch` handed
+                // over, or — on a wake that handed over nothing — a look.
+                // SAFETY: field projection via raw ptr; `s` is held for `take`.
+                unsafe {
+                    let mut s = (*instance).schedule.lock();
+                    next = s.primary_next.take();
+                    if next.is_none() {
+                        next = Self::take(instance, &mut s);
                     }
+                    s.primary_parked = next.is_none();
                 }
-                has_bundled = true;
             }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
-            }
-
-            if has_bundled {
-                crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
-                bun_alloc::mimalloc::mi_collect(false);
-                has_bundled = false;
-            }
-
-            // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
-            unsafe { (*instance).waker.wait() };
+            let Some(taken) = next.take() else {
+                if has_bundled {
+                    crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
+                    bun_alloc::mimalloc::mi_collect(false);
+                    has_bundled = false;
+                }
+                // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `dispatch` is by design.
+                unsafe { (*instance).waker.wait() };
+                continue;
+            };
+            // SAFETY: from `take`, and this thread runs it; then `finish`'s contract.
+            next = unsafe {
+                Self::run(taken);
+                Self::finish(instance, true)
+            };
+            has_bundled = true;
         }
     }
 
@@ -360,19 +631,40 @@ pub mod singleton {
     /// only ever project fields via raw-pointer access.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
-    // `'static`; cross-thread access is mediated entirely through
-    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
+    // `'static`; cross-thread access is mediated entirely through the
+    // `UnboundedQueue` / `ResetEvent` atomics and the `schedule` lock.
     unsafe impl Send for Instance {}
     // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
-    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives, so
-    // sharing the pointer across threads is sound.
+    // goes through `BundleThread`'s raw-pointer methods, which touch only those
+    // primitives, so sharing the pointer across threads is sound.
     unsafe impl Sync for Instance {}
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
+    /// [`BundleThread::waiting_on_plugins`] for the one `C`, which `BundleV2`
+    /// cannot name. Set along with `INSTANCE`.
+    static WAITING_ON_PLUGINS: std::sync::OnceLock<fn(bool)> = std::sync::OnceLock::new();
+
+    fn waiting_on_plugins_impl<C: CompletionStruct>(waiting: bool) {
+        // SAFETY: `get()` returns the leaked 'static singleton.
+        unsafe { BundleThread::waiting_on_plugins(get::<C>(), waiting) };
+    }
+
+    /// The `Bun.build` pass this bundle thread runs has handed its plugins'
+    /// VM a request and none was outstanding (`true`), or took the answer to
+    /// the last one outstanding (`false`).
+    pub(crate) fn waiting_on_plugins(waiting: bool) {
+        if let Some(hook) = WAITING_ON_PLUGINS.get() {
+            hook(waiting);
+        }
+    }
+
     // Blocks the calling thread until the bun build thread is created.
     // OnceLock also blocks other callers of this function until the first caller is done.
     fn load_once_impl<C: CompletionStruct>() -> Instance {
+        // Every call uses the same `C` (see `get`), so a second `set` is the same value.
+        let _ = WAITING_ON_PLUGINS.set(waiting_on_plugins_impl::<C>);
+
         let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
 
         // 2. Spawn the bun build thread.

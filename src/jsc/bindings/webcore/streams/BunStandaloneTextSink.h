@@ -40,9 +40,7 @@ struct BunTextAccumulator {
     bool hasString { false };
     bool hasBuffer { false };
 
-    // Moves the flushed rope (when there is one) and then `chunk` into `pieces`. Returns
-    // false when `pieces` cannot grow: script adds a piece per cheap write() call, and
-    // Vector::append CRASH()es there. The caller throws once it has dropped the lock.
+    // Script adds a piece per write(), so growth is fallible. On false the caller throws after it drops the lock.
     bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
     {
         using Piece = JSC::WriteBarrier<JSC::Unknown>;

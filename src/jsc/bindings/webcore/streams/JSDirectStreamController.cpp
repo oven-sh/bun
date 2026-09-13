@@ -431,8 +431,7 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
             ropeString = jsString(vm, accumulator.rope.toString());
             RETURN_IF_EXCEPTION(scope, {});
         }
-        // The barrier container is only mutated under the cell lock, and nothing GC-allocates
-        // under it: the rope string exists already, and the throw waits for the unlock.
+        // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
         bool appended;
         {
             Locker locker { controller->cellLock() };

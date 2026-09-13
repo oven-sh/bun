@@ -1,10 +1,8 @@
 name: FreeBSD smoke test
 
-# Runs the cross-compiled FreeBSD binary inside a FreeBSD VM to verify it
-# actually starts and executes JavaScript. The build itself happens on
-# BuildKite (cross-compiled from Linux); this just validates the result.
-#
-# Triggered manually with a BuildKite artifact URL.
+# Probe variant for a one-time check of os.cpus() on FreeBSD. It is not for merge.
+# It runs the check at the default boot, sets one loader.conf line, reboots the VM,
+# and runs the check again.
 
 permissions:
   contents: read
@@ -16,55 +14,104 @@ on:
         description: 'URL to bun-freebsd-x64.zip (from BuildKite artifacts)'
         required: true
         type: string
+      tunable:
+        description: 'loader.conf line to set before the reboot, for example kern.smp.disabled=1'
+        required: false
+        type: string
+        default: ''
+      label:
+        description: 'Text for the run title'
+        required: false
+        type: string
+        default: ''
+
+run-name: 'os.cpus() probe: ${{ inputs.label }} / ${{ inputs.tunable }}'
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    name: FreeBSD ${{ matrix.version }} smoke
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ['14.3']
+    name: FreeBSD 14.3 os.cpus() probe
+    env:
+      TUNABLE: ${{ inputs.tunable }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            test/js/bun
-            test/harness.ts
-
       - name: Download bun-freebsd-x64
-        if: inputs.artifact_url != ''
         env:
           ARTIFACT_URL: ${{ inputs.artifact_url }}
         run: |
           curl -fsSL "$ARTIFACT_URL" -o bun-freebsd.zip
           mkdir -p ./bin
           unzip -j bun-freebsd.zip -d ./bin
-          # Normalize whatever name was in the zip to ./bin/bun.
           for f in ./bin/bun-freebsd-* ./bin/bun-profile; do
             [ -f "$f" ] && mv "$f" ./bin/bun && break
           done
           chmod +x ./bin/bun
           file ./bin/bun
+          rm bun-freebsd.zip
 
-      - name: Run in FreeBSD VM
+      - name: Write the probe scripts
+        run: |
+          cat > probe.js <<'EOF'
+          const os = require("os");
+          const cpus = os.cpus();
+          console.log("os.cpus().length before a read:", cpus.length);
+          try {
+            const first = { model: cpus[0].model, speed: cpus[0].speed, times: cpus[0].times };
+            console.log("os.cpus().length after a read:", cpus.length);
+            cpus.forEach((cpu, i) => console.log("cpu", i, JSON.stringify(cpu.times)));
+            console.log("cpus[0]:", JSON.stringify(first));
+          } catch (e) {
+            console.log("os.cpus() THREW:", e.code, "-", e.message);
+            process.exit(1);
+          }
+          EOF
+          cat > probe.sh <<'EOF'
+          #!/bin/sh
+          echo "##### $1"
+          echo "uname: $(uname -srm)"
+          echo "kern.boottime: $(sysctl -n kern.boottime)"
+          sysctl hw.ncpu kern.smp.maxid kern.smp.maxcpus kern.smp.cpus kern.smp.disabled
+          echo "kern.cp_times bytes: $(sysctl -b kern.cp_times | wc -c | tr -d ' ') (blocks * 5 longs * 8 bytes)"
+          echo "kern.cp_times before: $(sysctl -n kern.cp_times)"
+          ./bin/bun --revision
+          ./bin/bun probe.js
+          echo "bun exit code: $?"
+          echo "kern.cp_times after:  $(sysctl -n kern.cp_times)"
+          EOF
+
+      - name: Default boot
         uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1 # v1
         with:
-          release: ${{ matrix.version }}
-          usesh: true
+          release: '14.3'
+          cpu: 4
           copyback: false
+          envs: 'TUNABLE'
           run: |
-            set -e
-            if [ -x ./bin/bun ]; then BUN=./bin/bun;
-            else echo "::error::no bun binary found; pass artifact_url"; exit 1; fi
-            echo "=== version ==="
-            $BUN --revision
-            echo "=== eval ==="
-            $BUN -e 'console.log("hello from", process.platform, process.arch)'
-            echo "=== os ==="
-            $BUN -e 'const os=require("os"); console.log(os.type(), os.release(), os.cpus().length, "cpus")'
-            echo "=== fs ==="
-            $BUN -e 'require("fs").writeFileSync("/tmp/x","ok"); console.log(require("fs").readFileSync("/tmp/x","utf8"))'
-            echo "=== http ==="
-            $BUN -e 'const s=Bun.serve({port:0,fetch:()=>new Response("ok")}); fetch("http://localhost:"+s.port).then(r=>r.text()).then(t=>{console.log("got:",t);s.stop();process.exit(t==="ok"?0:1)})'
+            sh ./probe.sh "default boot"
+            if [ -n "$TUNABLE" ]; then
+              echo "$TUNABLE" >> /boot/loader.conf
+              echo "--- /boot/loader.conf"
+              cat /boot/loader.conf
+            fi
+
+      - name: Reboot with the tunable
+        if: inputs.tunable != ''
+        run: |
+          before=$(ssh freebsd 'sysctl -n kern.boottime')
+          echo "boottime before: $before"
+          ssh freebsd 'shutdown -r now' || true
+          sleep 20
+          after=''
+          for i in $(seq 1 60); do
+            after=$(ssh -o ConnectTimeout=5 freebsd 'sysctl -n kern.boottime' 2>/dev/null || true)
+            if [ -n "$after" ] && [ "$after" != "$before" ]; then
+              echo "rebooted after $i tries, boottime after: $after"
+              break
+            fi
+            sleep 5
+          done
+          [ -n "$after" ] && [ "$after" != "$before" ]
+
+      - name: After the reboot
+        if: inputs.tunable != ''
+        run: |
+          ssh freebsd "cd '$GITHUB_WORKSPACE' && sh ./probe.sh 'after the reboot with $TUNABLE'"

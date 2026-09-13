@@ -240,7 +240,12 @@ export var __privateSet = (obj, member, value, setter) => (
 );
 export var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
-export var __decoratorStart = base => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
+// `target` is a derived class: its metadata inherits from that of its prototype,
+// the class it extends. Output of older versions passes that class as `base`.
+export var __decoratorStart = (base, target) => (
+  target && (base = __getProtoOf(target)),
+  [, , , __create(base?.[__knownSymbol("metadata")] ?? null)]
+);
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];
 var __expectFn = fn => (fn !== void 0 && typeof fn !== "function" ? __typeError("Function expected") : fn);
 var __decoratorContext = (kind, name, done, metadata, fns) => ({
@@ -286,7 +291,10 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
             },
         name,
       ));
-  k ? p && k < 4 && __name(extra, (k > 2 ? "set " : k > 1 ? "get " : "") + name) : __name(target, name);
+  // A static member called `name` has already replaced the string every class starts with.
+  k
+    ? p && k < 4 && __name(extra, (k > 2 ? "set " : k > 1 ? "get " : "") + name)
+    : typeof __getOwnPropDesc(target, "name")?.value == "string" && __name(target, name);
 
   for (var i = decorators.length - 1; i >= 0; i--) {
     ctx = __decoratorContext(k, name, (done = {}), array[3], extraInitializers);

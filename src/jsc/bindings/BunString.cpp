@@ -620,10 +620,10 @@ namespace Bun {
 WTF::String moduleKeyFromFileURL(const WTF::URL& url)
 {
     auto path = url.fileSystemPath();
-    if (path.find('?') != WTF::notFound)
-        return url.string();
     auto query = url.queryWithLeadingQuestionMark();
     auto fragment = url.fragmentIdentifierWithLeadingNumberSign();
+    if (path.find('?') != WTF::notFound)
+        return makeString(WTF::URL::fileURLWithFileSystemPath(path).string(), query, fragment);
     if (query.isEmpty() && fragment.isEmpty())
         return path;
     // A module key is cut at its first '?' only, so a fragment always rides behind a '?'.

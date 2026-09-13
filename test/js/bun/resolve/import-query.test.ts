@@ -679,14 +679,15 @@ test.concurrent("file URL resolution preserves encoded path delimiters and raw s
   });
 });
 
-test.concurrent("mock.module uses the same key as a file URL containing %3F", async () => {
+test.concurrent("mock.module canonicalizes escapes in a file URL containing %3F", async () => {
   using dir = tempDir("mock-file-url-literal-question", {
     "target?copy.mjs": `export const value = "real";`,
     "entry.test.mjs": `
       import { expect, mock, test } from "bun:test";
-      const target = new URL("./target%3Fcopy.mjs?v=1", import.meta.url).href;
+      const target = new URL("./target%3fcopy.mjs?v=1", import.meta.url).href;
       mock.module(target, () => ({ value: "mocked" }));
       test("mocked encoded path", async () => {
+        expect(target).toContain("%3f");
         expect((await import(target)).value).toBe("mocked");
       });
     `,

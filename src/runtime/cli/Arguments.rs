@@ -1023,6 +1023,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
+            ctx.worker_eval_preloads.clone_from(&ctx.preloads);
+            ctx.worker_eval_preloads.extend(
+                preloads
+                    .iter()
+                    .chain(preloads2.iter())
+                    .map(|preload| Box::<[u8]>::from(*preload)),
+            );
+
             let total_preloads = ctx.preloads.len()
                 + preloads.len()
                 + preloads2.len()

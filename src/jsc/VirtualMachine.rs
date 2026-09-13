@@ -183,6 +183,12 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    /// Effective execArgv preloads retained after this VM runs them, so child
+    /// workers can inherit the same startup contract.
+    pub worker_preloads: Vec<Box<[u8]>>,
+    /// The require-style subset of `worker_preloads` that Node also applies
+    /// before eval Worker source.
+    pub worker_eval_preloads: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -4955,6 +4961,8 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.worker_preloads));
+        drop(core::mem::take(&mut self.worker_eval_preloads));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.
@@ -5069,6 +5077,11 @@ impl VirtualMachine {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
+        // A rejected preload is the worker's startup failure. Its rejection is
+        // reported through the normal Worker error path, but it still exits 1.
+        if unsafe { &*promise }.status() == crate::js_promise::Status::Rejected {
+            self.exit_handler.exit_code = 1;
+        }
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);

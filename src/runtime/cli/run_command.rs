@@ -971,6 +971,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.worker_preloads.clone_from(&vm.preload);
+        vm.worker_eval_preloads = std::mem::take(&mut ctx.worker_eval_preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
@@ -1174,6 +1176,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.worker_preloads.clone_from(&vm.preload);
+        vm.worker_eval_preloads = std::mem::take(&mut ctx.worker_eval_preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap

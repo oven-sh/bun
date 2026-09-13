@@ -38,6 +38,10 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+    // --require/--import modules parsed from an explicit node Worker execArgv.
+    // Kept raw so resolution and evaluation happen in the worker VM.
+    Vector<String> execArgvPreloadModules;
+    size_t execArgvEvalPreloadCount { 0 };
 };
 
 } // namespace WebCore

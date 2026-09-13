@@ -345,6 +345,116 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+describe("execArgv preloads", () => {
+  const entry = resolve(__dirname, "fixture-execargv-preload-entry.mjs");
+  const importPreload = resolve(__dirname, "fixture-execargv-preload-import.mjs");
+  const nestedEntry = resolve(__dirname, "fixture-execargv-preload-nested.mjs");
+  const requirePreload = resolve(__dirname, "fixture-execargv-preload-require.cjs");
+
+  async function runWorker(execArgv: string[]) {
+    const worker = new Worker(entry, {
+      argv: ["worker-arg"],
+      execArgv,
+      workerData: { from: "parent" },
+    });
+    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+    const [message] = await once(worker, "message");
+    expect(await exited).toBe(0);
+    return message;
+  }
+
+  test.each([
+    ["separate import and inline require", ["--import", importPreload, `--require=${requirePreload}`]],
+    ["inline import and separate require", [`--import=${importPreload}`, "--require", requirePreload]],
+  ])("runs %s before the source worker entry", async (_name, execArgv) => {
+    expect(await runWorker(execArgv)).toEqual({
+      argv: ["worker-arg"],
+      execArgv,
+      preloads: ["require", "import"],
+      workerData: { from: "parent" },
+    });
+  });
+
+  test("inherits parent preloads unless execArgv is explicitly empty", async () => {
+    const source = `
+      const { once } = require("node:events");
+      const { Worker } = require("node:worker_threads");
+      async function run(options) {
+        const worker = new Worker(${JSON.stringify(entry)}, options);
+        const exited = once(worker, "exit");
+        const [message] = await once(worker, "message");
+        await exited;
+        return message.preloads;
+      }
+      console.log(JSON.stringify(await run({})));
+      console.log(JSON.stringify(await run({ execArgv: [] })));
+    `;
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "--require", requirePreload, "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe('["require"]\nnull\n');
+  });
+
+  test("inherits explicit preloads through nested workers", async () => {
+    const worker = new Worker(nestedEntry, { execArgv: ["--require", requirePreload] });
+    const [message] = await once(worker, "message");
+    expect(message).toEqual({ child: ["require"], parent: ["require"] });
+  });
+
+  test("reports preload failures on the Worker", async () => {
+    const worker = new Worker(entry, {
+      execArgv: ["--import", "data:text/javascript,throw%20new%20Error(%22execArgv%20preload%20failed%22)"],
+    });
+    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+    const [error] = await once(worker, "error");
+    expect(error.message).toContain("execArgv preload failed");
+    expect(await exited).toBe(1);
+  });
+
+  test.each([
+    ["require", ["--require", requirePreload], ["require"]],
+    ["import", ["--import", importPreload], null],
+  ])("applies %s preload semantics to eval workers", async (_name, execArgv, expected) => {
+    const worker = new Worker(
+      `require("node:worker_threads").parentPort.postMessage(globalThis.execArgvPreloads ?? null)`,
+      { eval: true, execArgv },
+    );
+    const [message] = await once(worker, "message");
+    expect(message).toEqual(expected);
+    await worker.terminate();
+  });
+
+  test.each([
+    [["--title=worker"], "--title=worker"],
+    [["--import"], "--import requires an argument"],
+    [["--require", "--no-warnings"], "--require requires an argument"],
+  ])("rejects invalid or process-wide flags: %j", (execArgv, message) => {
+    let error: unknown;
+    try {
+      new Worker(entry, { execArgv });
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).toEqual(
+      expect.objectContaining({ code: "ERR_WORKER_INVALID_EXEC_ARGV", message: expect.stringContaining(message) }),
+    );
+  });
+
+  test.each([
+    ["conditions alias", ["-C", "development"]],
+    ["inline boolean", ["--enable-source-maps=true"]],
+    ["unhandled rejection mode", ["--unhandled-rejections=strict"]],
+  ])("accepts %s", async (_name, execArgv) => {
+    expect(await runWorker(execArgv)).toEqual(expect.objectContaining({ execArgv, preloads: null }));
+  });
+});
+
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
@@ -2506,10 +2616,17 @@ test("worker argv/execArgv option strings, read repeatedly in the worker", async
     parentPort.postMessage({ argv: process.argv.slice(2), execArgv: process.execArgv })`;
   const ws = Array.from(
     { length: 4 },
-    (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
+    (_, i) =>
+      new Worker(src, {
+        eval: true,
+        argv: ["", "a" + i, "\u00fc\u2603", ""],
+        execArgv: ["--no-warnings"],
+      }),
   );
   const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
-  expect(got).toEqual([0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })));
+  expect(got).toEqual(
+    [0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["--no-warnings"] })),
+  );
   await Promise.all(ws.map(w => w.terminate()));
 });
 

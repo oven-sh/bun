@@ -43,6 +43,7 @@ pub struct ContextData {
     pub no_exit_on_error: bool,
 
     pub preloads: Vec<Box<[u8]>>,
+    pub worker_eval_preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
 }
 
@@ -83,6 +84,7 @@ impl Default for ContextData {
             sequential: false,
             no_exit_on_error: false,
             preloads: Vec::new(),
+            worker_eval_preloads: Vec::new(),
             has_loaded_global_config: false,
         }
     }

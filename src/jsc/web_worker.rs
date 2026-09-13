@@ -84,6 +84,8 @@ pub struct WebWorker {
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    worker_preloads: Vec<Box<[u8]>>,
+    worker_eval_preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
     // ---- Cross-thread ----------------------------------------------------------
@@ -299,6 +301,9 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
+        exec_argv_preload_modules_ptr: *const BunString,
+        exec_argv_preload_modules_len: usize,
+        exec_argv_eval_preload_count: usize,
     ) -> *mut WebWorker {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
@@ -324,7 +329,12 @@ impl WebWorker {
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
-        let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
+        let exec_argv_preload_modules: &[BunString] = unsafe {
+            bun_core::ffi::slice(exec_argv_preload_modules_ptr, exec_argv_preload_modules_len)
+        };
+
+        let mut preloads: Vec<Box<[u8]>> =
+            Vec::with_capacity(preload_modules_len.saturating_add(exec_argv_preload_modules_len));
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
@@ -351,6 +361,28 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
+        let (worker_preloads, worker_eval_preloads) = if inherit_exec_argv {
+            (
+                parent_ref.worker_preloads.clone(),
+                parent_ref.worker_eval_preloads.clone(),
+            )
+        } else {
+            let worker_preloads: Vec<Box<[u8]>> = exec_argv_preload_modules
+                .iter()
+                .map(|module| module.to_utf8().slice().to_vec().into_boxed_slice())
+                .collect();
+            let worker_eval_preloads =
+                worker_preloads[..exec_argv_eval_preload_count.min(worker_preloads.len())].to_vec();
+            (worker_preloads, worker_eval_preloads)
+        };
+        if is_node_worker {
+            let exec_arg_preloads = if eval_mode {
+                &worker_eval_preloads
+            } else {
+                &worker_preloads
+            };
+            preloads.splice(0..0, exec_arg_preloads.iter().cloned());
+        }
         let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
@@ -414,6 +446,8 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            worker_preloads,
+            worker_eval_preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -801,6 +835,12 @@ impl WebWorker {
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
+        vm.as_mut()
+            .worker_preloads
+            .clone_from(&self.worker_preloads);
+        vm.as_mut()
+            .worker_eval_preloads
+            .clone_from(&self.worker_eval_preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from

@@ -328,28 +328,48 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const connect = port => new WebSocket("ws://127.0.0.1:" + port);
       `,
     });
-    const closed = Promise.withResolvers<void>();
+    let serverClosed = 0;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
-      websocket: { message: (ws, message) => void ws.send(message), close: () => closed.resolve() },
+      websocket: { message: (ws, message) => void ws.send(message), close: () => void serverClosed++ },
     });
-    const ws: WebSocket = await (async () => {
+    // Once `keepAlive` is emptied nothing of the graph is referenced but the socket its code made.
+    const connect = async (keepAlive: object[]): Promise<WebSocket> => {
       const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+      keepAlive.push(graph);
       const app = await graph.import(join(dir, "ws.mjs"));
       return graph.run(() => app.connect(server.port));
-    })();
-    try {
-      // Collected mid-handshake or right after it: either way the socket is closed from
-      // the event loop, not from under the collector.
-      await until(() => {
+    };
+    const collectedAndClosed = (ws: WebSocket) =>
+      until(() => {
         Bun.gc(true);
         return ws.readyState === WebSocket.CLOSED;
       });
-      await closed.promise;
+
+    // Collected while the socket is open: it is closed from the event loop, and the server sees it.
+    const keepAlive: object[] = [];
+    const open = await connect(keepAlive);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        open.onopen = () => resolve();
+        open.onerror = open.onclose = () => reject(new Error("closed before it opened"));
+      });
+      open.onerror = open.onclose = null;
+      keepAlive.length = 0;
+      await collectedAndClosed(open);
+      await until(() => serverClosed === 1);
     } finally {
-      ws.close();
+      open.close();
+    }
+
+    // Collected in the same turn the socket started connecting: closed mid-handshake.
+    const connecting = await connect([]);
+    try {
+      await collectedAndClosed(connecting);
+    } finally {
+      connecting.close();
     }
   });
 

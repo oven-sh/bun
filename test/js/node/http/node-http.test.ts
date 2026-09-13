@@ -4282,6 +4282,52 @@ it("https wraps a raw socket injected through the connection event", async () =>
   }
 });
 
+async function withStalledInjectedHttpsConnection<T>(observe: (server: https.Server) => Promise<T>) {
+  const server = createHttpsServer({ ...tlsCert, handshakeTimeout: 50 });
+  const rawClosed = Promise.withResolvers<void>();
+  const front = createNetServer(socket => {
+    socket.once("close", () => rawClosed.resolve());
+    server.emit("connection", socket);
+  });
+  let client;
+
+  try {
+    const observed = observe(server);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    const result = await observed;
+    await rawClosed.promise;
+    return result;
+  } finally {
+    client?.destroy();
+    front.close();
+  }
+}
+
+it("https routes an injected socket handshake timeout through clientError", async () => {
+  const result = await withStalledInjectedHttpsConnection(server => {
+    const clientError = Promise.withResolvers<{ code: string | undefined; destroyed: boolean }>();
+    server.on("clientError", (err: Error & { code?: string }, socket) => {
+      clientError.resolve({ code: err.code, destroyed: socket.destroyed });
+      socket.destroy();
+    });
+    return clientError.promise;
+  });
+  expect(result).toEqual({ code: "ERR_TLS_HANDSHAKE_TIMEOUT", destroyed: false });
+});
+
+it("https destroys an injected socket after an unhandled handshake timeout", async () => {
+  const result = await withStalledInjectedHttpsConnection(server => {
+    const tlsClientError = Promise.withResolvers<{ code: string | undefined; destroyed: boolean }>();
+    server.on("tlsClientError", (err: Error & { code?: string }, socket) => {
+      tlsClientError.resolve({ code: err.code, destroyed: socket.destroyed });
+    });
+    return tlsClientError.promise;
+  });
+  expect(result).toEqual({ code: "ERR_TLS_HANDSHAKE_TIMEOUT", destroyed: true });
+});
+
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
 // belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
 // (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the

@@ -315,6 +315,10 @@ function secureConnectionListener(this: Server, socket) {
   connectionListenerHTTP1.$call(this, socket);
 }
 
+function tlsClientErrorListener(this: Server, err, socket) {
+  if (!this.emit("clientError", err, socket)) socket.destroy(err);
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -428,7 +432,7 @@ function Server(options, callback): void {
       });
       this._SNICallback = options.SNICallback;
       const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
-      validateNumber(handshakeTimeout, "options.handshakeTimeout");
+      validateNumber(handshakeTimeout, "options.handshakeTimeout", 0);
       this._handshakeTimeout = handshakeTimeout;
     } else {
       this[tlsSymbol] = null;
@@ -438,7 +442,10 @@ function Server(options, callback): void {
   this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
 
-  if (this[tlsSymbol]) this.on("secureConnection", secureConnectionListener);
+  if (this[tlsSymbol]) {
+    this.on("secureConnection", secureConnectionListener);
+    this.on("tlsClientError", tlsClientErrorListener);
+  }
 
   if (callback) this.on("request", callback);
   return this;

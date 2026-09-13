@@ -217,6 +217,8 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  /** Never-external modules (takes precedence over `external` and `packages: "external"`) */
+  internal?: string[];
   allowUnresolved?: string[];
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
@@ -503,6 +505,7 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    internal,
     allowUnresolved,
     packages,
     drop = [],
@@ -693,6 +696,9 @@ function expectBundled(
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
   }
+  if (ESBUILD && internal) {
+    throw new Error("internal not implemented in esbuild");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }
@@ -722,6 +728,12 @@ function expectBundled(
 
     if (external) {
       external = external.map(x =>
+        typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
+      );
+    }
+
+    if (internal) {
+      internal = internal.map(x =>
         typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
       );
     }
@@ -856,6 +868,7 @@ function expectBundled(
               `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              internal && internal.map(x => ["--internal", x]),
               allowUnresolved !== undefined &&
                 (allowUnresolved.length === 0
                   ? "--reject-unresolved"
@@ -1230,6 +1243,7 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          internal,
           allowUnresolved,
           banner,
           format,

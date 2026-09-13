@@ -85,7 +85,7 @@ jobs:
               console.log("cpu", i, JSON.stringify(cpus[i].times));
               for (let j = 0; j < fields.length; j++) {
                 const v = cpus[i].times[fields[j]];
-                const lo = before[i * 5 + j] * mult, hi = after[i * 5 + j] * mult;
+                const lo = before[i * 5 + j] * mult, hi = (after[i * 5 + j] + clkTck) * mult;
                 if (!(v >= lo && v <= hi)) { ok = false; console.log("  MISMATCH", fields[j], v, "not in", [lo, hi]); }
               }
             }

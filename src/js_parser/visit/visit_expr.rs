@@ -2766,7 +2766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
             return;
         }
 

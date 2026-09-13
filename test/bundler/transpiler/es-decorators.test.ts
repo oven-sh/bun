@@ -31,6 +31,17 @@ async function runDecorator(code: string) {
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
+async function runIn(cwd: string, args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    cwd,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {
@@ -1299,6 +1310,394 @@ describe("ES Decorators", () => {
     });
   });
 
+  // A lowered class keeps its members where they are written. Decorator lists
+  // are evaluated in the key of their member, a leading static block applies
+  // them, and what runs between two instance fields rides in the next one.
+  describe("members stay where they are written", () => {
+    test.concurrent("undecorated fields initialize in source order next to decorated fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {}; const log = (s) => (console.log("init", s), s);
+        class Foo { @dec a = log("a"); b = log(this.a === "a" ? "b (a set)" : "b (a NOT set)"); @dec c = log("c"); }
+        new Foo();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("init a\ninit b (a set)\ninit c\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("decorated fields are defined, not assigned", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class Base { set a(v) { console.log("BASE SETTER", v) } }
+        class Bar extends Base { @dec a = 1 }
+        console.log(JSON.stringify(Object.getOwnPropertyDescriptor(new Bar(), "a")));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"value":1,"writable":true,"enumerable":true,"configurable":true}\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("static fields and static blocks keep their order next to decorated members", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class S { @dec static x = console.log(1); static { console.log(2) } static y = console.log(3) }
+        class T { static { console.log(1) } static x = console.log(2); @dec m() {} }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\n2\n3\n1\n2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "undecorated private members stay native, and every initializer reaches a lowered one",
+      async () => {
+        const { stdout, stderr, exitCode } = await runDecorator(`
+        function d(t, k) {}
+        class D { static #p = 5; static a = D.#p; static b = this.#p; #q = 6; d = this.#q; e() { return D.#p + this.#q } @d m() {} }
+        class E {
+          @d #low = 7;
+          @d static #slow = 8;
+          a = this.#low;
+          b = () => this.#low;
+          static c = E.#slow;
+          static { E.d = this.#slow; }
+          [(o => o.#low, "f")] = #low in this;
+          static read(o) { function inner() { return o.#low } class N { static v = o.#low } return [inner(), N.v, (({ x = o.#low }) => x)({})] }
+        }
+        const e = new E();
+        console.log(D.a, D.b, new D().d, new D().e(), e.a, e.b(), E.c, E.d, e.f, E.read(e));
+      `);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("5 5 6 11 7 7 8 8 true [ 7, 7, 7 ]\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("new.target stays undefined in field initializers and static blocks", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class C {
+          @dec m() {}
+          static a = new.target;
+          @dec b = new.target;
+          c = () => new.target;
+          d = function () { return new.target; };
+          static { C.sb = new.target; }
+        }
+        class D extends C { e = new.target; }
+        const c = new C(), d = new D(), fn = d.d;
+        console.log(C.a, c.b, c.c(), C.sb, d.b, d.e, new fn() === fn);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined undefined undefined undefined undefined undefined true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("super resolves from the class as written when a class decorator replaces it", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const wrap = (C) => class extends C { static sg() { return "wrapper" } greet() { return "wrapper" } };
+        class B { greet() { return "B" } static sg() { return "B" } }
+        @wrap class C extends B {
+          @dec x = super.greet();
+          greet() { return "C" }
+          static sg() { return "C" }
+          #m() { return super.greet() }
+          static #s() { return super.sg() }
+          call() { return [this.x, this.#m(), C.#s()] }
+          @dec static y = super.sg();
+          static { C.blk = super.sg(); }
+        }
+        console.log(new C().call(), C.y, C.blk, Object.getPrototypeOf(C) !== B);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[ "B", "B", "B" ] B B true\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("super.m?.() in a static initializer keeps short-circuiting the rest of its chain", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class B { static get maybe() { return undefined } static sg() { return "B" } }
+        class C extends B {
+          @dec m() {}
+          @dec static z = super.maybe?.().value;
+          static w = super.sg?.().length;
+          static { C.blk = super.maybe?.()?.x ?? "none"; }
+        }
+        console.log(C.z, C.w, C.blk);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined 1 none\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the inner name of a named class expression resolves in private methods", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const A = class Foo {
+          @dec a = 1;
+          #m() { return Foo }
+          @dec #n() { return Foo }
+          static #s() { return [Foo, this] }
+          call() { return [this.#m(), this.#n()] }
+          static scall() { return Foo.#s() }
+        };
+        console.log(new A().call().every(c => c === A), A.scall()[0] === A, A.scall()[1] === A);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("decorator lists are evaluated where their member is written", async () => {
+      // In the key of the member, so: in order with computed keys, with the
+      // outer \`this\`, \`await\` and \`arguments\`, inside the private scope of
+      // the class, and before the class binding is initialized. A decorated
+      // \`#private\` member has no key of its own and uses a neighbor's.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const K = (n) => (log.push("k:" + n), n);
+        const D = (n, ...rest) => (log.push("d:" + n), () => {});
+        async function outer() {
+          class A {
+            @D(1) #first = 0;
+            [K("a")] = 0;
+            @D(2, this.tag, arguments[0]) b() {}
+            static [K("c")]() {}
+            @D(3) #p = 0;
+            @D(4) static #q() {}
+            @D(await 5) accessor e = 0;
+            [K("f")]() {}
+            @D(6, (o) => o.#p, () => A) #last = 0;
+            constructor() {}
+            static { log.push("static") }
+          }
+          return log.join(" ");
+        }
+        console.log(await outer.call({ tag: "t" }, "arg"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("d:1 k:a d:2 k:c d:3 d:4 d:5 k:f d:6 static\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a decorator expression sees the outer this, its own class only after it is defined", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const fns = [];
+        const capture = (fn) => { fns.push(fn); try { fn(); fns.push("no TDZ") } catch (e) { fns.push(e.constructor.name) } return () => {} };
+        function outer() {
+          class A { @capture(() => [this.tag, A]) m() {} @capture(() => [this.tag, A]) #p() {} }
+          return A;
+        }
+        const A = outer.call({ tag: "t" });
+        console.log(fns[1], fns[3], fns[0]()[0], fns[0]()[1] === A, fns[2]()[0], fns[2]()[1] === A);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ReferenceError ReferenceError t true t true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "class decorators run before static fields, extra initializers right after their field",
+      async () => {
+        const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const cls = (C, ctx) => { log.push("class:" + Object.hasOwn(C, "s")); ctx.addInitializer(function () { log.push("class extra:" + this.s) }) };
+        const field = (v, ctx) => { ctx.addInitializer(function () { log.push(ctx.name + " extra:" + Object.keys(this)) }) };
+        const method = field;
+        @cls class A {
+          static s = (log.push("s"), 1);
+          @field a = (log.push("a"), 1);
+          accessor b = (log.push("b"), 2);
+          @field c = (log.push("c"), 3);
+          @method m() {}
+        }
+        log.push("new");
+        new A();
+        console.log(log.join(" | "));
+      `);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("class:false | s | class extra:1 | new | m extra: | a | a extra:a | b | c | c extra:a,c\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("an anonymous class expression keeps the name its context gives it", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const A = class { @dec x = 1 };
+        const B = @dec class { accessor y = 2 };
+        const o = { C: class { @dec static #z = 3 } };
+        console.log(A.name, B.name, o.C.name, JSON.stringify((class { @dec m() {} }).name));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('A B C ""\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("decorator lists no key of the class can hold are evaluated before it", async () => {
+      // Only \`#private\` members and a constructor: no computed key to borrow.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const D = (n, d) => (log.push("d:" + n), d ?? ((v, ctx) => { log.push("apply:" + ctx.name) }));
+        class A { @D(1) #a = 1; @D(2) static #b() {} constructor() { log.push("ctor:" + this.#a) } }
+        new A();
+        function outer() { return class { @D(3, this.dec) #x = 1; @D("3b", arguments[0]) #w = 2; constructor() { log.push("x:" + this.#x + this.#w) } } }
+        new (outer.call({ dec: (v, ctx) => { log.push("this.dec:" + ctx.name) } }, (v, ctx) => { log.push("arguments[0]:" + ctx.name) }))();
+        const late = Promise.resolve((v, ctx) => { log.push("awaited:" + ctx.name) });
+        const E = class { @D(4, await late) #y = 1 };
+        function* gen() { return class { @D(5, yield) #z = 1 }; }
+        const it = gen(); it.next(); it.next((v, ctx) => { log.push("yielded:" + ctx.name) });
+        console.log(log.join(" "), JSON.stringify(E.name));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        'd:1 d:2 apply:#b apply:#a ctor:1 d:3 d:3b this.dec:#x arguments[0]:#w x:12 d:4 awaited:#y d:5 yielded:#z "E"\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a field that carries the effects of its neighbors keeps naming its function", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class A { @dec m() {} first = () => {}; accessor a = 1; afterAccessor = class {}; plain = function () {}; @dec d = 1; afterField = () => {}; "q r" = () => {}; }
+        class B { accessor a = 1; onlyAccessors = () => {}; }
+        const a = new A();
+        console.log(JSON.stringify([a.first.name, a.afterAccessor.name, a.plain.name, a.afterField.name, a["q r"].name, new B().onlyAccessors.name]));
+        const k = "dyn", sym = Symbol("desc");
+        class C {
+          accessor a = 1; [k] = function () {};
+          accessor b = 2; 123 = class {};
+          accessor c = 3; [sym] = () => {};
+          accessor d = 4; #p = () => {}; privateName() { return this.#p.name }
+          accessor f = 6; #own = class { static name = "own" }; ownName() { return this.#own.name }
+          accessor e = 5; ["__proto__"] = function () {};
+        }
+        const c = new C();
+        console.log(JSON.stringify([c[k].name, c[123].name, c[sym].name, c.privateName(), c.ownName(), c["__proto__"].name, Object.getPrototypeOf(c) === C.prototype]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["first","afterAccessor","plain","afterField","q r","onlyAccessors"]\n["dyn","123","[desc]","#p","own","__proto__",true]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "a class with no key for its decorator lists: private names, extends and the inner name",
+      async () => {
+        const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v) => v, order = [];
+        let inB, inA;
+        class B { @(inB = (o) => #m in o, dec) #m() { return 1 } }
+        class A { #y = 1; @(inA = (o) => #y in o, dec) #m() {} static {} }
+        class E extends (order.push("extends"), Object) { @(order.push("dec m"), dec) #m() {} @(order.push("dec x"), dec) #x = 1; }
+        const later = [];
+        const lazy = (f) => (later.push(f), dec);
+        const X = class Inner extends Object { @lazy(() => Inner) #p; constructor() { super() } };
+        console.log(inB(new B()), inA(new A()), inA({}), order.join(","), later[0]() === X);
+        let x = 5, seen;
+        const o = { x: class { @dec #p = 1; static { seen = x } } };
+        function g() { var h = class { @dec #p() {} static { this.self = () => h } }; const was = h; h = null; return [was.name, was.self()] }
+        console.log(o.x.name, seen, JSON.stringify(g()));
+        const Named = class Self { @lazy(() => Self) #q() {} };
+        class Symbol {}
+        class Shadow { @dec #s = 1 }
+        console.log(later[1]() === Named, JSON.stringify([B, A, Shadow].map(C => Object.getOwnPropertyNames(C))));
+      `);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(
+          'true true false extends,dec m,dec x true\nx 5 ["h",null]\ntrue [["length","name","prototype"],["length","name","prototype"],["length","name","prototype"]]\n',
+        );
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("a class decorator on a class whose context name is not an identifier", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => { console.log(ctx.kind, ctx.name) };
+        const o = { "a-b c": @dec class {} };
+        class Q { static "x y" = @dec class { @dec m() {} } }
+        console.log(o["a-b c"].name, Q["x y"].name);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class a-b c\nmethod m\nclass x y\na-b c x y\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an exported decorated class next to a lowered top-level using", async () => {
+      using dir = tempDir("es-dec-using", {
+        "entry.js": `
+          const dec = (v, ctx) => {};
+          using res = { [Symbol.dispose]() { console.log("disposed") } };
+          export @dec class A { @dec m() { return 1 } }
+          export class B extends A { @dec accessor x = 2 }
+          console.log(new A().m(), new B().x);
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "--target=browser", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("1 2\ndisposed\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a class decorator's initializers run once the class is bound to its name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        function register(v, ctx) { ctx.addInitializer(function () { log.push(A === this, typeof A.create, A.ready) }) }
+        @register class A { static create() { return new A() } static ready = (log.push("static field"), true) }
+        console.log(log.join(" "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("static field true function true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a TypeScript parameter property that holds the decorator lists keeps its name", async () => {
+      // The field of \`constructor(public x)\` is the only member with a key.
+      using dir = tempDir("es-dec-param-prop-key", {
+        "tsconfig.json": "{}",
+        "test.ts": `
+          const dec = (v: any, ctx: any) => {};
+          const seen: unknown[] = [];
+          class C { @dec #a = 1; constructor(public x: number) { seen.push(this.#a); } }
+          const c = new C(5);
+          function scope() {
+            const y = "outer";
+            class D { @dec #b = 2; constructor(public y: number) { seen.push(this.#b); } }
+            return new D(6);
+          }
+          const d = scope();
+          console.log(JSON.stringify([c.x, Object.keys(c), d.y, Object.keys(d), seen]));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["test.ts"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('[5,["x"],6,["y"],[1,2]]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a decorated private name in the head of a loop or in a catch binding", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class A {
+          @dec #x = 1;
+          forOf(a) { const out = []; for (const { v = this.#x } of a) out.push(v); return out; }
+          forIn(o) { const out = []; for (const { nope = this.#x } in o) out.push(nope); return out; }
+          caught() { try { throw {}; } catch ({ v = this.#x }) { return v; } }
+        }
+        const a = new A();
+        console.log(JSON.stringify([a.forOf([{}, { v: 2 }]), a.forIn({ k: 0 }), a.caught()]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[[1,2],[1],1]\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {
@@ -1353,6 +1752,758 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
+    });
+  });
+});
+
+// One fixture holds a matrix of decorated members and prints one JSON object;
+// each cell is then its own test. It runs as .js and .ts, and through `bun build`.
+
+const kinds = ["field", "method", "getter", "setter", "accessor"] as const;
+const placements = ["instance", "static"] as const;
+const visibilities = ["public", "private"] as const;
+type Kind = (typeof kinds)[number];
+type Placement = (typeof placements)[number];
+type Visibility = (typeof visibilities)[number];
+
+type Cell = {
+  kind: Kind;
+  placement: Placement;
+  visibility: Visibility;
+  classDecorated: boolean;
+  derived: boolean;
+};
+
+const cells: Cell[] = [];
+for (const kind of kinds) {
+  for (const placement of placements) {
+    for (const visibility of visibilities) {
+      for (const classDecorated of [false, true]) {
+        for (const derived of [false, true]) {
+          cells.push({ kind, placement, visibility, classDecorated, derived });
+        }
+      }
+    }
+  }
+}
+
+function cellName(cell: Cell) {
+  const flags = [cell.classDecorated ? "class decorator" : "", cell.derived ? "derived" : ""].filter(Boolean);
+  return `${cell.kind}/${cell.placement}/${cell.visibility}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+}
+
+// One class per cell: the decorated member `x` sits between undecorated
+// instance fields, private fields, static fields and a static block. `dec`
+// replaces every kind of member with one that appends "!" to its value, so
+// the result also shows the decorator's return value was applied to the right
+// member and nothing else.
+function matrixClass(cell: Cell) {
+  const { kind, placement, visibility, classDecorated, derived } = cell;
+  const s = placement === "static" ? "static " : "";
+  const name = visibility === "private" ? "#x" : "x";
+  const self = placement === "static" ? "C" : "this";
+  let member: string;
+  let reader: string;
+  switch (kind) {
+    case "field":
+      member = `@decApply ${s}${name} = L("x");`;
+      reader = `${s}read() { return ${self}.${name}; }`;
+      break;
+    case "accessor":
+      member = `@decApply ${s}accessor ${name} = L("x");`;
+      reader = `${s}read() { return ${self}.${name}; }`;
+      break;
+    case "method":
+      member = `@decApply ${s}${name}() { return "x"; }`;
+      reader = `${s}read() { return ${self}.${name}(); }`;
+      break;
+    case "getter":
+      member = `@decApply ${s}get ${name}() { return "x"; }`;
+      reader = `${s}read() { return ${self}.${name}; }`;
+      break;
+    case "setter":
+      member = `@decApply ${s}set ${name}(v) { side = v; }`;
+      reader = `${s}read() { ${self}.${name} = "x"; return side; }`;
+      break;
+  }
+  const id = JSON.stringify(cellName(cell));
+  return `
+{
+  let side;
+  class B { constructor() { L("base"); } }
+  log.length = 0;
+  ctxs = {};
+  ${classDecorated ? "@decApply " : ""}class C ${derived ? "extends B " : ""}{
+    static sBefore = L("sBefore");
+    static { L("sBlock"); }
+    iBefore = L("iBefore");
+    #p = L("#p");
+    iPriv = (L("iPriv"), this.#p);
+    ${member}
+    iAfter = L("iAfter");
+    static sAfter = L("sAfter");
+    static #sp = L("#sp");
+    static sPriv = (L("sPriv"), C.#sp);
+    #m() { return "m"; }
+    callM() { return this.#m(); }
+    has() { return #p in this; }
+    ${reader}
+  }
+  const defLog = log.slice();
+  log.length = 0;
+  const inst = new C();
+  out[${id}] = {
+    defLog,
+    ctorLog: log.slice(),
+    value: ${placement === "static" ? "C.read()" : "inst.read()"},
+    iPriv: inst.iPriv,
+    sPriv: C.sPriv,
+    callM: inst.callM(),
+    has: inst.has(),
+    ctx: ctxs[${JSON.stringify(name)}],
+    classCtx: ctxs["C"] ?? null,
+    isInstance: inst instanceof C${derived ? " && inst instanceof B" : ""},
+  };
+}`;
+}
+
+function matrixExpected(cell: Cell) {
+  const { kind, placement, visibility, classDecorated, derived } = cell;
+  const name = visibility === "private" ? "#x" : "x";
+  const isFieldLike = kind === "field" || kind === "accessor";
+  // Decorators are called before any static member is initialized; the class
+  // decorator last. Static fields and blocks then run in source order.
+  const defLog = [`dec:${name}`];
+  if (classDecorated) defLog.push("dec:C");
+  defLog.push("sBefore", "sBlock");
+  if (isFieldLike && placement === "static") defLog.push("x");
+  defLog.push("sAfter", "#sp", "sPriv");
+  // Instance fields run after super() returns, in source order.
+  const ctorLog = derived ? ["base"] : [];
+  ctorLog.push("iBefore", "#p", "iPriv");
+  if (isFieldLike && placement === "instance") ctorLog.push("x");
+  ctorLog.push("iAfter");
+  return {
+    defLog,
+    ctorLog,
+    value: "x!",
+    iPriv: "#p",
+    sPriv: "#sp",
+    callM: "m",
+    has: true,
+    ctx: { kind, name, static: placement === "static", private: visibility === "private" },
+    classCtx: classDecorated ? { kind: "class", name: "C", static: null, private: null } : null,
+    isInstance: true,
+  };
+}
+
+const fixturePrelude = `
+const log = [];
+const L = (name) => (log.push(name), name);
+let ctxs = {};
+const dec = (value, ctx) => {
+  log.push("dec:" + String(ctx.name));
+  ctxs[String(ctx.name)] = { kind: ctx.kind, name: ctx.name, static: ctx.static ?? null, private: ctx.private ?? null };
+};
+const decApply = (value, ctx) => {
+  dec(value, ctx);
+  switch (ctx.kind) {
+    case "field": return (v) => v + "!";
+    case "accessor": return { init: (v) => v + "!" };
+    case "method": return function (...args) { return value.call(this, ...args) + "!"; };
+    case "getter": return function () { return value.call(this) + "!"; };
+    case "setter": return function (v) { value.call(this, v + "!"); };
+  }
+};
+const out = {};
+const pending = [];
+`;
+
+// Fields keep [[Define]] semantics: a setter on the base class is not invoked,
+// and the instance gets an own data property.
+const installSection = `
+{
+  const calls = [];
+  class Base {
+    set f(v) { calls.push("f:" + v); }
+    set g(v) { calls.push("g:" + v); }
+    static set sf(v) { calls.push("sf:" + v); }
+    static set sg(v) { calls.push("sg:" + v); }
+  }
+  class D extends Base {
+    @dec f = 1;
+    g = 2;
+    @dec static sf = 3;
+    static sg = 4;
+    bar;
+  }
+  const d = new D();
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  out.install = {
+    calls,
+    own: [own(d, "f"), own(d, "g"), own(d, "bar")],
+    staticOwn: [own(D, "sf"), own(D, "sg")],
+    values: [d.f, d.g, d.bar, D.sf, D.sg],
+  };
+}`;
+
+const installExpected = {
+  calls: [],
+  own: [true, true, true],
+  staticOwn: [true, true],
+  values: [1, 2, null, 3, 4],
+};
+
+const extraSections = `
+// \`this\` in a static initializer, decorated or not, is the class.
+{
+  class S {
+    @dec static x = this;
+    static y = () => this;
+    static z = this.x;
+  }
+  out.staticThis = [S.x === S, S.y() === S, S.z === S];
+}
+
+// Two decorated classes in one scope keep separate decorator contexts.
+{
+  const seen = [];
+  const decInit = (value, ctx) => {
+    ctx.addInitializer(function () { seen.push(ctx.name + ":" + this.constructor.name); });
+  };
+  class A1 { @decInit m() {} }
+  class B1 { @decInit n() {} }
+  new A1();
+  new B1();
+  out.twoClasses = seen;
+}
+
+// Generated names do not clash with user bindings.
+{
+  let _init = "user";
+  let _x = "user_x";
+  let _dec = "user_dec";
+  class V { @dec m() {} #x = 1; getX() { return this.#x; } }
+  out.collision = [_init, _x, _dec, new V().getX()];
+}
+
+// Undecorated \`accessor\` fields: initialization order is kept, and a class
+// without decorators gets no Symbol.metadata.
+{
+  log.length = 0;
+  class T {
+    accessor a = L("a");
+    b = L("b");
+    static accessor c = L("c");
+    static d = L("d");
+  }
+  const defLog = log.slice();
+  log.length = 0;
+  const t = new T();
+  out.accessorOnly = { defLog, ctorLog: log.slice(), values: [t.a, t.b, T.c, T.d], symbols: Object.getOwnPropertySymbols(T).length };
+}
+
+// Decorator expressions and computed keys evaluate in source order, once.
+{
+  log.length = 0;
+  const K = (n) => (log.push("k:" + n), n);
+  const D = (n) => (log.push("d:" + n), dec);
+  class Q {
+    [K("m")]() { return "mv"; }
+    @D("f") [K("f")] = L("fv");
+    static [K("s")] = L("sv");
+    [K("g")] = L("gv");
+  }
+  const defLog = log.slice();
+  log.length = 0;
+  const q = new Q();
+  out.computed = { defLog, ctorLog: log.slice(), values: [q.m(), q.f, Q.s, q.g] };
+  new Q();
+  out.computedTwice = log.slice();
+}
+
+// A named class expression: its static code sees the class by its inner name.
+{
+  log.length = 0;
+  const E = class Named {
+    @dec m() {}
+    static self = Named;
+    static { L("eblk"); }
+    y = Named;
+  };
+  out.namedExpr = { defLog: log.slice(), self: E.self === E, y: new E().y === E };
+}
+
+// Derived class with an explicit constructor: fields initialize after super().
+{
+  log.length = 0;
+  class Base2 { constructor() { L("base"); } }
+  class Der extends Base2 {
+    a = L("a");
+    @dec b = L("b");
+    constructor() { L("pre"); super(); L("post"); }
+  }
+  new Der();
+  out.derived = log.slice();
+}
+
+// Private accessors and private methods next to a decorated member.
+{
+  class PA {
+    @dec m() {}
+    accessor #acc = L("acc");
+    static accessor #sacc = 5;
+    get acc() { return this.#acc; }
+    set acc(v) { this.#acc = v; }
+    static bump() { return ++PA.#sacc; }
+    static { PA.#sacc += 10; }
+  }
+  const pa = new PA();
+  const before = pa.acc;
+  pa.acc = 7;
+  out.privateAccessor = [before, pa.acc, PA.bump()];
+}
+
+// Undecorated \`#private\` members of a decorated class stay native, so every
+// update and compound assignment form works on them.
+{
+  let n = 0;
+  class U {
+    @dec m() {}
+    #x = "5";
+    #b = 1n;
+    static #s = 1;
+    static run(o) {
+      const mk = () => (n++, o);
+      const r1 = ++o.#x;
+      const r2 = o.#x++;
+      o.#x -= 1;
+      o.#x ??= 100;
+      o.#b++;
+      U.#s += 2;
+      mk().#x *= 2;
+      mk().#x ||= 0;
+      return [r1, r2, o.#x, o.#b.toString() + "n", U.#s, n];
+    }
+  }
+  out.privateUpdates = U.run(new U());
+}
+
+// \`super\`, \`this\` and nested scopes in the static code of a decorated
+// class. The expected values are what node prints for the same class without
+// the decorator.
+{
+  let n = 0;
+  class SBase {
+    static count = 10;
+    static get y() { return "by"; }
+    static m(a) { return "bm:" + a + ":" + this.name; }
+    static set z(v) { SBase.z_ = v; }
+  }
+  class SDer extends SBase {
+    @dec static q = 1;
+    static a = super.y;
+    static b = super.m("arg");
+    static c = (super.z = 5);
+    static d = () => super["y"];
+    static { SDer.e = super.m("blk"); }
+    static f = (super.count += 5);
+    static g = ++super.count;
+    static h = super.count++;
+    static i = (super.z ??= 7);
+    static j = super[(n++, "y")];
+    static k = (super[(n++, "count")] -= 1);
+    static l = (super[(n++, "count")]--, SDer.count);
+    static obj = { [this.q]: this.q, m() { return super.toString === Object.prototype.toString; } };
+    static fn = (a = this.q, { b = this.q } = {}) => [a, b];
+    static nested = class Inner extends (this.q, SBase) { static [this.q] = 2; static w = SDer.q; };
+    static asyncFn = async () => { await null; return this.q; };
+    static { const { x = this.q } = {}; const [y = this.q] = []; SDer.destructured = [x, y]; }
+  }
+  out.superStatic = [SDer.a, SDer.b, SDer.c, SDer.d(), SDer.e, SDer.f, SDer.g, SDer.h, SDer.i, SDer.j, SDer.k, SDer.l, SDer.count, SBase.count, SBase.z_, n];
+  out.staticScopes = [SDer.obj[1], SDer.obj.m(), SDer.fn(), SDer.nested[1], SDer.nested.w, SDer.destructured];
+  pending.push(SDer.asyncFn().then((v) => { out.staticScopesAsync = v; }));
+}
+
+// The inner name of a class expression, in nested scopes of its static code.
+{
+  const E = class Named {
+    @dec m() {}
+    static #p = 3;
+    static inner = class { static w = Named.#p; static [Named.#p] = "k"; m() { return Named; } };
+    static obj = { [Named.#p]: Named.#p, get g() { return Named.#p; } };
+    static fn = (a = Named.#p, { b = Named.#p } = {}) => [a, b, Named];
+    static { const { x = Named.#p } = {}; for (const y of [Named.#p]) Named.z = x + y; }
+  };
+  out.namedExprNested = [E.inner.w, E.inner[3], new E.inner().m() === E, E.obj[3], E.obj.g, E.fn().slice(0, 2), E.fn()[2] === E, E.z];
+}
+
+// Every form of \`super\` and of an undecorated private member in a decorated
+// class, with \`Reflect\` and \`Object\` shadowed. The expected values are what
+// node prints for the same class without the decorator.
+{
+  const Reflect = null;
+  const Object = null;
+  class SB {
+    static v = 1;
+    static get g() { return "g"; }
+    static tag(s, ...vals) { return this.name + ":" + s.raw.join("|") + vals.join(","); }
+    static sm() { return "sm:" + this.name; }
+    greet() { return "hi:" + this.n; }
+  }
+  class SC extends SB {
+    @dec static m() {}
+    n = 7;
+    static y = super.v;
+    static opt1 = super.missing?.();
+    static opt2 = super.sm?.();
+    static destructured = ([super.d1, { k: super.d2 = 9 }, ...super.rest] = [5, {}, 6, 7], [SC.d1, SC.d2, SC.rest]);
+    static loop = (() => {
+      const seen = [];
+      for (super.it of [1, 2]) seen.push(SC.it);
+      for (super.key in { a: 1 }) seen.push(SC.key);
+      return seen;
+    })();
+    static {
+      try {
+        SC.fail = (super.g = 1);
+      } catch (e) {
+        SC.readonlyError = e.constructor.name + ": " + e.message;
+      }
+    }
+    #pm() { return super.greet() + "/" + super.sm?.() + "/" + super.missing?.(); }
+    static #spm() { return super.sm() + "/" + super.g; }
+    #tag(s, ...vals) { return this.n + ":" + s.raw.join("|") + vals.join(","); }
+    #a = 1;
+    #b = 2;
+    swap() {
+      [this.#a, this.#b] = [this.#b, this.#a];
+      ({ x: this.#a = 10 } = {});
+      for (this.#b of [30]) {}
+      return [this.#a, this.#b];
+    }
+    call() { return [this.#pm(), SC.#spm(), this.#tag\`q\${1}\`]; }
+  }
+  out.superForms = [SC.y, SC.opt1, SC.opt2, SC.destructured, SC.loop, SC.readonlyError];
+  out.privateForms = [new SC().call(), new SC().swap()];
+}
+
+// https://github.com/oven-sh/bun/issues/28118
+{
+  const id = (value, context) => value;
+  class Broken {
+    @id accessor label = "";
+    #name = "hello";
+    #callback = () => this.#name;
+    run() { return this.#callback(); }
+  }
+  out.issue28118 = new Broken().run();
+}
+
+// https://github.com/oven-sh/bun/issues/31917
+{
+  const pick = (x) => x;
+  const C = class Foo {
+    static #m = function (tag) { return { tag }; };
+    @dec static s = Foo.#m("s").tag;
+    @dec static t = pick(this).#m("t").tag;
+  };
+  out.issue31917 = [C.s, C.t];
+}
+
+// https://github.com/oven-sh/bun/issues/31929
+{
+  const C = class Foo {
+    @dec static s = (class { @dec static x = Foo; }).x;
+  };
+  out.issue31929 = [typeof C.s, C.s === C];
+}
+
+// https://github.com/oven-sh/bun/issues/28010 and /28316: each class keeps
+// its own decorator context, so subclasses and siblings do not mix up
+// field initializer slots.
+{
+  const seen = [];
+  const decorate = (name) => (_value, context) => (initialValue) => {
+    seen.push(name + ":" + String(context.name) + "=" + initialValue);
+    return initialValue;
+  };
+  class Parent {
+    @decorate("Parent.foo") foo = "parent_foo";
+    @decorate("Parent.shared") shared = "parent_shared";
+  }
+  class Child extends Parent {
+    @decorate("Child.foo") foo = "child_foo";
+    @decorate("Child.childOnly") childOnly = "child_childOnly";
+  }
+  new Child();
+  out.issue28010 = seen;
+}
+
+// https://github.com/oven-sh/bun/issues/29837
+{
+  class A { accessor name = "A"; }
+  class B extends A {
+    accessor name = "B";
+    names() { return [this.name, super.name]; }
+  }
+  out.issue29837 = new B().names();
+}
+
+// Private names in static blocks and static initializers of a lowered class:
+// brand checks, private calls, a function declared in the block, and a nested
+// class that keeps its own private fields.
+{
+  class SB {
+    @dec m() {}
+    #a() { return "a"; }
+    static #s() { return "s"; }
+    accessor #x = 0;
+    static accessor y = #a in new SB();
+    static {
+      function check(o) { return #a in o; }
+      SB.checks = [#a in new SB(), #a in {}, #x in new SB(), check(new SB()), check({}), this.#s()];
+      class Inner { accessor b = 1; #y = 0; inc() { return this.#y++; } }
+      const inner = new Inner();
+      inner.inc();
+      SB.inner = [inner.inc(), inner.b];
+    }
+    inc() { return this.#x++; }
+  }
+  const sb = new SB();
+  sb.inc();
+  out.staticBlockPrivate = [SB.checks, SB.y, SB.inner, sb.inc()];
+}
+
+// A plain function in a static initializer keeps its own \`this\`, and a
+// shadowing binding of the class name wins.
+{
+  const C = class Foo {
+    @dec static fn = function () { return this; };
+    @dec static shadow = (function Foo() { return Foo; })();
+  };
+  const obj = {};
+  out.nestedScopes = [C.fn.call(obj) === obj, typeof C.shadow === "function" && C.shadow !== C];
+}
+
+// Generated names avoid globals the file references only after the class,
+// a method parameter named like a lowered member's storage, and a class
+// named like a temporary.
+{
+  globalThis._init = "global init";
+  globalThis._G = "global G";
+  class G { @dec m() {} }
+  class Store {
+    #value = 0;
+    @dec set(_value) { this.#value = _value; return this; }
+    get() { return this.#value; }
+  }
+  const answer = (value, ctx) => () => 42;
+  @dec class init { @dec m() { return init; } }
+  const K = class { @answer x = 1; };
+  out.temporaryNames = [_init, _G, typeof G, new Store().set(5).get(), new init().m() === init, new K().x];
+}
+
+// The temporary that captures a private call receiver does not clobber a
+// user binding of the same name, and two class expressions in sibling blocks
+// do not share their hoisted temporaries.
+{
+  const _obj = "outer";
+  class R {
+    @dec m() {}
+    #secret() { return "secret"; }
+    static #staticSecret() { return "static secret"; }
+    self() { return this; }
+    static self() { return R; }
+    run() { return [this.self().#secret(), _obj]; }
+    static { R.fromBlock = [R.self().#staticSecret(), _obj]; }
+  }
+  let A2, B2;
+  { A2 = class { @dec m() {} accessor x = "a"; }; }
+  const a2 = new A2();
+  { B2 = class { @dec m() {} accessor x = "b"; }; }
+  out.temporaryScopes = [...new R().run(), ...R.fromBlock, a2.x, new B2().x];
+}
+
+// Accessor keys that are not identifiers.
+{
+  class SK {
+    accessor "x y" = 1;
+    @dec accessor "x-y" = 2;
+    static accessor "x y" = 3;
+    accessor 0 = 4;
+  }
+  const sk = new SK();
+  sk["x y"] += 10;
+  out.accessorKeys = [sk["x y"], sk["x-y"], SK["x y"], sk[0]];
+}
+
+// https://github.com/oven-sh/bun/issues/31921: a class with accessors and no
+// decorators. Its private names stay reachable from its static code, and
+// static accessor initializers keep their order against static blocks.
+{
+  log.length = 0;
+  const C1 = class Foo {
+    static #m = function (tag) { return { tag }; };
+    static accessor a = Foo.#m("a").tag;
+  };
+  const C2 = class Foo {
+    static accessor a = 1;
+    static #m = 5;
+    static { L(this.#m); }
+  };
+  const C3 = class {
+    static accessor a = L("a");
+    static { L("block"); }
+    static accessor b = L("b");
+  };
+  out.issue31921 = [C1.a, C2.a, C3.a, C3.b, log.slice()];
+}
+
+// Accessor storage is per member: an instance and a static accessor of one
+// name, a user \`#a\` next to \`accessor a\`, and an enclosing class's private
+// name do not share it. A computed accessor key evaluates once and is shared
+// by the getter and the setter, with and without a decorator in the class.
+{
+  let n = 0;
+  const key = (k) => (n++, k);
+  class N {
+    #a = 1;
+    accessor a = 2;
+    static accessor a = 3;
+    accessor [key("k")] = 4;
+    priv() { return this.#a; }
+  }
+  class M {
+    @dec m() {}
+    accessor [key("k")] = 5;
+  }
+  class Outer {
+    static #a = 6;
+    static make() { return class { static accessor a = Outer.#a; }; }
+  }
+  const nn = new N();
+  nn.a += 10;
+  N.a += 10;
+  nn.k += 10;
+  const mm = new M();
+  mm.k += 10;
+  const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
+  out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
+}
+`;
+
+const extraExpected = {
+  staticThis: [true, true, true],
+  twoClasses: ["m:A1", "n:B1"],
+  collision: ["user", "user_x", "user_dec", 1],
+  accessorOnly: { defLog: ["c", "d"], ctorLog: ["a", "b"], values: ["a", "b", "c", "d"], symbols: 0 },
+  computed: {
+    defLog: ["k:m", "d:f", "k:f", "k:s", "k:g", "dec:f", "sv"],
+    ctorLog: ["fv", "gv"],
+    values: ["mv", "fv", "sv", "gv"],
+  },
+  computedTwice: ["fv", "gv", "fv", "gv"],
+  namedExpr: { defLog: ["dec:m", "eblk"], self: true, y: true },
+  derived: ["dec:b", "pre", "base", "a", "b", "post"],
+  privateAccessor: ["acc", 7, 16],
+  privateUpdates: [6, 6, 12, "2n", 3, 2],
+  superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
+  staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],
+  staticScopesAsync: 1,
+  namedExprNested: [3, "k", true, 3, 3, [3, 3], true, 6],
+  superForms: [1, null, "sm:SC", [5, 9, [6, 7]], [1, 2, "a"], "TypeError: Attempted to assign to readonly property."],
+  privateForms: [
+    ["hi:7/undefined/undefined", "sm:SC/g", "7:q|1"],
+    [10, 30],
+  ],
+  issue28118: "hello",
+  issue31917: ["s", "t"],
+  issue31929: ["function", true],
+  issue28010: [
+    "Parent.foo:foo=parent_foo",
+    "Parent.shared:shared=parent_shared",
+    "Child.foo:foo=child_foo",
+    "Child.childOnly:childOnly=child_childOnly",
+  ],
+  issue29837: ["B", "A"],
+  staticBlockPrivate: [[true, false, true, true, false, "s"], true, [1, 1], 1],
+  nestedScopes: [true, true],
+  temporaryNames: ["global init", "global G", "function", 5, true, 42],
+  temporaryScopes: ["secret", "outer", "static secret", "outer", "a", "b"],
+  accessorKeys: [11, 2, 3, 4],
+  issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
+  accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
+};
+
+function buildFixture() {
+  let src = fixturePrelude;
+  for (const cell of cells) {
+    src += matrixClass(cell);
+  }
+  src += installSection;
+  src += extraSections;
+  src += `\nPromise.all(pending).then(() => console.log(JSON.stringify(out)));\n`;
+  return src;
+}
+
+function buildExpected() {
+  const expected: Record<string, unknown> = {};
+  for (const cell of cells) {
+    expected[cellName(cell)] = matrixExpected(cell);
+  }
+  expected.install = installExpected;
+  Object.assign(expected, extraExpected);
+  return expected;
+}
+
+type Mode = {
+  name: string;
+  file: string;
+  bundle: boolean;
+};
+
+const modes: Mode[] = [
+  { name: ".js", file: "main.js", bundle: false },
+  { name: ".ts", file: "main.ts", bundle: false },
+  { name: ".js bundled", file: "main.js", bundle: true },
+];
+
+// Runs the fixture once per mode.
+async function runMode(mode: Mode) {
+  using dir = tempDir("es-dec-matrix", {
+    [mode.file]: buildFixture(),
+    "tsconfig.json": "{}",
+  });
+  let entry = mode.file;
+  if (mode.bundle) {
+    const build = await runIn(String(dir), ["build", mode.file, "--target=bun", "--outfile=bundled.js"]);
+    if (build.exitCode !== 0) return { out: {}, stderr: filterStderr(build.stderr), exitCode: build.exitCode };
+    entry = "bundled.js";
+  }
+  const { stdout, stderr, exitCode } = await runIn(String(dir), [entry]);
+  return { out: exitCode === 0 ? JSON.parse(stdout) : {}, stderr: filterStderr(stderr), exitCode };
+}
+
+const matrixRuns = await Promise.all(modes.map(runMode));
+
+describe("ES decorators lowering matrix", () => {
+  modes.forEach((mode, i) => {
+    describe(mode.name, () => {
+      const { out, stderr, exitCode } = matrixRuns[i];
+      const expected = buildExpected();
+
+      test("the fixture runs", () => {
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        expect(Object.keys(out).sort()).toEqual(Object.keys(expected).sort());
+      });
+
+      for (const key of Object.keys(expected)) {
+        test(key, () => {
+          // JSON turns `undefined` into `null`.
+          expect(out[key]).toEqual(expected[key]);
+        });
+      }
     });
   });
 });

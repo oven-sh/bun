@@ -258,8 +258,7 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
         builder.append("; Expires="_s);
         // RFC 6265 wants an IMF-fixdate ("Thu, 01 Jan 1970 00:00:00 GMT"). Reuse the
         // Date.prototype.toUTCString() formatter, which emits exactly that.
-        WTF::GregorianDateTime dateTime;
-        vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime, dateTime);
+        auto dateTime = vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime);
         builder.append(JSC::formatDateTime(dateTime, JSC::DateTimeFormat::DateAndTime, /* asUTCVariant */ true, vm.dateCache));
     }
 

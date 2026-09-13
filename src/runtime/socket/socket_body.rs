@@ -3187,16 +3187,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `on_connecting_error` synchronously inside `close()` and so does
         // its own `deref()`; double-releasing it would underflow.
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
-        // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
-        // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
-        // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
-        // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
-        // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
-        // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
-        // defer this close behind its own ciphertext write spill
-        // (`ssl_close_after_spill`) until the kernel takes the spill or the peer's
-        // FIN arrives, with no timeout; a peer that stopped reading holds it open.
+        // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
+        // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
+        // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
+        // Not `.normal`: that defers for the peer's reply while we detach + unref
+        // below, orphaning the `us_socket_t`. Not `.failure`: that arms
+        // SO_LINGER{1,0} → RST and drops data still in the kernel send buffer,
+        // which `destroy()` after `write()` must not do. The SSL layer may still
+        // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;

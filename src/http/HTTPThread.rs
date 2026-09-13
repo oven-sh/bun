@@ -74,9 +74,8 @@ pub struct HttpThread {
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
     /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
-    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`, ~0.7 ms CPU +
-    /// ~400 KB heap to parse the bundled root certs) until the first SSL
-    /// connect actually arrives via [`HttpThread::connect`]`::<true>`. A
+    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`) until the first
+    /// SSL connect actually arrives via [`HttpThread::connect`]`::<true>`. A
     /// fully-cached `bun install` never makes one, so the cost is skipped
     /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
     /// init eagerly so a bad CA file crashes at thread start (the long-standing
@@ -137,7 +136,9 @@ impl HttpThread {
             uws_loop: core::ptr::null_mut(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
-                pending_sockets: bun_collections::HiveArray::init(),
+                pending_sockets: crate::http_context::LazyPool::new(),
+                pending_unix_sockets: crate::http_context::LazyPool::new(),
+                park_seq: 0,
                 group: uws::SocketGroup::default(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
@@ -146,7 +147,9 @@ impl HttpThread {
             },
             https_context: NewHttpContext::<true> {
                 ref_count: Cell::new(1),
-                pending_sockets: bun_collections::HiveArray::init(),
+                pending_sockets: crate::http_context::LazyPool::new(),
+                pending_unix_sockets: crate::http_context::LazyPool::new(),
+                park_seq: 0,
                 group: uws::SocketGroup::default(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
@@ -389,13 +392,7 @@ impl HttpThread {
             // SSL request — including unix-socket and proxy paths below —
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
-        }
-        let unix_path = client.unix_socket_path;
-        if !unix_path.is_empty() {
-            return self.context::<IS_SSL>().connect_socket(client, unix_path);
-        }
 
-        if IS_SSL {
             'custom_ctx: {
                 let Some(tls) = client.tls_props.clone() else {
                     break 'custom_ctx;
@@ -413,22 +410,17 @@ impl HttpThread {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
                     client.set_custom_ssl_ctx(entry.ctx.clone());
-                    let ctx = entry.ctx_mut();
-                    // Keepalive is now supported for custom SSL contexts
-                    return if let Some(url) = client.http_proxy.clone() {
-                        ctx.connect(client, url.hostname, url.get_port_auto())
-                    } else {
-                        let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-                        ctx.connect(client, hn, pt)
-                    }
                     // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                    .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                    return Self::dial(entry.ctx_mut(), client)
+                        .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
                 }
 
                 // Cache miss - create new SSL context
                 let ctx = RefPtr::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
-                    pending_sockets: bun_collections::HiveArray::init(),
+                    pending_sockets: crate::http_context::LazyPool::new(),
+                    pending_unix_sockets: crate::http_context::LazyPool::new(),
+                    park_seq: 0,
                     group: uws::SocketGroup::default(),
                     secure: None,
                     active_h2_sessions: Vec::new(),
@@ -468,36 +460,34 @@ impl HttpThread {
                     evict_oldest_ssl_context();
                 }
 
-                // Keepalive is now supported for custom SSL contexts
-                let result = if let Some(url) = client.http_proxy.clone() {
-                    if url.protocol.is_empty() || url.has_http_like_protocol() {
-                        custom_context.connect(client, url.hostname, url.get_port_auto())
-                    } else {
-                        return Err(crate::Error::UnsupportedProxyProtocol);
-                    }
-                } else {
-                    let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-                    custom_context.connect(client, hn, pt)
-                };
                 // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                return Self::dial(custom_context, client)
+                    .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
+        }
+        Self::dial(self.context::<IS_SSL>(), client)
+    }
+
+    /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
+    fn dial<const IS_SSL: bool>(
+        ctx: &mut NewHttpContext<IS_SSL>,
+        client: &mut HttpClient,
+    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
+        let unix_path = client.unix_socket_path;
+        if !unix_path.is_empty() {
+            return ctx.connect_socket(client, unix_path);
         }
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
                 if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return self.context::<IS_SSL>().connect(
-                        client,
-                        url.hostname,
-                        url.get_port_auto(),
-                    );
+                    return ctx.connect(client, url.hostname, url.get_port_auto());
                 }
                 return Err(crate::Error::UnsupportedProxyProtocol);
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-        self.context::<IS_SSL>().connect(client, hn, pt)
+        ctx.connect(client, hn, pt)
     }
 
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
@@ -1224,13 +1214,13 @@ mod _event_loop_draft {
         thread.uws_loop = uws_loop;
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
-        // `SSL_CTX` and parses the bundled root-CA store
-        // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
-        // and ~400 KB heap whether or not an HTTPS request ever happens. When
-        // there is no user-supplied CA config we stash `opts` and let the first
-        // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
-        // fully-cached `bun install` (which makes zero network requests) then
-        // skips the cost entirely.
+        // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
+        // which reads the OpenSSL default cert file/dir where present, whether
+        // or not an HTTPS request ever happens. When there is no user-supplied
+        // CA config we stash `opts` and let the first `connect::<true>` call
+        // run it (see `HttpThread::lazy_https_init`) — a fully-cached
+        // `bun install` (which makes zero network requests) then skips the
+        // cost entirely.
         if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
             // User passed --cafile / --ca: validate now so a bad CA file fails
             // the process at thread start (test contract:

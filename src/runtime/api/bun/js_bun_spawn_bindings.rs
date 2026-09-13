@@ -105,9 +105,7 @@ fn get_argv0(
             )
             .throw());
     }
-    // Heap allocate it to ensure we don't run out of stack space.
-    let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
-    // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     let argv0_to_use: &[u8] = arg0.slice();
 
@@ -1048,9 +1046,17 @@ fn spawn_maybe_sync(
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
-            let sync_loop = (*jsc_vm_ptr)
+            let Some(sync_loop) = (*jsc_vm_ptr)
                 .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr);
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+            else {
+                // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
+                #[cfg(windows)]
+                for e in &mut extra_fds {
+                    e.deinit();
+                }
+                return Err(throw_spawn_sync_loop_init_failed(global_this));
+            };
             sync_loop.prepare(jsc_vm_ptr.cast());
             // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
             // (bun_event_loop is below bun_jsc); the accessor returns the
@@ -1076,6 +1082,7 @@ fn spawn_maybe_sync(
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
+                    .expect("cached by the is_sync prepare above")
                     .cleanup(jsc_vm_ptr_cleanup.cast());
             }
         }
@@ -1724,11 +1731,16 @@ fn spawn_maybe_sync(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+    let stdin_start_err = match subprocess.stdin.get() {
+        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        _ => None,
+    };
+    if let Some(err) = stdin_start_err {
+        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
+        subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+        let _ = subprocess.try_kill(subprocess.kill_signal);
+        return Err(global_this.throw_value(err.to_js(global_this)));
     }
 
     **should_close_memfd = false;
@@ -1875,7 +1887,8 @@ fn spawn_maybe_sync(
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
             .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            .expect("cached by the is_sync prepare above");
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -2038,6 +2051,28 @@ fn spawn_maybe_sync(
     sync_value.put(global_this, b"pid", result_pid);
 
     Ok(sync_value)
+}
+
+fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
+    // us_create_loop returns NULL without the errno; EMFILE is the common cause.
+    let err = SystemError {
+        message: BunString::static_(
+            b"spawnSync failed to initialize its event loop (system resource exhaustion)",
+        ),
+        code: BunString::static_("EMFILE"),
+        errno: -UV_E::MFILE,
+        path: BunString::EMPTY,
+        #[cfg(windows)]
+        syscall: BunString::static_("uv_loop_init"),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        syscall: BunString::static_("epoll_create1"),
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        syscall: BunString::static_("kqueue"),
+        hostname: BunString::EMPTY,
+        fd: -1,
+        dest: BunString::EMPTY,
+    };
+    global_this.throw_value(err.to_error_instance(global_this))
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {

@@ -41,6 +41,7 @@
     "./snapshots",
     "./js/deno",
     "./node.js", // entire node.js upstream repository
-    "regression/issue/14477/*-mismatch.tsx" // deliberately-mismatched JSX, the test asserts the parse error
+    "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
+    "integration/bun-types/fixture/ts7.1" // only types with TypeScript >= 7.1, see bun-types.test.ts
   ]
 }

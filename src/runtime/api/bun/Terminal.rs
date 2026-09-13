@@ -141,19 +141,16 @@ pub struct Terminal {
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
 
-    /// This value reference for GC tracking
-    /// - weak: allows GC when idle
-    /// - strong: prevents GC when actively connected
+    /// The JS wrapper, which roots the callbacks in its cached slots. Strong
+    /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
     this_value: JsCell<JsRef>,
 
     /// State flags
     flags: Cell<Flags>,
 
-    /// The streaming writer has accepted bytes it hasn't flushed to the fd
-    /// yet. Set by `write()` from `has_pending_data()`; cleared when
-    /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
-    /// (Windows fires it from `on_writable`). Also gates the post-EOF
-    /// downgrade in `maybe_downgrade_after_eof`.
+    /// The writer holds bytes it has not flushed to the fd yet, so a `drain`
+    /// is still owed. Gates the post-EOF downgrade in
+    /// `maybe_downgrade_after_eof`.
     writer_has_buffered: Cell<bool>,
 
     /// This PTY's own raw-mode state (mode + saved termios), so one terminal
@@ -169,13 +166,15 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
         const READER_STARTED = 1 << 3;
-        const CONNECTED      = 1 << 4;
-        const READER_DONE    = 1 << 5;
-        const WRITER_DONE    = 1 << 6;
+        const READER_DONE    = 1 << 4;
+        const WRITER_DONE    = 1 << 5;
         /// Set once an inline-created terminal is attached to a spawn; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
-        const INLINE_SPAWNED = 1 << 7;
+        const INLINE_SPAWNED = 1 << 6;
+        /// The `exit` callback has run (or was skipped). The wrapper stays
+        /// strong until then; see `maybe_downgrade_after_eof`.
+        const EXIT_DISPATCHED = 1 << 7;
     }
 }
 
@@ -462,20 +461,12 @@ impl Terminal {
         {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
-                // POSIX: writer.start() may have allocated a poll holding write_fd
-                // before registerWithFd failed; closeInternal → writer.close()
-                // frees the poll and closes write_fd. Windows: writer.start()
-                // failure leaves source==null so writer.close() is a no-op; close
-                // write_fd directly. Pre-set writer_done so onWriterClose's deref
-                // is skipped and the struct isn't freed mid-closeInternal.
+                // The writer took neither its ref nor write_fd, and the reader never started.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
-                #[cfg(windows)]
-                {
-                    terminal.write_fd.get().close();
-                    terminal.write_fd.set(Fd::INVALID);
-                }
+                terminal.write_fd.get().close();
+                terminal.write_fd.set(Fd::INVALID);
                 terminal.close_internal();
                 terminal.deref_();
                 return Err(InitError::WriterStartFailed);
@@ -1449,6 +1440,12 @@ impl Terminal {
             return Ok(JSValue::js_number(0.0));
         }
 
+        // The write side is gone, so queuing these bytes would only re-root the
+        // wrapper below for a drain that cannot come.
+        if self.flags.get().contains(Flags::WRITER_DONE) {
+            return Ok(JSValue::js_number(input_len as f64));
+        }
+
         // Suppress drain firing from the synchronous on_write calls that
         // StreamingWriter::write() makes while we still hold the `with_mut`
         // borrow; it is restored from `has_pending_data()` immediately after.
@@ -1776,17 +1773,25 @@ impl Terminal {
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = amount;
-        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
-        // buffered→drained transition here instead. Windows fires the drain
-        // callback from `on_writable`, so only record the drained state (a
-        // stale flag would block `maybe_downgrade_after_eof` forever).
-        #[cfg(unix)]
-        if status == WriteStatus::Drained && self.writer_has_buffered.replace(false) {
-            self.on_writer_ready();
-        }
-        #[cfg(not(unix))]
-        if matches!(status, WriteStatus::Drained | WriteStatus::EndOfFile) {
-            self.writer_has_buffered.set(false);
+        match status {
+            WriteStatus::Pending => {}
+            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // fires `drain` off this transition. Windows fires it from
+            // `on_writable` and only records the state here.
+            WriteStatus::Drained => {
+                let had_buffered = self.writer_has_buffered.replace(false);
+                #[cfg(unix)]
+                if had_buffered {
+                    self.on_writer_ready();
+                }
+                #[cfg(not(unix))]
+                let _ = had_buffered;
+            }
+            // The writer closed its fd, so no drain can follow.
+            WriteStatus::EndOfFile => {
+                self.writer_has_buffered.set(false);
+                self.maybe_downgrade_after_eof();
+            }
         }
     }
 
@@ -1810,30 +1815,49 @@ impl Terminal {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
-        self.update_flags(|f| {
-            f.insert(Flags::READER_DONE);
-            f.remove(Flags::CONNECTED);
-        });
-        // EOF from master - downgrade to weak ref to allow GC.
+        self.update_flags(|f| f.insert(Flags::READER_DONE));
+        #[cfg(unix)]
+        self.finish_io_after_eof();
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.maybe_downgrade_after_eof();
             self.call_exit_callback(exit_code, None);
         }
+        // The wrapper stayed strong for `exit`; only a pending `drain` needs
+        // it from here on.
+        self.update_flags(|f| f.insert(Flags::EXIT_DISPATCHED));
+        self.maybe_downgrade_after_eof();
         self.deref_();
     }
 
-    /// Downgrade `this_value` once no further callback can fire: reader hit
-    /// EOF *and* the writer has no buffered data awaiting a `drain` dispatch.
-    /// The wrapper's cached callback slots are the only GC root of the
-    /// callbacks, so downgrading with a drain still pending lets GC collect
-    /// the wrapper before `on_writer_ready` dispatches through it.
+    /// Finish both ends of the PTY once the reader is done, so `exit` is the
+    /// last callback. A pty master reports neither side's hangup the way a
+    /// pipe does: Linux answers a write with EAGAIN instead of EPIPE, and a
+    /// read with EIO instead of EOF. Left alone, the writer waits for a drain
+    /// that cannot come and the reader delivers echo after `exit`.
+    #[cfg(unix)]
+    fn finish_io_after_eof(&self) {
+        // EOF closes the reader itself, a read error does not.
+        if !self.reader.get().is_done() {
+            self.reader.with_mut(|r| r.close());
+            self.read_fd.set(Fd::INVALID);
+        }
+        // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
+        if !self.flags.get().contains(Flags::WRITER_DONE) {
+            self.writer.with_mut(|w| w.end());
+            self.write_fd.set(Fd::INVALID);
+        }
+    }
+
+    /// Downgrade `this_value` once no further callback can fire: `exit` has
+    /// been dispatched and no `drain` is owed. Downgrading earlier would let
+    /// GC collect the wrapper, and with it the callbacks it roots, before the
+    /// last dispatch goes through it.
     ///
     /// Reads only `Cell` fields, never `self.writer`: callers include
     /// writer-parent callbacks that run while a writer borrow is live.
     fn maybe_downgrade_after_eof(&self) {
         let flags = self.flags.get();
-        if !flags.contains(Flags::READER_DONE) || flags.contains(Flags::FINALIZED) {
+        if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
             return;
         }
         if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {
@@ -1882,13 +1906,6 @@ impl Terminal {
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
-        }
-
-        // First data received - upgrade to strong ref (connected)
-        if !self.flags.get().contains(Flags::CONNECTED) {
-            self.update_flags(|f| f.insert(Flags::CONNECTED));
-            let global = self.global();
-            self.this_value.with_mut(|v| v.upgrade(global));
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {

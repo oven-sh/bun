@@ -56,8 +56,8 @@ private:
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
-// reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData
-// whose gregorian cache still matches, so walk the heap and invalidate those.
+// reset only clears shared slots; live DateInstances keep their own cached fields
+// that still match, so walk the heap and invalidate those.
 void invalidateLiveDateInstanceCaches(JSC::VM&);
 
 // The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel

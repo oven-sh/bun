@@ -93,7 +93,7 @@ fn dump_source_string_failiable(
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
-    let mut path_buf = bun_paths::PathBuffer::default();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     if holder.is_none() {
         let base_name: &[u8] = if cfg!(windows) {

@@ -1,10 +1,13 @@
 // @ts-nocheck
 import { existsSync, readFileSync } from "fs";
+import { createRequire } from "module";
 import path from "path";
-import jsclasses from "./../jsc/bindings/js_classes";
-import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { writeIfNotChanged } from "./helpers";
+import { inspect } from "util";
+import jsclasses from "./../jsc/bindings/js_classes.ts";
+import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
+import { writeIfNotChanged } from "./helpers.ts";
 
+const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
 const outBase = files.pop();
 let externs = "";
@@ -1679,7 +1682,7 @@ function rustSnakeIdent(name: string): string {
 // distinct `Source` structs) MUST set `rustPath` explicitly in their
 // `.classes.ts` definition; this resolver is name-based and can't infer those.
 const rustModuleResolver = (() => {
-  const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
+  const runtimeRoot = path.resolve(import.meta.dirname, "../runtime");
   const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
   const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName (shortest)
   // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* pub mod NAME ;` — pub-only: a private
@@ -2530,7 +2533,7 @@ const classes: ClassDefinition[] = [];
     if (!(result?.default?.length ?? 0)) {
       errors.push(
         new TypeError(
-          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${Bun.inspect(result).slice(0, 100) + "..."} `,
+          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${inspect(result).slice(0, 100) + "..."} `,
         ),
       );
       continue;

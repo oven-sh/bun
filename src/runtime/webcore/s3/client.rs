@@ -573,8 +573,7 @@ pub struct S3UploadStreamWrapper {
     pub(crate) callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
-    /// Pins the source ReadableStream when the native ByteStream fast-path is
-    /// taken (no JS reader to lock it). Empty on the `assign_to_stream` path.
+    /// Roots the source ReadableStream, and the JS pump reachable only through it, until this wrapper drops.
     pub readable_stream_ref: ReadableStreamStrong,
     pub global: GlobalRef, // JSC_BORROW
 }
@@ -992,6 +991,8 @@ pub(crate) fn upload_stream(
     // default-controller stream synchronously inside `assign_to_stream`.
     task.continue_stream();
 
+    ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
+
     // Native ByteStream fast-path: wire the source/sink handles directly so
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
     // `readStreamIntoSink` pump.
@@ -1000,11 +1001,11 @@ pub(crate) fn upload_stream(
             sink.source = crate::webcore::streams::SourceHandle::ByteStream(byte_stream);
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
-            ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
             readable_stream.lock_native(global_this);
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
+                byte_stream.detach_sink(Some(&err));
                 let err_js = err.to_js(global_this);
                 err_js.ensure_still_alive();
                 ctx.handle_reject_stream(err_js);
@@ -1025,7 +1026,7 @@ pub(crate) fn upload_stream(
                     }
                     crate::webcore::streams::Writable::Done
                     | crate::webcore::streams::Writable::Err(_) => {
-                        byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                        byte_stream.detach_sink(None);
                         sink.source.clear();
                         if !sink.ended {
                             let _ = sink.end(None);
@@ -1037,7 +1038,7 @@ pub(crate) fn upload_stream(
                 }
             }
             if had_last {
-                byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                byte_stream.detach_sink(None);
                 sink.source.clear();
                 if !sink.ended {
                     let _ = sink.end(None);

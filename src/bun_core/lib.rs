@@ -2887,9 +2887,9 @@ pub mod asan {
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
-    /// Do not report the allocation containing `ptr`: its owner holds it through a reference LSAN cannot follow (a tagged pointer).
+    /// Exclude the allocation at `ptr` from leak reports.
     #[inline]
-    pub fn lsan_ignore_object(ptr: *const c_void) {
+    pub fn ignore_object(ptr: *const c_void) {
         #[cfg(bun_asan)]
         __lsan_ignore_object(ptr);
         #[cfg(not(bun_asan))]

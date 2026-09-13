@@ -168,11 +168,6 @@ impl AbortSignal {
         WebCore__AbortSignal__unref(self)
     }
 
-    pub fn detach(&self, ctx: *mut c_void) {
-        self.clean_native_bindings(ctx);
-        self.unref();
-    }
-
     /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
     /// valid only while `value` remains reachable. Use [`AbortSignal::ref_from_js`]
     /// to take refcounted ownership instead.

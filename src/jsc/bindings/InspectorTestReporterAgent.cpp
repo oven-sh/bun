@@ -136,7 +136,7 @@ void InspectorTestReporterAgent::didCreateFrontendAndBackend()
 
 void InspectorTestReporterAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorTestReporterAgent::enable()

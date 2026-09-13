@@ -444,12 +444,15 @@ declare module "bun:jsc" {
    */
   interface MemoryUsage {
     /**
-     * Resident set size: the physical memory the process is using right now.
-     * The same measurement as `process.memoryUsage().rss`.
+     * The physical memory the process is using right now. The same
+     * measurement as `process.memoryUsage().rss`: the resident set size on
+     * Linux and Windows, and on macOS the memory footprint that Activity
+     * Monitor shows (`phys_footprint`, which also counts compressed pages and
+     * leaves out clean file-backed ones).
      */
     current: number;
     /**
-     * The largest resident set size the process has had.
+     * The largest value `current` has had over the life of the process.
      */
     peak: number;
     /**

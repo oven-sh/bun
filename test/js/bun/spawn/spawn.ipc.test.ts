@@ -122,6 +122,43 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
   });
 });
 
+describe("ipc mode json", () => {
+  it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
+    // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag
+    // byte strips to an empty payload. The receiver must treat it like an empty
+    // line (invalid, close the channel) instead of building an external string
+    // over a zero-length slice.
+    //
+    // The receiver runs in its own subprocess so a crash shows up as a failing
+    // assertion here rather than taking out the test runner.
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, "\\\\x02\\\\n");',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "json",
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+      });
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("CHILD_EXIT 42");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("ipc mode advanced", () => {
   it("unwraps the Buffer envelope before cmd dispatch", async () => {
     // A cmd-bearing message whose payload holds a Buffer travels as the
@@ -200,6 +237,58 @@ describe("ipc mode advanced", () => {
 
     expect(stdout.trim()).toBe("PARENT_OK");
     expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
+    // Frame type 4 carries a [message, buffers] envelope and the receiver puts
+    // Buffer.prototype on every entry of `buffers`. Only Uint8Arrays may be
+    // there: a Float64Array with that prototype reads as a Buffer whose
+    // methods index the wrong element size. The peer controls the envelope,
+    // so the receiver must check each entry and reject the frame.
+    const parent = `
+      const { types } = require("node:util");
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          \`
+          const { serialize } = require("bun:jsc");
+          const f = new Float64Array([1.5]);
+          const body = serialize([{ b: f }, [f]], { binaryType: "nodebuffer" });
+          const head = Buffer.alloc(5);
+          head[0] = 4;
+          head.writeUInt32LE(body.length, 1);
+          process.on("disconnect", () => process.exit(42));
+          require("fs").writeSync(3, Buffer.concat([head, body]));
+          \`,
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg, subprocess) {
+          // Delivered means the frame was accepted. Report and stop the child,
+          // which otherwise waits for a disconnect that never comes.
+          console.log("MESSAGE", Buffer.isBuffer(msg.b), types.isUint8Array(msg.b));
+          subprocess.kill();
+        },
+      });
+      process.on("uncaughtException", err => console.log("UNCAUGHT", err.message));
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "UNCAUGHT failed to parse serialized buffer envelope",
+      "CHILD_EXIT 42",
+    ]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 

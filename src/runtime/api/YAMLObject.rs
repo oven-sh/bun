@@ -23,6 +23,14 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|roots| stringify_impl(global, call_frame, roots))
+}
+
+fn stringify_impl(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+    roots: &mut MarkedArgumentBuffer,
+) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -37,7 +45,7 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(global, space_value, roots)?;
 
     stringifier
         .find_anchors_and_aliases(global, value, ValueOrigin::Root)
@@ -50,12 +58,14 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     stringifier.builder.to_string(global)
 }
 
-struct Stringifier {
+struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
 
+    /// Keyed by cell address. `known_collection_roots` keeps the keys alive so none gets reused.
     known_collections: HashMap<JSValue, AnchorAlias>,
+    known_collection_roots: &'a mut MarkedArgumentBuffer,
     array_item_counter: usize,
     prop_names: StringHashMap<usize>,
 
@@ -183,8 +193,12 @@ impl StringifyError {
 
 bun_core::oom_from_alloc!(StringifyError);
 
-impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+impl<'a> Stringifier<'a> {
+    fn init(
+        global: &JSGlobalObject,
+        space_value: JSValue,
+        known_collection_roots: &'a mut MarkedArgumentBuffer,
+    ) -> JsResult<Stringifier<'a>> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -195,6 +209,7 @@ impl Stringifier {
             builder: wtf::StringBuilder::init(),
             indent: 0,
             known_collections: HashMap::default(),
+            known_collection_roots,
             array_item_counter: 0,
             prop_names,
             space: Space::init(global, space_value)?,
@@ -278,6 +293,7 @@ impl Stringifier {
         }
 
         *object_entry.value_ptr = AnchorAlias::init(origin);
+        self.known_collection_roots.append(unwrapped);
 
         if unwrapped.is_array() {
             let mut iter = unwrapped.array_iterator(global)?;

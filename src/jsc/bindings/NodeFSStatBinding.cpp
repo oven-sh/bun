@@ -749,10 +749,7 @@ const JSC::ClassInfo JSBigIntStatsPrototype::s_info = { "BigIntStats"_s, &Base::
 const JSC::ClassInfo JSStatsConstructor::s_info = { "Stats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatsConstructor) };
 const JSC::ClassInfo JSBigIntStatsConstructor::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsConstructor) };
 
-// Node: `this.atimeMs = atimeNs / kNsPerMsBigInt`, then mtime, ctime and birthtime. jsDiv is the
-// `/` operator: the quotient stays a BigInt of any size, and an operand that ToNumeric does not
-// turn into a BigInt throws a TypeError.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L624-L627
+// Node divides with the JS `/` operator: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L624-L627
 static void divideNsIntoMs(JSC::JSGlobalObject* globalObject, JSValue& atime, JSValue& mtime, JSValue& ctime, JSValue& birthtime)
 {
     auto& vm = globalObject->vm();

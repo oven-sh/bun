@@ -935,23 +935,21 @@ impl ClientSession {
         for client in core::mem::take(&mut self.pending_attach) {
             pending_client_mut(client).h2_fail(err);
         }
-        // A terminal callback in `handle_data`'s deliver loop can close this
-        // socket. The loop still holds that stream and removes every stream
-        // that has no client, so it frees them, not this function.
-        let free_streams = !self.delivering;
+        // `handle_data`'s deliver loop holds a stream across the callback that re-entered here.
+        let deliver_loop_frees_streams = self.delivering;
         for &e in self.streams.values() {
             let client = stream_mut(e).client.take();
             if let Some(c) = client {
                 stream_client_mut(c).h2 = None;
             }
-            if free_streams {
+            if !deliver_loop_frees_streams {
                 drop_stream(e);
             }
             if let Some(c) = client {
                 stream_client_mut(c).h2_fail(err);
             }
         }
-        if free_streams {
+        if !deliver_loop_frees_streams {
             self.streams.clear_retaining_capacity();
             self.by_http_id.clear_retaining_capacity();
         }

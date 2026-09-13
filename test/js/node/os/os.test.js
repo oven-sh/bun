@@ -202,21 +202,15 @@ it("networkInterfaces IPv6 loopback", () => {
 });
 
 it("machine", () => {
-  const possibleValues = [
-    "arm",
-    "arm64",
-    "aarch64",
-    "mips",
-    "mips64",
-    "ppc64",
-    "ppc64le",
-    "s390",
-    "s390x",
-    "i386",
-    "i686",
-    "x86_64",
-  ];
-  expect(possibleValues.includes(os.machine())).toBe(true);
+  const expected =
+    process.arch === "arm64"
+      ? process.platform === "linux" || process.platform === "android"
+        ? "aarch64"
+        : "arm64"
+      : process.platform === "freebsd"
+        ? "amd64"
+        : "x86_64";
+  expect(os.machine()).toBe(expected);
 });
 
 it("EOL", () => {

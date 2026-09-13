@@ -219,6 +219,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     if (wasModuleMock) {
+        if (!objectValue.isObject()) [[unlikely]] {
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "mock(module, fn) requires a function that returns an object"_s));
+            result.value.error = scope.exception();
+            (void)scope.tryClearException();
+            result.type = OnLoadResultTypeError;
+            return result;
+        }
         result.type = OnLoadResultTypeObject;
         result.value.object = objectValue;
         return result;

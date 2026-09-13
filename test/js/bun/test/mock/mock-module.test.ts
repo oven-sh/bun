@@ -345,6 +345,44 @@ test("a factory promise that resolves to a non-object is rejected like the synch
   expect(ns.default).toBe("real-default");
 });
 
+// The same for a module that is not loaded yet: mock.module() only registers
+// the factory and import() runs it. A factory promise still pending at that
+// point reaches the module loader unvalidated. The unfixed runtime segfaults
+// there, so these run in a subprocess.
+for (const [label, factory] of [
+  // An async factory with no return statement.
+  ["undefined", `async () => { await 1; }`],
+  ["a number", `() => new Promise(resolve => setTimeout(() => resolve(42), 1))`],
+  ["null", `async () => { await Bun.sleep(1); return null; }`],
+  ["a string", `async () => { await Bun.sleep(1); return "str"; }`],
+] as const) {
+  test.concurrent(
+    `a pending factory promise that resolves to ${label} rejects import() of a module not loaded yet`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { mock } from "bun:test";
+        mock.module("mm-async-non-object", ${factory});
+        try {
+          await import("mm-async-non-object");
+          console.log("imported");
+        } catch (e) {
+          console.log("rejected:", e?.message);
+        }`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("rejected: mock(module, fn) requires a function that returns an object\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
 test("a later mock.module for the same module is not overwritten when an earlier pending factory settles", async () => {
   using dir = tempDir("mock-module-superseded", {
     "a.ts": `export function a() { return "real-a"; }`,

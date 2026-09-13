@@ -1,5 +1,6 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
 // the JS-facing API surface, the two result shapes, Bun-specific input types,
@@ -1015,8 +1016,10 @@ describe("XML.stringify", () => {
 
   test("deep values are a catchable error", () => {
     // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // debug/ASAN ones, so use a depth no native stack survives. A debug build
+    // overflows below depth 3,000 (release: below 30,000) and builds each
+    // level about 50 times slower, so it gets a smaller depth.
+    const depth = isDebug ? 100_000 : 1_000_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);
@@ -1024,6 +1027,5 @@ describe("XML.stringify", () => {
     let node: any = { name: "a", children: ["x"] };
     for (let i = 0; i < depth; i++) node = { name: "a", children: [node] };
     expect(() => XML.stringify(node)).toThrow(RangeError);
-    // Building the two values takes over 10 s on a debug build.
-  }, 60_000);
+  });
 });

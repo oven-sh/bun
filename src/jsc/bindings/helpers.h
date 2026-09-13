@@ -269,14 +269,6 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
               str.length() };
 }
 
-static EncodedSlice toEncodedSlice(JSC::JSString* str, JSC::JSGlobalObject* global)
-{
-    if (str->isSubstring()) {
-        return toEncodedSlice(str->view(global));
-    }
-    return toEncodedSlice(str->value(global));
-}
-
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,

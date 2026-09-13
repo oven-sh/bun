@@ -228,7 +228,6 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     JSC::JSString* input = argument0.value().toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     JSC::EncodedJSValue res;
-    StringView str;
     if (input->is8Bit()) {
         if (input->isNonSubstringRope()) {
             GCDeferralContext gcDeferralContext(vm);
@@ -240,13 +239,13 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
-        str = input->view(lexicalGlobalObject);
+        auto str = input->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+        res = TextEncoder__encode8(lexicalGlobalObject, str->span8().data(), str->length());
     } else {
-        str = input->view(lexicalGlobalObject);
+        auto str = input->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str->span16().data(), str->length());
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -289,7 +289,7 @@ pub(crate) trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
+    /// The current context's per-protocol uws [`bun_uws::SocketGroup`], for a new connection.
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
@@ -325,12 +325,12 @@ impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().postgres_group::<SSL>(loop_)
+        self.client_socket_groups().postgres_group::<SSL>(loop_)
     }
     #[inline]
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().mysql_group::<SSL>(loop_)
+        self.client_socket_groups().mysql_group::<SSL>(loop_)
     }
 }
 

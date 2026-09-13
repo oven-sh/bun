@@ -590,7 +590,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // on Handlers (that's `invalid_reference_casting`).
         let vm = VirtualMachine::get().as_mut();
         let loop_ = vm.uws_loop();
-        let group = vm.rare_data().bun_connect_group::<SSL>(loop_);
+        let group = vm.client_socket_groups().bun_connect_group::<SSL>(loop_);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -3562,7 +3562,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let loop_ = vm.uws_loop();
         let group = VirtualMachine::get()
             .as_mut()
-            .rare_data()
+            .client_socket_groups()
             .bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref

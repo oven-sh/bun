@@ -1127,6 +1127,15 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
     return m_scriptExecutionContext;
 }
 
+WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
+{
+    if (m_hasModuleGraphContexts) [[unlikely]] {
+        if (auto* graph = Bun::currentModuleGraph(this))
+            return graph->context();
+    }
+    return m_scriptExecutionContext;
+}
+
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {

@@ -5324,9 +5324,18 @@ impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
+        // The VM-global resolver serves every context of the realm.
+        let is_global = crate::jsc_hooks::global_dns_data()
+            .get()
+            .is_some_and(|global| core::ptr::eq(&raw const global.resolver, self));
+        let context = if is_global {
+            self.vm.root_context()
+        } else {
+            self.vm.current_context()
+        };
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
-        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), self.vm.current_context()) };
+        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
     }
 }
 

@@ -1782,9 +1782,13 @@ fn spawn_maybe_sync(
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
             // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            // `subprocess_ptr` is live and heap-pinned.
             unsafe {
                 (*jsc_vm_ptr)
-                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()));
+                if let Some(context) = (*jsc_vm_ptr).current_graph_context() {
+                    bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
+                }
             };
         }
         return Ok(out);

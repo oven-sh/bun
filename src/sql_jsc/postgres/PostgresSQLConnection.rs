@@ -432,10 +432,6 @@ impl PostgresSQLConnection {
 
     pub(crate) fn setup_tls(&self) {
         debug!("setupTLS");
-        // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
-        // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
-
         // At this point we are
         // a plain TCP socket in the Connected state.
         let Socket::SocketTcp(tcp) = self.socket.get() else {
@@ -451,6 +447,11 @@ impl PostgresSQLConnection {
                 AnyPostgresError::TLSUpgradeFailed,
             );
             return;
+        };
+        // SAFETY: `raw` is a live connected socket in its context's Postgres TCP group.
+        let tls_group: &mut bun_uws::SocketGroup = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .postgres_group::<true>(self.vm_mut().uws_loop())
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is

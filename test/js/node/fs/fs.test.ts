@@ -57,6 +57,8 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -692,8 +694,7 @@ describe("writeFile with a non-truncating flag", () => {
     expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
   });
 
-  // An iterable `data` takes a separate slow path in fs.promises, with its own
-  // truncate.
+  // An iterable `data` takes a separate slow path in fs.promises.
   it.each(["r+", "rs+"])("promises.writeFile of an async iterable with flag %p overwrites in place", async flag => {
     const path = join(tmpdirSync(), "in-place-async-iter.txt");
     writeFileSync(path, "0123456789");
@@ -826,6 +827,277 @@ describe("appendFile honors an explicit 'w' flag", () => {
     fs.appendFileSync(path, "e", {});
     expect(readFileSync(path, "utf8")).toBe("abcde");
   });
+});
+
+// In node, fs/promises writeFile and appendFile take `data` as an iterable or
+// async iterable of chunks as well as a string or buffer (the sync and callback
+// forms take only the latter two). promises.appendFile handed every kind of data
+// to the native binding, which rejected the iterables.
+describe("promises.appendFile with iterable data", () => {
+  const iterables: [string, () => Iterable<any> | AsyncIterable<any>][] = [
+    ["an array of strings", () => ["ab", "cd"]],
+    ["a String object", () => new String("abcd")],
+    ["an array of buffers", () => [Buffer.from("ab"), new Uint8Array([0x63, 0x64])]],
+    [
+      "a generator",
+      () =>
+        (function* () {
+          yield "ab";
+          yield Buffer.from("cd");
+        })(),
+    ],
+    [
+      "an async generator",
+      () =>
+        (async function* () {
+          yield "ab";
+          yield Buffer.from("cd");
+        })(),
+    ],
+    ["a Readable", () => Readable.from(["ab", "cd"])],
+  ];
+
+  it.each(iterables)("appends %s to an existing file", async (_, data) => {
+    using dir = tempDir("append-iterable", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    await expect(promises.appendFile(path, data() as any)).resolves.toBeUndefined();
+    expect(readFileSync(path, "utf8")).toBe("0123abcd");
+  });
+
+  it("creates the file when it does not exist", async () => {
+    using dir = tempDir("append-iterable-create", {});
+    const path = join(String(dir), "f.txt");
+    await promises.appendFile(path, ["ab", "cd"]);
+    expect(readFileSync(path, "utf8")).toBe("abcd");
+  });
+
+  it.skipIf(isWindows)("creates the file with options.mode", async () => {
+    using dir = tempDir("append-iterable-mode", {});
+    const path = join(String(dir), "f.txt");
+    await promises.appendFile(path, ["ab"], { mode: 0o600 });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("encodes string chunks with the encoding argument or option, utf8 by default", async () => {
+    using dir = tempDir("append-iterable-encoding", {});
+    const asArgument = join(String(dir), "argument.txt");
+    const asOption = join(String(dir), "option.txt");
+    const byDefault = join(String(dir), "default.txt");
+    await promises.appendFile(asArgument, ["\u00e9"], "latin1");
+    await promises.appendFile(asOption, ["\u00e9"], { encoding: "latin1" });
+    await promises.appendFile(byDefault, ["\u00e9"]);
+    expect({
+      asArgument: [...readFileSync(asArgument)],
+      asOption: [...readFileSync(asOption)],
+      byDefault: [...readFileSync(byDefault)],
+    }).toEqual({ asArgument: [0xe9], asOption: [0xe9], byDefault: [0xc3, 0xa9] });
+  });
+
+  it("honors an explicit flag, and falls back to appending for an empty one", async () => {
+    using dir = tempDir("append-iterable-flag", { "w.txt": "0123456789", "empty.txt": "0123" });
+    const truncated = join(String(dir), "w.txt");
+    const appended = join(String(dir), "empty.txt");
+    await promises.appendFile(truncated, ["ZZ"], { flag: "w" });
+    await promises.appendFile(appended, ["ab"], { flag: "" });
+    expect({ truncated: readFileSync(truncated, "utf8"), appended: readFileSync(appended, "utf8") }).toEqual({
+      truncated: "ZZ",
+      appended: "0123ab",
+    });
+  });
+
+  it.each([
+    ["a Buffer", (p: string) => Buffer.from(p)],
+    ["a file URL", (p: string) => pathToFileURL(p)],
+  ])("appends when the path is %s", async (_, wrap) => {
+    using dir = tempDir("append-iterable-path", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    await promises.appendFile(wrap(path), ["ab", "cd"]);
+    expect(readFileSync(path, "utf8")).toBe("0123abcd");
+  });
+
+  it("writes through a FileHandle and leaves it open", async () => {
+    using dir = tempDir("append-iterable-handle", {});
+    const path = join(String(dir), "f.txt");
+    await using handle = await promises.open(path, "w");
+    await promises.appendFile(handle, ["ab"]);
+    await handle.appendFile(["cd"]);
+    await promises.appendFile(
+      handle,
+      (async function* () {
+        yield "ef";
+      })(),
+    );
+    expect((await handle.stat()).size).toBe(6);
+    expect(readFileSync(path, "utf8")).toBe("abcdef");
+  });
+
+  it("rejects with an AbortError before pulling from the iterable when the signal is already aborted", async () => {
+    using dir = tempDir("append-iterable-abort", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    let pulled = false;
+    const data = {
+      *[Symbol.iterator]() {
+        pulled = true;
+        yield "ab";
+      },
+    };
+    await expect(promises.appendFile(path, data, { signal: AbortSignal.abort() })).rejects.toMatchObject({
+      name: "AbortError",
+      code: "ABORT_ERR",
+    });
+    expect({ pulled, contents: readFileSync(path, "utf8") }).toEqual({ pulled: false, contents: "0123" });
+  });
+
+  it("propagates an error thrown by the iterable and keeps the chunks written before it", async () => {
+    using dir = tempDir("append-iterable-throws", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    const data = (function* () {
+      yield "ab";
+      throw new Error("stop");
+    })();
+    await expect(promises.appendFile(path, data)).rejects.toThrow("stop");
+    expect(readFileSync(path, "utf8")).toBe("0123ab");
+  });
+
+  it("closes the file it opened, also when the iterable throws", async () => {
+    using dir = tempDir("append-iterable-fds", {});
+    const path = join(String(dir), "f.txt");
+    const maxFD = getMaxFD();
+    for (let i = 0; i < 16; i++) {
+      await promises.appendFile(Buffer.from(path), ["ab"]);
+      await expect(
+        promises.appendFile(
+          pathToFileURL(path),
+          (function* () {
+            yield "cd";
+            throw new Error("stop");
+          })(),
+        ),
+      ).rejects.toThrow("stop");
+    }
+    expect(readFileSync(path, "utf8")).toBe(Buffer.alloc(16 * 4, "abcd").toString());
+    expect(getMaxFD() - maxFD).toBeLessThan(5);
+  });
+
+  it("rejects an unknown encoding with ERR_INVALID_ARG_VALUE, as the string path does", async () => {
+    using dir = tempDir("iterable-bad-encoding", {});
+    const path = join(String(dir), "f.txt");
+    const expected = {
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'encoding' is invalid encoding. Received 'bogus'",
+    };
+    await expect(promises.appendFile(path, ["ab"], "bogus" as any)).rejects.toMatchObject(expected);
+    await expect(promises.writeFile(path, ["ab"], "bogus" as any)).rejects.toMatchObject(expected);
+    await expect(promises.appendFile(path, "ab", "bogus" as any)).rejects.toMatchObject({ code: expected.code });
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("still rejects data that is neither a string, a buffer nor iterable", async () => {
+    using dir = tempDir("append-not-iterable", {});
+    const path = join(String(dir), "f.txt");
+    await expect(promises.appendFile(path, 42 as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    await expect(promises.appendFile(path, {} as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("the sync and callback forms still reject iterables", () => {
+    using dir = tempDir("append-iterable-sync", {});
+    const path = join(String(dir), "f.txt");
+    expect(() => fs.appendFileSync(path, ["ab"] as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFile(path, ["ab"] as any, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFileSync(path, ["ab"] as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFile(path, ["ab"] as any, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(existsSync(path)).toBe(false);
+  });
+});
+
+// The iterable slow path shared by promises.writeFile and promises.appendFile
+// only opened string paths itself. A Buffer or URL path went to
+// Bun.file().writer(), which ignores `flag` and `mode` and overwrites the file in
+// place without truncating it.
+describe("promises.writeFile with iterable data and a Buffer or URL path", () => {
+  const pathKinds: [string, (p: string) => Buffer | URL][] = [
+    ["a Buffer", p => Buffer.from(p)],
+    ["a file URL", p => pathToFileURL(p)],
+  ];
+
+  it.each(pathKinds)("truncates the existing file when the path is %s", async (_, wrap) => {
+    using dir = tempDir("write-iterable-path", { "f.txt": "0123456789" });
+    const path = join(String(dir), "f.txt");
+    await promises.writeFile(wrap(path), ["ZZ"]);
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
+  it.each(pathKinds)("honors flag 'a' when the path is %s", async (_, wrap) => {
+    using dir = tempDir("write-iterable-path-a", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    await promises.writeFile(wrap(path), ["ab", "cd"], { flag: "a" });
+    expect(readFileSync(path, "utf8")).toBe("0123abcd");
+  });
+
+  it.each(pathKinds)("honors flag 'wx' when the path is %s", async (_, wrap) => {
+    using dir = tempDir("write-iterable-path-wx", { "f.txt": "0123" });
+    const path = join(String(dir), "f.txt");
+    await expect(promises.writeFile(wrap(path), ["ZZ"], { flag: "wx" })).rejects.toMatchObject({
+      code: "EEXIST",
+      syscall: "open",
+    });
+    expect(readFileSync(path, "utf8")).toBe("0123");
+  });
+
+  it.skipIf(isWindows).each(pathKinds)("creates the file with options.mode when the path is %s", async (_, wrap) => {
+    using dir = tempDir("write-iterable-path-mode", {});
+    const path = join(String(dir), "f.txt");
+    await promises.writeFile(wrap(path), ["ab"], { mode: 0o600 });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("rejects a path of the wrong type without pulling from the iterable", async () => {
+    let pulled = false;
+    const data = {
+      *[Symbol.iterator]() {
+        pulled = true;
+        yield "ab";
+      },
+    };
+    await expect(promises.writeFile({} as any, data)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    await expect(promises.appendFile({} as any, data)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(pulled).toBe(false);
+  });
+});
+
+// After writing, the iterable path used to ftruncate() the file to the sum of
+// the FileSink.write() return values. That sum over-counts once the sink starts
+// flushing (every 4 KiB, 16 KiB on Apple Silicon), so a stream of small chunks
+// came out padded with NUL bytes. The truncating flags already empty the file at
+// open, so the file has to end up exactly as long as the data.
+describe("promises.writeFile and appendFile of many small chunks", () => {
+  const chunk = Buffer.alloc(1024, "0123456789").toString();
+  const chunkCount = 32;
+  const expected = Buffer.alloc(chunk.length * chunkCount, chunk).toString();
+  function* chunks() {
+    for (let i = 0; i < chunkCount; i++) yield chunk;
+  }
+
+  const paths: [string, (p: string) => string | Buffer | URL][] = [
+    ["a string", p => p],
+    ["a Buffer", p => Buffer.from(p)],
+    ["a file URL", p => pathToFileURL(p)],
+  ];
+  const writers: [string, (path: string | Buffer | URL) => Promise<void>][] = [
+    ["promises.writeFile", path => promises.writeFile(path, chunks())],
+    ["promises.appendFile with flag 'w'", path => promises.appendFile(path, chunks(), { flag: "w" })],
+    ["promises.appendFile", path => promises.appendFile(path, chunks())],
+  ];
+
+  for (const [writerName, write] of writers) {
+    it.each(paths)(`${writerName} to %s writes exactly the data`, async (_, wrap) => {
+      using dir = tempDir("iterable-exact-size", {});
+      const path = join(String(dir), "out.txt");
+      await write(wrap(path));
+      expect(readFileSync(path, "utf8")).toBe(expected);
+    });
+  }
 });
 
 // A write that dies partway through must not leave the old tail sitting behind

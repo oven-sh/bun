@@ -2734,14 +2734,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
 
                         let buf_len = self.buffered_data_for_node_net.get().len();
-                        // `write2` wrote the old buffered data first, then
-                        // `written - buf_len` bytes of the new input (zero when the
-                        // write stopped inside the old buffered data).
+                        // `write2` writes the old buffered data first, then the new input.
                         let remaining_in_input_data = &buffer.slice()
                             [(written.saturating_sub(buf_len)).min(buffer.slice().len())..];
 
-                        // Drop the prefix that hit the wire, keeping only the unsent
-                        // suffix (clears entirely when `written >= buf_len`).
                         self.buffered_data_for_node_net
                             .with_mut(|b| b.drain_front(written));
 

@@ -557,7 +557,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"

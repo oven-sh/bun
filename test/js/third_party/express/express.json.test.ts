@@ -25,7 +25,7 @@ describe("express.json()", function () {
       .expect(200, "{}", done);
   });
 
-  it.todo("should handle empty message-body", function (done) {
+  it("should handle empty message-body", function (done) {
     request(createApp())
       .post("/")
       .set("Content-Type", "application/json")
@@ -201,7 +201,7 @@ describe("express.json()", function () {
         app = createApp({ inflate: false });
       });
 
-      it.todo("should not accept content-encoding", function (done) {
+      it("should not accept content-encoding", function (done) {
         var test = request(app).post("/");
         test.set("Content-Encoding", "gzip");
         test.set("Content-Type", "application/json");
@@ -245,7 +245,7 @@ describe("express.json()", function () {
         app = createApp({ strict: false });
       });
 
-      it.todo("should parse primitives", function (done) {
+      it("should parse primitives", function (done) {
         request(app).post("/").set("Content-Type", "application/json").send("true").expect(200, "true", done);
       });
     });
@@ -326,7 +326,7 @@ describe("express.json()", function () {
           .expect(200, '{"user":"tobi"}', done);
       });
 
-      it.todo('should parse JSON for "application/vnd.api+json"', function (done) {
+      it('should parse JSON for "application/vnd.api+json"', function (done) {
         request(app)
           .post("/")
           .set("Content-Type", "application/vnd.api+json")

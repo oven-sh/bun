@@ -217,7 +217,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("splitting/CircularReferenceESBuildIssue251", {
-    todo: true,
     files: {
       "/a.js": /* js */ `
         export * from './b.js';

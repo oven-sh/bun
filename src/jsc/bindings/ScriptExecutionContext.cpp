@@ -67,12 +67,16 @@ extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM);
 extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
 extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
 
-Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent, JSC::JSObject* moduleGraph)
+void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
+{
+    m_moduleGraph = JSC::Weak<JSC::JSObject>(moduleGraph);
+}
+
+Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
 {
     ASSERT(parent.isContextThread());
     ASSERT(!parent.m_bunContext);
     auto context = adoptRef(*new ScriptExecutionContext(parent.m_vm, parent.m_globalObject, std::numeric_limits<int32_t>::max()));
-    context->m_moduleGraph = JSC::Weak<JSC::JSObject>(moduleGraph);
     context->m_isInMainThreadRealm = parent.isMainThread();
     context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM);
     parent.m_moduleGraphContexts.add(context.get());

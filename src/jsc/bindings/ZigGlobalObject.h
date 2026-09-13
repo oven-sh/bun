@@ -307,6 +307,7 @@ public:
     // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
     bool hasModuleGraphs() const { return m_moduleGraphRegistry.isInitialized(); }
     JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); } // overlay -> graph
+    JSC::Structure* JSIsolatedModuleGraphStructure() const { return m_JSIsolatedModuleGraphStructure.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
@@ -537,6 +538,7 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSIsolatedModuleGraphStructure)                      \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \

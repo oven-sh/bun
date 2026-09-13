@@ -112,17 +112,15 @@ JSModuleLoader* moduleLoaderForRequire(JSGlobalObject* globalObject, ThrowScope&
 // top inherits, is what names the current context.
 
 // The graph an async context (a frame or undefined) is inside of: async_hooks.ts Frame.graph.
-static JSModuleGraph* moduleGraphOfFrame(VM& vm, JSValue asyncContext)
+static JSIsolatedModuleGraph* moduleGraphOfFrame(VM& vm, JSValue asyncContext)
 {
     JSObject* frame = asyncContext.getObject();
     if (!frame)
         return nullptr;
-    auto* graph = dynamicDowncast<JSModuleGraph>(frame->getDirect(vm, WebCore::builtinNames(vm).graphPublicName()));
-    ASSERT(!graph || graph->context()); // only such a graph gets frames
-    return graph;
+    return dynamicDowncast<JSIsolatedModuleGraph>(frame->getDirect(vm, WebCore::builtinNames(vm).graphPublicName()));
 }
 
-JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
+JSIsolatedModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 {
     return moduleGraphOfFrame(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0));
 }
@@ -161,8 +159,8 @@ ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject
 
 bool isStoppedModuleGraphContext(VM& vm, JSValue asyncContext)
 {
-    JSModuleGraph* graph = moduleGraphOfFrame(vm, asyncContext);
-    return graph && graph->context()->activeDOMObjectsAreStopped();
+    JSIsolatedModuleGraph* graph = moduleGraphOfFrame(vm, asyncContext);
+    return graph && graph->context().activeDOMObjectsAreStopped();
 }
 
 ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)
@@ -385,17 +383,46 @@ void JSModuleGraph::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-void JSModuleGraph::createContext(Zig::GlobalObject* globalObject)
+const ClassInfo JSIsolatedModuleGraph::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSIsolatedModuleGraph) };
+
+template<typename, SubspaceAccess mode>
+GCClient::IsoSubspace* JSIsolatedModuleGraph::subspaceFor(VM& vm)
 {
-    m_context = WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext(), this);
+    if constexpr (mode == SubspaceAccess::Concurrently)
+        return nullptr;
+    return WebCore::subspaceForImpl<JSIsolatedModuleGraph, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSIsolatedModuleGraph, m_subspaceForJSIsolatedModuleGraph),
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSIsolatedModuleGraph; });
 }
 
-void JSModuleGraph::destroy(JSCell* cell)
+JSIsolatedModuleGraph::JSIsolatedModuleGraph(VM& vm, Structure* structure, Ref<WebCore::ScriptExecutionContext>&& context, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSString* overlaySourceSuffix, JSMap* requireMap, JSObject* onError)
+    : Base(vm, structure, loader, overlay, overlaySourceSuffix, requireMap, onError)
+    , m_context(WTF::move(context))
 {
-    auto* graph = static_cast<JSModuleGraph*>(cell);
-    if (graph->m_context)
-        graph->m_context->moduleGraphDestroyed();
-    graph->JSModuleGraph::~JSModuleGraph();
+}
+
+JSIsolatedModuleGraph* JSIsolatedModuleGraph::create(VM& vm, Structure* structure, Ref<WebCore::ScriptExecutionContext>&& context, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSString* overlaySourceSuffix, JSMap* requireMap, JSObject* onError)
+{
+    auto* cell = new (NotNull, allocateCell<JSIsolatedModuleGraph>(vm)) JSIsolatedModuleGraph(vm, structure, WTF::move(context), loader, overlay, overlaySourceSuffix, requireMap, onError);
+    cell->finishCreation(vm);
+    return cell;
+}
+
+void JSIsolatedModuleGraph::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    m_context->setModuleGraph(this);
+}
+
+void JSIsolatedModuleGraph::destroy(JSCell* cell)
+{
+    auto* graph = static_cast<JSIsolatedModuleGraph*>(cell);
+    graph->m_context->moduleGraphDestroyed();
+    graph->JSIsolatedModuleGraph::~JSIsolatedModuleGraph();
+}
+
+Structure* JSIsolatedModuleGraph::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 void JSModuleGraph::setImportSettledHandlers(VM& vm, JSFunction* fulfilled, JSFunction* rejected)
@@ -800,7 +827,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         }
     }
 
-    Structure* structure = globalObject->JSModuleGraphStructure();
+    Structure* structure = isolateIO ? globalObject->JSIsolatedModuleGraphStructure() : globalObject->JSModuleGraphStructure();
     JSObject* newTarget = asObject(callFrame->newTarget());
     if (newTarget != callFrame->jsCallee()) {
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget, structure);
@@ -810,16 +837,19 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, overlaySourceSuffix);
     RETURN_IF_EXCEPTION(scope, {});
     JSMap* requireMap = JSMap::create(vm, globalObject->mapStructure());
-    JSModuleGraph* graph = JSModuleGraph::create(vm, structure, moduleLoaderOfOverlay(vm, overlay), overlay, overlaySourceSuffix, requireMap, onError.isUndefined() ? nullptr : asObject(onError));
-    globalObject->moduleGraphRegistry()->set(vm, overlay, graph);
+    JSObject* onErrorObject = onError.isUndefined() ? nullptr : asObject(onError);
+    JSModuleLoader* loader = moduleLoaderOfOverlay(vm, overlay);
+    JSModuleGraph* graph;
     if (isolateIO) {
-        graph->createContext(globalObject);
+        graph = JSIsolatedModuleGraph::create(vm, structure, WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext()), loader, overlay, overlaySourceSuffix, requireMap, onErrorObject);
         globalObject->m_hasModuleGraphContexts = true;
         // The graph's context travels with the async context: the top-level code of the
         // graph's modules runs in it however their evaluation is reached, and run() enters it.
         globalObject->setAsyncContextTrackingEnabled(true);
-        graph->loader()->setAsyncContext(vm, createModuleGraphFrame(globalObject, graph, jsUndefined()));
-    }
+        loader->setAsyncContext(vm, createModuleGraphFrame(globalObject, graph, jsUndefined()));
+    } else
+        graph = JSModuleGraph::create(vm, structure, loader, overlay, overlaySourceSuffix, requireMap, onErrorObject);
+    globalObject->moduleGraphRegistry()->set(vm, overlay, graph);
     return JSValue::encode(graph);
 }
 

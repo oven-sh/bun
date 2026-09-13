@@ -69,6 +69,23 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     // Without a context of its own run() is just a call.
     using plain = new Bun.unsafe.ModuleGraph();
     expect(plain.run(x => x * 2, 21)).toBe(42);
+    // Either kind is a ModuleGraph, to `instanceof` and to a subclass.
+    class Tenant extends Bun.unsafe.ModuleGraph {
+      tenant = "t1";
+    }
+    using tenant = new Tenant({ isolateIO: true });
+    const prototypes = [Bun.unsafe.ModuleGraph.prototype, Bun.unsafe.ModuleGraph.prototype, Tenant.prototype];
+    expect(
+      [graph, plain, tenant].map((g, i) => [
+        g instanceof Bun.unsafe.ModuleGraph,
+        Object.getPrototypeOf(g) === prototypes[i],
+      ]),
+    ).toEqual([
+      [true, true],
+      [true, true],
+      [true, true],
+    ]);
+    expect([tenant instanceof Tenant, tenant.tenant, tenant.run(() => "ran")]).toEqual([true, "t1", "ran"]);
   });
 
   test("dispose() stops the graph's timers, not the host's", async () => {

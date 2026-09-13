@@ -55,6 +55,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunInspectorConnection { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNextTickQueue { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSModuleGraph { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSIsolatedModuleGraph { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSocketHandlers { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellman { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };

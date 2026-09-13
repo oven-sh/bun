@@ -6,7 +6,11 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
-#include <JavaScriptCore/JSDestructibleObject.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSLexicalEnvironment.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSSet.h>
 #include "ScriptExecutionContext.h"
 
 namespace Zig {
@@ -26,6 +30,7 @@ class ThrowScope;
 namespace Bun {
 
 class JSModuleGraph;
+class JSIsolatedModuleGraph;
 
 // Bun.unsafe.ModuleGraph: a further instantiation of ES module graphs in this global
 // object — a JSC module loader whose module scope (the "overlay") holds the host's
@@ -51,7 +56,7 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 // The innermost graph with a context of its own (`isolateIO`) that the current async context
 // is inside of: what script opens now belongs to that graph's context. Null: the global's.
-JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
+JSIsolatedModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 // Whether `asyncContext` (what a callback captured when it was handed to native code) is inside
 // the context of a graph that has since been disposed: nothing of such a graph is called back.
 bool isStoppedModuleGraphContext(JSC::VM&, JSC::JSValue asyncContext);
@@ -76,11 +81,9 @@ private:
     JSC::JSValue m_previous;
 };
 
-class JSModuleGraph final : public JSC::JSDestructibleObject {
+class JSModuleGraph : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
-    static void destroy(JSC::JSCell*);
+    using Base = JSC::JSNonFinalObject;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static JSModuleGraph* create(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment* overlay, JSC::JSString* overlaySourceSuffix, JSC::JSMap* requireMap, JSC::JSObject* onError);
@@ -101,9 +104,8 @@ public:
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); } // key of the first module import()ed (import.meta.main)
     JSC::JSSet* pendingImports() const { return m_pendingImports.get(); } // promises import() returned that have not settled; dispose() rejects them
     JSC::JSFunction* importSettledHandler(bool rejected) const { return rejected ? m_importRejected.get() : m_importFulfilled.get(); }
-    // The context that owns what the graph's script opens; null unless `isolateIO`.
-    WebCore::ScriptExecutionContext* context() const { return m_context.get(); }
-    void createContext(Zig::GlobalObject*);
+    // The context that owns what the graph's script opens: a JSIsolatedModuleGraph's, else null.
+    inline WebCore::ScriptExecutionContext* context() const;
 
     void setMainPath(JSC::VM& vm, JSC::JSString* path) { m_mainPath.set(vm, this, path); }
     void clearMainPath() { m_mainPath.clear(); }
@@ -112,10 +114,11 @@ public:
     // dispose(): the loader goes; everything else stays for code of the graph that is still running.
     void clearLoader() { m_loader.clear(); }
 
-private:
+protected:
     JSModuleGraph(JSC::VM& vm, JSC::Structure* structure, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment*, JSC::JSString*, JSC::JSMap*, JSC::JSObject* onError);
     void finishCreation(JSC::VM&);
 
+private:
     JSC::WriteBarrier<JSC::JSModuleLoader> m_loader;
     JSC::WriteBarrier<JSC::JSLexicalEnvironment> m_overlay;
     JSC::WriteBarrier<JSC::JSString> m_overlaySourceSuffix;
@@ -126,8 +129,35 @@ private:
     JSC::WriteBarrier<JSC::JSSet> m_pendingImports;
     JSC::WriteBarrier<JSC::JSFunction> m_importFulfilled;
     JSC::WriteBarrier<JSC::JSFunction> m_importRejected;
-    RefPtr<WebCore::ScriptExecutionContext> m_context;
 };
+
+// A graph made with `isolateIO`: it owns the context its script's timers and I/O belong to,
+// which lives exactly as long as it does.
+class JSIsolatedModuleGraph final : public JSModuleGraph {
+public:
+    using Base = JSModuleGraph;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static void destroy(JSC::JSCell*);
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSIsolatedModuleGraph* create(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment* overlay, JSC::JSString* overlaySourceSuffix, JSC::JSMap* requireMap, JSC::JSObject* onError);
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
+    DECLARE_EXPORT_INFO;
+
+    WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
+
+private:
+    JSIsolatedModuleGraph(JSC::VM& vm, JSC::Structure* structure, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment*, JSC::JSString*, JSC::JSMap*, JSC::JSObject* onError);
+    void finishCreation(JSC::VM&);
+
+    Ref<WebCore::ScriptExecutionContext> m_context;
+};
+
+inline WebCore::ScriptExecutionContext* JSModuleGraph::context() const
+{
+    auto* isolated = dynamicDowncast<JSIsolatedModuleGraph>(const_cast<JSModuleGraph*>(this));
+    return isolated ? &isolated->context() : nullptr;
+}
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).
 struct ModuleGraphState {

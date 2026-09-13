@@ -502,6 +502,28 @@ describe("execArgv preloads", () => {
     });
   });
 
+  test("uses the same package conditions for inherited preloads in the parent and worker", async () => {
+    const source = `
+      const { Worker } = require("node:worker_threads");
+      console.log(JSON.stringify(globalThis.execArgvPreloads));
+      const worker = new Worker(${JSON.stringify(entry)});
+      worker.on("message", message => console.log(JSON.stringify(message.preloads)));
+    `;
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "--require", "worker-preload-conditions", "--import", "worker-preload-conditions", "-e", source],
+      cwd: String(fixtureDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '["condition-require","condition-import"]\n["condition-require","condition-import"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("reports preload failures on the Worker", async () => {
     expect(
       await runPreloadFailureProbe("data:text/javascript,throw%20new%20Error(%22execArgv%20preload%20failed%22)"),

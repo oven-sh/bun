@@ -96,6 +96,8 @@ impl ReplCommand {
             (*vm).worker_preload_require_start = ctx.worker_preload_require_start;
             (*vm).worker_preload_require_count = ctx.worker_preload_require_count;
             (*vm).worker_eval_mode = ctx.worker_eval_mode;
+            (*vm).preload_require_start = ctx.worker_preload_require_start;
+            (*vm).preload_require_count = ctx.worker_preload_require_count;
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
             // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
             // post-init like run_command.rs since InitOptions doesn't carry it.

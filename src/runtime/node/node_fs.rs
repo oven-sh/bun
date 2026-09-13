@@ -7360,17 +7360,11 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
-            if variant == RealpathVariant::Emulated {
-                // remove the trailing slash
-                //
-                // `buf` is an immutable view and every consumer below copies by
-                // length, so just shrink the slice — writing a NUL back through
-                // `ptr.cast_mut()` while `buf` is live would be Stacked-Borrows UB.
-                if buf.last() == Some(&b'\\') {
-                    buf = &buf[..buf.len() - 1];
-                }
-            }
+            // libuv returns a canonical path. Only a root (`C:\`, `\\server\share\`)
+            // keeps its trailing separator, and a root must keep it: `C:` is the
+            // current directory of drive C, not the root.
+            let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

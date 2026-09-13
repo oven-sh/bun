@@ -3971,6 +3971,13 @@ describe("expect()", () => {
   test("toBePositive()", () => {
     expect(1).toBePositive();
     expect(1.23).toBePositive();
+    expect(0.5).toBePositive();
+    expect(0.49).toBePositive();
+    expect(0.1).toBePositive();
+    expect(1e-300).toBePositive();
+    expect(Number.MIN_VALUE).toBePositive();
+    expect(-0.1).not.toBePositive();
+    expect(-0).not.toBePositive();
     expect(Infinity).not.toBePositive();
     expect(0).not.toBePositive();
     expect(-Infinity).not.toBePositive();
@@ -3982,6 +3989,13 @@ describe("expect()", () => {
   test("toBeNegative()", () => {
     expect(-1).toBeNegative();
     expect(-1.23).toBeNegative();
+    expect(-0.5).toBeNegative();
+    expect(-0.49).toBeNegative();
+    expect(-0.1).toBeNegative();
+    expect(-1e-300).toBeNegative();
+    expect(-Number.MIN_VALUE).toBeNegative();
+    expect(0.1).not.toBeNegative();
+    expect(-0).not.toBeNegative();
     expect(-Infinity).not.toBeNegative();
     expect(0).not.toBeNegative();
     expect(Infinity).not.toBeNegative();

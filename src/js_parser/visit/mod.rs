@@ -1220,7 +1220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                // Standard decorator lowering wraps field initializers where they are.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;
 

@@ -658,7 +658,7 @@ test.concurrent("a module embedded by bun build --compile loads with a ?query or
       cmd: [bunExe(), "build", "--compile", "entry.mjs", "x.mjs", "--outfile", exe],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);

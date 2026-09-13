@@ -31,6 +31,24 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
+/// The stylesheets printed into a CSS chunk, each with a zeroed `bytesInOutput`
+/// counter that `generate_compile_result_for_css_chunk` adds to. The metafile
+/// lists a chunk's inputs (and the inputs of the whole build) from this map, so a
+/// stylesheet missing from it never shows up in the metafile.
+fn css_files_with_parts_in_chunk(
+    order: &[chunk::CssImportOrder],
+) -> ArrayHashMap<IndexInt, AtomicUsize> {
+    let mut files: ArrayHashMap<IndexInt, AtomicUsize> = ArrayHashMap::new();
+    for entry in order {
+        if let chunk::CssImportOrderKind::SourceIndex(source_index) = &entry.kind {
+            files
+                .put(source_index.get(), AtomicUsize::new(0))
+                .expect("oom");
+        }
+    }
+    files
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
@@ -162,6 +180,7 @@ pub(crate) fn compute_chunks(
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
+                let files_with_parts_in_chunk = css_files_with_parts_in_chunk(order.slice());
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                     entry_bits: entry_point_chunk_bits,
@@ -172,6 +191,7 @@ pub(crate) fn compute_chunks(
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
                     }),
+                    files_with_parts_in_chunk,
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
                         has_html_chunk,
@@ -245,15 +265,7 @@ pub(crate) fn compute_chunks(
 
                 if !css_chunk_entry.found_existing {
                     let order_len = order.len() as usize;
-                    let mut css_files_with_parts_in_chunk: ArrayHashMap<IndexInt, AtomicUsize> =
-                        ArrayHashMap::new();
-                    for entry in order.slice() {
-                        if let chunk::CssImportOrderKind::SourceIndex(si) = &entry.kind {
-                            css_files_with_parts_in_chunk
-                                .put(si.get(), AtomicUsize::new(0))
-                                .expect("oom");
-                        }
-                    }
+                    let files_with_parts_in_chunk = css_files_with_parts_in_chunk(order.slice());
                     *css_chunk_entry.value_ptr = Chunk {
                         entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                         entry_bits: entry_bits.clone()?,
@@ -264,7 +276,7 @@ pub(crate) fn compute_chunks(
                                 .collect::<Vec<_>>()
                                 .into_boxed_slice(),
                         }),
-                        files_with_parts_in_chunk: css_files_with_parts_in_chunk,
+                        files_with_parts_in_chunk,
                         output_source_map: SourceMapPieces::init(),
                         flags: make_flags(
                             has_html_chunk,

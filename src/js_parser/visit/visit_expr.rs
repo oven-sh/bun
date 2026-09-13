@@ -1079,12 +1079,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             if inlined.can_be_inlined_from_property_access() {
                                 // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
+                                // "[class {}][0]" => "(0, class {})"
+                                *e = inlined.unwrapped_by_fold(is_call_target, expr.loc);
                                 return;
                             }
                         }
@@ -1496,24 +1492,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
+            // "(a, true) ? b : c" => "a, b"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
-                return;
+                if let Some(test) = SideEffects::simplify_unused_expr(p, e_.test) {
+                    *e = test.join_with_comma(e_.yes);
+                    return;
+                }
             }
 
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            *e = e_.yes;
+            // "(1 ? class {} : 2)" => "(0, class {})"
+            *e = e_.yes.unwrapped_by_fold(is_call_target, e_.test.loc);
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1524,22 +1515,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "(a, false) ? b : c" => "a, c"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
-                return;
+                if let Some(test) = SideEffects::simplify_unused_expr(p, e_.test) {
+                    *e = test.join_with_comma(e_.no);
+                    return;
+                }
             }
 
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
-            }
-            *e = e_.no;
+            // "(0 ? 1 : fn)()" => "fn()"
+            // "(0 ? 1 : this.fn)" => "this.fn"
+            // "(0 ? 1 : this.fn)()" => "(0, this.fn)()"
+            // "(0 ? 1 : class {})" => "(0, class {})"
+            *e = e_.no.unwrapped_by_fold(is_call_target, e_.test.loc);
         }
     }
 

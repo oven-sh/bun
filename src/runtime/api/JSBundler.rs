@@ -799,14 +799,30 @@ pub mod js_bundler {
                     drop(slice);
                 }
 
-                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"factory")? {
-                    this.jsx.factory = Box::<[u8]>::from(slice.slice());
-                    drop(slice);
-                }
-
-                if let Some(slice) = jsx_value.get_optional_slice(global_this, b"fragment")? {
-                    this.jsx.fragment = Box::<[u8]>::from(slice.slice());
-                    drop(slice);
+                for (name, option, text) in [
+                    (
+                        "factory",
+                        options::JSX::MemberListOption::Factory,
+                        &mut this.jsx.factory,
+                    ),
+                    (
+                        "fragment",
+                        options::JSX::MemberListOption::Fragment,
+                        &mut this.jsx.fragment,
+                    ),
+                ] {
+                    let Some(slice) = jsx_value.get_optional_slice(global_this, name)? else {
+                        continue;
+                    };
+                    if let Err(expected) = option.check(slice.slice()) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Invalid jsx.{}: {}. {}",
+                            name,
+                            bun_core::fmt::quote(slice.slice()),
+                            expected
+                        )));
+                    }
+                    *text = Box::<[u8]>::from(slice.slice());
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"importSource")? {

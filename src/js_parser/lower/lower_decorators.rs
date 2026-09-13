@@ -62,6 +62,68 @@ enum FieldName {
     Unknown,
 }
 
+/// The initializer of a decorated field or accessor.
+struct DecoratedInitializer {
+    /// `__runInitializers(_init, n, this, initializer)`
+    value: Expr,
+    /// Runs the extra initializers once the member is defined.
+    extra: Expr,
+}
+
+fn is_constructor(prop: &Property) -> bool {
+    prop.flags.contains(Flags::Property::IsMethod)
+        && !prop.flags.contains(Flags::Property::IsStatic)
+        && !prop.flags.contains(Flags::Property::IsComputed)
+        && matches!(
+            prop.key.map(|key| key.data),
+            Some(js_ast::ExprData::EString(s)) if s.eql_comptime(b"constructor")
+        )
+}
+
+/// A key whose evaluation cannot be observed, so it can be repeated.
+fn is_constant_key(key: &Expr) -> bool {
+    matches!(
+        key.data,
+        js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
+    )
+}
+
+/// Which initializer list of `__decorateElement` a decorated accessor or field
+/// gets: static accessors, instance accessors, static fields, instance fields.
+fn initializer_group(prop: &Property) -> Option<usize> {
+    let instance = usize::from(!prop.flags.contains(Flags::Property::IsStatic));
+    if prop.kind == PropertyKind::AutoAccessor {
+        Some(instance)
+    } else if prop.flags.contains(Flags::Property::IsMethod) {
+        None
+    } else {
+        Some(2 + instance)
+    }
+}
+
+/// Puts `inserted` in `constructor` right after a top-level `super()`
+/// statement returns, which is after the last instance field.
+fn insert_after_super<'a>(
+    constructor: &mut Property,
+    inserted: &[Stmt],
+    arena: &'a bun_alloc::Arena,
+) {
+    let func = match &mut constructor.value.as_mut().unwrap().data {
+        js_ast::ExprData::EFunction(f) => &mut **f,
+        _ => unreachable!(),
+    };
+    let body: &[Stmt] = func.func.body.stmts.slice();
+    let after_super = body
+        .iter()
+        .position(|stmt| stmt.is_super_call())
+        .map_or(0, |i| i + 1);
+    let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
+    stmts.extend_from_slice(&body[..after_super]);
+    stmts.extend_from_slice(inserted);
+    stmts.extend_from_slice(&body[after_super..]);
+    func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -747,7 +809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 lowered_names.insert(private.ref_.inner_index(), ());
             }
-            if let Some(group) = Self::initializer_group(prop) {
+            if let Some(group) = initializer_group(prop) {
                 for later in &mut next_initializer[group + 1..] {
                     *later += 1;
                 }
@@ -990,7 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // ── Members that stay as written ──
             let mut field_name = FieldName::Unknown;
             let mut name_expr = key;
-            if Self::is_constructor(&prop) {
+            if is_constructor(&prop) {
                 constructor = Some(members.len());
             } else if let Some(private_index) = private_index {
                 let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
@@ -1010,7 +1072,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     dec_ref.is_some() || names_function,
                 );
                 last_key_host = Some((members.len(), key_temp));
-                if Self::is_constant_key(&name_expr) {
+                if is_constant_key(&name_expr) {
                     field_name = FieldName::Key(name_expr);
                 } else if names_function {
                     field_name = FieldName::Computed(name_expr);
@@ -1023,7 +1085,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 decorate[group]
                     .push(p.decorate_element(init_ref, flags, name_expr, dec, this, None, loc));
                 if !is_method {
-                    let (value, extra) = p.decorated_initializer(
+                    let DecoratedInitializer { value, extra } = p.decorated_initializer(
                         init_ref,
                         next_initializer[group],
                         prop.initializer,
@@ -1187,7 +1249,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !constructor_effects.is_empty() {
             match constructor {
                 Some(constructor) => {
-                    p.run_after_super(&mut members[constructor], &constructor_effects, loc);
+                    let stmts = p.effect_stmts(&constructor_effects, loc);
+                    insert_after_super(&mut members[constructor], &stmts, p.arena);
                 }
                 None => {
                     new_constructor =
@@ -1215,38 +1278,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = self.generate_temp_var(name);
         self.temp_refs_to_declare.push(TempRef { r#ref: ref_ });
         ref_
-    }
-
-    fn is_constructor(prop: &Property) -> bool {
-        prop.flags.contains(Flags::Property::IsMethod)
-            && !prop.flags.contains(Flags::Property::IsStatic)
-            && !prop.flags.contains(Flags::Property::IsComputed)
-            && matches!(
-                prop.key.map(|key| key.data),
-                Some(js_ast::ExprData::EString(s)) if s.eql_comptime(b"constructor")
-            )
-    }
-
-    /// A key whose evaluation cannot be observed, so it can be repeated.
-    fn is_constant_key(key: &Expr) -> bool {
-        matches!(
-            key.data,
-            js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
-        )
-    }
-
-    /// Which initializer list of `__decorateElement` a decorated accessor or
-    /// field gets: static accessors, instance accessors, static fields,
-    /// instance fields.
-    fn initializer_group(prop: &Property) -> Option<usize> {
-        let instance = usize::from(!prop.flags.contains(Flags::Property::IsStatic));
-        if prop.kind == PropertyKind::AutoAccessor {
-            Some(instance)
-        } else if prop.flags.contains(Flags::Property::IsMethod) {
-            None
-        } else {
-            Some(2 + instance)
-        }
     }
 
     /// `__decorateElement(_init, flags, name, _dec, target[, extra])`
@@ -1297,7 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> (Expr, Option<Expr>) {
         let key = prop.key.expect("a class member has a key");
         let is_constant =
-            !prop.flags.contains(Flags::Property::IsComputed) || Self::is_constant_key(&key);
+            !prop.flags.contains(Flags::Property::IsComputed) || is_constant_key(&key);
         if !is_constant && reuse_key {
             let key_ref = self.declared_temp(b"_computedKey");
             effects.push(self.assign_to(key_ref, key, key.loc));
@@ -1343,12 +1374,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts.push(key);
             parts.extend_from_slice(effects);
             parts.push(key_temp);
-        } else if !prop.flags.contains(Flags::Property::IsComputed) || Self::is_constant_key(&key) {
+        } else if !prop.flags.contains(Flags::Property::IsComputed) || is_constant_key(&key) {
             parts.extend_from_slice(effects);
             parts.push(self.key_as_value(prop, key));
         } else if let js_ast::ExprData::EBinary(comma) = &key.data
             && comma.op == js_ast::OpCode::BinComma
-            && Self::is_constant_key(&comma.right)
+            && is_constant_key(&comma.right)
         {
             parts.push(comma.left);
             parts.extend_from_slice(effects);
@@ -1427,7 +1458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         index: usize,
         initializer: Option<Expr>,
         loc: bun_ast::Loc,
-    ) -> (Expr, Expr) {
+    ) -> DecoratedInitializer {
         let mut args = BumpVec::<Expr>::with_capacity_in(4, self.arena);
         args.push(self.use_ref(init_ref, loc));
         args.push(self.new_expr(E::Number::new(((4 + 2 * index) << 1) as f64), loc));
@@ -1436,7 +1467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = self.call_runtime(loc, b"__runInitializers", ExprNodeList::from_bump_vec(args));
         let this = self.new_expr(E::This {}, loc);
         let extra = self.run_initializers(init_ref, (((5 + 2 * index) << 1) | 1) as f64, this, loc);
-        (value, extra)
+        DecoratedInitializer { value, extra }
     }
 
     /// `__privateAdd(this, storage, initializer)`. `decorated` is the
@@ -1451,8 +1482,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut effects = BumpVec::<Expr>::with_capacity_in(2, self.arena);
         let (value, extra) = match decorated {
             Some((init_ref, index)) => {
-                let (value, extra) = self.decorated_initializer(init_ref, index, initializer, loc);
-                (value, Some(extra))
+                let decorated = self.decorated_initializer(init_ref, index, initializer, loc);
+                (decorated.value, Some(decorated.extra))
             }
             None => (
                 initializer.unwrap_or_else(|| self.new_expr(E::Undefined {}, loc)),
@@ -1529,25 +1560,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
         stmts
-    }
-
-    /// Runs `effects` in `constructor` right after a top-level `super()`
-    /// statement returns, which is after the last instance field.
-    fn run_after_super(&mut self, constructor: &mut Property, effects: &[Expr], loc: bun_ast::Loc) {
-        let func = match &mut constructor.value.as_mut().unwrap().data {
-            js_ast::ExprData::EFunction(f) => &mut **f,
-            _ => unreachable!(),
-        };
-        let body: &[Stmt] = func.func.body.stmts.slice();
-        let after_super = body
-            .iter()
-            .position(|stmt| stmt.is_super_call())
-            .map_or(0, |i| i + 1);
-        let mut stmts = BumpVec::<Stmt>::with_capacity_in(body.len() + effects.len(), self.arena);
-        stmts.extend_from_slice(&body[..after_super]);
-        stmts.extend(self.effect_stmts(effects, loc));
-        stmts.extend_from_slice(&body[after_super..]);
-        func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
     }
 
     /// `constructor() { super(...arguments); effects }`

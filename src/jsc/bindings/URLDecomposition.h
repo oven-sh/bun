@@ -34,6 +34,9 @@
 
 namespace WebCore {
 
+// WTF::URL is the null URL after a parse or a setter whose result does not fit in a String.
+inline bool doesNotFitInString(const URL& url) { return url.isNull(); }
+
 class URLDecomposition {
 public:
     // Parse a port string with optional protocol for default port detection

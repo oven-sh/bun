@@ -41,10 +41,10 @@ extern "C" void Bun__setURLMaximumLengthForTesting(size_t limit)
 
 namespace WebCore {
 
-// WTF::URL gives the null URL when the URL does not fit in a String. When the input is not a URL it keeps the input.
+// A null input parses to the null URL too. Input that is not a URL gives an invalid URL that keeps the input.
 static bool isTooLong(const URL& parsed, const String& input)
 {
-    return parsed.isNull() && !input.isNull();
+    return doesNotFitInString(parsed) && !input.isNull();
 }
 
 // The WHATWG parser (WebKit) fast-paths all-ASCII hosts without validating
@@ -199,7 +199,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
 // Per the URL spec the setters ignore a value that is not valid. They only report a URL that does not fit in a String.
 ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
 {
-    if (fullURL.isNull()) [[unlikely]]
+    if (doesNotFitInString(fullURL)) [[unlikely]]
         return Exception { OutOfMemoryError };
     auto result = setHref(fullURL.string());
     if (result.hasException() && result.exception().code() != OutOfMemoryError)

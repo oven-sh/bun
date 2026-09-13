@@ -6273,16 +6273,6 @@ CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
     return arg0->count();
 }
 
-extern "C" void DOMFormData__toQueryString(
-    DOMFormData* formData,
-    void* ctx,
-    void (*callback)(void* ctx, EncodedSlice* encoded))
-{
-    auto str = formData->toURLEncodedString();
-    EncodedSlice encoded = toEncodedSlice(str);
-    callback(ctx, &encoded);
-}
-
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);

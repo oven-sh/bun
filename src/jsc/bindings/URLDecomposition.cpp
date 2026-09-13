@@ -145,7 +145,7 @@ ExceptionOr<void> URLDecomposition::setHost(StringView value)
                 fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
-    if (fullURL.isNull() || (fullURL.isValid() && hasAcceptableHost(fullURL)))
+    if (doesNotFitInString(fullURL) || (fullURL.isValid() && hasAcceptableHost(fullURL)))
         return setFullURL(fullURL);
     return {};
 }
@@ -163,7 +163,7 @@ ExceptionOr<void> URLDecomposition::setHostname(StringView host)
     if (fullURL.hasOpaquePath())
         return {};
     fullURL.setHost(host);
-    if (fullURL.isNull() || (fullURL.isValid() && hasAcceptableHost(fullURL)))
+    if (doesNotFitInString(fullURL) || (fullURL.isValid() && hasAcceptableHost(fullURL)))
         return setFullURL(fullURL);
     return {};
 }

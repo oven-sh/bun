@@ -146,11 +146,23 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.protocol = protocolResult.releaseReturnValue();
     }
 
-    if (!init.username.isNull())
-        result.username = canonicalizeUsername(init.username, type);
+    if (!init.username.isNull()) {
+        auto usernameResult = canonicalizeUsername(init.username, type);
 
-    if (!init.password.isNull())
-        result.password = canonicalizePassword(init.password, type);
+        if (usernameResult.hasException())
+            return usernameResult.releaseException();
+
+        result.username = usernameResult.releaseReturnValue();
+    }
+
+    if (!init.password.isNull()) {
+        auto passwordResult = canonicalizePassword(init.password, type);
+
+        if (passwordResult.hasException())
+            return passwordResult.releaseException();
+
+        result.password = passwordResult.releaseReturnValue();
+    }
 
     if (!init.hostname.isNull()) {
         auto hostResult = canonicalizeHostname(init.hostname, type);

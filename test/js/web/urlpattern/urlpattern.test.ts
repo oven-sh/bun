@@ -1,5 +1,6 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import testData from "./urlpatterntestdata.json";
 
@@ -204,6 +205,26 @@ describe("URLPattern", () => {
 
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
+    });
+  });
+
+  // test() and exec() percent-encode each component of their input through a URL. That URL can be longer than a string
+  // can be (2 ** 31 - 1 characters). The component then read as empty, so it matched an empty pattern.
+  describe("an input component that does not fit in a string when it is percent-encoded", () => {
+    // U+00E9 is one character and "%C3%A9" is six: a little over 1 Mi characters. 1 MiB stands in for 2 ** 31 - 1.
+    const tooLong = Buffer.alloc(176_000, 0xe9).toString("latin1");
+
+    test.each(["pathname", "search", "hash", "username", "password"] as const)("%s does not match", component => {
+      const previous = setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect({
+          empty: new URLPattern({ [component]: "" }).test({ [component]: tooLong }),
+          wildcard: new URLPattern({ [component]: "*" }).exec({ [component]: tooLong }),
+          inAURL: new URLPattern({ [component]: "" }).test("https://u:p@example.com/p?q#h"),
+        }).toEqual({ empty: false, wildcard: null, inAURL: false });
+      } finally {
+        setSyntheticAllocationLimitForTesting(previous);
+      }
     });
   });
 });

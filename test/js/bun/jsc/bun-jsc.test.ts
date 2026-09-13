@@ -1,3 +1,4 @@
+import { jscInternals } from "bun:internal-for-testing";
 import {
   callerSourceOrigin,
   describeArray,
@@ -23,7 +24,6 @@ import {
   setTimeZone,
   totalCompileTime,
 } from "bun:jsc";
-import { jscInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
 

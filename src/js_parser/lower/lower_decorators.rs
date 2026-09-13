@@ -213,8 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Private access rewriting ─────────────────────────
 
-    /// `_x_acc.get` or `_x_acc.set`: one half of what the decorators of
-    /// `accessor #x` returned.
+    /// `_x_acc.get` or `_x_acc.set` of a decorated `accessor #x`.
     fn accessor_desc_fn(&mut self, desc_ref: Ref, name: &'static [u8], l: bun_ast::Loc) -> Expr {
         let desc = self.use_ref(desc_ref, l);
         self.new_expr(
@@ -268,9 +267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `__privateWrapper(obj, storage, setter, getter)._`: a property that
-    /// reads and writes the member, for where the syntax needs a reference.
-    /// `obj` is evaluated once.
+    /// `__privateWrapper(obj, storage, setter, getter)._`, a property that is the member.
     fn private_wrapper_expr(
         &mut self,
         obj: Expr,
@@ -309,8 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// A second reference to the receiver `obj`, when evaluating it again
-    /// cannot be observed.
+    /// A second reference to the receiver `obj`, if evaluating it twice cannot be observed.
     fn repeated_receiver(&mut self, obj: &Expr) -> Option<Expr> {
         match &obj.data {
             js_ast::ExprData::EIdentifier(id) => Some(self.use_ref(id.ref_, obj.loc)),
@@ -319,10 +315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `target` is written to: the left side of an assignment, the operand of
-    /// `++` or `--`, the head of a `for-in` or `for-of`, or an element of a
-    /// destructuring pattern in one of those. `__privateGet(o, _x)` is not
-    /// valid there, so a lowered `o.#x` becomes `__privateWrapper(o, _x)._`.
+    /// `target` is written to: a lowered `o.#x` in it becomes `__privateWrapper(o, _x)._`.
     fn rewrite_private_accesses_in_assign_target(
         &mut self,
         target: &mut Expr,
@@ -409,9 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             *expr = self.private_set_expr(lt, &info, rt, expr_loc);
                             return;
                         };
-                        // A compound assignment reads and writes the member on one
-                        // receiver. `this` and identifiers can be repeated; any other
-                        // receiver goes through `__privateWrapper`, which holds it.
+                        // `__privateWrapper` holds a receiver that cannot be repeated.
                         let Some(lt_again) = self.repeated_receiver(&lt) else {
                             e.left = self.private_wrapper_expr(lt, &info, e.left.loc);
                             e.right = rt;
@@ -723,9 +714,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
-    /// The head of a `for-in` or `for-of`: a declaration, as in
-    /// `for (const { a = this.#x } of ...)`, or an assignment target, as in
-    /// `for (this.#x of ...)`.
+    /// The head of a `for-in` or `for-of`: a declaration or an assignment target.
     fn rewrite_private_accesses_in_loop_head(&mut self, init: &mut Stmt, map: &PrivateLoweredMap) {
         match &mut init.data {
             js_ast::StmtData::SLocal(_) => {

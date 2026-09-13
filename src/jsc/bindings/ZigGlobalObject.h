@@ -201,6 +201,7 @@ public:
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* JSWrappingFunctionStructure() const { return m_JSWrappingFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
@@ -560,6 +561,7 @@ public:
     /* However, we'd like it better if they could be protected. */                                           \
     V(private, LazyClassStructure, m_JSArrayBufferSinkClassStructure)                                        \
     V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
+    V(private, LazyClassStructure, m_JSWrappingFunctionStructure)                                            \
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \

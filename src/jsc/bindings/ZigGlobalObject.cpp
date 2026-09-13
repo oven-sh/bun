@@ -113,6 +113,7 @@
 #include "JSEventTarget.h"
 #include "JSFetchHeaders.h"
 #include "JSFFIFunction.h"
+#include "JSWrappingFunction.h"
 #include "JSFFICString.h"
 #include "webcore/JSMIMEParams.h"
 #include "webcore/JSMIMEType.h"
@@ -2298,6 +2299,9 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSFFIFunctionStructure), [](LazyClassStructure::Initializer& init) {
              init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSWrappingFunctionStructure), [](LazyClassStructure::Initializer& init) {
+             init.setStructure(Zig::JSWrappingFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
          } },
     };
 

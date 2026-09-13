@@ -3111,9 +3111,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   // "dup": after a partial writev that consumes all previously buffered data
   // plus a prefix of the new chunk, the bytes that hit the wire must not be
   // buffered (and resent) again.
-  it.each(["loss", "dup"] as const)(
-    "a partial writev keeps exactly the unsent suffix (%s)",
-    async phase => {
+  describe.each(["loss", "dup"] as const)("%s", phase => {
+    it("a partial writev keeps exactly the unsent suffix", async () => {
       using dir = tempDir("writev-remainder", {
         "server-fixture.mjs": serverFixture,
         "client-fixture.mjs": clientFixture,
@@ -3160,9 +3159,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       // handle.bytesWritten is flushed bytes + natively buffered bytes, so it
       // must equal the submitted total as soon as the writes return.
       expect(sent.bw).toBe(totalSent);
-    },
-    90_000,
-  );
+    }, 90_000);
+  });
 });
 
 // On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,

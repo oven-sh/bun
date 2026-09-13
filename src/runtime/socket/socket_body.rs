@@ -2733,10 +2733,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                             break 'brk rc;
                         }
 
+                        // writev order: buffered data first, then `buffer`.
                         let buf_len = self.buffered_data_for_node_net.get().len();
-                        // `write2` writes the old buffered data first, then the new input.
-                        let remaining_in_input_data = &buffer.slice()
-                            [(written.saturating_sub(buf_len)).min(buffer.slice().len())..];
+                        let input_written =
+                            written.saturating_sub(buf_len).min(buffer.slice().len());
+                        let remaining_in_input_data = &buffer.slice()[input_written..];
 
                         self.buffered_data_for_node_net
                             .with_mut(|b| b.drain_front(written));

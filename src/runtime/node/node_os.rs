@@ -484,9 +484,7 @@ mod _impl {
 
     const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
 
-    /// hw.ncpu and the kern.cp_times counters: `CPU_STATES` longs for each CPU id. The two reads
-    /// are parameters because no CI lane runs FreeBSD: `freebsdCpTimes` in
-    /// `bun:internal-for-testing` runs this against a table on every platform.
+    /// The reads are parameters so that `bun:internal-for-testing` can run this off FreeBSD.
     fn freebsd_cp_times(
         read_uint: impl Fn(&core::ffi::CStr) -> Option<c_uint>,
         read_longs: impl Fn(&core::ffi::CStr, &mut [c_long]) -> bool,
@@ -495,8 +493,7 @@ mod _impl {
         if ncpu == 0 {
             return Err(OsError::Any);
         }
-        // kern.cp_times writes kern.smp.maxid + 1 blocks, one per CPU id, and fails with ENOMEM
-        // on a shorter buffer. hw.ncpu is below that count when CPUs are disabled at boot.
+        // kern.cp_times writes kern.smp.maxid + 1 blocks and fails (ENOMEM) on a shorter buffer.
         let maxid = read_uint(c"kern.smp.maxid").unwrap_or(0);
         let blocks = (maxid as usize + 1).max(ncpu as usize);
         let mut times: Vec<c_long> = vec![0; blocks * CPU_STATES];
@@ -506,10 +503,7 @@ mod _impl {
         Ok((ncpu, times))
     }
 
-    /// `freebsdCpTimes(table)` in `bun:internal-for-testing`: the counters that
-    /// `cpus_impl_freebsd` uses, with the sysctl values taken from `table`. The kern.cp_times
-    /// read fails when the buffer is shorter than the array, as the kernel does with ENOMEM.
-    /// `null` when a read fails.
+    /// `freebsdCpTimes(table)` in `bun:internal-for-testing`. `null` when a read fails.
     #[bun_jsc::host_fn]
     pub(crate) fn js_freebsd_cp_times(
         global: &JSGlobalObject,
@@ -534,7 +528,7 @@ mod _impl {
             },
             |_, buf| {
                 if buf.len() < cp_times.len() {
-                    return false;
+                    return false; // ENOMEM
                 }
                 buf[..cp_times.len()].copy_from_slice(&cp_times);
                 true

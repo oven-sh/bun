@@ -74,9 +74,7 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
-// The kern.cp_times counters that os.cpus() uses on FreeBSD, with the sysctl values taken from
-// `table`. The kern.cp_times read fails when the buffer is shorter than the array, as the kernel
-// does. null when a read fails.
+// The kern.cp_times read of os.cpus() on FreeBSD, against a table of sysctl values. null when a read fails.
 export const freebsdCpTimes: (table: {
   "hw.ncpu"?: number;
   "kern.smp.maxid"?: number;

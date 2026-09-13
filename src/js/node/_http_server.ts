@@ -110,12 +110,20 @@ function emitCloseServer(self: Server) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2439-L2454
   if (!self[kPendingDrainClose]) return;
   if (self[serverSymbol] || self[kTrackedConnections].size > 0) return;
+  const generation = self[kListenerGeneration];
+  // A stopped listener can settle after its replacement has also stopped.
+  // Only the replacement's native completion can drain their shared close.
+  if (generation && !generation.nativeClosed) return;
   self[kPendingDrainClose] = false;
   self[kListenerGeneration] = undefined;
   self.emit("close");
 }
-function emitCloseNTServer(this: Server) {
-  process.nextTick(emitCloseServer, this);
+function markListenerGenerationClosed(self: Server, generation) {
+  generation.nativeClosed = true;
+  emitCloseServer(self);
+}
+function emitCloseNTServer(this: Server, generation) {
+  process.nextTick(markListenerGenerationClosed, this, generation);
 }
 
 function setCloseCallback(self, callback) {
@@ -1065,11 +1073,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     const handle = this[serverSymbol];
     listenerGeneration = {
       isUnix: !!socketPath,
+      nativeClosed: false,
     };
     this[kListenerGeneration] = listenerGeneration;
     // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
     this.listening = true;
-    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this));
+    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
     applyServerCustomOptions(this);
 
     if (this?._unref) {

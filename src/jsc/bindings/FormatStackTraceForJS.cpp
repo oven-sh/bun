@@ -637,10 +637,31 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     }
 }
 
+// ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
+static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<StackFrame>& stackTrace)
+{
+    cells.ensureCapacity(stackTrace.size() * 2);
+    for (auto& frame : stackTrace) {
+        if (auto* callee = frame.callee())
+            cells.append(callee);
+        if (auto* codeBlock = frame.codeBlock())
+            cells.append(codeBlock);
+    }
+}
+
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
+
+    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
+    JSC::MarkedArgumentBuffer protectedFrameCells;
+    protectFrameCells(protectedFrameCells, stackTrace);
+    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(errorInstance->globalObject(), scope);
+        return jsUndefined();
+    }
 
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 
@@ -666,6 +687,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     if (!source || !destination) {
         throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
         return {};
+    }
+
+    // A destination that is materialized, or is being formatted right now, never renders frames again.
+    if (destination->hasMaterializedErrorInfo()) {
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     if (!destination->stackTrace()) {
@@ -724,21 +750,20 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        // Re-entered from materializeErrorInfoIfNeeded's formatter, which still reads *stackTrace: copy, do not move.
+        bool isBeingMaterialized = errorObject->hasMaterializedErrorInfo();
+        auto ownedStackTrace = isBeingMaterialized
+            ? makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace)
+            : makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
-        for (auto& frame : *ownedStackTrace) {
-            if (auto* callee = frame.callee())
-                protectedFrameCells.append(callee);
-            if (auto* codeBlock = frame.codeBlock())
-                protectedFrameCells.append(codeBlock);
-        }
+        protectFrameCells(protectedFrameCells, *ownedStackTrace);
         if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
-        errorObject->setStackFrames(vm, {});
+        if (!isBeingMaterialized)
+            errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
     errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);

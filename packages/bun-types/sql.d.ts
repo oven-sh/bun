@@ -592,6 +592,14 @@ declare module "bun" {
 
   /**
    * SQL client. Manages a connection pool, queries, and transactions.
+   *
+   * A client is a function. Call it as a tagged template to run a query.
+   * Every client that Bun creates passes `instanceof SQL`: `new SQL()`, the
+   * default `Bun.sql`, the client that a transaction or savepoint callback
+   * receives, and a reserved connection.
+   *
+   * `SQL` does not support subclasses. `new` on a class that extends `SQL`
+   * throws a `TypeError`. To add behavior, wrap the client in your own class.
    */
   class SQL {
     /**

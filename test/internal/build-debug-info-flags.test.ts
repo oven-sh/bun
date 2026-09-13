@@ -36,6 +36,9 @@ function mockToolchain(): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -91,7 +94,10 @@ describe("debug-info flag order", () => {
 
   test("release without LTO: full, homed debug info", () => {
     using dir = tempDir("build-debug-info", {});
-    for (const partial of [{ buildType: "Release" }, { buildType: "Release", asan: true }] as const) {
+    for (const partial of [
+      { buildType: "Release", lto: false },
+      { buildType: "Release", asan: true },
+    ] as const) {
       const cfg = linuxConfig(partial, String(dir));
       expect(cfg.lto).toBe(false);
       for (const flags of allCompileFlagLists(cfg)) {

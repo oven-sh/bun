@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitPostLink } from "../../scripts/build/bun.ts";
+import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -37,6 +37,9 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -68,11 +71,16 @@ function hostConfig(partial: PartialConfig, buildDir: string): Config {
 }
 
 /** Find one build-edge line in the generated ninja text (continuations unwrapped). */
+/**
+ * The `build` line for `rule`, with the absolute-path alias Ninja.build()
+ * declares for every build-dir output (`| /abs/build/<out>`) folded away so
+ * the expectations read as `build <out>: <rule> <ins>`.
+ */
 function buildEdge(ninja: string, rule: string): string {
   const flat = ninja.replace(/ \$\n +/g, " ");
   const line = flat.split("\n").find(l => l.startsWith("build ") && l.includes(`: ${rule} `));
   if (line === undefined) throw new Error(`no '${rule}' edge in ninja output:\n${ninja}`);
-  return line;
+  return line.replace(new RegExp(` \\| \\S+(?=: ${rule} )`), "");
 }
 
 describe("emitPostLink ninja ordering", () => {
@@ -84,7 +92,7 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
-    const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
     const out = n.toString();
 
     expect(strippedExe).toBe(resolve(buildDir, `bun${cfg.exeSuffix}`));
@@ -97,6 +105,36 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
   });
 
+  test("the static scans only warn for ASan and debug builds, and fail every other", () => {
+    using dir = tempDir("build-post-link", {});
+    const buildDir = String(dir);
+    const commands = (partial: PartialConfig) => {
+      const cfg = hostConfig(partial, buildDir);
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
+      emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+      const command = (rule: string) => new RegExp(`^rule ${rule}\\n  command = (.*)$`, "m").exec(out)![1]!;
+      return { cfg, verify: command("binary_verify"), duplicates: command("duplicate_symbols") };
+    };
+
+    for (const partial of [{ buildType: "Release" }, { buildType: "Release", assertions: true }] as PartialConfig[]) {
+      const { cfg, verify, duplicates } = commands(partial);
+      expect(binaryChecksWarnOnly(cfg)).toBe(false);
+      expect(verify).not.toContain("--warn-only");
+      expect(duplicates).not.toContain("--warn-only");
+    }
+    for (const partial of [
+      { buildType: "Debug", assertions: true },
+      { buildType: "Release", asan: true, assertions: true },
+    ] as PartialConfig[]) {
+      const { cfg, verify, duplicates } = commands(partial);
+      expect(binaryChecksWarnOnly(cfg)).toBe(true);
+      expect(verify).toContain("verify-binary.ts --warn-only binary ");
+      expect(duplicates).toContain("verify-binary.ts --warn-only duplicates ");
+    }
+  });
+
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
     using dir = tempDir("build-post-link", {});
     const buildDir = String(dir);
@@ -104,7 +142,7 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-debug${cfg.exeSuffix}`);
-    const { strippedExe, dsym } = emitPostLink(n, cfg, exe, "bun-debug", []);
+    const { strippedExe, dsym } = emitPostLink(n, cfg, exe, "bun-debug", [], [exe + ".o"]);
     const out = n.toString();
 
     expect({ strippedExe, dsym }).toEqual({ strippedExe: undefined, dsym: undefined });
@@ -125,13 +163,17 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, "bun-profile");
-    const { dsym } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const { dsym } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
     const out = n.toString();
 
     expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
-    // binary can't run on this host), so the strip race can't happen there.
-    expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile");
+    // binary can't run on this host), so the strip race can't happen there;
+    // the static scans (verify-binary, duplicate
+    // definitions) run on any host.
+    expect(buildEdge(out, "phony")).toBe(
+      "build check: phony bun-profile bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
+    );
   });
 });

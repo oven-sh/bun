@@ -220,6 +220,12 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
+    ///
+    /// Once any of the request was written to a stream the origin may already
+    /// have acted on it, so from then on only an idempotent method is re-sent
+    /// (RFC 9110 §9.2.2), like the HTTP/1.1 client's `on_close`. A peer
+    /// RESET_STREAM(H3_REQUEST_REJECTED) or a GOAWAY below the stream id also
+    /// proves the origin did not act on it; neither reaches this function yet.
     pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
@@ -230,9 +236,11 @@ impl ClientSession {
             return self.fail(stream, err);
         };
         // `Stream.client` is a live backref while attached; `ParentRef::from`
-        // (NonNull → shared deref) reads the Copy `flags` field without
-        // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        // (NonNull → shared deref) reads the Copy `flags`/`method` fields
+        // without forming `&mut HTTPClient` across the `detach()` below.
+        let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        let replay_safe = !st.headers_sent || client_ref.method.is_idempotent();
+        if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {

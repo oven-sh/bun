@@ -1679,6 +1679,23 @@ describe("ES Decorators", () => {
       expect(stdout).toBe('[5,["x"],6,["y"],[1,2]]\n');
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a decorated private name in the head of a loop or in a catch binding", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class A {
+          @dec #x = 1;
+          forOf(a) { const out = []; for (const { v = this.#x } of a) out.push(v); return out; }
+          forIn(o) { const out = []; for (const { nope = this.#x } in o) out.push(nope); return out; }
+          caught() { try { throw {}; } catch ({ v = this.#x }) { return v; } }
+        }
+        const a = new A();
+        console.log(JSON.stringify([a.forOf([{}, { v: 2 }]), a.forIn({ k: 0 }), a.caught()]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[[1,2],[1],1]\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

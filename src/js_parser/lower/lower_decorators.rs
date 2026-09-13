@@ -504,6 +504,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
+    /// The declaration in the head of `for (const { a = this.#x } of ...)`. An
+    /// assignment target there is not a read and stays as written.
+    fn rewrite_private_accesses_in_loop_head(&mut self, init: &mut Stmt, map: &PrivateLoweredMap) {
+        if matches!(init.data, js_ast::StmtData::SLocal(_)) {
+            self.rewrite_private_accesses_in_stmts(core::slice::from_mut(init), map);
+        }
+    }
+
     fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
         for stmt_item in stmts.iter_mut() {
             match &mut stmt_item.data {
@@ -563,6 +571,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_accesses_in_loop_head(&mut init, map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -571,6 +582,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_accesses_in_loop_head(&mut init, map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -611,6 +625,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch {
+                        if let Some(binding) = c.binding {
+                            self.rewrite_private_accesses_in_binding(binding, map);
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }

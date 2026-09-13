@@ -1655,7 +1655,7 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);

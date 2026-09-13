@@ -2095,6 +2095,45 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(bound);
 });
 
+// ValidateExhaustiveDependencies gives each phi the dependencies of its
+// operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
+// phi held one copy of a dependency for each path that reaches it. Each `if`
+// below merges `v` twice, which doubled the list: 20 of them took 300 MB, 22
+// took 1 GB and 24 took 4 GB.
+test("react-compiler keeps one copy of each dependency of a phi", async () => {
+  // A debug build takes 7 seconds for 20 and 25 seconds for 22.
+  const statements = isDebug || isASAN ? 20 : 22;
+  using dir = tempDir("react-compiler-phi-dependencies", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "ladder.jsx": `
+      export default function App(p) {
+        let v = "init";
+        ${Array.from({ length: statements }, (_, i) => `if (p.a${i}) { log(${i}); } else if (p.b${i}) { v = "s${i}"; }`).join("\n")}
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  const build = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+  };
+
+  const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);
+  expect(ladder.memoized).toBe(true);
+  // Above the empty build: 300 MB to 1 GB without the fix, under 20 MB with it.
+  expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,
@@ -2191,4 +2230,39 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
       Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
     ),
   );
+});
+
+// RenameVariables reaches a nested function expression through its
+// `visit_value` override. The shared walker for a function body recursed into
+// it a second time, so a function at depth d was walked 2^d times: depth 25
+// took 5 seconds and depth 30 did not finish.
+test("react-compiler compile time is not exponential in the function nesting depth", async () => {
+  const depth = 40;
+  const open = "(() => ";
+  const close = ")()";
+  using dir = tempDir("react-compiler-nesting", {
+    "entry.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Buffer.alloc(open.length * depth, open)}p.a + s${Buffer.alloc(close.length * depth, close)};
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // The outermost call is inlined. The other arrows stay, in one memoized scope.
+  expect(stdout).toContain("p.a + s");
+  expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
 });

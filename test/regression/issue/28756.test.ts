@@ -12,7 +12,7 @@ test("AbortSignal.timeout + util.aborted does not leak memory", async () => {
       "-e",
       `
       const { aborted } = require("util");
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
 
       // 10 batches * 8000 = 80k signals.
       // Without fix: leaks ~0.8 KB/signal => ~60 MB growth.

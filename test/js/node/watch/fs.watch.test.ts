@@ -1498,7 +1498,7 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
       /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
 
         async function cycle(count) {
           for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();

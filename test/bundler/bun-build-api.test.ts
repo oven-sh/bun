@@ -7,7 +7,6 @@ import {
   bunRun,
   isASAN,
   isDebug,
-  isMacOS,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -241,11 +240,11 @@ describe("Bun.build", () => {
         console.log(JSON.stringify({ base, after }));
       `,
     });
-    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
     // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
-    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
+    // gross retention.
     const slow = isASAN || isDebug;
-    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
+    const [functions, limit] = slow ? [3000, 400] : [20000, 40];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
       env: bunEnv,
@@ -1788,7 +1787,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1867,7 +1866,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).

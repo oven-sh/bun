@@ -229,6 +229,7 @@ declare function $format(): TODO;
 declare function $esmNamespaceForCjs(key: string): any | undefined;
 declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];
+declare function $esmRegistryHasEvaluated(key: string): boolean;
 declare function $esmLoadSync(key: string): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;

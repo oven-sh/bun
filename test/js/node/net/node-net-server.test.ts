@@ -271,6 +271,88 @@ describe("net.createServer listen", () => {
     });
   });
 
+  it("does not carry a canceled host listen callback into a later listen", async () => {
+    const server: Server = createServer();
+    const callbacks: string[] = [];
+    server.listen(0, "127.0.0.1", () => callbacks.push("stale"));
+
+    const closeError = await new Promise<Error>(resolve => server.close(resolve));
+    expect(closeError).toMatchObject({ code: "ERR_SERVER_NOT_RUNNING" });
+
+    const { promise: started, resolve, reject } = Promise.withResolvers<void>();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      callbacks.push("active");
+      server.close(err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    await started;
+
+    expect(callbacks).toEqual(["active"]);
+  });
+
+  it("runs every active-generation callback when one closes the server", async () => {
+    const server: Server = createServer();
+    const callbacks: string[] = [];
+    const closed = once(server, "close");
+    server.listen(0, "127.0.0.1", () => {
+      callbacks.push("first");
+      server.close();
+    });
+    server.listen(0, "127.0.0.1", () => callbacks.push("second"));
+
+    await closed;
+    expect(callbacks).toEqual(["first", "second"]);
+  });
+
+  it("runs a listen callback once under reentrant listening emission", async () => {
+    const server: Server = createServer();
+    const closed = once(server, "close");
+    let listenCallbacks = 0;
+    server.once("listening", () => server.emit("listening"));
+    server.listen(0, "127.0.0.1", () => {
+      listenCallbacks++;
+      server.close();
+    });
+
+    await closed;
+    expect(listenCallbacks).toBe(1);
+  });
+
+  it("preserves a new-generation callback during an older reentrant emission", async () => {
+    const server: Server = createServer();
+    const callbacks: string[] = [];
+    let preservedAfterReentry = false;
+    const { promise: finished, resolve, reject } = Promise.withResolvers<void>();
+    const activeCallback = () => {
+      callbacks.push("active");
+      server.close(err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    };
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      callbacks.push("old");
+      server.close();
+      server.listen(0, "127.0.0.1", activeCallback);
+      server.emit("listening");
+      preservedAfterReentry = server.listeners("listening").includes(activeCallback);
+      if (!preservedAfterReentry) {
+        server.close();
+        resolve();
+      }
+    });
+
+    await finished;
+    expect({ callbacks, preservedAfterReentry }).toEqual({
+      callbacks: ["old", "active"],
+      preservedAfterReentry: true,
+    });
+  });
+
   // The error twin of the test above: a listen() that fails reports on the same tick as one that succeeds.
   // No host argument: with one, Node resolves it through dns.lookup first, which adds a tick.
   it("emits a listen() error on the next tick, before the event loop polls", async () => {

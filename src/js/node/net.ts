@@ -42,7 +42,12 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { lookupListenAddress } = require("internal/net/server");
+const {
+  emitListeningEvent,
+  invalidateListenCallbacks,
+  lookupListenAddress,
+  registerListenCallback,
+} = require("internal/net/server");
 const {
   kArmHandshakeTimeout,
   kDestroyOnRead,
@@ -3606,6 +3611,7 @@ Server.prototype.unref = function unref() {
 
 Server.prototype.close = function close(callback) {
   this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
+  invalidateListenCallbacks(this);
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3911,7 +3917,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   }
 
   if (onListen != null) {
-    this.once("listening", onListen);
+    registerListenCallback(this, onListen);
   }
 
   const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
@@ -4133,7 +4139,7 @@ function addServerAbortSignalOption(self, options) {
 
 function emitListeningNextTick(self) {
   if (!self._handle) return;
-  self.emit("listening");
+  emitListeningEvent(self);
 }
 
 const { isPrimary } = require("internal/cluster/isPrimary");

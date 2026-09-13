@@ -55,7 +55,12 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
-const { lookupListenAddress } = require("internal/net/server");
+const {
+  emitListeningEvent,
+  invalidateListenCallbacks,
+  lookupListenAddress,
+  registerListenCallback,
+} = require("internal/net/server");
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -230,7 +235,7 @@ function emitListeningNextTick(self, hostname, port) {
   // Nothing to announce if close() ran in the same tick as listen().
   if (!self[serverSymbol]) return;
   // Node passes no arguments. The extra ones are a Bun extension.
-  self.emit("listening", null, hostname, port);
+  emitListeningEvent(self, null, hostname, port);
 }
 
 function emitListenErrorNextTick(self, err) {
@@ -476,6 +481,7 @@ Server.prototype.closeIdleConnections = function () {
 
 Server.prototype.close = function (optionalCallback?) {
   this[kListeningId] = (this[kListeningId] || 0) + 1;
+  invalidateListenCallbacks(this);
   const server = this[serverSymbol];
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
@@ -614,7 +620,7 @@ Server.prototype.listen = function () {
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
     // Before the bind, as in node, so a listen() retried from the 'error' handler still calls it.
-    this.once("listening", lastArg);
+    registerListenCallback(this, lastArg);
   }
 
   const listeningId = (this[kListeningId] = (this[kListeningId] || 0) + 1);

@@ -210,6 +210,28 @@ describe("node:http", () => {
           closeCallbacks: 1,
         });
       });
+
+      it("does not carry a canceled listen callback into a later listen", async () => {
+        const server = create();
+        const callbacks: string[] = [];
+        server.listen(0, "127.0.0.1", () => callbacks.push("stale"));
+
+        const closeError = await new Promise<Error>(resolve => server.close(resolve));
+        expect(closeError).toMatchObject({ code: "ERR_SERVER_NOT_RUNNING" });
+
+        const { promise: started, resolve, reject } = Promise.withResolvers<void>();
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          callbacks.push("active");
+          server.close(err => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        await started;
+
+        expect(callbacks).toEqual(["active"]);
+      });
     });
 
     it("emits a listen() error on the next tick, before the event loop polls", async () => {

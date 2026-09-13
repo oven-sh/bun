@@ -6342,13 +6342,17 @@ impl VirtualMachine {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
-                if code_value.is_string() {
+                // Not `is_string()`: converting a String object runs its `toString` /
+                // `Symbol.toPrimitive`. The property loop below prints one.
+                if code_value.is_string_literal() {
                     match code_value.to_bun_string(global_ref) {
                         Ok(s) if s.is_8bit() => {
                             code_string = Some(s);
                             code_string.as_ref().map(|s| s.latin1())
                         }
                         Ok(_) => None,
+                        // A primitive string only fails to convert when it is a rope
+                        // that cannot be resolved.
                         Err(_) => bun_core::out_of_memory(),
                     }
                 } else {

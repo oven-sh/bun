@@ -40,6 +40,28 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
+  // https://github.com/oven-sh/bun/issues/42539
+  it.each([
+    [Promise.resolve(), {}],
+    [Promise.resolve(), new WeakSet()],
+    [new WeakMap(), {}],
+    [new DataView(new ArrayBuffer(8)), {}],
+    [new Response(), {}],
+    [new URL("http://a"), {}],
+    [Math, {}],
+    [{}, new AbortController()],
+  ])("objects with different Object.prototype.toString tags are not equal: %p, %p", (a, b) => {
+    expect(deepEquals(a, b)).toBe(false);
+    expect(deepEquals(b, a)).toBe(false);
+  });
+
+  it("objects with the same Object.prototype.toString tag compare own properties", () => {
+    expect(deepEquals(Promise.resolve(), Promise.resolve())).toBe(true);
+    expect(deepEquals(new WeakMap(), new WeakMap())).toBe(true);
+    expect(deepEquals(Object.assign(new WeakMap(), { a: 1 }), new WeakMap())).toBe(false);
+    expect(deepEquals(Object.create(null), {})).toBe(true);
+  });
+
   it("fake maps are not equal", () => {
     function FakeMap() {}
     FakeMap.prototype = Map.prototype;

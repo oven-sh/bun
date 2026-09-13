@@ -896,11 +896,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
     // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
-    if constexpr (checkPrototypes) {
+    // jest's equals() (expect-utils jasmineUtils.ts) also starts with the tag comparison, so a
+    // Promise, WeakMap or DataView never equals {} even though none of them has own properties.
+    {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
-            if constexpr (!skipPrototypeIdentity) {
+            if constexpr (checkPrototypes && !skipPrototypeIdentity) {
                 const auto& constructorName = vm.propertyNames->constructor;
                 PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
                 bool hasConstructor1 = protoCheck1->getPropertySlot(globalObject, constructorName, slot1);

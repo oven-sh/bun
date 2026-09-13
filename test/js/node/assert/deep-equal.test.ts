@@ -480,7 +480,6 @@ const cases: Case[] = [
     b: () => Object.create({ [Symbol.toStringTag]: "X" }),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "Object.create({ x: 1 }) and { x: 1 }",
@@ -773,7 +772,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
 
   // Typed arrays and buffers.

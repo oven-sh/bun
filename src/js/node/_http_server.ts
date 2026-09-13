@@ -1318,6 +1318,10 @@ function clearUpgradeIncoming(socket) {
 function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
+  // A synchronously-finished response is fully uncorked by end(), then the
+  // dispatcher corks the reusable socket once before returning. Release that
+  // server-owned cork so raw CONNECT/Upgrade writes are not held forever.
+  socket.uncork();
   socket.on("end", onReadableStreamEnd);
 }
 function resolveHandoffPromise(promise) {

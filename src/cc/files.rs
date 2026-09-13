@@ -67,7 +67,7 @@ fn joined(parts: &[&str]) -> String {
 /// `target`: `C_INCLUDE_PATH` first (what gcc and clang search as `-isystem` directories, so that
 /// a project's copy of a header is the one found), then, when the target is this machine, where
 /// its C library's headers are.
-pub fn system_include_dirs(target: Target) -> Vec<String> {
+pub(crate) fn system_include_dirs(target: Target) -> Vec<String> {
     let mut dirs = Vec::new();
     if let Some(list) = env_var::C_INCLUDE_PATH::get() {
         let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };

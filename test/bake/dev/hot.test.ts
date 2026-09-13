@@ -1,7 +1,8 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
+import { isDebug } from "harness";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -611,6 +612,208 @@ devTest("hot update frames are not delivered to application websocket topics", {
     }
   },
 });
+
+// The `M` (memory visualizer) and `v` (incremental visualizer) HMR topics only
+// exist in builds with `BAKE_DEBUGGING_FEATURES` (canary or debug). A stable
+// release accepts the subscription but never emits a frame, so there is
+// nothing to observe there.
+const hasBakeDebuggingFeatures = isDebug || Bun.version_with_sha.includes("-canary.");
+
+const memoryVisualizerApp = {
+  "index.html": emptyHtmlFile({}),
+  "bun.app.ts": `
+    import html from "./index.html";
+    // Always armed in the dev server's timer heap; /tick answers on its next fire.
+    const waiters = [];
+    setInterval(() => {
+      for (const resolve of waiters.splice(0)) resolve();
+    }, 20);
+    export default {
+      static: {
+        "/": html,
+      },
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/tick") {
+          await new Promise(resolve => waiters.push(resolve));
+          return new Response("ticked");
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `,
+};
+
+/**
+ * Opens an extra `/_bun/hmr` socket and counts the `M` (memory visualizer)
+ * frames it receives. The server answers an `M` subscription with one frame
+ * immediately and then sends one per timer tick.
+ */
+async function openVisualizerSocket(dev: Dev) {
+  const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+  ws.binaryType = "arraybuffer";
+  let open = false;
+  let frames = 0;
+  // Set when the socket errors or closes unexpectedly; fails the step being
+  // awaited at that moment and every step started afterwards.
+  let failure: Error | null = null;
+  // The step currently being awaited: socket progress resolves it, socket
+  // failure or the deadline rejects it.
+  let step: { what: string; done: () => boolean; resolve: () => void; reject: (err: Error) => void } | null = null;
+  const check = () => {
+    if (step === null || !step.done()) return;
+    const { resolve } = step;
+    step = null;
+    resolve();
+  };
+  const fail = (reason: string) => {
+    const err = new Error(
+      `${reason}${step ? ` while ${step.what}` : ""} (received ${frames} memory visualizer frames)`,
+    );
+    failure ??= err;
+    if (step === null) return;
+    const { reject } = step;
+    step = null;
+    reject(err);
+  };
+  ws.onopen = () => {
+    open = true;
+    check();
+  };
+  ws.onerror = () => fail("hmr socket errored");
+  ws.onclose = event => fail(`hmr socket closed unexpectedly with code ${event.code}`);
+  ws.onmessage = event => {
+    if (new Uint8Array(event.data as ArrayBuffer)[0] !== "M".charCodeAt(0)) return;
+    frames++;
+    check();
+  };
+  const waitUntil = (what: string, done: () => boolean) =>
+    new Promise<void>((resolve, reject) => {
+      if (failure) return reject(failure);
+      const deadline = setTimeout(() => fail("timed out"), 5_000 * WAIT_MULTIPLIER);
+      step = {
+        what,
+        done,
+        resolve: () => {
+          clearTimeout(deadline);
+          resolve();
+        },
+        reject: err => {
+          clearTimeout(deadline);
+          reject(err);
+        },
+      };
+      check();
+    });
+
+  const handle = {
+    get frames() {
+      return frames;
+    },
+    /** Replaces this socket's topic set: `s` followed by one character per topic. */
+    subscribe: (topics: string) => ws.send("s" + topics),
+    /** Resolves once this socket has received `count` memory visualizer frames in total. */
+    waitForFrames: (count: number) => waitUntil(`waiting for memory visualizer frame #${count}`, () => frames >= count),
+    /** Closes the socket, which unsubscribes it on the server, and waits for the close handshake. */
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        if (failure) return reject(failure);
+        ws.onerror = () => reject(new Error("hmr socket errored during the close handshake"));
+        ws.onclose = () => resolve();
+        ws.close();
+      }),
+  };
+
+  await waitUntil("opening the hmr socket", () => open);
+  return handle;
+}
+
+/** Opens a socket that subscribes to the memory visualizer topic and waits for the frame that answers it. */
+async function subscribeMemoryVisualizer(dev: Dev) {
+  const socket = await openVisualizerSocket(dev);
+  socket.subscribe("M");
+  await socket.waitForFrames(1);
+  return socket;
+}
+
+if (hasBakeDebuggingFeatures) {
+  devTest("memory visualizer topic ticks while subscribed and unsubscribes without disturbing other timers", {
+    files: memoryVisualizerApp,
+    htmlFiles: [],
+    async test(dev) {
+      const start = performance.now();
+      const subscriber = await subscribeMemoryVisualizer(dev);
+      // Frame 1 is sent synchronously on subscribe and frame 2 by the timer
+      // armed at that point; frame 3 only arrives if the tick handler
+      // re-armed the timer after firing.
+      await subscriber.waitForFrames(3);
+      // Two real ticks take at least 2s. A handler that re-inserted the timer
+      // without moving its deadline would deliver frame 3 right after frame 2,
+      // i.e. at roughly 1s; 1.5s keeps clear of both.
+      expect(performance.now() - start).toBeGreaterThanOrEqual(1500);
+
+      // The fixture's interval is pending in the same heap while the subscriber
+      // leaves. Unsubscribing removes the visualizer timer from the heap; when
+      // the tick had left that node marked as still in the heap, the removal
+      // discarded whichever timer was at the root instead (debug builds assert),
+      // and the interval never fired again.
+      await dev.fetch("/tick").equals("ticked");
+      await subscriber.close();
+      await dev.fetch("/tick").equals("ticked");
+
+      // The timer can be re-armed after being disarmed. This socket is left
+      // open on purpose: the harness's graceful exit closes it while the timer
+      // is armed, covering the teardown path.
+      await subscribeMemoryVisualizer(dev);
+    },
+  });
+
+  devTest("memory visualizer timer stays armed while another subscriber remains", {
+    files: memoryVisualizerApp,
+    htmlFiles: [],
+    async test(dev) {
+      const first = await subscribeMemoryVisualizer(dev);
+      const second = await subscribeMemoryVisualizer(dev);
+      await first.close();
+      // A frame published by a tick just before the close can still be in
+      // flight, so only the second frame from here on proves the timer is
+      // still armed for the remaining subscriber.
+      await second.waitForFrames(second.frames + 2);
+    },
+  });
+
+  // The timer belongs to the `M` subscriber count alone. When the unsubscribe
+  // path consulted the `v` count instead, a `v` holder kept the timer armed
+  // with no `M` subscriber left, and the next `M` subscription armed it a
+  // second time (debug builds assert; otherwise the armed node could already
+  // be popped and its removal discarded an unrelated timer).
+  devTest("memory visualizer timer is disarmed with its last subscriber while the incremental visualizer is held", {
+    files: memoryVisualizerApp,
+    htmlFiles: [],
+    async test(dev) {
+      // One socket narrows {M, v} to {v} and then asks for M again. A socket's
+      // frames are handled in order, so nothing has to be awaited in between.
+      const socket = await openVisualizerSocket(dev);
+      socket.subscribe("Mv");
+      socket.subscribe("v");
+      socket.subscribe("M");
+      // Frames 1 and 2 answer the two M subscriptions. Frame 3 only arrives if
+      // the second subscription armed the timer again.
+      await socket.waitForFrames(3);
+      await socket.close();
+
+      // The same through the close path. `holder` sends its subscription
+      // before `leaver` connects, so the server counts it first.
+      const holder = await openVisualizerSocket(dev);
+      holder.subscribe("v");
+      const leaver = await subscribeMemoryVisualizer(dev);
+      await leaver.close();
+      const returner = await subscribeMemoryVisualizer(dev);
+      await returner.waitForFrames(2);
+      await dev.fetch("/tick").equals("ticked");
+      await holder.close();
+    },
+  });
+}
 
 devTest("dev.write resolves only after the new module body has run", {
   files: {

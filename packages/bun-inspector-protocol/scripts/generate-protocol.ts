@@ -12,13 +12,17 @@
 //
 // Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
 // repository (requires network access).
+//
+// test/cli/inspect/bun-inspector-protocol.test.ts imports the exported functions
+// and checks the generated files, so only the `import.meta.main` block below may
+// have side effects.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Domain, Property, Protocol } from "../src/protocol/schema";
 
-function formatProtocol(protocol: Protocol, extraTs?: string): string {
+export function formatProtocol(protocol: Protocol, extraTs?: string): string {
   const { name, domains } = protocol;
   const eventMap = new Map();
   const commandMap = new Map();
@@ -57,7 +61,7 @@ function formatProtocol(protocol: Protocol, extraTs?: string): string {
         properties: returns,
       });
     }
-    body += "};";
+    body += "}";
   }
   for (const type of ["Event", "Request", "Response"]) {
     const sourceMap = type === "Event" ? eventMap : commandMap;
@@ -74,7 +78,7 @@ function formatProtocol(protocol: Protocol, extraTs?: string): string {
   if (extraTs) {
     body += extraTs;
   }
-  return body + "};";
+  return body + "}";
 }
 
 function formatProperty(property: Property): string {
@@ -130,6 +134,101 @@ function formatProperty(property: Property): string {
     body += ";";
   }
   return body;
+}
+
+/**
+ * Besides a type of the referring domain (`RemoteObject`) or of another one (`Network.RequestId`), a
+ * `$ref` may name one of these, the types WebKit's protocol generator predeclares
+ * (inspector/scripts/codegen/models.py, resolve_types): Runtime.PropertyDescriptor.isPrivate is a
+ * `$ref` to `boolean`. There is nothing to declare for them.
+ */
+export const primitiveTypes: ReadonlySet<string> = new Set(["any", "boolean", "integer", "number", "object", "string"]);
+
+/**
+ * The domains of the snapshot: those of `all` (a CombinedDomains.json) that a JavaScript debuggable (a bun
+ * process, as opposed to a web page or a service worker) speaks, by the rule WebKit's own frontend applies
+ * in InspectorBackend.activateDomain (a domain applies to the debuggable types it lists, and one that lists
+ * none, like GenericTypes, applies to every debuggable), except `domainsWithoutAgent`; plus the types they
+ * refer to in the remaining domains.
+ */
+export function selectJscDomains(all: readonly Domain[], domainsWithoutAgent: ReadonlySet<string>): Domain[] {
+  const selected = all.filter(
+    ({ domain, debuggableTypes }) =>
+      (debuggableTypes === undefined || debuggableTypes.includes("javascript")) && !domainsWithoutAgent.has(domain),
+  );
+  return withReferencedTypes(selected, all);
+}
+
+/**
+ * `selected`, plus a types-only copy of every other domain of `all` whose types they `$ref`
+ * (Console.ConsoleMessage has a Network.RequestId, although Network itself is a web page domain),
+ * holding just the referenced types and whatever those refer to in turn. Without them, index.d.ts
+ * names namespaces it does not declare, which every consumer compiles with skipLibCheck, so the
+ * affected properties silently type-check as anything.
+ */
+function withReferencedTypes(selected: readonly Domain[], all: readonly Domain[]): Domain[] {
+  const allByName = new Map(all.map(domain => [domain.domain, domain]));
+  const selectedNames = new Set(selected.map(domain => domain.domain));
+  /** Domain name to the ids of its types that `selected` refers to, for domains outside `selected`. */
+  const referenced = new Map<string, Set<string>>();
+
+  function visit(property: Property, domain: string): void {
+    if ("$ref" in property) {
+      const { $ref } = property;
+      const [refDomain, id] = $ref.includes(".") ? $ref.split(".") : [domain, $ref];
+      if (selectedNames.has(refDomain)) {
+        return;
+      }
+      const type = allByName.get(refDomain)?.types?.find(type => type.id === id);
+      if (!type) {
+        if (primitiveTypes.has($ref)) {
+          return;
+        }
+        throw new Error(`${domain} refers to ${$ref}, which no domain declares`);
+      }
+      const ids = referenced.get(refDomain) ?? new Set();
+      referenced.set(refDomain, ids);
+      if (!ids.has(id)) {
+        ids.add(id);
+        visit(type, refDomain);
+      }
+    } else if (property.type === "array") {
+      if (property.items) {
+        visit(property.items, domain);
+      }
+    } else if (property.type === "object") {
+      for (const member of property.properties ?? []) {
+        visit(member, domain);
+      }
+    }
+  }
+
+  for (const { domain, types = [], commands = [], events = [] } of selected) {
+    for (const type of types) {
+      visit(type, domain);
+    }
+    for (const { parameters = [], returns = [] } of commands) {
+      for (const property of [...parameters, ...returns]) {
+        visit(property, domain);
+      }
+    }
+    for (const { parameters = [] } of events) {
+      for (const property of parameters) {
+        visit(property, domain);
+      }
+    }
+  }
+
+  const referencedDomains = [...referenced].map(([name, ids]): Domain => {
+    const { debuggableTypes, types = [] } = allByName.get(name)!;
+    return {
+      domain: name,
+      description: "Only the types that the other domains of this snapshot refer to.",
+      debuggableTypes,
+      types: types.filter(type => ids.has(type.id!)),
+    };
+  });
+  return [...selected, ...referencedDomains].sort((a, b) => a.domain.localeCompare(b.domain));
 }
 
 /**
@@ -202,49 +301,49 @@ function findPinnedCombinedDomains(): string | undefined {
  */
 const domainsWithoutAgent = new Set(["File", "Process"]);
 
-const args = process.argv.slice(2);
-const includeV8 = args.includes("--v8");
-const combinedDomainsPath = args.find(arg => !arg.startsWith("--")) ?? findPinnedCombinedDomains();
-if (!combinedDomainsPath) {
-  console.error(
-    "Could not find CombinedDomains.json for the pinned WebKit version. " +
-      "Run `bun bd` first or pass the path to a WebKit build's CombinedDomains.json.",
-  );
-  process.exit(1);
-}
-console.log(`Reading ${combinedDomainsPath}`);
-const combinedDomains: { domains: Domain[] } = await Bun.file(combinedDomainsPath).json();
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const includeV8 = args.includes("--v8");
+  const combinedDomainsPath = args.find(arg => !arg.startsWith("--")) ?? findPinnedCombinedDomains();
+  if (!combinedDomainsPath) {
+    console.error(
+      "Could not find CombinedDomains.json for the pinned WebKit version. " +
+        "Run `bun bd` first or pass the path to a WebKit build's CombinedDomains.json.",
+    );
+    process.exit(1);
+  }
+  console.log(`Reading ${combinedDomainsPath}`);
+  const combinedDomains: { domains: Domain[] } = await Bun.file(combinedDomainsPath).json();
 
-const protocolDir = path.resolve(import.meta.dir, "..", "src", "protocol");
-const written: string[] = [];
-const write = (name: string, data: string) => {
-  const filePath = path.join(protocolDir, name);
-  writeFileSync(filePath, data);
-  written.push(filePath);
-};
-const base = readFileSync(path.join(protocolDir, "protocol.d.ts"), "utf-8");
-const baseNoComments = base.replace(/\/\/.*/g, "");
+  const protocolDir = path.resolve(import.meta.dir, "..", "src", "protocol");
+  const written: string[] = [];
+  const write = (name: string, data: string) => {
+    const filePath = path.join(protocolDir, name);
+    writeFileSync(filePath, data);
+    written.push(filePath);
+  };
+  const base = readFileSync(path.join(protocolDir, "protocol.d.ts"), "utf-8");
+  const baseNoComments = base.replace(/\/\/.*/g, "");
 
-const jsc: Protocol = {
-  name: "JSC",
-  version: {
-    major: 1,
-    minor: 4,
-  },
-  domains: combinedDomains.domains
-    .filter(domain => domain.debuggableTypes?.includes("javascript") && !domainsWithoutAgent.has(domain.domain))
-    .sort((a, b) => a.domain.localeCompare(b.domain)),
-};
-write("jsc/protocol.json", JSON.stringify(jsc, null, 2));
-write("jsc/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(jsc, baseNoComments));
+  const jsc: Protocol = {
+    name: "JSC",
+    version: {
+      major: 1,
+      minor: 4,
+    },
+    domains: selectJscDomains(combinedDomains.domains, domainsWithoutAgent),
+  };
+  write("jsc/protocol.json", JSON.stringify(jsc, null, 2));
+  write("jsc/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(jsc, baseNoComments));
 
-if (includeV8) {
-  const v8 = await downloadV8();
-  write("v8/protocol.json", JSON.stringify(v8));
-  write("v8/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(v8, baseNoComments));
-}
+  if (includeV8) {
+    const v8 = await downloadV8();
+    write("v8/protocol.json", JSON.stringify(v8));
+    write("v8/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(v8, baseNoComments));
+  }
 
-const { status } = spawnSync("bunx", ["prettier", "--write", ...written], { cwd: repoRoot, stdio: "inherit" });
-if (status !== 0) {
-  process.exit(status ?? 1);
+  const { status } = spawnSync("bunx", ["prettier", "--write", ...written], { cwd: repoRoot, stdio: "inherit" });
+  if (status !== 0) {
+    process.exit(status ?? 1);
+  }
 }

@@ -28,6 +28,10 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
+      _setNodeHTTPSSecureContext: {
+        fn: "doSetNodeHTTPSSecureContext",
+        length: 1,
+      },
       "@@dispose": {
         fn: "dispose",
         length: 0,

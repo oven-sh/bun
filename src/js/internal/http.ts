@@ -37,6 +37,7 @@ const typeSymbol = Symbol("type");
 const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
+const setSecureContextSymbol = Symbol("setSecureContext");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
@@ -535,6 +536,7 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   serverSymbol,
+  setSecureContextSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,

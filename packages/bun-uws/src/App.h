@@ -216,6 +216,27 @@ public:
         return sslCtx;
     }
 
+    bool setSecureContext(SocketContextOptions options) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+            struct ssl_ctx_st *next = us_ssl_ctx_from_options(options, &err);
+            if (!next) return false;
+
+            if (httpContext->getSocketContextData()->http2Context) {
+                us_ssl_ctx_enable_http2_alpn(next, httpContext->getSocketContextData()->allowHttp1);
+            }
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                us_listen_socket_set_ssl_ctx(ls, next);
+            });
+
+            us_internal_ssl_ctx_unref(sslCtx);
+            sslCtx = next;
+            return true;
+        }
+    }
+
     /* Attaches a "filter" function to track socket connections/disconnections */
     TemplatedApp &&filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {
         httpContext->filter(std::move(filterHandler));

@@ -1418,6 +1418,59 @@ describe("node https server", async () => {
       });
     });
   };
+
+  it("setSecureContext updates future handshakes without closing existing connections", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+      minVersion: "TLSv1.2" as const,
+    };
+    const server = createHttpsServer(httpsOptions, (_req, res) => res.end("ok"));
+    const url = await listen(server, "https");
+    const connect = async () => {
+      const socket = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      return socket;
+    };
+    let existing;
+    let renewed;
+    try {
+      existing = await connect();
+      const originalFingerprint = existing.getPeerCertificate().fingerprint256;
+
+      server.setSecureContext(replacement);
+      renewed = await connect();
+
+      const replacementFingerprint = renewed.getPeerCertificate().fingerprint256;
+      expect(replacementFingerprint).not.toBe(originalFingerprint);
+      expect(existing.getPeerCertificate().fingerprint256).toBe(originalFingerprint);
+      expect(existing.destroyed).toBe(false);
+      renewed.destroy();
+      renewed = undefined;
+
+      for (let iteration = 0; iteration < 8; iteration++) {
+        const useReplacement = iteration % 2 === 0;
+        server.setSecureContext(useReplacement ? replacement : httpsOptions);
+        const probe = await connect();
+        try {
+          expect(probe.getPeerCertificate().fingerprint256).toBe(
+            useReplacement ? replacementFingerprint : originalFingerprint,
+          );
+          expect(existing.destroyed).toBe(false);
+        } finally {
+          probe.destroy();
+        }
+      }
+    } finally {
+      existing?.destroy();
+      renewed?.destroy();
+      server.close();
+    }
+  });
   it("is marked encrypted (#5867)", async () => {
     const { server, url, done } = await createServer(async (req, res) => {
       expect(req.connection.encrypted).toBe(true);

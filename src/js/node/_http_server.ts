@@ -24,6 +24,7 @@ const { isPrimary } = require("internal/cluster/isPrimary");
 const {
   kInternalSocketData,
   serverSymbol,
+  setSecureContextSymbol,
   kHandle,
   kRealListen,
   tlsSymbol,
@@ -531,6 +532,30 @@ Server.prototype[Symbol.asyncDispose] = function () {
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
   return this[serverSymbol].address;
+};
+
+Server.prototype[setSecureContextSymbol] = function (options) {
+  validateObject(options, "options");
+  const current = this[tlsSymbol];
+  if (!current) {
+    throw $ERR_INVALID_ARG_VALUE("options", options, "server is not configured for TLS");
+  }
+
+  const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = require("internal/tls");
+  // Match Node's synchronous option validation before publishing a replacement.
+  require("node:tls").createSecureContext(options);
+  validateSecureProtocol(options.secureProtocol);
+  const range = secureProtocolToVersionRange(options.secureProtocol);
+  const next = {
+    ...options,
+    minVersion: range ? range[0] : tlsStringToProtocolVersion(options.minVersion),
+    maxVersion: range ? range[1] : tlsStringToProtocolVersion(options.maxVersion),
+    serverName: options.servername,
+    requestCert: current.requestCert,
+    rejectUnauthorized: current.rejectUnauthorized,
+  };
+  this[serverSymbol]?._setNodeHTTPSSecureContext(next);
+  this[tlsSymbol] = normalizeServerTls(next);
 };
 
 Server.prototype.listen = function () {

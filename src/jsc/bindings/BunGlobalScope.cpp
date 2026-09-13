@@ -8,6 +8,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
+#include "FormatStackTraceForJS.h"
 
 namespace Bun {
 
@@ -17,6 +18,10 @@ void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    // JSC's own Error.captureStackTrace writes `fn@url:line:col` text. It skips
+    // Error.prepareStackTrace and source maps. Every realm, node:vm contexts too, gets Bun's.
+    errorConstructor()->putDirectNativeFunction(vm, this, vm.propertyNames->captureStackTrace, 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

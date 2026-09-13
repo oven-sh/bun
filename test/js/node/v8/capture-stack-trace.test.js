@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { runInNewContext } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -633,6 +634,72 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
   );
   expect(result).toBe("custom stack trace");
   expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace inside a node:vm formats the stack like the main context does", () => {
+  const code = `
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    inner();
+  `;
+  // `reference` shares the line of the runInNewContext call. This file's frame
+  // in the vm stack must name that source line, not a line of the transpiled file.
+  const [reference, stack] = [new Error(), runInNewContext(code, {}, { filename: "in-vm.js" })];
+
+  const lines = stack.split("\n");
+  expect(lines.slice(0, 3)).toEqual([
+    "Error",
+    expect.stringMatching(/^    at inner \(in-vm\.js:4:\d+\)$/),
+    expect.stringMatching(/^    at in-vm\.js:7:\d+$/),
+  ]);
+
+  const thisFileFrame = /^    at .*capture-stack-trace\.test\.js:(\d+):\d+\)?$/;
+  const lineOfThisFile = stackLines => thisFileFrame.exec(stackLines.find(line => thisFileFrame.test(line)))?.[1];
+  expect(lineOfThisFile(lines)).toBeDefined();
+  expect(lineOfThisFile(lines)).toBe(lineOfThisFile(reference.stack.split("\n")));
+
+  expect(runInNewContext("Error.captureStackTrace.length")).toBe(2);
+});
+
+test("Error.captureStackTrace inside a node:vm calls the Error.prepareStackTrace of that context", () => {
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(`
+    Error.prepareStackTrace = (target, sites) => "custom: " + sites[0].getFunctionName();
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    inner();
+  `);
+  expect(result).toBe("custom: inner");
+  expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace inside a node:vm takes an Error target and a caller argument", () => {
+  const stack = runInNewContext(
+    `
+    function inner() {
+      const error = new RangeError("boom");
+      Error.captureStackTrace(error, inner);
+      return error.stack;
+    }
+    function outer() {
+      return inner();
+    }
+    outer();
+    `,
+    {},
+    { filename: "in-vm.js" },
+  );
+  expect(stack.split("\n").slice(0, 3)).toEqual([
+    "RangeError: boom",
+    expect.stringMatching(/^    at outer \(in-vm\.js:8:\d+\)$/),
+    expect.stringMatching(/^    at in-vm\.js:10:\d+$/),
+  ]);
 });
 
 test("Error.captureStackTrace inside error constructor works", () => {

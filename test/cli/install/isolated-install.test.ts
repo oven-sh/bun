@@ -604,6 +604,48 @@ test("a folder dependency shared by several folder dependencies is one package",
   expect(siblings.map(name => requireFromRoot(name))).toEqual(siblings.map(() => "shared"));
 });
 
+test("a file: override that several registry packages depend on is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // Each of these declares `no-deps`.
+  const dependents = {
+    "one-dep": "1.0.0",
+    "one-fixed-dep": "1.0.0",
+    "one-range-dep": "1.0.0",
+    "one-range-dep-too": "1.0.0",
+    "normal-dep-and-dev-dep": "1.0.2",
+  };
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-file-override",
+        dependencies: dependents,
+        overrides: { "no-deps": "file:./vendor/no-deps" },
+      }),
+    ),
+    write(join(packageDir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+  ]);
+
+  const { out } = await runBunInstall(bunEnv, packageDir);
+  expect(out).toContain(`${Object.keys(dependents).length + 1} packages installed`);
+
+  const store = join(packageDir, "node_modules", ".bun");
+  expect(
+    await Promise.all(
+      Object.entries(dependents).map(([name, version]) =>
+        readlink(join(store, `${name}@${version}`, "node_modules", "no-deps")),
+      ),
+    ),
+  ).toEqual(
+    Object.keys(dependents).map(() => join("..", "..", "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps")),
+  );
+  expect(
+    await file(join(store, "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps", "package.json")).json(),
+  ).toEqual({ name: "no-deps", version: "9.9.9" });
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

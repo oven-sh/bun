@@ -654,8 +654,7 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    // stackTrace is still installed on errorInstance. A GC in the formatter that finds one of its
-    // frames dead frees it (ErrorInstance::reconcileWeakReferencesAtGCEnd).
+    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
     JSC::MarkedArgumentBuffer protectedFrameCells;
     protectFrameCells(protectedFrameCells, stackTrace);
     if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
@@ -690,8 +689,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
-    // A destination that is materialized, or is being formatted right now, never renders frames
-    // again, and the next GC that finds an installed frame dead formats the trace a second time.
+    // A destination that is materialized, or is being formatted right now, never renders frames again.
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());
     }
@@ -752,8 +750,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        // User JS in materializeErrorInfoIfNeeded's formatter can re-enter here, and that formatter
-        // still reads *stackTrace: copy the frames and leave the vector installed.
+        // Re-entered from materializeErrorInfoIfNeeded's formatter, which still reads *stackTrace: copy, do not move.
         bool isBeingMaterialized = errorObject->hasMaterializedErrorInfo();
         auto ownedStackTrace = isBeingMaterialized
             ? makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace)

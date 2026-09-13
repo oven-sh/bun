@@ -535,6 +535,8 @@ Register-ArgumentCompleter -CommandName bun, bunx -Native -ScriptBlock {
         return __bunCompleteFlags $cmd $wordToComplete
     }
 
+    if ($cmd -eq 'c') { $cmd = 'create' }
+
     if ($cmd -eq '') {
         # Completing the subcommand: commands plus package.json scripts.
         $results = @()

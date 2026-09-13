@@ -866,7 +866,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
     MarkedArgumentBuffer namespaces;
     auto* moduleLoader = zigGlobalObject->moduleLoader();
     for (auto moduleName : builtinModuleNames) {
-        auto key = Identifier::fromString(vm, makeString("node:"_s, moduleName));
+        String moduleKey(moduleName);
+        if (!moduleKey.startsWith("node:"_s))
+            moduleKey = makeString("node:"_s, moduleName);
+        auto key = Identifier::fromString(vm, moduleKey);
         auto* entry = moduleLoader->registryEntry(key);
         if (!entry)
             continue;
@@ -885,6 +888,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
         return {};
     }
 
+    struct ExportUpdate {
+        JSModuleNamespaceObject* namespaceObject;
+        Identifier name;
+    };
+    Vector<ExportUpdate, 32> updates;
+    MarkedArgumentBuffer values;
+
+    // A throwing CommonJS getter must leave every live ESM binding unchanged.
     for (JSValue namespaceValue : namespaces) {
         auto* namespaceObject = uncheckedDowncast<JSModuleNamespaceObject>(namespaceValue);
         JSValue exportsValue = namespaceObject->get(globalObject, vm.propertyNames->defaultKeyword);
@@ -906,9 +917,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
             RETURN_IF_EXCEPTION(scope, {});
             JSValue value = hasOwn ? slot.getValue(globalObject, name) : jsUndefined();
             RETURN_IF_EXCEPTION(scope, {});
-            namespaceObject->overrideExportValue(globalObject, name, value);
-            RETURN_IF_EXCEPTION(scope, {});
+            updates.append({ namespaceObject, name });
+            values.append(value);
         }
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < updates.size(); ++i) {
+        updates[i].namespaceObject->overrideExportValue(globalObject, updates[i].name, values.at(i));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

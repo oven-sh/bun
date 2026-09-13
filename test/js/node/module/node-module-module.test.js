@@ -124,6 +124,64 @@ describe.concurrent("node-module-module", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "required first\n", stderr: "", exitCode: 0 });
   });
 
+  test("syncBuiltinESMExports handles node-prefixed builtin names", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      import sqliteDefault, { DatabaseSync as esmDatabaseSync } from "node:sqlite";
+      const require = createRequire(import.meta.url);
+      const sqlite = require("node:sqlite");
+      const replacement = () => "prefixed";
+      assert.strictEqual(sqliteDefault, sqlite);
+      sqlite.DatabaseSync = replacement;
+      syncBuiltinESMExports();
+      assert.strictEqual(esmDatabaseSync, replacement);
+      console.log(esmDatabaseSync());
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "prefixed\n", stderr: "", exitCode: 0 });
+  });
+
+  test("syncBuiltinESMExports snapshots getters before updating bindings", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      import { access as esmAccess } from "node:fs";
+      const require = createRequire(import.meta.url);
+      const fs = require("node:fs");
+      const originalAccess = esmAccess;
+      const appendFileDescriptor = Object.getOwnPropertyDescriptor(fs, "appendFile");
+      const sentinel = new Error("sync getter");
+      fs.access = () => "replacement";
+      Object.defineProperty(fs, "appendFile", {
+        configurable: true,
+        enumerable: appendFileDescriptor.enumerable,
+        get() {
+          throw sentinel;
+        },
+      });
+      assert.throws(() => syncBuiltinESMExports(), error => error === sentinel);
+      assert.strictEqual(esmAccess, originalAccess);
+      console.log("unchanged");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unchanged\n", stderr: "", exitCode: 0 });
+  });
+
   test("syncBuiltinESMExports updates builtin bindings in workers", async () => {
     const source = String.raw`
       const { parentPort } = require("node:worker_threads");

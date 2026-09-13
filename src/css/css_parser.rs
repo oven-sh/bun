@@ -5760,9 +5760,16 @@ pub mod serializer {
         writer: &mut W,
     ) -> bun_io::Result<()> {
         writer.write_all(b"\"")?;
-        let mut sw = CssStringWriter::new(writer);
-        sw.write_str(value)?;
+        serialize_string_contents(value, writer)?;
         writer.write_all(b"\"")
+    }
+
+    /// Write the inside of a double-quoted CSS string token, without the quotes.
+    pub fn serialize_string_contents<W: WriteAll + ?Sized>(
+        value: &[u8],
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
+        CssStringWriter::new(writer).write_str(value)
     }
 
     pub(crate) fn serialize_dimension(

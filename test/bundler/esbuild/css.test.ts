@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1292,6 +1293,58 @@ b {
           '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}.d{background:url("./plain-w49ecq2a.png")}',
         );
     },
+  });
+
+  // The final path replaces the placeholder inside a quoted string, so it is
+  // escaped for one. Windows cannot represent `"` or a line break in a file name.
+  describe.skipIf(isWindows)("asset path is escaped for the CSS string it lands in", () => {
+    const injection = 'x");}body{color:red}a{b:url("y';
+    itBundled("css/FileLoaderURLEscapesFileName", {
+      files: {
+        // `\22 ` is `"` and `\a ` is a line feed.
+        "/entry.css": String.raw`
+          .a { background: url("./a\a b.png") }
+          .b { background: url("./x\22 );}body{color:red}a{b:url(\22 y.png") }
+        `,
+        "/a\nb.png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+        [`/${injection}.png`]: Buffer.alloc(128 * 1024 + 1, "X").toString(),
+      },
+      loader: {
+        ".png": "file",
+      },
+      minifyWhitespace: true,
+      outdir: "/out",
+      async onAfterBundle(api) {
+        expect(api.readFile("/out/entry.css")).toBe(
+          String.raw`.a{background:url("./a\a b-nkpagkva.png")}.b{background:url("./x\");}body{color:red}a{b:url(\"y-w49ecq2a.png")}` +
+            "\n",
+        );
+        // Every url() in the output has to name a file that was written next to it.
+        const again = await Bun.build({ entrypoints: [api.join("out/entry.css")], outdir: api.join("out2") });
+        const assets = again.outputs.map(o => basename(o.path)).filter(name => name.endsWith(".png"));
+        expect(assets.map(name => name.replace(/-[a-z0-9]+\.png$/, "")).sort()).toEqual(
+          ["a\nb-nkpagkva", `${injection}-w49ecq2a`].sort(),
+        );
+      },
+    });
+
+    itBundled("css/FileLoaderURLEscapesPublicPath", {
+      files: {
+        "/entry.css": `.a { background: url("./plain.png") }`,
+        "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+      },
+      loader: {
+        ".png": "file",
+      },
+      publicPath: '");}body{color:red}a{b:url("',
+      minifyWhitespace: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(api.readFile("/out/entry.css")).toBe(
+          String.raw`.a{background:url("\");}body{color:red}a{b:url(\"plain-w49ecq2a.png")}` + "\n",
+        );
+      },
+    });
   });
 
   itBundled("css/IgnoreURLsInAtRulePrelude", {

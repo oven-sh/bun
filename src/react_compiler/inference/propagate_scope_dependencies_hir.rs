@@ -1858,9 +1858,7 @@ impl<'a> DependencyCollectionContext<'a> {
         self.visit_dependency(dep, env);
     }
 
-    /// Record `identifier` as a declaration of each scope that declared it and is no
-    /// longer active. Codegen then emits the `let` before that scope's memo block
-    /// instead of inside it, so a later scope can read or assign the variable.
+    /// A value used after its declaring scope ends is an output of that scope.
     fn declare_outside_original_scope(&self, identifier: IdentifierId, env: &mut Environment) {
         let decl_id = env.identifiers[identifier.0 as usize].declaration_id;
         let Some(original_decl) = self.declarations.get(decl_id) else {
@@ -1920,9 +1918,7 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
-        // Not in upstream, which prunes `let x` when nothing reads `x`. Here a
-        // retained store keeps it (dead_code_elimination.rs), and the store can be
-        // in a later scope than the declaration.
+        // Not in upstream: a store that dead_code_elimination.rs retains can be in a later scope.
         self.declare_outside_original_scope(place.identifier, env);
         if let Some(current_scope) = self.current_scope() {
             let scope = &env.scopes[current_scope.0 as usize];

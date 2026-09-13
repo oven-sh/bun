@@ -1599,9 +1599,7 @@ fn emit_store(
                 stmt_loc,
             );
             if instr.lvalue.is_some() {
-                // Not in upstream, which inlines the value of every StoreLocal
-                // into its reads. A promoted one (`const t0 = x = p.n`) is read by
-                // name from a later memo block, so it has to be a statement.
+                // Not in upstream: a promoted result is read by name from a later memo block.
                 let stmt = codegen_instruction(cx, instr, expr)?;
                 if matches!(stmt.data, StmtData::SEmpty(_)) {
                     return Ok(None);

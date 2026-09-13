@@ -2,9 +2,23 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe, tempDir } from "harness";
+import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
+
+/**
+ * Applies a patch that is expected to fail and returns the error it threw.
+ * The `syscall` assertions on it cover the Windows `*at` wrappers, which used to
+ * report the NT step that failed (`open`) instead of the operation.
+ */
+function applyError(patchfile: string, dir: string): any {
+  try {
+    apply(patchfile, dir);
+  } catch (e) {
+    return e;
+  }
+  return undefined;
+}
 
 const makeDiffJs = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
   const { stdout, stderr } =
@@ -143,6 +157,20 @@ describe("apply", () => {
         await $`if ls -d ${join(afolder, "byebye.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
       ).toBe("okay!\n");
     });
+
+    test("of a missing file reports the unlink syscall", async () => {
+      await using tempdir = tempDir("patch-test", {});
+
+      const patchfile = [
+        "diff --git a/missing.txt b/missing.txt",
+        "deleted file mode 100644",
+        "--- a/missing.txt",
+        "+++ /dev/null",
+        "",
+      ].join("\n");
+
+      expect(applyError(patchfile, String(tempdir))).toMatchObject({ code: "ENOENT", syscall: "unlink" });
+    });
   });
 
   describe("creation", () => {
@@ -179,6 +207,24 @@ describe("apply", () => {
 
       expect(await $`cat ${join(afolder, "newfile.txt")}`.cwd(tempdir).text()).toBe(files["b/newfile.txt"]);
     });
+
+    // `?` is a legal file name character on POSIX, so a patch made there can
+    // name a directory that Windows refuses to create.
+    test.skipIf(!isWindows)("in a directory Windows cannot create reports the mkdir syscall", async () => {
+      await using tempdir = tempDir("patch-test", {});
+
+      const patchfile = [
+        "diff --git a/bad?dir/new.txt b/bad?dir/new.txt",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/bad?dir/new.txt",
+        "@@ -0,0 +1 @@",
+        "+hi",
+        "",
+      ].join("\n");
+
+      expect(applyError(patchfile, String(tempdir))).toMatchObject({ code: "ENOENT", syscall: "mkdir" });
+    });
   });
 
   describe("rename", () => {
@@ -200,6 +246,14 @@ describe("apply", () => {
       expect(
         await $`if ls -d ${join(afolder, "hey.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
       ).toBe("okay!\n");
+    });
+
+    test("of a missing source reports the rename syscall", async () => {
+      await using tempdir = tempDir("patch-test", {});
+
+      const patchfile = "rename from missing.txt\nrename to renamed.txt\n";
+
+      expect(applyError(patchfile, String(tempdir))).toMatchObject({ code: "ENOENT", syscall: "rename" });
     });
 
     test("to a destination dir longer than the path buffer throws instead of crashing", async () => {

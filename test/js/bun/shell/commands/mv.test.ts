@@ -52,6 +52,25 @@ describe("mv", async () => {
     .file("file1.txt", "hello")
     .runAsTest("fails if destination folder does not exist");
 
+  // Both messages name the source because renameat() attaches it to the error.
+  // The Windows wrapper did not, so these printed "mv: No such file or
+  // directory" there. The first fails opening the source, the second fails the
+  // rename itself, which are separate error paths in the Windows wrapper.
+  TestBuilder.command`mv missing b`
+    .ensureTempDir()
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: missing: No such file or directory\n")
+    .doesNotExist("b")
+    .runAsTest("names the source when it does not exist");
+
+  TestBuilder.command`mv a missing_dir/b`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: a: No such file or directory\n")
+    .fileEquals("a", "file")
+    .runAsTest("names the source when the destination's parent does not exist");
+
   TestBuilder.command`mkdir -p foo; mkdir -p bar; echo hi > foo/inside_foo; echo hi > bar/inside_bar; mv foo bar; ls -R bar`
     .ensureTempDir()
     .stdout(str =>

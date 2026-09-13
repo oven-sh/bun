@@ -628,7 +628,10 @@ test("a file: override that several registry packages depend on is one package",
     write(join(packageDir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
   ]);
 
-  const { out } = await runBunInstall(bunEnv, packageDir);
+  // CI exports one BUN_INSTALL_CACHE_DIR for the whole file. Manifests cached here
+  // would change the order in which later tests resolve the same packages.
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+  const { out } = await runBunInstall(env, packageDir);
   expect(out).toContain(`${Object.keys(dependents).length + 1} packages installed`);
 
   const store = join(packageDir, "node_modules", ".bun");

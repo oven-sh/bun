@@ -35,7 +35,8 @@ impl JSString {
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut owner: *const JSString = self;
-        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
+        let view =
+            crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
         Ok(JSStringView {
             cell: self,
             owner: JSString::opaque_ref(owner),

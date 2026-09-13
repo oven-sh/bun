@@ -3294,6 +3294,48 @@ config:
         expect(reparsed).toEqual(value);
         expect(reparsed["\\u{10FFFF}a"]).toBe(reparsed.b);
       });
+
+      // A collection that only a getter or a Proxy trap returned is garbage as soon as the
+      // stringifier leaves it, so a later collection can be allocated at the same address.
+      describe("does not alias distinct collections that reuse the address of a collected one", () => {
+        const count = 12;
+
+        test.each([undefined, 2])("returned by getters (space: %p)", space => {
+          const plain = {};
+          const lazy = {};
+          for (let i = 0; i < count; i++) {
+            const make = () => ({ id: i, rows: [i * 10, i * 10 + 1] });
+            plain["k" + i] = make();
+            Object.defineProperty(lazy, "k" + i, {
+              enumerable: true,
+              get() {
+                if (i % 3 === 0) Bun.gc(true);
+                return make();
+              },
+            });
+          }
+
+          expect(YAML.stringify(lazy, null, space)).toBe(YAML.stringify(plain, null, space));
+        });
+
+        test.each([undefined, 2])("returned by Proxy traps (space: %p)", space => {
+          let wrapped = 0;
+          const readonly = (target: object): object =>
+            new Proxy(target, {
+              get(target, key, receiver) {
+                const value = Reflect.get(target, key, receiver);
+                if (typeof value !== "object" || value === null) return value;
+                if (++wrapped % 3 === 0) Bun.gc(true);
+                return readonly(value);
+              },
+            });
+
+          const plain = {};
+          for (let i = 0; i < count; i++) plain["r" + i] = { id: i, tags: { a: "a" + i, b: "b" + i } };
+
+          expect(YAML.stringify(readonly(plain), null, space)).toBe(YAML.stringify(plain, null, space));
+        });
+      });
     });
 
     // Edge cases and error handling

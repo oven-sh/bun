@@ -1314,6 +1314,12 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
       attempt("setMaxListeners", 20);
       attempt("listenerCount", "x");
       attempt("emit", "x");
+      // An "error" event with no listener goes to the uncaught exception handler. That path read
+      // the global object off the receiver, and a WebAssembly GC reference has none.
+      process.on("uncaughtException", e => {
+        result.uncaught = e.message;
+      });
+      result.emitError = process.emit.call(ref, "error", new Error("boom"));
       console.log(JSON.stringify(result));
     `;
     await using proc = Bun.spawn({
@@ -1333,7 +1339,43 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
       setMaxListeners: "TypeError",
       listenerCount: 0,
       emit: false,
+      uncaught: "boom",
+      emitError: false,
     });
     expect(exitCode).toBe(0);
+  });
+
+  // In a subprocess because a collected emitter is a use after free. A method that only reads runs
+  // on an emitter that nothing else references, and the event name conversion can run user code.
+  test("the emitter of a reading method survives a collection during the call", async () => {
+    const src = `
+      let wrong = 0;
+      for (let i = 0; i < 20; i++) {
+        const keep = [];
+        const count = process.listenerCount.call({}, {
+          toString() {
+            Bun.gc(true);
+            // Emitters with listeners, to take the memory of a collected one.
+            for (let j = 0; j < 50; j++) {
+              const other = {};
+              process.on.call(other, "x", () => {});
+              process.on.call(other, "x", () => {});
+              keep.push(other);
+            }
+            return "x";
+          },
+        });
+        if (count !== 0) wrong++;
+      }
+      console.log(wrong);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
   });
 });

@@ -924,15 +924,22 @@ console.log("survived", require("./late.js"));`,
   });
 
   // In Node, `cache` and `extensions` are own data properties of each require function. Here they
-  // are accessors on the prototype that every require function shares, and an assignment shadows
-  // the accessor with an own data property on `this`. The setters used to write that property
-  // directly, which skipped the receiver's own [[DefineOwnProperty]]: a frozen object gained a
-  // property, a Proxy saw no trap, and a WebAssembly GC reference aborted the process.
+  // live on the prototype that every require function shares, and an assignment shadows them on the
+  // receiver. They were accessors whose setter wrote the value onto any receiver directly: a frozen
+  // require function gained the property, a Proxy receiver saw no trap, and a WebAssembly GC
+  // reference as the receiver aborted the process.
   describe.each(["cache", "extensions"])("assigning require.%s", key => {
-    const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), key);
+    const prototype = Object.getPrototypeOf(require);
     const dataProperty = value => ({ value, writable: true, enumerable: true, configurable: true });
 
-    test("shadows the accessor on that require function only", () => {
+    test("the descriptor has the value and no accessor functions", () => {
+      // Not toEqual on the whole descriptor: a failure would print all of require.cache.
+      const { value, ...rest } = Object.getOwnPropertyDescriptor(prototype, key);
+      expect(rest).toEqual({ writable: true, enumerable: true, configurable: true });
+      expect(value === require[key]).toBe(true);
+    });
+
+    test("shadows the value on that require function only", () => {
       const assigned = createRequire(import.meta.url);
       const value = {};
       assigned[key] = value;
@@ -944,7 +951,7 @@ console.log("survived", require("./late.js"));`,
     test("a receiver that is not extensible rejects the property", () => {
       for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
         const receiver = lock({});
-        expect(() => set.call(receiver, 1)).toThrow(TypeError);
+        expect(Reflect.set(prototype, key, 1, receiver)).toBe(false);
         expect(Reflect.ownKeys(receiver)).toEqual([]);
 
         const locked = lock(createRequire(import.meta.url));
@@ -966,16 +973,16 @@ console.log("survived", require("./late.js"));`,
           return Reflect.defineProperty(target, key, descriptor);
         },
       });
-      set.call(proxy, 1);
+      expect(Reflect.set(prototype, key, 1, proxy)).toBe(true);
       expect(calls).toEqual([[key, dataProperty(1)]]);
       expect(target).toEqual({ [key]: 1 });
 
       const refusing = new Proxy({}, { defineProperty: () => false });
-      expect(() => set.call(refusing, 1)).toThrow(TypeError);
+      expect(Reflect.set(prototype, key, 1, refusing)).toBe(false);
     });
 
     // In a subprocess because this aborted the process.
-    test("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
+    test("a WebAssembly GC reference as the receiver is left alone", async () => {
       const src = `
         // (module (type $s (struct (field (mut i32))))
         //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
@@ -987,13 +994,7 @@ console.log("survived", require("./late.js"));`,
           0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
         ]);
         const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
-        const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), ${JSON.stringify(key)});
-        try {
-          set.call(ref, 1);
-          console.log("no error");
-        } catch (e) {
-          console.log(e.constructor.name);
-        }
+        console.log(Reflect.set(Object.getPrototypeOf(require), ${JSON.stringify(key)}, 1, ref));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -1002,7 +1003,7 @@ console.log("survived", require("./late.js"));`,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
     });
   });
 

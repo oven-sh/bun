@@ -32,6 +32,8 @@ public:
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
         }
 
+        // `operation` runs user code (toString of the event name), and nothing else references a DefineEvents::No emitter.
+        JSC::EnsureStillAliveScope keepEmitterAlive(thisObject);
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }
 };

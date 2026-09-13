@@ -1,7 +1,8 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { sep } from "node:path";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1223,3 +1224,64 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(exitCode).toBe(0);
   },
 );
+
+// The `stack` of `new WebAssembly.Exception(tag, payload, { traceStack: true })` is the stack of an Error created at
+// that point: V8-style, source-mapped, and passed through Error.prepareStackTrace.
+describe("WebAssembly.Exception with traceStack", () => {
+  const tag = new WebAssembly.Tag({ parameters: [] });
+  // Both on one line, so only the column of the first frame differs.
+  // prettier-ignore
+  function createBoth() { return [new WebAssembly.Exception(tag, [], { traceStack: true }), new Error()]; }
+
+  test("stack is formatted and source-mapped like the stack of an Error", () => {
+    const [exception, error] = createBoth();
+    const withoutFirstColumn = stack => stack.replace(/:\d+\)$/m, ")");
+    expect(exception.stack).toStartWith(`Error\n    at createBoth (${import.meta.path}:`);
+    expect(withoutFirstColumn(exception.stack)).toBe(withoutFirstColumn(error.stack));
+  });
+
+  test("stack goes through Error.prepareStackTrace", () => {
+    Error.prepareStackTrace = (_, callSites) => callSites;
+    const [exception, error] = createBoth();
+    const summarize = callSites =>
+      callSites.map(site => [site.getFunctionName(), site.getFileName(), site.getLineNumber()]);
+    expect(summarize(exception.stack)).toEqual(summarize(error.stack));
+    expect(summarize(exception.stack)[0]).toEqual(["createBoth", import.meta.path, expect.any(Number)]);
+  });
+
+  test("stack stays a getter on the prototype", () => {
+    const [exception] = createBoth();
+    expect(Reflect.ownKeys(exception)).toEqual([]);
+    expect(Object.getOwnPropertyDescriptor(WebAssembly.Exception.prototype, "stack").get).toBeFunction();
+    expect(new WebAssembly.Exception(tag, []).stack).toBeUndefined();
+  });
+
+  test("positions are those of the source file, not of the transpiled file", async () => {
+    using dir = tempDir("wasm-exception-stack", {
+      "thrower.ts": `// line 1
+// line 2
+type Erased = { erased: true };
+function thrower(): WebAssembly.Exception {
+  const tag = new WebAssembly.Tag({ parameters: [] });
+  return new WebAssembly.Exception(tag, [], { traceStack: true });
+}
+console.log(thrower().stack);
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "thrower.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.replaceAll(String(dir) + sep, "").replace(/:(\d+):\d+/g, ":$1")).toMatchInlineSnapshot(`
+      "Error
+          at thrower (thrower.ts:6)
+          at thrower.ts:8
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
+});

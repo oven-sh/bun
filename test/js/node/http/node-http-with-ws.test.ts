@@ -259,16 +259,23 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     ["a fresh caller cork", "fresh"],
     ["a caller cork below the dispatcher cork", "below-dispatcher"],
     ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
+    ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
     let serverSocket!: Socket;
+    let suppressedCork: Socket["cork"] | undefined;
     const server = http.createServer((_req, res) => res.end("ok"));
     server.on("connection", socket => {
       serverSocket = socket;
       if (mode !== "replaced-dispatcher") socket.cork();
+      if (mode === "suppressed-dispatcher") {
+        suppressedCork = socket.cork;
+        socket.cork = () => {};
+      }
     });
     const wss = new NpmWebSocketServer({ noServer: true });
     const upgraded = Promise.withResolvers<void>();
     server.on("upgrade", (req, socket, head) => {
+      if (suppressedCork) socket.cork = suppressedCork;
       try {
         wss.handleUpgrade(req, socket, head, ws => {
           ws.send("pending");

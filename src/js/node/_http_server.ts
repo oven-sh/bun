@@ -1559,8 +1559,10 @@ function getNodeHTTPServerSocket() {
     }
     [kCorkForDispatcher]() {
       if (this[kDispatcherCorkDepth] !== 0) return;
+      const corkedBefore = this.writableCorked;
       this.cork();
-      this[kDispatcherCorkDepth] = this.writableCorked;
+      const corkedAfter = this.writableCorked;
+      if (corkedAfter > corkedBefore) this[kDispatcherCorkDepth] = corkedAfter;
     }
     [kReleaseDispatcherCork]() {
       if (this[kDispatcherCorkDepth] === 0) return;

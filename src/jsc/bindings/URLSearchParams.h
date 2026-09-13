@@ -46,9 +46,9 @@ public:
         return adoptRef(*new URLSearchParams(string, associatedURL));
     }
 
-    // append and set throw when the params belong to a URL, and the URL does not fit in a String with the new pair.
+    // append, remove, set and sort throw when the params belong to a URL that does not fit in a String with the change.
     ExceptionOr<void> append(const String& name, const String& value);
-    void remove(const StringView name, const String& value = {});
+    ExceptionOr<void> remove(const StringView name, const String& value = {});
     String get(const StringView name) const;
     Vector<String> getAll(const StringView name) const;
     bool has(const StringView name, const String& value = {}) const;
@@ -56,7 +56,7 @@ public:
     // Throws when the result does not fit in a String.
     ExceptionOr<String> toString() const;
     void updateFromAssociatedURL();
-    void sort();
+    ExceptionOr<void> sort();
     size_t size() const { return m_pairs.size(); }
     size_t memoryCost() const;
 
@@ -76,8 +76,7 @@ private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
     URLSearchParams(const String&, DOMURL*);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
-    // addedLength is at least what the change adds to toString().
-    ExceptionOr<void> updateURL(uint64_t addedLength = 0);
+    template<typename Change> ExceptionOr<void> changePairs(uint64_t addedLength, const Change&);
 
     WeakPtr<DOMURL> m_associatedURL;
     Vector<KeyValuePair<String, String>> m_pairs;

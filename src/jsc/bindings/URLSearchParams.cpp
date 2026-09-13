@@ -101,61 +101,70 @@ bool URLSearchParams::has(const StringView name, const String& value) const
     return false;
 }
 
-void URLSearchParams::sort()
+// Applies the change and tells the URL. If the URL cannot take it, which needs gigabytes, the pairs go back to what they were.
+template<typename Change>
+ExceptionOr<void> URLSearchParams::changePairs(uint64_t addedLength, const Change& change)
 {
-    std::stable_sort(m_pairs.begin(), m_pairs.end(), [](const auto& a, const auto& b) {
-        return WTF::codePointCompareLessThan(a.key, b.key);
+    std::optional<Vector<KeyValuePair<String, String>>> pairsBefore;
+    if (m_associatedURL && !m_associatedURL->canDeferSearchParamsUpdate(addedLength)) [[unlikely]]
+        pairsBefore = m_pairs;
+    change();
+    if (!m_associatedURL)
+        return {};
+    auto result = m_associatedURL->searchParamsDidChange(addedLength);
+    if (result.hasException()) [[unlikely]] {
+        ASSERT(pairsBefore);
+        m_pairs = WTF::move(*pairsBefore);
+    }
+    return result;
+}
+
+ExceptionOr<void> URLSearchParams::sort()
+{
+    auto result = changePairs(0, [&] {
+        std::stable_sort(m_pairs.begin(), m_pairs.end(), [](const auto& a, const auto& b) {
+            return WTF::codePointCompareLessThan(a.key, b.key);
+        });
     });
-    updateURL();
-    needsSorting = false;
+    if (!result.hasException())
+        needsSorting = false;
+    return result;
 }
 
 ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)
 {
-    uint64_t addedLength = serializedLengthBound(name) + serializedLengthBound(value) + 2;
-    // updateURL() only fails for a URL of gigabytes. The pairs are kept to put them back then.
-    std::optional<Vector<KeyValuePair<String, String>>> pairsBefore;
-    if (m_associatedURL && !m_associatedURL->canDeferSearchParamsUpdate(addedLength)) [[unlikely]]
-        pairsBefore = m_pairs;
-    auto update = [&]() -> ExceptionOr<void> {
-        auto result = updateURL(addedLength);
-        if (result.hasException()) [[unlikely]] {
-            ASSERT(pairsBefore);
-            m_pairs = WTF::move(*pairsBefore);
-        } else
-            needsSorting = true;
-        return result;
-    };
-    for (auto& pair : m_pairs) {
-        if (pair.key != name)
-            continue;
-        if (pair.value != value)
-            pair.value = value;
-        bool skippedFirstMatch = false;
-        m_pairs.removeAllMatching([&](const auto& pair) {
-            if (pair.key == name) {
-                if (skippedFirstMatch)
-                    return true;
-                skippedFirstMatch = true;
-            }
-            return false;
-        });
-        return update();
-    }
-    m_pairs.append({ name, value });
-    return update();
+    auto result = changePairs(serializedLengthBound(name) + serializedLengthBound(value) + 2, [&] {
+        for (auto& pair : m_pairs) {
+            if (pair.key != name)
+                continue;
+            if (pair.value != value)
+                pair.value = value;
+            bool skippedFirstMatch = false;
+            m_pairs.removeAllMatching([&](const auto& pair) {
+                if (pair.key == name) {
+                    if (skippedFirstMatch)
+                        return true;
+                    skippedFirstMatch = true;
+                }
+                return false;
+            });
+            return;
+        }
+        m_pairs.append({ name, value });
+    });
+    if (!result.hasException())
+        needsSorting = true;
+    return result;
 }
 
 ExceptionOr<void> URLSearchParams::append(const String& name, const String& value)
 {
-    m_pairs.append({ name, value });
-    auto result = updateURL(serializedLengthBound(name) + serializedLengthBound(value) + 2);
-    if (result.hasException()) [[unlikely]] {
-        m_pairs.removeLast();
-        return result;
-    }
-    needsSorting = true;
-    return {};
+    auto result = changePairs(serializedLengthBound(name) + serializedLengthBound(value) + 2, [&] {
+        m_pairs.append({ name, value });
+    });
+    if (!result.hasException())
+        needsSorting = true;
+    return result;
 }
 
 Vector<String> URLSearchParams::getAll(const StringView name) const
@@ -170,13 +179,16 @@ Vector<String> URLSearchParams::getAll(const StringView name) const
     return values;
 }
 
-void URLSearchParams::remove(const StringView name, const String& value)
+ExceptionOr<void> URLSearchParams::remove(const StringView name, const String& value)
 {
-    m_pairs.removeAllMatching([&](const auto& pair) {
-        return pair.key == name && (value.isNull() || pair.value == value);
+    auto result = changePairs(0, [&] {
+        m_pairs.removeAllMatching([&](const auto& pair) {
+            return pair.key == name && (value.isNull() || pair.value == value);
+        });
     });
-    updateURL();
-    needsSorting = true;
+    if (!result.hasException())
+        needsSorting = true;
+    return result;
 }
 
 ExceptionOr<String> URLSearchParams::toString() const
@@ -185,13 +197,6 @@ ExceptionOr<String> URLSearchParams::toString() const
     if (!serialized) [[unlikely]]
         return Exception { OutOfMemoryError };
     return WTF::move(*serialized);
-}
-
-ExceptionOr<void> URLSearchParams::updateURL(uint64_t addedLength)
-{
-    if (!m_associatedURL)
-        return {};
-    return m_associatedURL->searchParamsDidChange(addedLength);
 }
 
 void URLSearchParams::updateFromAssociatedURL()

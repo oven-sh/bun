@@ -224,13 +224,16 @@ bool DOMURL::canDeferSearchParamsUpdate(uint64_t addedLength) const
 
 ExceptionOr<void> DOMURL::searchParamsDidChange(uint64_t addedLength)
 {
-    m_searchParamsDirty = true;
+    bool wasDirty = std::exchange(m_searchParamsDirty, true);
     if (canDeferSearchParamsUpdate(addedLength)) [[likely]] {
         m_pendingSearchParamsLength += addedLength;
         return {};
     }
-    if (!flushPendingSearchParamsUpdate())
+    if (!flushPendingSearchParamsUpdate()) [[unlikely]] {
+        // URLSearchParams puts its pairs back, so the URL is as much behind them as it was.
+        m_searchParamsDirty = wasDirty;
         return Exception { OutOfMemoryError };
+    }
     return {};
 }
 

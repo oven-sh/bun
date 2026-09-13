@@ -879,13 +879,31 @@ describe("a URL that does not fit in a string", () => {
       params.sort();
       expect(url.href).toBe("http://a/?a=2&x=1#f");
 
-      // A query that the URL keeps as it is can be 3 times as long once the params serialize it.
-      const parentheses = new URL("http://a/?" + repeated(400_000, "("));
+      // A query that the URL keeps as it is can be 3 times as long once the params serialize it. Then no change fits,
+      // not even one that removes a pair.
+      const parentheses = new URL("http://a/?z=1&" + repeated(400_000, "(") + "&x=1");
       expect({
         append: outcome(() => parentheses.searchParams.append("a", "b")),
-        size: parentheses.searchParams.size,
+        delete: outcome(() => parentheses.searchParams.delete("x")),
+        sort: outcome(() => parentheses.searchParams.sort()),
+        keys: [...parentheses.searchParams.keys()].map(key => (key.length > 1 ? key.length : key)),
         hrefLength: parentheses.href.length,
-      }).toEqual({ append: outOfMemory, size: 1, hrefLength: "http://a/?".length + 400_000 });
+        hrefEnd: parentheses.href.slice(-5),
+      }).toEqual({
+        append: outOfMemory,
+        delete: outOfMemory,
+        sort: outOfMemory,
+        keys: ["z", 400_000, "x"],
+        hrefLength: "http://a/?z=1&&x=1".length + 400_000,
+        hrefEnd: "(&x=1",
+      });
+
+      // A change that throws does not make the URL serialize the pairs it had. "(" would become "%28=".
+      const parenthesis = new URL("http://a/?(");
+      expect({
+        append: outcome(() => parenthesis.searchParams.append("a", tooLong)),
+        href: parenthesis.href,
+      }).toEqual({ append: outOfMemory, href: "http://a/?(" });
     });
   });
 

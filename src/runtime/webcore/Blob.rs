@@ -5204,16 +5204,18 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
+    // A caller-owned fd keeps the old best-effort resize: only a file Bun
+    // opened itself rejects when the old tail cannot be cut.
     if truncate
         && let Err(err) =
             bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))
+        && NEEDS_OPEN
     {
-        let err_js = if !NEEDS_OPEN {
-            err.to_js(global_this)
-        } else {
-            err.with_path(pathlike.path().slice()).to_js(global_this)
-        };
-        return JSPromise::rejected_promise(global_this, err_js).to_js();
+        return JSPromise::rejected_promise(
+            global_this,
+            err.with_path(pathlike.path().slice()).to_js(global_this),
+        )
+        .to_js();
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
@@ -5288,16 +5290,18 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
+    // A caller-owned fd keeps the old best-effort resize: only a file Bun
+    // opened itself rejects when the old tail cannot be cut.
     if truncate
         && let Err(err) =
             bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))
+        && NEEDS_OPEN
     {
-        let err_js = if !NEEDS_OPEN {
-            err.to_js(global_this)
-        } else {
-            err.with_path(pathlike.path().slice()).to_js(global_this)
-        };
-        return JSPromise::rejected_promise(global_this, err_js).to_js();
+        return JSPromise::rejected_promise(
+            global_this,
+            err.with_path(pathlike.path().slice()).to_js(global_this),
+        )
+        .to_js();
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))

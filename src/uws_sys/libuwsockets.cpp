@@ -62,6 +62,14 @@ extern "C"
     }
   }
 
+  int uws_app_set_secure_context(int ssl, uws_app_t *app, struct us_bun_socket_context_options_t options)
+  {
+    if (!ssl) return 0;
+    uWS::SocketContextOptions socket_context_options;
+    memcpy(&socket_context_options, &options, sizeof(uWS::SocketContextOptions));
+    return ((uWS::SSLApp *)app)->setSecureContext(socket_context_options);
+  }
+
   void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);

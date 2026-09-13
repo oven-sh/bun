@@ -9,6 +9,7 @@ use crate::bake::dev_server::DevServer;
 use crate::bake::framework_router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
+use crate::socket::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -1504,6 +1505,42 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         self.on_reload(global, callframe)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_set_node_https_secure_context(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if !SSL {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot set a TLS context on a non-TLS server",
+            )));
+        }
+        let options = callframe
+            .arguments()
+            .first()
+            .copied()
+            .ok_or_else(|| global.throw_not_enough_arguments("setSecureContext", 1, 0))?;
+        let Some(config) = SSLConfig::from_js(global.bun_vm_ref(), global, options)? else {
+            return Err(global
+                .throw_invalid_arguments(format_args!("setSecureContext requires TLS options",)));
+        };
+        let native_options = config.as_usockets();
+        let Some(app) = self.app else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot set a TLS context after the server has stopped",
+            )));
+        };
+        // SAFETY: app is the live SSL NewApp owned by this running server.
+        if !bun_opaque::opaque_deref_mut(app).set_secure_context(&native_options) {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Failed to set the TLS context",))
+            );
+        }
+        self.config.ssl_config = Some(config);
+        Ok(JSValue::UNDEFINED)
     }
 
     /// `pub const doFetch = onFetch`

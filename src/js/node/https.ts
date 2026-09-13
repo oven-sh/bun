@@ -8,6 +8,7 @@ const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
+const { setSecureContextSymbol } = require("internal/http");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
@@ -520,6 +521,7 @@ function createServer(options, requestListener) {
     require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
   }
   server.ALPNCallback = options.ALPNCallback;
+  server.setSecureContext = server[setSecureContextSymbol];
   return server;
 }
 

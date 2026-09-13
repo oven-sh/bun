@@ -7166,7 +7166,6 @@ impl NodeFS {
         }
 
         let mut buf = args.data.slice();
-        #[cfg(not(windows))]
         let mut written: usize = 0;
 
         // Attempt to pre-allocate large files
@@ -7217,10 +7216,7 @@ impl NodeFS {
                 }
                 Ok(amt) => {
                     buf = &buf[amt..];
-                    #[cfg(not(windows))]
-                    {
-                        written += amt;
-                    }
+                    written += amt;
                     if amt == 0 {
                         break;
                     }
@@ -7233,22 +7229,16 @@ impl NodeFS {
         // Resize only when the flags asked to truncate (the open above dropped
         // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
         // descriptor it was handed.
-        if (args.flag.as_int() & sys::O::TRUNC) != 0
-            && matches!(args.file, PathOrFileDescriptor::Path(_))
+        let mut truncate_err: Option<sys::Error> = None;
+        if let PathOrFileDescriptor::Path(p) = &args.file
+            && (args.flag.as_int() & sys::O::TRUNC) != 0
+            && let Err(err) =
+                sys::ftruncate_after_write(fd, (written as u64 & ((1u64 << 63) - 1)) as i64)
         {
-            // If this errors, we silently ignore it.
-            // Not all files are seekable (and thus, not all files can be truncated).
-            #[cfg(windows)]
-            {
-                let _ = unsafe { windows::SetEndOfFile(fd.native()) };
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
-            }
+            truncate_err = Some(err.with_path(p.slice()));
         }
 
-        if let Some(err) = write_err {
+        if let Some(err) = write_err.or(truncate_err) {
             return Err(err);
         }
 

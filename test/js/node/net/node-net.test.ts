@@ -3130,3 +3130,42 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// `_onTimeout` suppresses the idle timeout whenever `_pendingData` is set, so a
+// timeout never fires in the middle of a write. But `_write()` populates
+// `_pendingData` precisely while the socket is still connecting — those bytes
+// are queued FOR after the handshake, not a write in flight — and `this[kTimeout]`
+// is one-shot with no refresh on the suppression path, so the connect-phase
+// timeout was dropped permanently rather than deferred. node fires it.
+// TEST-NET-1 (RFC 5737) drops packets rather than refusing them, so the socket
+// stays in `connecting` for the whole test.
+describe("socket.setTimeout() while the socket is still connecting", () => {
+  const NON_ROUTABLE = "192.0.2.1";
+  const IDLE = 100;
+
+  async function whenTimeoutFires(queueAWriteBeforeConnect: boolean) {
+    const socket = connect({ host: NON_ROUTABLE, port: 80 });
+    socket.setTimeout(IDLE);
+    socket.on("error", () => {});
+    if (queueAWriteBeforeConnect) socket.write("GET / HTTP/1.1\r\nHost: example\r\n\r\n");
+    try {
+      const outcome = await Promise.race([
+        once(socket, "timeout").then(() => "timeout"),
+        Bun.sleep(IDLE * 20).then(() => `no timeout within ${IDLE * 20}ms`),
+      ]);
+      // Asserting it was still connecting is what makes this a connect-phase
+      // test: a handshake that somehow completed would exercise the idle path.
+      return { outcome, stillConnecting: socket.connecting };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  it("fires when no write is queued", async () => {
+    expect(await whenTimeoutFires(false)).toEqual({ outcome: "timeout", stillConnecting: true });
+  });
+
+  it("fires when a write was queued before the handshake completed", async () => {
+    expect(await whenTimeoutFires(true)).toEqual({ outcome: "timeout", stillConnecting: true });
+  });
+});

@@ -42,6 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
+const { lookupListenAddress } = require("internal/net/server");
 const {
   kArmHandshakeTimeout,
   kDestroyOnRead,
@@ -3686,6 +3687,71 @@ Server.prototype.getConnections = function getConnections(callback) {
   return this;
 };
 
+function startServerListen(
+  server,
+  queryAddress,
+  queryPort,
+  queryAddressType,
+  backlog,
+  fd,
+  exclusive,
+  ipv6Only,
+  reusePort,
+  readableAll,
+  writableAll,
+  flags,
+  path,
+  hostname,
+  onListen,
+  errorHostname,
+  errorPort,
+) {
+  try {
+    let tls;
+    let TLSSocketClass;
+    const bunTLS = server[bunTlsSymbol];
+    const options = server[bunSocketServerOptions];
+    let contexts: Map<string, any> | null = null;
+    if (typeof bunTLS === "function") {
+      [tls, TLSSocketClass] = bunTLS.$call(server, errorPort, errorHostname, false);
+      options.servername = tls.serverName;
+      options[kSocketClass] = TLSSocketClass;
+      contexts = tls.contexts;
+      if (!tls.requestCert) tls.rejectUnauthorized = false;
+    } else {
+      options[kSocketClass] = Socket;
+    }
+
+    listenInCluster(
+      server,
+      queryAddress,
+      queryPort,
+      queryAddressType,
+      backlog,
+      fd,
+      exclusive,
+      ipv6Only,
+      reusePort,
+      readableAll,
+      writableAll,
+      flags,
+      undefined,
+      path,
+      hostname,
+      tls,
+      contexts,
+      onListen,
+    );
+  } catch (err) {
+    const isUnix = path != null;
+    process.nextTick(
+      emitErrorNextTick,
+      server,
+      formatListenError(err, isUnix ? path : errorHostname, isUnix ? undefined : errorPort),
+    );
+  }
+}
+
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
   if (typeof port === "string") {
@@ -3848,41 +3914,56 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     this.once("listening", onListen);
   }
 
-  try {
-    var tls = undefined;
-    var TLSSocketClass = undefined;
-    const bunTLS = this[bunTlsSymbol];
-    const options = this[bunSocketServerOptions];
-    let contexts: Map<string, any> | null = null;
-    if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
-      options.servername = tls.serverName;
-      options[kSocketClass] = TLSSocketClass;
-      contexts = tls.contexts;
-      if (!tls.requestCert) {
-        tls.rejectUnauthorized = false;
-      }
-    } else {
-      options[kSocketClass] = Socket;
-    }
+  const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
+  let queryAddress = null;
+  let queryPort = port;
+  let queryAddressType = 4;
+  if (path) {
+    queryAddress = path;
+    queryPort = -1;
+    queryAddressType = -1;
+  } else if (typeof fd === "number" && fd >= 0) {
+    queryPort = null;
+    queryAddressType = null;
+  } else if (typeof clusterHost === "string") {
+    queryAddress = clusterHost;
+    queryAddressType = isIP(clusterHost) || 4;
+  }
 
-    const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
-    let queryAddress = null;
-    let queryPort = port;
-    let queryAddressType = 4;
-    if (path) {
-      queryAddress = path;
-      queryPort = -1;
-      queryAddressType = -1;
-    } else if (typeof fd === "number" && fd >= 0) {
-      queryPort = null;
-      queryAddressType = null;
-    } else if (typeof clusterHost === "string") {
-      queryAddress = clusterHost;
-      queryAddressType = isIP(clusterHost) || 4;
+  if (clusterHost && !path && fd === undefined && typeof queryPort === "number" && queryPort >= 0) {
+    const listeningId = (this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1);
+    try {
+      lookupListenAddress(clusterHost, (err, address, addressType) => {
+        if (listeningId !== this[kClusterListeningId]) return;
+        if (err) {
+          this.emit("error", err);
+          return;
+        }
+        startServerListen(
+          this,
+          address,
+          queryPort,
+          addressType,
+          backlog,
+          fd,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          flags,
+          path,
+          address,
+          onListen,
+          clusterHost,
+          port,
+        );
+      });
+    } catch (err) {
+      process.nextTick(emitErrorNextTick, this, formatListenError(err, clusterHost, port));
     }
-
-    listenInCluster(
+  } else {
+    startServerListen(
       this,
       queryAddress,
       queryPort,
@@ -3895,19 +3976,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       readableAll,
       writableAll,
       flags,
-      undefined,
       path,
       hostname,
-      tls,
-      contexts,
       onListen,
-    );
-  } catch (err) {
-    const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+      hostname,
+      port,
     );
   }
   return this;
@@ -4090,48 +4163,6 @@ function listenInCluster(
   // A worker's first require of node:cluster runs its bootstrap (IPC handlers, 'online'); listen() has always been one
   // of the places that happens, exclusive or not.
   if (!isPrimary && cluster === undefined) cluster = require("node:cluster");
-
-  if (
-    !isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
 
   if (isPrimary || exclusive) {
     server[kRealListen](

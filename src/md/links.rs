@@ -86,7 +86,9 @@ enum BracketLookup {
 /// the rest of the slice for every opener — that rescan is quadratic on
 /// inputs like `"[".repeat(n)`. The backing vec is recycled through
 /// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
-pub(crate) struct BracketMatches {
+pub(crate) struct BracketMatches<'a> {
+    /// The slice the map was built for: the block's whole inline content.
+    pub(crate) block: &'a [u8],
     /// `(open, close)` position of every `[` seen outside code spans, HTML
     /// tags/autolinks and backslash escapes, ordered by `open`.
     /// `close == UNMATCHED` marks an opener with no matching `]`.
@@ -96,7 +98,7 @@ pub(crate) struct BracketMatches {
     no_closers: bool,
 }
 
-impl BracketMatches {
+impl BracketMatches<'_> {
     const UNMATCHED: OFF = OFF::MAX;
 
     /// Hand the backing storage back for reuse by the next inline slice.
@@ -133,11 +135,11 @@ impl Parser<'_> {
     /// same tokenization as the matching scan (code spans, HTML tags,
     /// autolinks and backslash escapes hide brackets). `storage` is the
     /// recycled backing vec from `Parser.bracket_pairs`.
-    pub(crate) fn compute_bracket_matches(
+    pub(crate) fn compute_bracket_matches<'a>(
         &self,
-        content: &[u8],
+        content: &'a [u8],
         mut storage: Vec<(OFF, OFF)>,
-    ) -> BracketMatches {
+    ) -> BracketMatches<'a> {
         storage.clear();
         debug_assert!(content.len() <= OFF::MAX as usize);
 
@@ -145,12 +147,14 @@ impl Parser<'_> {
         // opener is trivially unmatched (e.g. "[".repeat(n)) — skip the walk.
         if bun_core::strings::index_of_char(content, b'[').is_none() {
             return BracketMatches {
+                block: content,
                 pairs: storage,
                 no_closers: false,
             };
         }
         if bun_core::strings::index_of_char(content, b']').is_none() {
             return BracketMatches {
+                block: content,
                 pairs: storage,
                 no_closers: true,
             };
@@ -174,7 +178,9 @@ impl Parser<'_> {
                 // Code spans take precedence over brackets (CommonMark §6.3)
                 b'`' => {
                     let count = inlines::count_backticks(content, pos);
-                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count, 0) {
+                    if let Some(end_pos) =
+                        self.find_code_span_end(content, pos + count, count, 0, content)
+                    {
                         pos = end_pos + count;
                     } else {
                         pos += count;
@@ -221,6 +227,7 @@ impl Parser<'_> {
         }
 
         BracketMatches {
+            block: content,
             pairs: storage,
             no_closers: false,
         }
@@ -234,7 +241,7 @@ impl Parser<'_> {
         &self,
         content: &[u8],
         start: usize,
-        brackets: &BracketMatches,
+        brackets: &BracketMatches<'_>,
         base: usize,
     ) -> Option<BracketScan> {
         match brackets.get(base + start) {
@@ -245,14 +252,20 @@ impl Parser<'_> {
                 })
             }
             BracketLookup::Unmatched => None,
-            _ => self.scan_bracket_close(content, start, base),
+            _ => self.scan_bracket_close(content, start, base, brackets.block),
         }
     }
 
     /// Forward scan for the `]` matching the `[` at `start`, skipping code
     /// spans, HTML tags/autolinks and backslash escapes. Only used when the
     /// opener is missing from the precomputed bracket map.
-    fn scan_bracket_close(&self, content: &[u8], start: usize, base: usize) -> Option<BracketScan> {
+    fn scan_bracket_close(
+        &self,
+        content: &[u8],
+        start: usize,
+        base: usize,
+        block: &[u8],
+    ) -> Option<BracketScan> {
         let mut pos = start + 1;
         let mut bracket_depth: u32 = 1;
         let mut has_inner_bracket = false;
@@ -264,7 +277,9 @@ impl Parser<'_> {
             // Skip code spans — they take precedence over brackets (CommonMark §6.3)
             if content[pos] == b'`' {
                 let count = inlines::count_backticks(content, pos);
-                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count, base) {
+                if let Some(end_pos) =
+                    self.find_code_span_end(content, pos + count, count, base, block)
+                {
                     pos = end_pos + count;
                 } else {
                     pos += count;
@@ -344,7 +359,7 @@ impl Parser<'_> {
         content: &[u8],
         start: usize,
         is_image: bool,
-        brackets: &BracketMatches,
+        brackets: &BracketMatches<'_>,
         base: usize,
     ) -> Result<Option<LabelParse>, parser::Error> {
         // start points at '['
@@ -603,7 +618,7 @@ impl Parser<'_> {
         &mut self,
         content: &[u8],
         start: usize,
-        brackets: &BracketMatches,
+        brackets: &BracketMatches<'_>,
         base: usize,
     ) -> BracketLinkMatch {
         let Some(bracket) = self.match_bracket(content, start, brackets, base) else {
@@ -794,7 +809,7 @@ impl Parser<'_> {
     pub(crate) fn label_contains_link(
         &mut self,
         label: &[u8],
-        brackets: &BracketMatches,
+        brackets: &BracketMatches<'_>,
         base: usize,
     ) -> bool {
         let mut pos: usize = 0;
@@ -806,7 +821,9 @@ impl Parser<'_> {
             // Skip code spans
             if label[pos] == b'`' {
                 let count = inlines::count_backticks(label, pos);
-                if let Some(end_pos) = self.find_code_span_end(label, pos + count, count, base) {
+                if let Some(end_pos) =
+                    self.find_code_span_end(label, pos + count, count, base, brackets.block)
+                {
                     pos = end_pos + count;
                 } else {
                     // No closer: skip the whole run so it isn't re-counted per

@@ -10019,10 +10019,10 @@ impl LowerUsingDeclarationsContext {
                     continue;
                 }
                 js_ast::StmtData::SClass(mut c) => {
-                    // An export can't go in try/catch. A class whose definition runs code
-                    // (`extends`, computed keys, static blocks) can't move out of it either.
-                    let runs_code = c.class.extends.is_some()
-                        || c.class.properties.slice().iter().any(|property| {
+                    // An export can't go in try/catch. A class with static blocks or computed
+                    // keys (every class with lowered decorators) reads what is declared there.
+                    let runs_code = c.is_export
+                        && c.class.properties.slice().iter().any(|property| {
                             property.kind == js_ast::g::PropertyKind::ClassStaticBlock
                                 || property.flags.contains(js_ast::flags::Property::IsComputed)
                         });

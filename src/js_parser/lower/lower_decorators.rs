@@ -40,22 +40,25 @@ type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
     temps: Option<Stmt>,
-    /// Evaluates the class decorator list, before the class.
-    before: Option<Expr>,
-    /// What the class decorators returned, and the call that runs their
-    /// extra initializers once the class is bound to its name.
-    decorated: Option<(Ref, Expr)>,
+    class_decorators: Option<ClassDecorators>,
+}
+
+struct ClassDecorators {
+    /// Evaluates the decorator list, before the class.
+    evaluate: Expr,
+    /// What the decorators returned.
+    decorated: Ref,
+    /// Runs their extra initializers, once the class is bound to its name.
+    run_extra_initializers: Expr,
 }
 
 /// How an instance field names an anonymous function it is initialized with.
 #[derive(Clone, Copy)]
 enum FieldName {
-    /// A string or number key.
+    /// A string or number key, or `"#name"` for a private one.
     Key(Expr),
     /// The temporary that holds a computed key.
     Computed(Expr),
-    /// `"#name"`
-    Private(Expr),
     Unknown,
 }
 
@@ -647,33 +650,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
         out.extend(lowered.temps);
-        if let Some(before) = lowered.before {
-            out.push(self.s(
-                S::SExpr {
-                    value: before,
-                    ..Default::default()
-                },
-                stmt.loc,
-            ));
-        }
+        let Some(decorators) = lowered.class_decorators else {
+            out.push(stmt);
+            return;
+        };
+        let name = s_class
+            .class
+            .class_name
+            .expect("a class statement has a name");
+        let decorated = self.use_ref(decorators.decorated, name.loc);
+        let rebind = self.assign_to(name.ref_, decorated, name.loc);
+        out.push(self.expr_stmt(decorators.evaluate, stmt.loc));
         out.push(stmt);
-        if let Some((decorated, run_extra_initializers)) = lowered.decorated {
-            let name = s_class
-                .class
-                .class_name
-                .expect("a class statement has a name");
-            let decorated = self.use_ref(decorated, name.loc);
-            let rebind = self.assign_to(name.ref_, decorated, name.loc);
-            for value in [rebind, run_extra_initializers] {
-                out.push(self.s(
-                    S::SExpr {
-                        value,
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                ));
-            }
-        }
+        out.push(self.expr_stmt(rebind, stmt.loc));
+        out.push(self.expr_stmt(decorators.run_extra_initializers, stmt.loc));
     }
 
     pub(crate) fn lower_standard_decorators_expr(
@@ -688,14 +678,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             stmt_list.push(decl);
         }
-        let Some(before) = lowered.before else {
+        let Some(decorators) = lowered.class_decorators else {
             return expr;
         };
-        if let Some((decorated, run_extra_initializers)) = lowered.decorated {
-            let decorated = self.use_ref(decorated, expr.loc);
-            return Expr::join_all_with_comma(&[before, expr, run_extra_initializers, decorated]);
-        }
-        Expr::join_with_comma(before, expr)
+        let decorated = self.use_ref(decorators.decorated, expr.loc);
+        Expr::join_all_with_comma(&[
+            decorators.evaluate,
+            expr,
+            decorators.run_extra_initializers,
+            decorated,
+        ])
     }
 
     // ── Core lowering ────────────────────────────────────
@@ -985,7 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 constructor = Some(members.len());
             } else if let Some(private_index) = private_index {
                 let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
-                field_name = FieldName::Private(p.new_expr(E::EString::init(name), loc));
+                field_name = FieldName::Key(p.new_expr(E::EString::init(name), loc));
             } else {
                 // Only a field that may carry effects has to name its function itself.
                 let names_function = !is_method
@@ -1093,8 +1085,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ── The leading static block ──
         leading.extend_from_slice(&storage_inits);
         leading.extend_from_slice(&static_brands);
-        let mut before: Option<Expr> = None;
-        let mut decorated_class: Option<(Ref, Expr)> = None;
+        let mut class_decorators_result: Option<ClassDecorators> = None;
         if has_decorators {
             let base = match base_ref {
                 Some(base) => p.use_ref(base, loc),
@@ -1115,7 +1106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
-                before = Some(p.assign_to(dec, list, loc));
+                let evaluate = p.assign_to(dec, list, loc);
                 let name: &'a [u8] = match &class.class_name {
                     Some(name) => p.symbols[name.ref_.inner_index() as usize]
                         .original_name
@@ -1131,13 +1122,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.new_expr(E::EString::init(name), loc);
                 let decorated = p.decorate_element(init_ref, 0.0, name, dec, this, None, loc);
                 leading.push(p.assign_to(decorated_ref, decorated, loc));
-                // Runs once the class is bound to its name, which an initializer
-                // may refer to.
                 let decorated = p.use_ref(decorated_ref, loc);
-                decorated_class = Some((
-                    decorated_ref,
-                    p.run_initializers(init_ref, 1.0, decorated, loc),
-                ));
+                class_decorators_result = Some(ClassDecorators {
+                    evaluate,
+                    decorated: decorated_ref,
+                    run_extra_initializers: p.run_initializers(init_ref, 1.0, decorated, loc),
+                });
             } else {
                 let args = [p.use_ref(init_ref, loc), p.new_expr(E::This {}, loc)];
                 leading.push(p.call_rt(loc, b"__decoratorMetadata", &args));
@@ -1199,8 +1189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         LoweredClass {
             temps: p.drain_capture_temp_decls(temps_before, loc),
-            before,
-            decorated: decorated_class,
+            class_decorators: class_decorators_result,
         }
     }
 
@@ -1359,9 +1348,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         match field_name {
             FieldName::Unknown => value,
-            // `__name` would overwrite a `static name` of a class.
-            FieldName::Private(_) if matches!(value.data, js_ast::ExprData::EClass(_)) => value,
-            FieldName::Private(name) => self.call_rt(value.loc, b"__name", &[value, name]),
             // `{ key: value }[key]` names it as the field would.
             FieldName::Key(key) | FieldName::Computed(key) => {
                 let mut flags = Flags::PROPERTY_NONE;
@@ -1488,6 +1474,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
         self.new_expr(E::Function { func }, loc)
+    }
+
+    fn expr_stmt(&mut self, value: Expr, loc: bun_ast::Loc) -> Stmt {
+        self.s(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            loc,
+        )
     }
 
     fn effect_stmts(&mut self, effects: &[Expr], loc: bun_ast::Loc) -> BumpVec<'a, Stmt> {

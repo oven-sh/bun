@@ -858,13 +858,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => None,
             };
             let decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
-            // An undecorated `accessor #x` behaves like the field `#x`.
-            if private_index.is_some()
-                && prop.kind == PropertyKind::AutoAccessor
-                && decorators.len_u32() == 0
-            {
-                prop.kind = PropertyKind::Normal;
-            }
             let is_static = prop.flags.contains(Flags::Property::IsStatic);
             let is_method = prop.flags.contains(Flags::Property::IsMethod);
             let kind: u8 = match prop.kind {
@@ -902,29 +895,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.symbols[private_index as usize].original_name.slice();
                 let name_expr = p.new_expr(E::EString::init(private_name), loc);
                 let existing = private_lowered_map.get(&private_index).copied();
+                // A method, getter, setter or accessor is on the object before
+                // its first field runs: a WeakSet the object joins up front. A
+                // field is there once it is defined: the WeakMap of its value.
+                let is_branded = is_method || kind == 4;
                 let storage = if let Some(existing) = existing {
                     existing.storage_ref
                 } else {
                     let name = p.bump_name3(b"_", &private_name[1..], b"");
                     let storage = p.declared_temp(name);
                     let container =
-                        p.new_global_expr(if is_method { b"WeakSet" } else { b"WeakMap" }, loc);
+                        p.new_global_expr(if is_branded { b"WeakSet" } else { b"WeakMap" }, loc);
                     storage_inits.push(p.assign_to(storage, container, loc));
                     storage
                 };
                 let mut info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(storage));
                 let storage_expr = p.use_ref(storage, loc);
 
-                if is_method {
-                    if existing.is_none() {
-                        let this = p.new_expr(E::This {}, loc);
-                        let brand = p.call_rt(loc, b"__privateAdd", &[this, storage_expr]);
-                        if is_static {
-                            static_brands.push(brand);
-                        } else {
-                            instance_brands.push(brand);
-                        }
+                if is_branded && existing.is_none() {
+                    let this = p.new_expr(E::This {}, loc);
+                    let brand = p.call_rt(loc, b"__privateAdd", &[this, storage_expr]);
+                    if is_static {
+                        static_brands.push(brand);
+                    } else {
+                        instance_brands.push(brand);
                     }
+                }
+
+                if is_method {
                     let (suffix, slot): (&[u8], _) = match kind {
                         2 => (b"_get", &mut info.getter_fn_ref),
                         3 => (b"_set", &mut info.setter_fn_ref),
@@ -954,9 +952,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
 
+                // The value of an accessor is defined where the accessor is written.
+                let value_storage = if kind == 4 {
+                    let name = p.bump_name3(b"_", &private_name[1..], b"_storage");
+                    let value_storage = p.declared_temp(name);
+                    let container = p.new_global_expr(b"WeakMap", loc);
+                    storage_inits.push(p.assign_to(value_storage, container, loc));
+                    value_storage
+                } else {
+                    storage
+                };
+
                 let mut initializer_index = None;
                 if let Some(dec) = dec_ref {
-                    let extra = (kind == 4).then_some(storage_expr);
+                    let extra = (kind == 4).then(|| p.use_ref(value_storage, loc));
                     let mut decorated = p.decorate_element(
                         init_ref,
                         flags,
@@ -978,7 +987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 private_lowered_map.insert(private_index, info);
                 let effects =
-                    p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
+                    p.storage_init_effects(value_storage, prop.initializer, initializer_index, loc);
                 if is_static {
                     members.push(p.make_static_block(&effects, loc));
                 } else {
@@ -994,15 +1003,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let container = p.new_global_expr(b"WeakMap", loc);
                 storage_inits.push(p.assign_to(storage, container, loc));
 
-                // Hosting key effects makes the getter's key computed; the
-                // setter repeats the key as it was.
                 let mut setter_flags = prop.flags;
                 setter_flags.insert(Flags::Property::IsMethod);
-                let (name_expr, key_temp) = p.host_key_effects(&mut prop, &mut key_effects, true);
+                let mut initializer = prop.initializer;
+                let name_expr = if let Some(private_index) = private_index {
+                    // `get #x` and `set #x` are on the object before its first
+                    // field runs, as the accessor is. Its value is the argument
+                    // of a call, where `#x` does not name a function any more.
+                    let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
+                    let name = FieldName::Key(p.new_expr(E::EString::init(name), loc));
+                    initializer =
+                        initializer.map(|value| p.hosted_initializer(Some(value), name, loc));
+                    key
+                } else {
+                    // Hosting key effects makes the getter's key computed; the
+                    // setter repeats the key as it was.
+                    let (name_expr, key_temp) =
+                        p.host_key_effects(&mut prop, &mut key_effects, true);
+                    last_key_host = Some((members.len(), key_temp));
+                    name_expr
+                };
                 let mut getter_flags = prop.flags;
                 getter_flags.insert(Flags::Property::IsMethod);
                 let getter = p.accessor_getter(storage, loc);
-                last_key_host = Some((members.len(), key_temp));
                 members.push(Property {
                     key: prop.key,
                     value: Some(getter),
@@ -1039,8 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     initializer_index = Some((init_ref, next_initializer[group]));
                     next_initializer[group] += 1;
                 }
-                let effects =
-                    p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
+                let effects = p.storage_init_effects(storage, initializer, initializer_index, loc);
                 if is_static {
                     members.push(p.make_static_block(&effects, loc));
                 } else {

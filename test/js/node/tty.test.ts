@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { WriteStream } from "node:tty";
+import fs from "node:fs";
+import os from "node:os";
+import { ReadStream, WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -299,5 +301,53 @@ describe("WriteStream.prototype.getColorDepth", () => {
 
   it("empty", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
+  });
+});
+
+describe("tty prototype and compatibility (issue #29019)", () => {
+  test("tty.WriteStream.prototype.isTTY is true", () => {
+    expect(WriteStream.prototype.isTTY).toBe(true);
+  });
+
+  test("tty.WriteStream.prototype does not mutate fs.WriteStream.prototype", () => {
+    expect(WriteStream.prototype !== fs.WriteStream.prototype).toBe(true);
+    expect((fs.WriteStream.prototype as any).hasColors).toBeUndefined();
+    expect(typeof WriteStream.prototype.hasColors).toBe("function");
+  });
+
+  test("tty.WriteStream.prototype.constructor is WriteStream", () => {
+    expect(WriteStream.prototype.constructor).toBe(WriteStream);
+  });
+
+  test("tty.ReadStream.prototype.constructor is ReadStream", () => {
+    expect(ReadStream.prototype.constructor).toBe(ReadStream);
+  });
+
+  test("new tty.WriteStream inherits isTTY: true from prototype without own property", () => {
+    const ws = new WriteStream(1);
+    expect(ws.isTTY).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(ws, "isTTY")).toBe(false);
+  });
+
+  test("plain fs.WriteStream instance does not have hasColors", () => {
+    const stream = fs.createWriteStream(os.devNull);
+    expect((stream as any).hasColors).toBeUndefined();
+    stream.close();
+  });
+
+  test("tty.WriteStream.prototype.constructor is non-enumerable", () => {
+    const desc = Object.getOwnPropertyDescriptor(WriteStream.prototype, "constructor");
+    expect(desc?.enumerable).toBe(false);
+    expect(desc?.writable).toBe(true);
+    expect(desc?.configurable).toBe(true);
+    expect(Object.keys(WriteStream.prototype).includes("constructor")).toBe(false);
+  });
+
+  test("tty.ReadStream.prototype.constructor is non-enumerable", () => {
+    const desc = Object.getOwnPropertyDescriptor(ReadStream.prototype, "constructor");
+    expect(desc?.enumerable).toBe(false);
+    expect(desc?.writable).toBe(true);
+    expect(desc?.configurable).toBe(true);
+    expect(Object.keys(ReadStream.prototype).includes("constructor")).toBe(false);
   });
 });

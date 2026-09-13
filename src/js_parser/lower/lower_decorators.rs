@@ -1067,8 +1067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
                 field_name = FieldName::Key(p.new_expr(E::EString::init(name), loc));
             } else {
-                // Only a field that is decorated or may carry effects has to
-                // name its function itself.
+                // Only a decorated field, or one that may carry effects, names its function itself.
                 let names_function = !is_method
                     && (dec_ref.is_some()
                         || !is_static
@@ -1178,8 +1177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         leading.extend_from_slice(&static_brands);
         let mut class_decorators_result: Option<ClassDecorators> = None;
         if has_decorators {
-            // The metadata of a derived class inherits from that of the class it
-            // extends, which `__decoratorStart` reads off the prototype of `this`.
+            // `__decoratorStart` reads the class that `this` extends off its prototype.
             let undefined = p.new_expr(E::Undefined {}, loc);
             let start = if class.extends.is_some() {
                 let this = p.new_expr(E::This {}, loc);
@@ -1423,8 +1421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `value` for a place where the field no longer names it: behind a comma
-    /// or as a call argument, an anonymous function or class stays anonymous.
+    /// `value` with the name `field_name` gives it, for behind a comma or in a call argument.
     fn named_by_field(&mut self, value: Expr, field_name: FieldName) -> Expr {
         if !value.is_anonymous_named() {
             return value;

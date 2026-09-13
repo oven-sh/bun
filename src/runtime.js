@@ -240,8 +240,7 @@ export var __privateSet = (obj, member, value, setter) => (
 );
 export var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
-// `target` is a derived class: its metadata inherits from that of its prototype,
-// the class it extends. Output of older versions passes that class as `base`.
+// `target` is a derived class. Older output passes the class it extends as `base`.
 export var __decoratorStart = (base, target) => (
   target && (base = __getProtoOf(target)),
   [, , , __create(base?.[__knownSymbol("metadata")] ?? null)]

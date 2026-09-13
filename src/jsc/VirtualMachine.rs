@@ -5077,11 +5077,6 @@ impl VirtualMachine {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
-        // A rejected preload is the worker's startup failure. Its rejection is
-        // reported through the normal Worker error path, but it still exits 1.
-        if unsafe { &*promise }.status() == crate::js_promise::Status::Rejected {
-            self.exit_handler.exit_code = 1;
-        }
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);

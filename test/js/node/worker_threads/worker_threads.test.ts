@@ -1,4 +1,4 @@
-import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -346,10 +346,48 @@ describe("execArgv option", async () => {
 });
 
 describe("execArgv preloads", () => {
-  const entry = resolve(__dirname, "fixture-execargv-preload-entry.mjs");
-  const importPreload = resolve(__dirname, "fixture-execargv-preload-import.mjs");
-  const nestedEntry = resolve(__dirname, "fixture-execargv-preload-nested.mjs");
-  const requirePreload = resolve(__dirname, "fixture-execargv-preload-require.cjs");
+  let fixtureDir: ReturnType<typeof tempDir> | undefined;
+  let entry: string;
+  let importPreload: string;
+  let nestedEntry: string;
+  let requirePreload: string;
+
+  beforeAll(() => {
+    fixtureDir = tempDir("worker-execargv-preloads", {
+      "entry.mjs": `
+        import { argv, execArgv } from "node:process";
+        import { parentPort, workerData } from "node:worker_threads";
+        parentPort.postMessage({
+          argv: argv.slice(2),
+          execArgv,
+          preloads: globalThis.execArgvPreloads ?? null,
+          workerData,
+        });
+      `,
+      "import.mjs": `
+        globalThis.execArgvPreloads ??= [];
+        globalThis.execArgvPreloads.push("import");
+      `,
+      "nested.mjs": `
+        import { parentPort, Worker } from "node:worker_threads";
+        const child = new Worker(new URL("./entry.mjs", import.meta.url));
+        child.once("message", message => {
+          parentPort.postMessage({ child: message.preloads, parent: globalThis.execArgvPreloads ?? null });
+        });
+      `,
+      "require.cjs": `
+        globalThis.execArgvPreloads ??= [];
+        globalThis.execArgvPreloads.push("require");
+      `,
+    });
+    const root = String(fixtureDir);
+    entry = join(root, "entry.mjs");
+    importPreload = join(root, "import.mjs");
+    nestedEntry = join(root, "nested.mjs");
+    requirePreload = join(root, "require.cjs");
+  });
+
+  afterAll(() => fixtureDir?.[Symbol.dispose]());
 
   async function runWorker(execArgv: string[]) {
     const worker = new Worker(entry, {
@@ -363,15 +401,21 @@ describe("execArgv preloads", () => {
     return message;
   }
 
-  test.each([
-    ["separate import and inline require", ["--import", importPreload, `--require=${requirePreload}`]],
-    ["inline import and separate require", [`--import=${importPreload}`, "--require", requirePreload]],
-  ])("runs %s before the source worker entry", async (_name, execArgv) => {
-    expect(await runWorker(execArgv)).toEqual({
-      argv: ["worker-arg"],
-      execArgv,
-      preloads: ["require", "import"],
-      workerData: { from: "parent" },
+  describe.each([
+    ["separate import and inline require", "separate-import"],
+    ["inline import and separate require", "inline-import"],
+  ])("%s", (_name, form) => {
+    test("runs before the source worker entry", async () => {
+      const execArgv =
+        form === "separate-import"
+          ? ["--import", importPreload, `--require=${requirePreload}`]
+          : [`--import=${importPreload}`, "--require", requirePreload];
+      expect(await runWorker(execArgv)).toEqual({
+        argv: ["worker-arg"],
+        execArgv,
+        preloads: ["require", "import"],
+        workerData: { from: "parent" },
+      });
     });
   });
 
@@ -403,8 +447,10 @@ describe("execArgv preloads", () => {
 
   test("inherits explicit preloads through nested workers", async () => {
     const worker = new Worker(nestedEntry, { execArgv: ["--require", requirePreload] });
+    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
     const [message] = await once(worker, "message");
     expect(message).toEqual({ child: ["require"], parent: ["require"] });
+    expect(await exited).toBe(0);
   });
 
   test("reports preload failures on the Worker", async () => {
@@ -417,41 +463,61 @@ describe("execArgv preloads", () => {
     expect(await exited).toBe(1);
   });
 
-  test.each([
-    ["require", ["--require", requirePreload], ["require"]],
-    ["import", ["--import", importPreload], null],
-  ])("applies %s preload semantics to eval workers", async (_name, execArgv, expected) => {
-    const worker = new Worker(
-      `require("node:worker_threads").parentPort.postMessage(globalThis.execArgvPreloads ?? null)`,
-      { eval: true, execArgv },
-    );
+  test("keeps exit code zero when a preload error is handled", async () => {
+    const preload = `data:text/javascript,${encodeURIComponent(`
+      import { parentPort } from "node:worker_threads";
+      process.on("uncaughtException", error => parentPort.postMessage("handled:" + error.message));
+      throw new Error("handled preload failure");
+    `)}`;
+    const worker = new Worker(entry, { execArgv: ["--import", preload] });
+    const exited = new Promise<number>(resolve => worker.once("exit", resolve));
     const [message] = await once(worker, "message");
-    expect(message).toEqual(expected);
-    await worker.terminate();
+    expect(message).toBe("handled:handled preload failure");
+    expect(await exited).toBe(0);
   });
 
-  test.each([
-    [["--title=worker"], "--title=worker"],
-    [["--import"], "--import requires an argument"],
-    [["--require", "--no-warnings"], "--require requires an argument"],
-  ])("rejects invalid or process-wide flags: %j", (execArgv, message) => {
-    let error: unknown;
-    try {
-      new Worker(entry, { execArgv });
-    } catch (cause) {
-      error = cause;
-    }
-    expect(error).toEqual(
-      expect.objectContaining({ code: "ERR_WORKER_INVALID_EXEC_ARGV", message: expect.stringContaining(message) }),
-    );
+  describe.each([
+    ["require", "--require", ["require"]],
+    ["import", "--import", null],
+  ])("%s preload", (_name, flag, expected) => {
+    test("applies eval worker semantics", async () => {
+      const module = flag === "--require" ? requirePreload : importPreload;
+      const worker = new Worker(
+        `require("node:worker_threads").parentPort.postMessage(globalThis.execArgvPreloads ?? null)`,
+        { eval: true, execArgv: [flag, module] },
+      );
+      const [message] = await once(worker, "message");
+      expect(message).toEqual(expected);
+      await worker.terminate();
+    });
   });
 
-  test.each([
+  describe.each([
+    ["title", ["--title=worker"], "--title=worker"],
+    ["missing import", ["--import"], "--import requires an argument"],
+    ["missing require", ["--require", "--no-warnings"], "--require requires an argument"],
+  ])("%s", (_name, execArgv, message) => {
+    test("rejects invalid or process-wide flags", () => {
+      let error: unknown;
+      try {
+        new Worker(entry, { execArgv });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toEqual(
+        expect.objectContaining({ code: "ERR_WORKER_INVALID_EXEC_ARGV", message: expect.stringContaining(message) }),
+      );
+    });
+  });
+
+  describe.each([
     ["conditions alias", ["-C", "development"]],
     ["inline boolean", ["--enable-source-maps=true"]],
     ["unhandled rejection mode", ["--unhandled-rejections=strict"]],
-  ])("accepts %s", async (_name, execArgv) => {
-    expect(await runWorker(execArgv)).toEqual(expect.objectContaining({ execArgv, preloads: null }));
+  ])("%s", (_name, execArgv) => {
+    test("is accepted", async () => {
+      expect(await runWorker(execArgv)).toEqual(expect.objectContaining({ execArgv, preloads: null }));
+    });
   });
 });
 

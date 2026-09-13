@@ -3,11 +3,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
 const fixtureDirs: string[] = [];

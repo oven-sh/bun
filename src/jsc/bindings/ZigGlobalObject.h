@@ -501,6 +501,8 @@ public:
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
                                                                                                              \
+    V(public, WriteBarrier<JSC::JSObject>, m_asyncHooksTimerDispatch)                                        \
+                                                                                                             \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \

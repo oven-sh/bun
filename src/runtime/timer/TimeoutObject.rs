@@ -13,12 +13,21 @@ impl TimeoutObject {
     pub(crate) fn init(
         global: &JSGlobalObject,
         id: i32,
+        async_hooks_id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, kind, interval, callback, arguments)
+        Self::init_with(
+            global,
+            id,
+            async_hooks_id,
+            kind,
+            interval,
+            callback,
+            arguments,
+        )
     }
 
     #[bun_jsc::host_fn(method)]

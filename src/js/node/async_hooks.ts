@@ -1,6 +1,6 @@
 // Hardcoded module "node:async_hooks"
-// Bun is only going to implement AsyncLocalStorage and AsyncResource (partial).
-// The other functions are deprecated anyways, and would impact performance too much.
+// Bun implements AsyncLocalStorage, part of AsyncResource, and selected
+// createHook resource lifecycles.
 // API: https://nodejs.org/api/async_hooks.html
 //
 // JSC has been patched to include a special global variable $asyncContext which is set to
@@ -27,6 +27,7 @@
 // that shares its tail with every other capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
+const setAsyncHooksTimerDispatch = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksTimerDispatch", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
@@ -475,13 +476,146 @@ function isEmptyFunction(f: Function) {
   return /^{\s*}$/.test(str);
 }
 
-const createHookNotImpl = createWarning(
-  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+const createHookPartialWarning = createWarning(
+  "async_hooks.createHook in Bun emits init for TickObject and init/destroy for timers. " +
+    "before, after, promiseResolve, and other resource events are not implemented.",
   true,
 );
 
 let hasEnabledCreateHook = false;
 const kHookEnabled = Symbol("kHookEnabled");
+
+type TimerHook = { init?: Function; destroy?: Function; hook: object };
+let timerHooks: TimerHook[] = [];
+const asyncHooksTick = require("internal/async_hooks_tick");
+const PromisePrototypeThen = $Promise.prototype.$then;
+const resolvedPromise = Promise.$resolve();
+let timerDispatchInstalled = false;
+let pendingTimerDestroys: number[] | undefined;
+let pendingTimerHooks: typeof timerHooks | undefined;
+
+function fatalTimerHookError(err) {
+  try {
+    console.error(typeof err?.stack === "string" ? err.stack : err);
+  } catch {}
+  process.exit(1);
+}
+
+function refreshTimerDispatch() {
+  const needed = timerHooks.length !== 0;
+  if (needed === timerDispatchInstalled) return;
+  timerDispatchInstalled = needed;
+  setAsyncHooksTimerDispatch(needed ? dispatchTimerHook : undefined);
+}
+
+function mutableTimerHooks() {
+  if (!asyncHooksTick.hookDispatchActive()) return timerHooks;
+  if (pendingTimerHooks === undefined) {
+    pendingTimerHooks = [];
+    for (var i = 0, n = timerHooks.length; i < n; i++) $arrayPush(pendingTimerHooks, timerHooks[i]);
+    asyncHooksTick.deferHookMutation(applyPendingTimerHooks);
+  }
+  return pendingTimerHooks;
+}
+
+function applyPendingTimerHooks() {
+  if (pendingTimerHooks === undefined) return;
+  timerHooks = pendingTimerHooks;
+  pendingTimerHooks = undefined;
+  refreshTimerDispatch();
+}
+
+function emitTimerInit(asyncId: number, type: string, resource: object) {
+  asyncHooksTick.beginHookDispatch();
+  try {
+    for (var i = 0, n = timerHooks.length; i < n; i++) {
+      const entry = timerHooks[i];
+      if (entry.init === undefined) continue;
+      try {
+        entry.init.$call(entry.hook, asyncId, type, 0, resource);
+      } catch (err) {
+        fatalTimerHookError(err);
+      }
+    }
+  } finally {
+    asyncHooksTick.endHookDispatch();
+  }
+}
+
+function emitTimerDestroy(asyncId: number) {
+  asyncHooksTick.beginHookDispatch();
+  try {
+    for (var i = 0, n = timerHooks.length; i < n; i++) {
+      const entry = timerHooks[i];
+      if (entry.destroy === undefined) continue;
+      try {
+        entry.destroy.$call(entry.hook, asyncId);
+      } catch (err) {
+        fatalTimerHookError(err);
+      }
+    }
+  } finally {
+    asyncHooksTick.endHookDispatch();
+  }
+}
+
+function timerDestroyHooksExist() {
+  for (var i = 0, n = timerHooks.length; i < n; i++) {
+    if (timerHooks[i].destroy !== undefined) return true;
+  }
+  return false;
+}
+
+function flushTimerDestroys() {
+  const pending = pendingTimerDestroys;
+  pendingTimerDestroys = undefined;
+  if (pending === undefined) return;
+  for (var i = 0, n = pending.length; i < n; i++) emitTimerDestroy(pending[i]);
+}
+
+function queueTimerDestroy(asyncId: number) {
+  if (pendingTimerDestroys === undefined) {
+    pendingTimerDestroys = [asyncId];
+    const frame = get();
+    set(undefined);
+    try {
+      PromisePrototypeThen.$call(resolvedPromise, flushTimerDestroys);
+    } finally {
+      set(frame);
+    }
+  } else {
+    $arrayPush(pendingTimerDestroys, asyncId);
+  }
+}
+
+// Called by the native timer owner. event is 0 for Timeout init, 1 for
+// Immediate init, and 2 when either kind reaches a terminal state.
+function dispatchTimerHook(event: number, resource: object, asyncId: number) {
+  if (event === 2) {
+    if (timerDestroyHooksExist()) queueTimerDestroy(asyncId);
+    return;
+  }
+
+  if (timerHooks.length === 0) return;
+  emitTimerInit(asyncId, event === 0 ? "Timeout" : "Immediate", resource);
+}
+
+function addTimerHook(hook) {
+  $arrayPush(mutableTimerHooks(), hook);
+  if (!asyncHooksTick.hookDispatchActive()) refreshTimerDispatch();
+}
+
+function removeTimerHook(hook) {
+  const hooks = mutableTimerHooks();
+  for (var i = 0, n = hooks.length; i < n; i++) {
+    if (hooks[i] !== hook) continue;
+    for (var j = i + 1; j < n; j++) hooks[j - 1] = hooks[j];
+    hooks.length = n - 1;
+    break;
+  }
+  if (!asyncHooksTick.hookDispatchActive()) refreshTimerDispatch();
+}
+
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -493,7 +627,9 @@ function createHook(hook) {
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
   let enabledInit;
-  return {
+  let timerHookEnabled = false;
+  let timerHook: TimerHook;
+  const asyncHook = {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
         // init is delivered for TickObject resources (process.nextTick);
@@ -502,11 +638,16 @@ function createHook(hook) {
         // function must stay independently removable (removal is by
         // identity, and removing the other instance's entry would reorder
         // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
-        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
+        enabledInit = (asyncId, type, triggerAsyncId, resource) =>
+          init.$call(asyncHook, asyncId, type, triggerAsyncId, resource);
+        asyncHooksTick.addInitHook(enabledInit);
       }
-      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
-        createHookNotImpl(hook);
+      if (!timerHookEnabled && (init !== undefined || destroy !== undefined)) {
+        timerHookEnabled = true;
+        addTimerHook(timerHook);
+      }
+      if (before !== undefined || after !== undefined || promiseResolve !== undefined) {
+        createHookPartialWarning(hook);
       }
       hasEnabledCreateHook = true;
       if (!this[kHookEnabled]) {
@@ -517,10 +658,12 @@ function createHook(hook) {
     },
     disable() {
       if (enabledInit !== undefined) {
-        const hooks = require("internal/async_hooks_tick").tickInitHooks;
-        const idx = hooks.indexOf(enabledInit);
-        if (idx !== -1) hooks.splice(idx, 1);
+        asyncHooksTick.removeInitHook(enabledInit);
         enabledInit = undefined;
+      }
+      if (timerHookEnabled) {
+        timerHookEnabled = false;
+        removeTimerHook(timerHook);
       }
       if (this[kHookEnabled]) {
         this[kHookEnabled] = false;
@@ -529,6 +672,8 @@ function createHook(hook) {
       return this;
     },
   };
+  timerHook = { init, destroy, hook: asyncHook };
+  return asyncHook;
 }
 
 const executionAsyncIdNotImpl = createWarning(

@@ -66,7 +66,6 @@ struct Stringifier {
 enum Space {
     Minified,
     Number(u32),
-    Str(bun_core::String),
 }
 
 /// How far a block collection indents the lines inside one of its entries.
@@ -96,11 +95,11 @@ impl Space {
         }
 
         if space.is_string() {
-            let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Str(str));
+            // Only spaces can indent YAML, so a string counts as its length (like npm `yaml`).
+            return Ok(match space.as_string().length().min(10) {
+                0 => Space::Minified,
+                width => Space::Number(width as u32),
+            });
         }
 
         Ok(Space::Minified)
@@ -441,7 +440,7 @@ impl Stringifier {
                 Space::Minified => {
                     self.builder.append_lchar(b' ');
                 }
-                Space::Number(_) | Space::Str(_) => {
+                Space::Number(_) => {
                     self.newline();
                 }
             }
@@ -473,7 +472,7 @@ impl Stringifier {
                     }
                     self.builder.append_lchar(b']');
                 }
-                Space::Number(_) | Space::Str(_) => {
+                Space::Number(_) => {
                     self.builder
                         .ensure_unused_capacity(iter.len as usize * b"- ".len());
                     let mut first = true;
@@ -538,7 +537,7 @@ impl Stringifier {
                 }
                 self.builder.append_lchar(b'}');
             }
-            Space::Number(_) | Space::Str(_) => {
+            Space::Number(_) => {
                 self.builder.ensure_unused_capacity(iter.len * b": ".len());
 
                 let mut first = true;
@@ -594,22 +593,6 @@ impl Stringifier {
                 self.builder.ensure_unused_capacity(columns);
                 for _ in 0..columns {
                     self.builder.append_lchar(b' ');
-                }
-            }
-            Space::Str(space_str) => {
-                self.builder.append_lchar(b'\n');
-
-                let clamped = space_str.trunc(10);
-
-                self.builder
-                    .ensure_unused_capacity(self.indent_len(clamped.length()));
-                for step in &self.indent {
-                    match step {
-                        IndentStep::MappingValue => self.builder.append_string(&clamped),
-                        IndentStep::SequenceItem => {
-                            self.builder.append_latin1(SEQUENCE_ITEM_INDENT)
-                        }
-                    }
                 }
             }
         }

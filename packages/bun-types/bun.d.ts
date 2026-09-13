@@ -1521,10 +1521,13 @@ declare module "bun" {
      *
      * @param input The JavaScript value to stringify.
      * @param replacer Not supported.
-     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
+     * @param space How many spaces a nested value is indented from its key: a number, or a string, which counts as its length.
+     *              YAML indentation can only be spaces, so the characters of a string are never written: `"\t"` means `1`.
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
-     *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     *              The number or the length is clamped between 0 and 10.
+     *              Inside a sequence item, the entries of a collection start 2 columns to the right of the dash,
+     *              whatever `space` is.
      * @returns A string containing the YAML document.
      *
      * @example

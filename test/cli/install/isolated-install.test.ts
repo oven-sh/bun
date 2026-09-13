@@ -554,6 +554,101 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+test("a folder dependency shared by several folder dependencies is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const siblings = Array.from({ length: 6 }, (_, i) => `sib${i}`);
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-shared-folder-dep",
+        dependencies: {
+          shared: "file:./vend/shared",
+          ...Object.fromEntries(siblings.map(name => [name, `file:./vend/${name}`])),
+        },
+      }),
+    ),
+    write(join(packageDir, "vend", "shared", "package.json"), JSON.stringify({ name: "shared", version: "1.0.0" })),
+    write(join(packageDir, "vend", "shared", "index.js"), "module.exports = 'shared';"),
+    ...siblings.flatMap(name => [
+      write(
+        join(packageDir, "vend", name, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", dependencies: { shared: "file:../shared" } }),
+      ),
+      write(join(packageDir, "vend", name, "index.js"), "module.exports = require('shared');"),
+    ]),
+  ]);
+
+  // A fresh resolve made one `shared` package per declarer. Each one linked
+  // into the same store entry at the same time: EEXIST from link().
+  const { out } = await runBunInstall(bunEnv, packageDir);
+  expect(out).toContain(`${siblings.length + 1} packages installed`);
+
+  const store = join(packageDir, "node_modules", ".bun");
+  expect(readlinkSync(join(packageDir, "node_modules", "shared"))).toBe(
+    join(".bun", "shared@file+vend+shared", "node_modules", "shared"),
+  );
+  expect(
+    await Promise.all(
+      siblings.map(name => readlink(join(store, `${name}@file+vend+${name}`, "node_modules", "shared"))),
+    ),
+  ).toEqual(siblings.map(() => join("..", "..", "shared@file+vend+shared", "node_modules", "shared")));
+  expect(await readdirSorted(join(store, "shared@file+vend+shared", "node_modules", "shared"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+
+  const requireFromRoot = createRequire(packageJson);
+  expect(siblings.map(name => requireFromRoot(name))).toEqual(siblings.map(() => "shared"));
+});
+
+test("a file: override that several registry packages depend on is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // Each of these declares `no-deps`.
+  const dependents = {
+    "one-dep": "1.0.0",
+    "one-fixed-dep": "1.0.0",
+    "one-range-dep": "1.0.0",
+    "one-range-dep-too": "1.0.0",
+    "normal-dep-and-dev-dep": "1.0.2",
+  };
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-file-override",
+        dependencies: dependents,
+        overrides: { "no-deps": "file:./vendor/no-deps" },
+      }),
+    ),
+    write(join(packageDir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+  ]);
+
+  // CI exports one BUN_INSTALL_CACHE_DIR for the whole file. Manifests cached here
+  // would change the order in which later tests resolve the same packages.
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+  const { out } = await runBunInstall(env, packageDir);
+  expect(out).toContain(`${Object.keys(dependents).length + 1} packages installed`);
+
+  const store = join(packageDir, "node_modules", ".bun");
+  expect(
+    await Promise.all(
+      Object.entries(dependents).map(([name, version]) =>
+        readlink(join(store, `${name}@${version}`, "node_modules", "no-deps")),
+      ),
+    ),
+  ).toEqual(
+    Object.keys(dependents).map(() => join("..", "..", "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps")),
+  );
+  expect(
+    await file(join(store, "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps", "package.json")).json(),
+  ).toEqual({ name: "no-deps", version: "9.9.9" });
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

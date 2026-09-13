@@ -136,6 +136,11 @@ impl SloppyGlobalGitConfig {
 pub use bun_install_types::resolver_hooks::Repository;
 
 /// The environment every `git` the install spawns runs with (see `GitEnv::get`).
+///
+/// Built from `PackageManager::process_env`, never from the loader that holds
+/// the project's `.env*` files: git reads `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`
+/// and `GIT_CONFIG_*` from its environment and runs what they name, so a
+/// cloned repository must not be able to set them for this install.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
@@ -147,21 +152,21 @@ pub(crate) struct GitEnv {
 static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
 
 impl GitEnv {
-    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
+    pub(crate) fn get(process_env: &bun_dotenv::Loader) -> &'static GitEnv {
         let slot = GIT_ENV.get();
         // SAFETY: only the install thread reaches this. The slot is written
         // once, before any reference into it exists, and never reassigned.
         unsafe {
             if (*slot).is_none() {
-                *slot = Some(Self::init(loader));
+                *slot = Some(Self::init(process_env));
             }
             (*slot).as_ref().unwrap()
         }
     }
 
-    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
+    fn init(process_env: &bun_dotenv::Loader) -> GitEnv {
         // No prompts by default: the install's own output would hide them.
-        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+        let mut map = bun_core::handle_oom(process_env.map.clone_with_allocator());
 
         if map.get(b"GIT_ASKPASS").is_none() {
             let config = SloppyGlobalGitConfig::get();

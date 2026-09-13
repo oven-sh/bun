@@ -9055,10 +9055,35 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 Ok(()) => break 'attempt,
             };
 
-            if opts.keep_existing_destination && matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
-            {
-                delete_source();
-                break 'attempt;
+            if opts.keep_existing_destination {
+                if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY) {
+                    delete_source();
+                    break 'attempt;
+                }
+                // The flag was rejected (EINVAL on NFS, 9p and FUSE without
+                // FUSE_RENAME2; ENOSYS, EOPNOTSUPP or EPERM elsewhere), so the
+                // errno says nothing about the destination. A plain rename
+                // decides atomically: it fails over a non-empty directory and
+                // succeeds into an absent one. Never delete the destination
+                // here, another process may have just published it.
+                return match renameat(from_dir_fd, from, to_dir_fd, to) {
+                    Ok(()) => Ok(()),
+                    Err(err) => {
+                        let dir_fd = if to_dir_fd.is_valid() {
+                            to_dir_fd
+                        } else {
+                            Fd::cwd()
+                        };
+                        if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
+                            || directory_exists_at(dir_fd, to).unwrap_or(false)
+                        {
+                            delete_source();
+                            Ok(())
+                        } else {
+                            Err(err)
+                        }
+                    }
+                };
             }
 
             // Windows doesn't have any equivalent of renameat with swap
@@ -9089,18 +9114,6 @@ pub(crate) fn renameat_concurrently_without_fallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
-        if opts.keep_existing_destination {
-            // EOPNOTSUPP etc. don't say whether the destination exists; check.
-            let dir_fd = if to_dir_fd.is_valid() {
-                to_dir_fd
-            } else {
-                Fd::cwd()
-            };
-            if directory_exists_at(dir_fd, to).unwrap_or(false) {
-                delete_source();
-                break 'attempt;
-            }
-        }
         if to_dir_fd.is_valid() {
             let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {

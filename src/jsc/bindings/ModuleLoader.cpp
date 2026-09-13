@@ -578,6 +578,44 @@ JSValue resolveAndFetchBuiltinModule(
     if (Bun__resolveAndFetchBuiltinModule(specifier, &res)) {
         ASSERT(res.success);
 
+        if (isBunTest && globalObject->onLoadPlugins.hasVirtualModules()) {
+            bool wasModuleMock = false;
+            BunString mutableSpecifier = *specifier;
+            JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &mutableSpecifier, wasModuleMock);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (virtualModuleResult) {
+                if (auto* promise = dynamicDowncast<JSPromise>(virtualModuleResult)) {
+                    switch (promise->status()) {
+                    case JSPromise::Status::Rejected: {
+                        promise->markAsHandled();
+                        JSC::throwException(globalObject, scope, promise->result());
+                        RELEASE_AND_RETURN(scope, JSValue {});
+                    }
+                    case JSPromise::Status::Pending: {
+                        JSC::throwTypeError(globalObject, scope, "process.getBuiltinModule() async module mock is unsupported"_s);
+                        RELEASE_AND_RETURN(scope, JSValue {});
+                    }
+                    case JSPromise::Status::Fulfilled: {
+                        virtualModuleResult = promise->result();
+                        break;
+                    }
+                    }
+                }
+                if (auto* obj = virtualModuleResult.getObject()) {
+                    auto esModuleValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
+                        auto defaultValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (defaultValue && !defaultValue.isUndefined()) {
+                            RELEASE_AND_RETURN(scope, defaultValue);
+                        }
+                    }
+                }
+                RELEASE_AND_RETURN(scope, virtualModuleResult);
+            }
+        }
+
         auto tag = res.result.value.tag;
         switch (tag) {
         // require("bun")

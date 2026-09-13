@@ -16,6 +16,17 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // The child runs with BUN_JSC_zeroExecutableMemoryOnFree, which fills freed JIT
 // code with zeroes. Without it the outcome depends on whether a dead stack slot
 // still holds the caller's CodeBlock pointer, which varies by build.
+//
+// Two shapes here are deliberate:
+//   - The timeout is above the default. The armed call runs a full synchronous
+//     collection that also drops every unlinked CodeBlock, which takes seconds
+//     in a debug ASAN build (2.8 s for the whole child here, and a loaded ASAN
+//     runner is slower). The workload cannot shrink, because a cheaper
+//     collection does not free the jettisoned code: `bun:jsc` `fullGC()` or
+//     `edenGC()` in place of `Bun.gc(true)` reproduces in 0 of 5 runs, against
+//     5 of 5 here.
+//   - The child runs a fixture file, not `bunExe() -e`. Under `-e` the caller
+//     does not reach the tier that inlines the call, and 0 of 5 runs reproduce.
 test("a collection inside an inspect hook keeps the code of a hot Bun.inspect caller", async () => {
   using dir = tempDir("gc-inside-inspect-hook", {
     "hot-inspect-fixture.js": String.raw`
@@ -24,7 +35,7 @@ test("a collection inside an inspect hook keeps the code of a hot Bun.inspect ca
         let armed = false;
         function deep(n) { if (n <= 0) return 0; const a = deep(n - 1); return a + 1; }
         function churn() {
-          for (let k = 0; k < 10; k++) {
+          for (let k = 0; k < 5; k++) {
             const f = new Function("a", "let s = 0; for (let i = 0; i < a; i++) s += i ^ " + k + "; return s;");
             for (let j = 0; j < 3; j++) f(200);
           }
@@ -64,4 +75,4 @@ test("a collection inside an inspect hook keeps the code of a hot Bun.inspect ca
   expect(stdout).toBe("result x\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-}, 60_000);
+}, 30_000);

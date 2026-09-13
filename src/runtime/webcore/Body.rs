@@ -997,7 +997,7 @@ impl Value {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
                 unsafe { &mut *search_params },
-            )));
+            )?));
         }
 
         if js_type == jsc::JSType::DOMWrapper {

@@ -18,7 +18,7 @@ unsafe extern "C" {
         self_: &mut URLSearchParams,
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void, str: *const EncodedSlice),
-    );
+    ) -> bool;
 }
 
 impl URLSearchParams {
@@ -28,11 +28,14 @@ impl URLSearchParams {
         URLSearchParams__fromJS(value)
     }
 
+    /// `false`, and no call of `callback`, when the serialized params do not fit
+    /// in a `WTF::String`.
+    #[must_use]
     pub fn to_string<Ctx>(
         &mut self,
         ctx: &mut Ctx,
         callback: fn(ctx: &mut Ctx, str: EncodedSlice),
-    ) {
+    ) -> bool {
         // A fn pointer cannot be a const generic, so pack (ctx, callback) on the
         // stack and pass the pair through the C trampoline's void* context.
         struct Wrap<'a, Ctx> {
@@ -53,6 +56,6 @@ impl URLSearchParams {
         let mut w = Wrap { ctx, callback };
         // `w` lives for the duration of the call (URLSearchParams__toString invokes
         // the callback synchronously, does not retain it).
-        URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
+        URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>)
     }
 }

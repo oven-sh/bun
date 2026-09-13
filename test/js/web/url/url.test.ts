@@ -1,6 +1,8 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import os from "node:os";
 import util from "node:util";
 
 describe("url", () => {
@@ -685,4 +687,262 @@ describe("object URL prefix check", () => {
       signalCode: null,
     });
   }, 60_000);
+});
+
+// Percent-encoding makes a URL longer than its input: U+00E9 is one character and "%C3%A9" is six. A URL longer than a
+// string can be (2 ** 31 - 1 characters) used to abort the process. It throws the RangeError that JSC throws for a string
+// that is too long.
+describe("a URL that does not fit in a string", () => {
+  const MiB = 1024 * 1024;
+  const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  // A little over 1 Mi characters when percent-encoded, and 0.6 M.
+  const tooLong = "\u00e9".repeat(176_000);
+  const fits = "\u00e9".repeat(100_000);
+
+  // 1 MiB stands in for 2 ** 31 - 1. The limit is process-wide, so each test puts it back.
+  function withStringLimit(limit: number, fn: () => void) {
+    const previous = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      fn();
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+    }
+  }
+
+  // The error, or the length of what was returned. Never the value: under the limit the test runner cannot print it.
+  function outcome(fn: () => { length: number } | undefined | void) {
+    try {
+      return fn()?.length;
+    } catch (e: any) {
+      return { name: e.name, message: e.message };
+    }
+  }
+
+  it.each([
+    ["the query", () => new URL("http://a/?" + tooLong)],
+    ["the path", () => new URL("http://a/" + tooLong)],
+    ["the fragment", () => new URL("http://a/#" + tooLong)],
+    ["the username", () => new URL("http://" + tooLong + "@a/")],
+    ["an opaque path", () => new URL("foo:" + tooLong)],
+    ["a two-byte string", () => new URL("http://a/?" + "\u4e2d".repeat(117_000))],
+    ["ASCII that is escaped", () => new URL("http://a/" + " ".repeat(350_000) + "x")],
+    ["a relative URL", () => new URL("?" + tooLong, "http://a/b")],
+    ["the base URL", () => new URL("c", "http://a/?" + tooLong)],
+  ])("the constructor throws a RangeError when %s makes the URL too long", (_, construct) => {
+    withStringLimit(MiB, () => {
+      expect(outcome(() => construct().href)).toEqual(outOfMemory);
+    });
+  });
+
+  it("URL.canParse() returns false and URL.parse() returns null", () => {
+    withStringLimit(MiB, () => {
+      expect({
+        canParse: URL.canParse("http://a/?" + tooLong),
+        parse: URL.parse("?" + tooLong, "http://a/"),
+      }).toEqual({ canParse: false, parse: null });
+    });
+  });
+
+  it("a URL that fits parses, and input that is not a URL is a TypeError", () => {
+    withStringLimit(MiB, () => {
+      expect({
+        query: outcome(() => new URL("http://a/?" + fits).href),
+        relative: outcome(() => new URL("?" + fits, "http://a/b").href),
+        setter: outcome(() => {
+          const url = new URL("http://a/");
+          url.hash = fits;
+          return url.href;
+        }),
+        notAURL: outcome(() => new URL("http://a b/?" + tooLong).href),
+        notAURLWithBase: outcome(() => new URL("//a b/?" + tooLong, "http://c/").href),
+      }).toEqual({
+        query: "http://a/?".length + 6 * fits.length,
+        relative: "http://a/b?".length + 6 * fits.length,
+        setter: "http://a/#".length + 6 * fits.length,
+        notAURL: { name: "TypeError", message: "Invalid URL" },
+        notAURLWithBase: { name: "TypeError", message: "Invalid URL" },
+      });
+    });
+  });
+
+  it.each(["href", "search", "hash", "pathname", "username", "password"] as const)(
+    "the %s setter throws a RangeError and leaves the URL as it was",
+    setter => {
+      withStringLimit(MiB, () => {
+        const href = "http://u:p@h:8/p?q#f";
+        const url = new URL(href);
+        const params = url.searchParams;
+        expect({
+          error: outcome(() => void (url[setter] = setter === "href" ? "http://a/?" + tooLong : tooLong)),
+          href: url.href,
+          params: [...params],
+        }).toEqual({ error: outOfMemory, href, params: [["q", ""]] });
+      });
+    },
+  );
+
+  it("every setter throws a RangeError on a URL that is as long as a URL can be", () => {
+    withStringLimit(MiB, () => {
+      // The parser refuses input that is too long before it reads it, so input that is not a URL finds the longest
+      // input fast: a TypeError is input that it read.
+      let length = 0;
+      for (let step = MiB; step >= 1; step >>= 1) {
+        const error = outcome(() => void new URL("1".repeat(length + step)));
+        if (typeof error === "object" && error.name === "TypeError") length += step;
+      }
+      const url = new URL("http://a/" + "x".repeat(length - "http://a/".length));
+      expect({
+        length: url.href.length,
+        oneMore: outcome(() => new URL(url.href + "x").href),
+        port: outcome(() => void (url.port = "8080")),
+        host: outcome(() => void (url.host = "bb")),
+        hostname: outcome(() => void (url.hostname = "bb")),
+        protocol: outcome(() => void (url.protocol = "https")),
+        username: outcome(() => void (url.username = "u")),
+        password: outcome(() => void (url.password = "p")),
+        pathname: outcome(() => void (url.pathname = url.pathname + "x")),
+        search: outcome(() => void (url.search = "q")),
+        hash: outcome(() => void (url.hash = "f")),
+        lengthAfter: url.href.length,
+        // A value that does not make the URL longer is fine.
+        sameLength: outcome(() => void (url.hostname = "b")),
+        hostnameAfter: url.hostname,
+      }).toEqual({
+        length,
+        oneMore: outOfMemory,
+        port: outOfMemory,
+        host: outOfMemory,
+        hostname: outOfMemory,
+        protocol: outOfMemory,
+        username: outOfMemory,
+        password: outOfMemory,
+        pathname: outOfMemory,
+        search: outOfMemory,
+        hash: outOfMemory,
+        lengthAfter: length,
+        sameLength: undefined,
+        hostnameAfter: "b",
+      });
+    });
+  });
+
+  it("url.searchParams.append() and set() throw a RangeError and leave the URL and the params as they were", () => {
+    withStringLimit(MiB, () => {
+      const url = new URL("http://a/?x=1#f");
+      const params = url.searchParams;
+      expect({
+        append: outcome(() => params.append("a", tooLong)),
+        setExisting: outcome(() => params.set("x", tooLong)),
+        setNew: outcome(() => params.set("b", tooLong)),
+        href: url.href,
+        entries: [...params],
+      }).toEqual({
+        append: outOfMemory,
+        setExisting: outOfMemory,
+        setNew: outOfMemory,
+        href: "http://a/?x=1#f",
+        entries: [["x", "1"]],
+      });
+
+      // Values that fit one by one. The URL takes them at its next read, until one more may be too long. From then on
+      // each append serializes, and the one that does not fit throws.
+      const value = "\u00e9".repeat(10_000);
+      let appended = 0;
+      const error = outcome(() => {
+        for (;;) {
+          params.append("k", value);
+          appended++;
+        }
+      });
+      expect({
+        error,
+        appended: appended > 10 && appended < 20,
+        size: params.size,
+        hrefLength: url.href.length,
+        lastValueLength: params.getAll("k").at(-1)!.length,
+      }).toEqual({
+        error: outOfMemory,
+        appended: true,
+        size: 1 + appended,
+        hrefLength: "http://a/?x=1#f".length + appended * ("&k=".length + 6 * value.length),
+        lastValueLength: value.length,
+      });
+
+      // delete() and sort() still work on a URL this long.
+      params.delete("k");
+      params.append("a", "2");
+      params.sort();
+      expect(url.href).toBe("http://a/?a=2&x=1#f");
+
+      // A query that the URL keeps as it is can be 3 times as long once the params serialize it.
+      const parentheses = new URL("http://a/?" + "(".repeat(400_000));
+      expect({
+        append: outcome(() => parentheses.searchParams.append("a", "b")),
+        size: parentheses.searchParams.size,
+        hrefLength: parentheses.href.length,
+      }).toEqual({ append: outOfMemory, size: 1, hrefLength: "http://a/?".length + 400_000 });
+    });
+  });
+
+  // The cases that only the real limit reaches: the parser's buffer past the size where a doubling Vector gives up, the
+  // concatenation in a setter, and the UTF-8 copy a setter makes of a string of 2 ** 30 characters. Each child commits
+  // 4 to 8 GB, and a debug or ASAN build needs minutes for them.
+  const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+  describe.skipIf(isDebug || isASAN || memory < 16 * 1024 ** 3)("at the real limit", () => {
+    async function runChild(source: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+    }
+    const prelude = `
+      const outcome = fn => { try { return fn()?.length; } catch (e) { return e.name + ": " + e.message; } };
+      const latin1 = n => Buffer.alloc(n, 0xe9).toString("latin1");
+    `;
+    const printed = (value: unknown) => ({
+      stdout: JSON.stringify(value) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+
+    test("the constructor throws a RangeError", async () => {
+      const result = await runChild(`${prelude}
+        console.log(JSON.stringify({ constructor: outcome(() => new URL("http://a/?" + latin1(2 ** 29)).href) }));
+      `);
+      expect(result).toEqual(printed({ constructor: "RangeError: Out of memory" }));
+    }, 120_000);
+
+    test("a URL of nearly 2 ** 31 characters parses", async () => {
+      const result = await runChild(`${prelude}
+        // 6 * 357_000_000 + 10 is 2_142_000_010 characters.
+        console.log(JSON.stringify({ fits: outcome(() => new URL("http://a/?" + latin1(357_000_000)).href) }));
+      `);
+      expect(result).toEqual(printed({ fits: 2_142_000_010 }));
+    }, 120_000);
+
+    test("setters whose value is too long before any encoding", async () => {
+      const result = await runChild(`${prelude}
+        const url = new URL("http://a/p");
+        console.log(JSON.stringify({
+          pathnameOf2To30: outcome(() => void (url.pathname = latin1(2 ** 30))),
+          searchOfNumberSigns: outcome(() => void (url.search = "#".repeat(2 ** 30))),
+          searchNearTheLimit: outcome(() => void (url.search = "a".repeat(2 ** 31 - 5))),
+          href: url.href,
+        }));
+      `);
+      expect(result).toEqual(
+        printed({
+          pathnameOf2To30: "RangeError: Out of memory",
+          searchOfNumberSigns: "RangeError: Out of memory",
+          searchNearTheLimit: "RangeError: Out of memory",
+          href: "http://a/p",
+        }),
+      );
+    }, 120_000);
+  });
 });

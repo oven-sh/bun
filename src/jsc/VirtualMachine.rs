@@ -52,6 +52,19 @@ pub fn synthetic_allocation_limit() -> usize {
 // `Bun__stringSyntheticAllocationLimit`.
 pub use bun_core::STRING_ALLOCATION_LIMIT;
 
+unsafe extern "C" {
+    safe fn Bun__setURLMaximumLengthForTesting(limit: usize);
+}
+
+/// Stores the limit for each of its readers: Rust, Bun's C++, and WTF's URL
+/// parser, which keeps its own copy. Returns the limit it replaces.
+pub(crate) fn set_synthetic_allocation_limit(limit: usize) -> usize {
+    let previous = SYNTHETIC_ALLOCATION_LIMIT.swap(limit, core::sync::atomic::Ordering::Relaxed);
+    STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+    Bun__setURLMaximumLengthForTesting(limit);
+    previous
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
@@ -3812,9 +3825,7 @@ impl VirtualMachine {
             if let Some(value) = map.get(b"BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT") {
                 match bun_core::fmt::parse_int::<usize>(value, 10).ok() {
                     Some(limit) => {
-                        SYNTHETIC_ALLOCATION_LIMIT
-                            .store(limit, core::sync::atomic::Ordering::Relaxed);
-                        STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+                        set_synthetic_allocation_limit(limit);
                     }
                     None => bun_core::Output::panic(format_args!(
                         "BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer"
@@ -5310,8 +5321,7 @@ impl VirtualMachine {
     /// Put the startup value back so a file's limit stays with that file.
     fn undo_synthetic_allocation_limit(&mut self) {
         if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
-            SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
-            STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+            set_synthetic_allocation_limit(limit);
         }
     }
 

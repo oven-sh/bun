@@ -57,7 +57,11 @@ public:
     ExceptionOr<void> setHref(const String&);
 
     URLSearchParams& searchParams();
-    void markSearchParamsDirty() { m_searchParamsDirty = true; }
+    // URLSearchParams calls this after each change. The URL takes the new query at its next read, see
+    // flushPendingSearchParamsUpdate(). A read cannot throw, so when the URL may then not fit in a String it takes the
+    // query now, and this gives the exception if it does not fit. addedLength is at least what the change adds to the query.
+    ExceptionOr<void> searchParamsDidChange(uint64_t addedLength);
+    bool canDeferSearchParamsUpdate(uint64_t addedLength) const;
 
     size_t memoryCost() const
     {
@@ -77,11 +81,13 @@ private:
         flushPendingSearchParamsUpdate();
         return m_url;
     }
-    void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
-    void flushPendingSearchParamsUpdate() const;
+    ExceptionOr<void> setFullURL(const URL&) final;
+    bool flushPendingSearchParamsUpdate() const;
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
+    // At least what the changes since the last flush add to the query.
+    mutable uint64_t m_pendingSearchParamsLength { 0 };
     uint16_t m_initialURLCostForGC { 0 };
     mutable bool m_searchParamsDirty { false };
 };

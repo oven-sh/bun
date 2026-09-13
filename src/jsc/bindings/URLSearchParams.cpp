@@ -39,11 +39,23 @@ extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue
 // callback accepting a void* and a const EncodedSlice*, returning void
 typedef void (*URLSearchParams__toStringCallback)(void* ctx, const EncodedSlice* str);
 
-extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
+// False, and no call of the callback, when the params do not fit in a String.
+extern "C" bool URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
-    String str = urlSearchParams->toString();
+    auto result = urlSearchParams->toString();
+    if (result.hasException()) [[unlikely]]
+        return false;
+    String str = result.releaseReturnValue();
     auto slice = Zig::toEncodedSlice(str);
     callback(ctx, &slice);
+    return true;
+}
+
+// At least what the string adds to toString(). A code unit is at most 3 UTF-8 bytes, 2 in an 8-bit string, and a byte is at
+// most 3 characters.
+static uint64_t serializedLengthBound(const String& string)
+{
+    return static_cast<uint64_t>(string.length()) * (string.is8Bit() ? 6 : 9);
 }
 
 URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)
@@ -99,8 +111,22 @@ void URLSearchParams::sort()
     needsSorting = false;
 }
 
-void URLSearchParams::set(const String& name, const String& value)
+ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)
 {
+    uint64_t addedLength = serializedLengthBound(name) + serializedLengthBound(value) + 2;
+    // updateURL() only fails for a URL of gigabytes. The pairs are kept to put them back then.
+    std::optional<Vector<KeyValuePair<String, String>>> pairsBefore;
+    if (m_associatedURL && !m_associatedURL->canDeferSearchParamsUpdate(addedLength)) [[unlikely]]
+        pairsBefore = m_pairs;
+    auto update = [&]() -> ExceptionOr<void> {
+        auto result = updateURL(addedLength);
+        if (result.hasException()) [[unlikely]] {
+            ASSERT(pairsBefore);
+            m_pairs = WTF::move(*pairsBefore);
+        } else
+            needsSorting = true;
+        return result;
+    };
     for (auto& pair : m_pairs) {
         if (pair.key != name)
             continue;
@@ -115,20 +141,22 @@ void URLSearchParams::set(const String& name, const String& value)
             }
             return false;
         });
-        updateURL();
-        needsSorting = true;
-        return;
+        return update();
     }
     m_pairs.append({ name, value });
-    needsSorting = true;
-    updateURL();
+    return update();
 }
 
-void URLSearchParams::append(const String& name, const String& value)
+ExceptionOr<void> URLSearchParams::append(const String& name, const String& value)
 {
     m_pairs.append({ name, value });
-    updateURL();
+    auto result = updateURL(serializedLengthBound(name) + serializedLengthBound(value) + 2);
+    if (result.hasException()) [[unlikely]] {
+        m_pairs.removeLast();
+        return result;
+    }
     needsSorting = true;
+    return {};
 }
 
 Vector<String> URLSearchParams::getAll(const StringView name) const
@@ -152,15 +180,19 @@ void URLSearchParams::remove(const StringView name, const String& value)
     needsSorting = true;
 }
 
-String URLSearchParams::toString() const
+ExceptionOr<String> URLSearchParams::toString() const
 {
-    return WTF::URLParser::serialize(m_pairs);
+    auto serialized = WTF::URLParser::trySerialize(m_pairs);
+    if (!serialized) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return WTF::move(*serialized);
 }
 
-void URLSearchParams::updateURL()
+ExceptionOr<void> URLSearchParams::updateURL(uint64_t addedLength)
 {
-    if (m_associatedURL)
-        m_associatedURL->markSearchParamsDirty();
+    if (!m_associatedURL)
+        return {};
+    return m_associatedURL->searchParamsDidChange(addedLength);
 }
 
 void URLSearchParams::updateFromAssociatedURL()

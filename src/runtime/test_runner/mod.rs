@@ -287,6 +287,83 @@ pub mod expect {
         f
     }
 
+    #[inline]
+    fn dom_element_outer_html_value(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+        if !value.is_object() {
+            return Ok(None);
+        }
+
+        let Some(node_type) = value.get(global, "nodeType")? else {
+            return Ok(None);
+        };
+        if !node_type.is_number() || node_type.to_int32() != 1 {
+            return Ok(None);
+        }
+
+        let Some(outer_html) = value.get(global, "outerHTML")? else {
+            return Ok(None);
+        };
+
+        Ok(outer_html.is_string().then_some(outer_html))
+    }
+
+    #[inline]
+    pub fn is_dom_element_like(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        Ok(dom_element_outer_html_value(value, global)?.is_some())
+    }
+
+    #[inline]
+    pub fn dom_element_outer_html(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Vec<u8>>> {
+        let Some(outer_html) = dom_element_outer_html_value(value, global)? else {
+            return Ok(None);
+        };
+
+        let outer_html = outer_html.to_slice(global)?;
+        Ok(Some(outer_html.slice().to_vec()))
+    }
+
+    pub fn dom_element_outer_html_prefix(
+        value: JSValue,
+        global: &JSGlobalObject,
+        max_len: usize,
+    ) -> JsResult<Option<Vec<u8>>> {
+        let Some(outer_html_value) = dom_element_outer_html_value(value, global)? else {
+            return Ok(None);
+        };
+        let outer_html = outer_html_value.get_zig_string(global)?;
+
+        // Each UTF-16 or Latin-1 code unit contributes at least one UTF-8 byte.
+        // One extra unit detects truncation and keeps a surrogate pair intact.
+        let input_limit = max_len.saturating_add(1);
+        let (mut output, read, input_len) = if outer_html.is_16_bit() {
+            let input = outer_html.utf16_slice();
+            let input = &input[..input.len().min(input_limit)];
+            let utf8_len = bun_core::strings::element_length_utf16_into_utf8(input);
+            let output_len = utf8_len.min(max_len);
+            let mut output = Vec::with_capacity(output_len.saturating_add(3));
+            output.resize(output_len, 0);
+            let copied = bun_core::strings::copy_utf16_into_utf8_with_utf8_len(&mut output, input, utf8_len);
+            output.truncate(copied.written as usize);
+            (output, copied.read as usize, input.len())
+        } else {
+            let input = outer_html.slice();
+            let input = &input[..input.len().min(input_limit)];
+            let output_len = bun_core::strings::element_length_latin1_into_utf8(input).min(max_len);
+            let mut output = Vec::with_capacity(output_len.saturating_add(3));
+            output.resize(output_len, 0);
+            let copied = bun_core::strings::copy_latin1_into_utf8(&mut output, input);
+            output.truncate(copied.written as usize);
+            (output, copied.read as usize, input.len())
+        };
+        if read < input_len || input_len < outer_html.length() {
+            output.extend_from_slice(b"...");
+        }
+
+        // `outer_html` borrows the JS string's storage until the prefix is copied.
+        outer_html_value.ensure_still_alive();
+        Ok(Some(output))
+    }
+
     // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
     // The four matchers are near-identical; collapse to one body
     // parameterised by relation.

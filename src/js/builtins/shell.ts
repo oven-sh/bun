@@ -307,7 +307,6 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   }
 
   // `$` and every `new $.Shell()` are functions whose prototype is ShellPrototype.prototype.
-  // Chain it to Function.prototype so `bind`, `call`, `apply` and `instanceof Function` work.
   Object.setPrototypeOf(ShellPrototype.prototype, Function.prototype);
 
   var BunShell = function BunShell(first, ...rest) {

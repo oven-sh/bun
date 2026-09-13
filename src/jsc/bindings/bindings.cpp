@@ -894,8 +894,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // node's objectComparisonStart and jest's equals() both start with the Object.prototype.toString
-    // tag comparison. The constructor / [[Prototype]] rule is node strict mode only.
+    // jest's equals() and node's objectComparisonStart: equal Object.prototype.toString tags first.
     {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();

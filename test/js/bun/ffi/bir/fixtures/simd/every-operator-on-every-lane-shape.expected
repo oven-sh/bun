@@ -1,0 +1,1171 @@
+s8
+ seed 0
+  +          9c f8 e9 14 87 7f 81 80 65 9c f8 e9 14 87 7f 81
+  -          64 f8 f9 fa 79 7f 7d 82 63 64 f8 f9 fa 79 7f 7d
+  *          0 0 78 5b 80 80 fe 7f 64 0 0 78 5b 80 80 fe
+  /          0 fe 1 0 ee 0 3f 0 64 0 fe 1 0 ee 0 3f
+  compound   74 0 c0 f7 aa 0 0 1 64 74 0 c0 f7 aa 0 0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          0 ff ff ff ff 0 0 ff 0 0 ff ff ff ff 0 0
+  <=         0 ff ff ff ff 0 0 ff 0 0 ff ff ff ff 0 0
+  >          ff 0 0 0 0 ff ff 0 ff ff 0 0 0 0 ff ff
+  >=         ff 0 0 0 0 ff ff 0 ff ff 0 0 0 0 ff ff
+  &&         0 0 ff ff ff ff ff ff ff 0 0 ff ff ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          ff 0 0 0 0 0 0 0 0 ff 0 0 0 0 0 0
+  neg        0 8 f f9 80 1 81 ff 9c 0 8 f f9 80 1 81
+  plus       0 f8 f1 7 80 ff 7f 1 64 0 f8 f1 7 80 ff 7f
+  ?:         9c f8 f1 7 80 80 2 1 1 9c f8 f1 7 80 80 2
+  + scalar   0 f8 f1 7 80 ff 7f 1 64 0 f8 f1 7 80 ff 7f
+  scalar -   9c a4 ab 95 1c 9d 1d 9b 38 9c a4 ab 95 1c 9d 1d
+  + 3        3 fb f4 a 83 2 82 4 67 3 fb f4 a 83 2 82
+  %          0 fe f9 7 fe ff 1 1 0 0 fe f9 7 fe ff 1
+  &          0 0 f0 5 0 80 2 1 0 0 0 f0 5 0 80 2
+  |          9c f8 f9 f 87 ff 7f 7f 65 9c f8 f9 f 87 ff 7f
+  ^          9c f8 9 a 87 7f 7d 7e 65 9c f8 9 a 87 7f 7d
+  <<         0 c0 40 e 0 80 fc 20 64 0 0 e2 70 0 fc e0
+  >>         0 ff ff 3 f8 ff 1f 0 64 0 ff f8 0 ff ff 3
+  ~          ff 7 e f8 7f 0 80 fe 9b ff 7 e f8 7f 0 80
+  << n       0 f0 e2 e 0 fe fe 2 c8 0 f0 e2 e 0 fe fe
+  >> n       0 fc f8 3 c0 ff 3f 0 32 0 fc f8 3 c0 ff 3f
+  << 3       0 c0 88 38 0 f8 f8 8 20 0 c0 88 38 0 f8 f8
+ seed 1
+  +          80 65 71 f8 e9 f3 87 7f 9b 80 65 71 f8 e9 f3 87
+  -          82 63 a9 f8 f9 11 79 7f 9d 82 63 a9 f8 f9 11 79
+  *          7f 64 14 0 78 e2 80 80 64 7f 64 14 0 78 e2 80
+  /          0 64 0 fe 1 0 ee 0 ec 0 64 0 fe 1 0 ee
+  compound   1 64 c0 0 c0 d2 aa 0 66 1 64 c0 0 c0 d2 aa
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          ff 0 ff ff ff 0 ff 0 ff ff 0 ff ff ff 0 ff
+  <=         ff 0 ff ff ff 0 ff 0 ff ff 0 ff ff ff 0 ff
+  >          0 ff 0 0 0 ff 0 ff 0 0 ff 0 0 0 ff 0
+  >=         0 ff 0 0 0 ff 0 ff 0 0 ff 0 0 0 ff 0
+  &&         ff ff ff 0 ff ff ff ff ff ff ff ff 0 ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  neg        ff 9c f3 8 f fe 80 1 64 ff 9c f3 8 f fe 80
+  plus       1 64 d f8 f1 2 80 ff 9c 1 64 d f8 f1 2 80
+  ?:         1 1 d f8 f1 f1 80 80 9c 1 1 d f8 f1 f1 80
+  + scalar   2 65 e f9 f2 3 81 0 9d 2 65 e f9 f2 3 81
+  scalar -   7e 1b 72 87 8e 7d ff 80 e3 7e 1b 72 87 8e 7d ff
+  + 3        4 67 10 fb f4 5 83 2 9f 4 67 10 fb f4 5 83
+  %          1 0 d fe f9 2 fe ff 0 1 0 d fe f9 2 fe
+  &          1 0 4 0 f0 0 0 80 9c 1 0 4 0 f0 0 0
+  |          7f 65 6d f8 f9 f3 87 ff ff 7f 65 6d f8 f9 f3 87
+  ^          7e 65 69 f8 9 f3 87 7f 63 7e 65 69 f8 9 f3 87
+  <<         2 40 80 e0 20 2 0 c0 38 10 0 34 0 f1 10 0
+  >>         0 6 0 fe ff 2 f0 ff ce 0 0 3 ff f1 0 fe
+  ~          fe 9b f2 7 e fd 7f 0 63 fe 9b f2 7 e fd 7f
+  << n       4 90 34 e0 c4 8 0 fc 70 4 90 34 e0 c4 8 0
+  >> n       0 19 3 fe fc 0 e0 ff e7 0 19 3 fe fc 0 e0
+  << 3       8 20 68 c0 88 10 0 f8 e0 8 20 68 c0 88 10 0
+ seed 2
+  +          7f 9b 9c 65 71 14 e9 f3 81 7f 9b 9c 65 71 14 e9
+  -          7f 9d 64 63 a9 fa f9 11 7d 7f 9d 64 63 a9 fa f9
+  *          80 64 0 64 14 5b 78 e2 fe 80 64 0 64 14 5b 78
+  /          0 ec 0 64 0 0 1 0 3f 0 ec 0 64 0 0 1
+  compound   0 66 74 64 c0 f7 c0 d2 0 0 66 74 64 c0 f7 c0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          0 ff 0 0 ff ff ff 0 0 0 ff 0 0 ff ff ff
+  <=         0 ff 0 0 ff ff ff 0 0 0 ff 0 0 ff ff ff
+  >          ff 0 ff ff 0 0 0 ff ff ff 0 ff ff 0 0 0
+  >=         ff 0 ff ff 0 0 0 ff ff ff 0 ff ff 0 0 0
+  &&         ff ff 0 ff ff ff ff ff ff ff ff 0 ff ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 ff 0 0 0 0 0 0 0 0 ff 0 0 0 0
+  neg        1 64 0 9c f3 f9 f fe 81 1 64 0 9c f3 f9 f
+  plus       ff 9c 0 64 d 7 f1 2 7f ff 9c 0 64 d 7 f1
+  ?:         80 9c 9c 1 d 7 f1 f1 2 80 9c 9c 1 d 7 f1
+  + scalar   fe 9b ff 63 c 6 f0 1 7e fe 9b ff 63 c 6 f0
+  scalar -   81 e4 80 1c 73 79 8f 7e 1 81 e4 80 1c 73 79 8f
+  + 3        2 9f 3 67 10 a f4 5 82 2 9f 3 67 10 a f4
+  %          ff 0 0 0 d 7 f9 2 1 ff 0 0 0 d 7 f9
+  &          80 9c 0 0 4 5 f0 0 2 80 9c 0 0 4 5 f0
+  |          ff ff 9c 65 6d f f9 f3 7f ff ff 9c 65 6d f f9
+  ^          7f 63 9c 65 69 a 9 f3 7d 7f 63 9c 65 69 a 9
+  <<         fc 80 0 20 40 e 10 0 fc e0 9c 0 0 1a 70 80
+  >>         ff fc 0 c 0 3 ff 0 1f ff 9c 0 1 6 0 ff
+  ~          0 63 ff 9b f2 f8 e fd 80 0 63 ff 9b f2 f8 e
+  << n       f8 e0 0 20 68 38 88 10 f8 f8 e0 0 20 68 38 88
+  >> n       ff f3 0 c 1 0 fe 0 f ff f3 0 c 1 0 fe
+  << 3       f8 e0 0 20 68 38 88 10 f8 f8 e0 0 20 68 38 88
+ seed 3
+  +          f3 81 80 9b 9c f8 71 14 87 f3 81 80 9b 9c f8 71
+  -          11 7d 82 9d 64 f8 a9 fa 79 11 7d 82 9d 64 f8 a9
+  *          e2 fe 7f 64 0 0 14 5b 80 e2 fe 7f 64 0 0 14
+  /          0 3f 0 ec 0 fe 0 0 ee 0 3f 0 ec 0 fe 0
+  compound   d2 0 1 66 74 0 c0 f7 aa d2 0 1 66 74 0 c0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          0 0 ff ff 0 ff ff ff ff 0 0 ff ff 0 ff ff
+  <=         0 0 ff ff 0 ff ff ff ff 0 0 ff ff 0 ff ff
+  >          ff ff 0 0 ff 0 0 0 0 ff ff 0 0 ff 0 0
+  >=         ff ff 0 0 ff 0 0 0 0 ff ff 0 0 ff 0 0
+  &&         ff ff ff ff 0 0 ff ff ff ff ff ff ff 0 0 ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 0 0 ff 0 0 0 0 0 0 0 0 ff 0 0
+  neg        fe 81 ff 64 0 8 f3 f9 80 fe 81 ff 64 0 8 f3
+  plus       2 7f 1 9c 0 f8 d 7 80 2 7f 1 9c 0 f8 d
+  ?:         f1 2 1 9c 9c f8 d 7 80 f1 2 1 9c 9c f8 d
+  + scalar   4 81 3 9e 2 fa f 9 82 4 81 3 9e 2 fa f
+  scalar -   ef 72 f0 55 f1 f9 e4 ea 71 ef 72 f0 55 f1 f9 e4
+  + 3        5 82 4 9f 3 fb 10 a 83 5 82 4 9f 3 fb 10
+  %          2 1 1 0 0 fe d 7 fe 2 1 1 0 0 fe d
+  &          0 2 1 9c 0 0 4 5 0 0 2 1 9c 0 0 4
+  |          f3 7f 7f ff 9c f8 6d f 87 f3 7f 7f ff 9c f8 6d
+  ^          f3 7d 7e 63 9c f8 69 a 87 f3 7d 7e 63 9c f8 69
+  <<         10 c0 2 c0 0 e0 a0 7 0 80 fe 10 0 0 0 d
+  >>         0 1 0 f9 0 fe 0 7 f0 0 3f 0 ff 0 ff d
+  ~          fd 80 fe 63 ff 7 f2 f8 7f fd 80 fe 63 ff 7 f2
+  << n       20 f0 10 c0 0 80 d0 70 0 20 f0 10 c0 0 80 d0
+  >> n       0 7 0 f9 0 ff 0 0 f8 0 7 0 f9 0 ff 0
+  << 3       10 f8 8 e0 0 c0 68 38 0 10 f8 8 e0 0 c0 68
+u8
+ seed 0
+  +          9c f8 e9 14 87 7f 81 80 65 9c f8 e9 14 87 7f 81
+  -          64 f8 f9 fa 79 7f 7d 82 63 64 f8 f9 fa 79 7f 7d
+  *          0 0 78 5b 80 80 fe 7f 64 0 0 78 5b 80 80 fe
+  /          0 52 0 0 12 1 3f 0 64 0 52 0 0 12 1 3f
+  compound   74 0 c0 f7 aa 0 0 1 64 74 0 c0 f7 aa 0 0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          ff 0 ff ff 0 0 0 ff 0 ff 0 ff ff 0 0 0
+  <=         ff 0 ff ff 0 0 0 ff 0 ff 0 ff ff 0 0 0
+  >          0 ff 0 0 ff ff ff 0 ff 0 ff 0 0 ff ff ff
+  >=         0 ff 0 0 ff ff ff 0 ff 0 ff 0 0 ff ff ff
+  &&         0 0 ff ff ff ff ff ff ff 0 0 ff ff ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          ff 0 0 0 0 0 0 0 0 ff 0 0 0 0 0 0
+  neg        0 8 f f9 80 1 81 ff 9c 0 8 f f9 80 1 81
+  plus       0 f8 f1 7 80 ff 7f 1 64 0 f8 f1 7 80 ff 7f
+  ?:         0 0 f1 7 7 80 2 1 1 0 0 f1 7 7 80 2
+  + scalar   0 f8 f1 7 80 ff 7f 1 64 0 f8 f1 7 80 ff 7f
+  scalar -   9c a4 ab 95 1c 9d 1d 9b 38 9c a4 ab 95 1c 9d 1d
+  + 3        3 fb f4 a 83 2 82 4 67 3 fb f4 a 83 2 82
+  %          0 2 f1 7 2 7f 1 1 0 0 2 f1 7 2 7f 1
+  &          0 0 f0 5 0 80 2 1 0 0 0 f0 5 0 80 2
+  |          9c f8 f9 f 87 ff 7f 7f 65 9c f8 f9 f 87 ff 7f
+  ^          9c f8 9 a 87 7f 7d 7e 65 9c f8 9 a 87 7f 7d
+  <<         0 c0 40 e 0 80 fc 20 64 0 0 e2 70 0 fc e0
+  >>         0 1f 3 3 8 1 1f 0 64 0 3 78 0 1 3f 3
+  ~          ff 7 e f8 7f 0 80 fe 9b ff 7 e f8 7f 0 80
+  << n       0 f0 e2 e 0 fe fe 2 c8 0 f0 e2 e 0 fe fe
+  >> n       0 7c 78 3 40 7f 3f 0 32 0 7c 78 3 40 7f 3f
+  << 3       0 c0 88 38 0 f8 f8 8 20 0 c0 88 38 0 f8 f8
+ seed 1
+  +          80 65 71 f8 e9 f3 87 7f 9b 80 65 71 f8 e9 f3 87
+  -          82 63 a9 f8 f9 11 79 7f 9d 82 63 a9 f8 f9 11 79
+  *          7f 64 14 0 78 e2 80 80 64 7f 64 14 0 78 e2 80
+  /          0 64 0 52 0 0 12 1 1f 0 64 0 52 0 0 12
+  compound   1 64 c0 0 c0 d2 aa 0 66 1 64 c0 0 c0 d2 aa
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          ff 0 ff 0 ff ff 0 0 ff ff 0 ff 0 ff ff 0
+  <=         ff 0 ff 0 ff ff 0 0 ff ff 0 ff 0 ff ff 0
+  >          0 ff 0 ff 0 0 ff ff 0 0 ff 0 ff 0 0 ff
+  >=         0 ff 0 ff 0 0 ff ff 0 0 ff 0 ff 0 0 ff
+  &&         ff ff ff 0 ff ff ff ff ff ff ff ff 0 ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  neg        ff 9c f3 8 f fe 80 1 64 ff 9c f3 8 f fe 80
+  plus       1 64 d f8 f1 2 80 ff 9c 1 64 d f8 f1 2 80
+  ?:         1 1 d 0 f1 2 7 80 9c 1 1 d 0 f1 2 7
+  + scalar   2 65 e f9 f2 3 81 0 9d 2 65 e f9 f2 3 81
+  scalar -   7e 1b 72 87 8e 7d ff 80 e3 7e 1b 72 87 8e 7d ff
+  + 3        4 67 10 fb f4 5 83 2 9f 4 67 10 fb f4 5 83
+  %          1 0 d 2 f1 2 2 7f 1 1 0 d 2 f1 2 2
+  &          1 0 4 0 f0 0 0 80 9c 1 0 4 0 f0 0 0
+  |          7f 65 6d f8 f9 f3 87 ff ff 7f 65 6d f8 f9 f3 87
+  ^          7e 65 69 f8 9 f3 87 7f 63 7e 65 69 f8 9 f3 87
+  <<         2 40 80 e0 20 2 0 c0 38 10 0 34 0 f1 10 0
+  >>         0 6 0 3e 7 2 10 3 4e 0 0 3 7 f1 0 2
+  ~          fe 9b f2 7 e fd 7f 0 63 fe 9b f2 7 e fd 7f
+  << n       4 90 34 e0 c4 8 0 fc 70 4 90 34 e0 c4 8 0
+  >> n       0 19 3 3e 3c 0 20 3f 27 0 19 3 3e 3c 0 20
+  << 3       8 20 68 c0 88 10 0 f8 e0 8 20 68 c0 88 10 0
+ seed 2
+  +          7f 9b 9c 65 71 14 e9 f3 81 7f 9b 9c 65 71 14 e9
+  -          7f 9d 64 63 a9 fa f9 11 7d 7f 9d 64 63 a9 fa f9
+  *          80 64 0 64 14 5b 78 e2 fe 80 64 0 64 14 5b 78
+  /          1 1f 0 64 0 0 0 0 3f 1 1f 0 64 0 0 0
+  compound   0 66 74 64 c0 f7 c0 d2 0 0 66 74 64 c0 f7 c0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          0 ff ff 0 ff ff ff ff 0 0 ff ff 0 ff ff ff
+  <=         0 ff ff 0 ff ff ff ff 0 0 ff ff 0 ff ff ff
+  >          ff 0 0 ff 0 0 0 0 ff ff 0 0 ff 0 0 0
+  >=         ff 0 0 ff 0 0 0 0 ff ff 0 0 ff 0 0 0
+  &&         ff ff 0 ff ff ff ff ff ff ff ff 0 ff ff ff ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 ff 0 0 0 0 0 0 0 0 ff 0 0 0 0
+  neg        1 64 0 9c f3 f9 f fe 81 1 64 0 9c f3 f9 f
+  plus       ff 9c 0 64 d 7 f1 2 7f ff 9c 0 64 d 7 f1
+  ?:         80 9c 0 1 d 7 f1 2 2 80 9c 0 1 d 7 f1
+  + scalar   fe 9b ff 63 c 6 f0 1 7e fe 9b ff 63 c 6 f0
+  scalar -   81 e4 80 1c 73 79 8f 7e 1 81 e4 80 1c 73 79 8f
+  + 3        2 9f 3 67 10 a f4 5 82 2 9f 3 67 10 a f4
+  %          7f 1 0 0 d 7 f1 2 1 7f 1 0 0 d 7 f1
+  &          80 9c 0 0 4 5 f0 0 2 80 9c 0 0 4 5 f0
+  |          ff ff 9c 65 6d f f9 f3 7f ff ff 9c 65 6d f f9
+  ^          7f 63 9c 65 69 a 9 f3 7d 7f 63 9c 65 69 a 9
+  <<         fc 80 0 20 40 e 10 0 fc e0 9c 0 0 1a 70 80
+  >>         3f 4 0 c 0 3 f 0 1f 7 9c 0 1 6 0 1
+  ~          0 63 ff 9b f2 f8 e fd 80 0 63 ff 9b f2 f8 e
+  << n       f8 e0 0 20 68 38 88 10 f8 f8 e0 0 20 68 38 88
+  >> n       1f 13 0 c 1 0 1e 0 f 1f 13 0 c 1 0 1e
+  << 3       f8 e0 0 20 68 38 88 10 f8 f8 e0 0 20 68 38 88
+ seed 3
+  +          f3 81 80 9b 9c f8 71 14 87 f3 81 80 9b 9c f8 71
+  -          11 7d 82 9d 64 f8 a9 fa 79 11 7d 82 9d 64 f8 a9
+  *          e2 fe 7f 64 0 0 14 5b 80 e2 fe 7f 64 0 0 14
+  /          0 3f 0 1f 0 52 0 0 12 0 3f 0 1f 0 52 0
+  compound   d2 0 1 66 74 0 c0 f7 aa d2 0 1 66 74 0 c0
+  ==         0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  !=         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  <          ff 0 ff ff ff 0 ff ff 0 ff 0 ff ff ff 0 ff
+  <=         ff 0 ff ff ff 0 ff ff 0 ff 0 ff ff ff 0 ff
+  >          0 ff 0 0 0 ff 0 0 ff 0 ff 0 0 0 ff 0
+  >=         0 ff 0 0 0 ff 0 0 ff 0 ff 0 0 0 ff 0
+  &&         ff ff ff ff 0 0 ff ff ff ff ff ff ff 0 0 ff
+  ||         ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+  !          0 0 0 0 ff 0 0 0 0 0 0 0 0 ff 0 0
+  neg        fe 81 ff 64 0 8 f3 f9 80 fe 81 ff 64 0 8 f3
+  plus       2 7f 1 9c 0 f8 d 7 80 2 7f 1 9c 0 f8 d
+  ?:         2 2 1 9c 0 0 d 7 7 2 2 1 9c 0 0 d
+  + scalar   4 81 3 9e 2 fa f 9 82 4 81 3 9e 2 fa f
+  scalar -   ef 72 f0 55 f1 f9 e4 ea 71 ef 72 f0 55 f1 f9 e4
+  + 3        5 82 4 9f 3 fb 10 a 83 5 82 4 9f 3 fb 10
+  %          2 1 1 1 0 2 d 7 2 2 1 1 1 0 2 d
+  &          0 2 1 9c 0 0 4 5 0 0 2 1 9c 0 0 4
+  |          f3 7f 7f ff 9c f8 6d f 87 f3 7f 7f ff 9c f8 6d
+  ^          f3 7d 7e 63 9c f8 69 a 87 f3 7d 7e 63 9c f8 69
+  <<         10 c0 2 c0 0 e0 a0 7 0 80 fe 10 0 0 0 d
+  >>         0 1 0 9 0 3e 0 7 10 0 3f 0 1 0 7 d
+  ~          fd 80 fe 63 ff 7 f2 f8 7f fd 80 fe 63 ff 7 f2
+  << n       20 f0 10 c0 0 80 d0 70 0 20 f0 10 c0 0 80 d0
+  >> n       0 7 0 9 0 f 0 0 8 0 7 0 9 0 f 0
+  << 3       10 f8 8 e0 0 c0 68 38 0 10 f8 8 e0 0 c0 68
+s16
+ seed 0
+  +          9b9c f7f8 e8e9 1414 8687 7e7f 8181 8080
+  -          6464 f7f8 f8f9 f9fa 7879 7f7f 7d7d 8182
+  *          0 0 f078 b65b fc80 80 fcfe fe7f
+  /          0 fd53 1 0 12 0 3f 0
+  compound   ab74 0 78c0 fbf7 57aa c100 300 c001
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          0 ffff ffff ffff 0 ffff 0 ffff
+  <=         0 ffff ffff ffff 0 ffff 0 ffff
+  >          ffff 0 0 0 ffff 0 ffff 0
+  >=         ffff 0 0 0 ffff 0 ffff 0
+  &&         0 0 ffff ffff ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          ffff 0 0 0 0 0 0 0
+  neg        0 808 f0f f8f9 8080 101 8081 feff
+  plus       0 f7f8 f0f1 707 7f80 feff 7f7f 101
+  ?:         9b9c f7f8 f0f1 707 707 feff 202 101
+  + scalar   0 f7f8 f0f1 707 7f80 feff 7f7f 101
+  scalar -   9b9c a3a4 aaab 9495 1c1c 9c9d 1c1d 9a9b
+  + 3        3 f7fb f0f4 70a 7f83 ff02 7f82 104
+  %          0 ffff f8f9 707 102 feff 101 101
+  &          0 0 f0f0 505 700 7e80 202 101
+  |          9b9c f7f8 f7f9 f0f 7f87 ffff 7f7f 7f7f
+  ^          9b9c f7f8 709 a0a 7887 817f 7d7d 7e7e
+  <<         0 bfc0 3c40 e00 0 8000 fdfc 2020
+  >>         0 feff ffc3 3 7 ffff 1fdf 8
+  ~          ffff 807 f0e f8f8 807f 100 8080 fefe
+  << n       0 eff0 e1e2 e0e ff00 fdfe fefe 202
+  >> n       0 fbfc f878 383 3fc0 ff7f 3fbf 80
+  << 3       0 bfc0 8788 3838 fc00 f7f8 fbf8 808
+ seed 1
+  +          8080 6565 7171 f7f8 e8e9 f2f3 8687 7e7f
+  -          8182 6363 a8a9 f7f8 f8f9 1111 7879 7f7f
+  *          fe7f c864 2d14 0 f078 c3e2 fc80 80
+  /          0 64 0 fd53 1 0 12 0
+  compound   c001 c964 fc0 0 78c0 95d2 57aa c100
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          ffff 0 ffff ffff ffff 0 0 ffff
+  <=         ffff 0 ffff ffff ffff 0 0 ffff
+  >          0 ffff 0 0 0 ffff ffff 0
+  >=         0 ffff 0 0 0 ffff ffff 0
+  &&         ffff ffff ffff 0 ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 0 0 0 0 0 0
+  neg        feff 9b9c f2f3 808 f0f fdfe 8080 101
+  plus       101 6464 d0d f7f8 f0f1 202 7f80 feff
+  ?:         101 101 d0d f7f8 f0f1 f0f1 707 feff
+  + scalar   202 6565 e0e f8f9 f1f2 303 8081 0
+  scalar -   7e7e 1b1b 7272 8787 8e8e 7d7d ffff 8080
+  + 3        104 6467 d10 f7fb f0f4 205 7f83 ff02
+  %          101 0 d0d ffff f8f9 202 102 feff
+  &          101 0 404 0 f0f0 0 700 7e80
+  |          7f7f 6565 6d6d f7f8 f7f9 f2f3 7f87 ffff
+  ^          7e7e 6565 6969 f7f8 709 f2f3 7887 817f
+  <<         202 4640 8680 e000 2000 202 fc00 bfc0
+  >>         80 646 1a fffd ffff 202 ff0 fffb
+  ~          fefe 9b9b f2f2 807 f0e fdfd 807f 100
+  << n       404 9190 3434 dfe0 c3c4 808 fe00 fbfc
+  >> n       40 1919 343 fdfe fc3c 80 1fe0 ffbf
+  << 3       808 2320 6868 bfc0 8788 1010 fc00 f7f8
+ seed 2
+  +          7e7f 9a9b 9b9c 6565 7171 1414 e8e9 f2f3
+  -          7f7f 9c9d 6464 6363 a8a9 f9fa f8f9 1111
+  *          80 c864 0 c864 2d14 b65b f078 c3e2
+  /          0 64 0 64 0 0 1 0
+  compound   c100 cb66 ab74 c964 fc0 fbf7 78c0 95d2
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          ffff ffff 0 0 ffff ffff ffff 0
+  <=         ffff ffff 0 0 ffff ffff ffff 0
+  >          0 0 ffff ffff 0 0 0 ffff
+  >=         0 0 ffff ffff 0 0 0 ffff
+  &&         ffff ffff 0 ffff ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 ffff 0 0 0 0 0
+  neg        101 6464 0 9b9c f2f3 f8f9 f0f fdfe
+  plus       feff 9b9c 0 6464 d0d 707 f0f1 202
+  ?:         feff 9b9c 9b9c 101 d0d 707 f0f1 f0f1
+  + scalar   fdfe 9a9b feff 6363 c0c 606 eff0 101
+  scalar -   8081 e3e4 7f80 1b1c 7273 7879 8e8f 7d7e
+  + 3        ff02 9b9f 3 6467 d10 70a f0f4 205
+  %          feff 0 0 0 d0d 707 f8f9 202
+  &          7e80 9a9c 0 0 404 505 f0f0 0
+  |          ffff ffff 9b9c 6565 6d6d f0f f7f9 f2f3
+  ^          817f 6563 9b9c 6565 6969 a0a 709 f2f3
+  <<         fbfc 7380 0 2000 4000 e0e f10 100
+  >>         ffbf fcdc 0 c 0 383 ff0f 4
+  ~          100 6463 ffff 9b9b f2f2 f8f8 f0e fdfd
+  << n       f7f8 dce0 0 2320 6868 3838 8788 1010
+  >> n       ffdf f373 0 c8c 1a1 e0 fe1e 40
+  << 3       f7f8 dce0 0 2320 6868 3838 8788 1010
+ seed 3
+  +          f2f3 8181 8080 9a9b 9b9c f7f8 7171 1414
+  -          1111 7d7d 8182 9c9d 6464 f7f8 a8a9 f9fa
+  *          c3e2 fcfe fe7f c864 0 0 2d14 b65b
+  /          0 3f 0 64 0 fd53 0 0
+  compound   95d2 300 c001 cb66 ab74 0 fc0 fbf7
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          0 0 ffff ffff 0 ffff ffff ffff
+  <=         0 0 ffff ffff 0 ffff ffff ffff
+  >          ffff ffff 0 0 ffff 0 0 0
+  >=         ffff ffff 0 0 ffff 0 0 0
+  &&         ffff ffff ffff ffff 0 0 ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 0 0 ffff 0 0 0
+  neg        fdfe 8081 feff 6464 0 808 f2f3 f8f9
+  plus       202 7f7f 101 9b9c 0 f7f8 d0d 707
+  ?:         f0f1 202 101 9b9c 9b9c f7f8 d0d 707
+  + scalar   404 8181 303 9d9e 202 f9fa f0f 909
+  scalar -   eeef 7172 eff0 5555 f0f1 f8f9 e3e4 e9ea
+  + 3        205 7f82 104 9b9f 3 f7fb d10 70a
+  %          202 101 101 0 0 ffff d0d 707
+  &          0 202 101 9a9c 0 0 404 505
+  |          f2f3 7f7f 7f7f ffff 9b9c f7f8 6d6d f0f
+  ^          f2f3 7d7d 7e7e 6563 9b9c f7f8 6969 a0a
+  <<         1010 dfc0 200 c000 0 dfe0 a1a0 700
+  >>         40 1fd 0 fff9 0 fdfe 68 7
+  ~          fdfd 8080 fefe 6463 ffff 807 f2f2 f8f8
+  << n       2020 f7f0 1010 b9c0 0 7f80 d0d0 7070
+  >> n       20 7f7 10 f9b9 0 ff7f d0 70
+  << 3       1010 fbf8 808 dce0 0 bfc0 6868 3838
+u16
+ seed 0
+  +          9b9c f7f8 e8e9 1414 8687 7e7f 8181 8080
+  -          6464 f7f8 f8f9 f9fa 7879 7f7f 7d7d 8182
+  *          0 0 f078 b65b fc80 80 fcfe fe7f
+  /          0 52a8 0 0 12 1 3f 0
+  compound   ab74 0 78c0 fbf7 57aa c100 300 c001
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          ffff 0 ffff ffff 0 0 0 ffff
+  <=         ffff 0 ffff ffff 0 0 0 ffff
+  >          0 ffff 0 0 ffff ffff ffff 0
+  >=         0 ffff 0 0 ffff ffff ffff 0
+  &&         0 0 ffff ffff ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          ffff 0 0 0 0 0 0 0
+  neg        0 808 f0f f8f9 8080 101 8081 feff
+  plus       0 f7f8 f0f1 707 7f80 feff 7f7f 101
+  ?:         0 0 f0f1 707 707 7f80 202 101
+  + scalar   0 f7f8 f0f1 707 7f80 feff 7f7f 101
+  scalar -   9b9c a3a4 aaab 9495 1c1c 9c9d 1c1d 9a9b
+  + 3        3 f7fb f0f4 70a 7f83 ff02 7f82 104
+  %          0 0 f0f1 707 102 7f7f 101 101
+  &          0 0 f0f0 505 700 7e80 202 101
+  |          9b9c f7f8 f7f9 f0f 7f87 ffff 7f7f 7f7f
+  ^          9b9c f7f8 709 a0a 7887 817f 7d7d 7e7e
+  <<         0 bfc0 3c40 e00 0 8000 fdfc 2020
+  >>         0 1eff 3c3 3 7 1 1fdf 8
+  ~          ffff 807 f0e f8f8 807f 100 8080 fefe
+  << n       0 eff0 e1e2 e0e ff00 fdfe fefe 202
+  >> n       0 7bfc 7878 383 3fc0 7f7f 3fbf 80
+  << 3       0 bfc0 8788 3838 fc00 f7f8 fbf8 808
+ seed 1
+  +          8080 6565 7171 f7f8 e8e9 f2f3 8687 7e7f
+  -          8182 6363 a8a9 f7f8 f8f9 1111 7879 7f7f
+  *          fe7f c864 2d14 0 f078 c3e2 fc80 80
+  /          0 64 0 52a8 0 0 12 1
+  compound   c001 c964 fc0 0 78c0 95d2 57aa c100
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          ffff 0 ffff 0 ffff ffff 0 0
+  <=         ffff 0 ffff 0 ffff ffff 0 0
+  >          0 ffff 0 ffff 0 0 ffff ffff
+  >=         0 ffff 0 ffff 0 0 ffff ffff
+  &&         ffff ffff ffff 0 ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 0 0 0 0 0 0
+  neg        feff 9b9c f2f3 808 f0f fdfe 8080 101
+  plus       101 6464 d0d f7f8 f0f1 202 7f80 feff
+  ?:         101 101 d0d 0 f0f1 202 707 7f80
+  + scalar   202 6565 e0e f8f9 f1f2 303 8081 0
+  scalar -   7e7e 1b1b 7272 8787 8e8e 7d7d ffff 8080
+  + 3        104 6467 d10 f7fb f0f4 205 7f83 ff02
+  %          101 0 d0d 0 f0f1 202 102 7f7f
+  &          101 0 404 0 f0f0 0 700 7e80
+  |          7f7f 6565 6d6d f7f8 f7f9 f2f3 7f87 ffff
+  ^          7e7e 6565 6969 f7f8 709 f2f3 7887 817f
+  <<         202 4640 8680 e000 2000 202 fc00 bfc0
+  >>         80 646 1a 3d 7 202 ff0 3fb
+  ~          fefe 9b9b f2f2 807 f0e fdfd 807f 100
+  << n       404 9190 3434 dfe0 c3c4 808 fe00 fbfc
+  >> n       40 1919 343 3dfe 3c3c 80 1fe0 3fbf
+  << 3       808 2320 6868 bfc0 8788 1010 fc00 f7f8
+ seed 2
+  +          7e7f 9a9b 9b9c 6565 7171 1414 e8e9 f2f3
+  -          7f7f 9c9d 6464 6363 a8a9 f9fa f8f9 1111
+  *          80 c864 0 c864 2d14 b65b f078 c3e2
+  /          1 0 0 64 0 0 0 0
+  compound   c100 cb66 ab74 c964 fc0 fbf7 78c0 95d2
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          0 ffff ffff 0 ffff ffff ffff ffff
+  <=         0 ffff ffff 0 ffff ffff ffff ffff
+  >          ffff 0 0 ffff 0 0 0 0
+  >=         ffff 0 0 ffff 0 0 0 0
+  &&         ffff ffff 0 ffff ffff ffff ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 ffff 0 0 0 0 0
+  neg        101 6464 0 9b9c f2f3 f8f9 f0f fdfe
+  plus       feff 9b9c 0 6464 d0d 707 f0f1 202
+  ?:         7f80 9b9c 0 101 d0d 707 f0f1 202
+  + scalar   fdfe 9a9b feff 6363 c0c 606 eff0 101
+  scalar -   8081 e3e4 7f80 1b1c 7273 7879 8e8f 7d7e
+  + 3        ff02 9b9f 3 6467 d10 70a f0f4 205
+  %          7f7f 9b9c 0 0 d0d 707 f0f1 202
+  &          7e80 9a9c 0 0 404 505 f0f0 0
+  |          ffff ffff 9b9c 6565 6d6d f0f f7f9 f2f3
+  ^          817f 6563 9b9c 6565 6969 a0a 709 f2f3
+  <<         fbfc 7380 0 2000 4000 e0e f10 100
+  >>         3fbf 4dc 0 c 0 383 f0f 4
+  ~          100 6463 ffff 9b9b f2f2 f8f8 f0e fdfd
+  << n       f7f8 dce0 0 2320 6868 3838 8788 1010
+  >> n       1fdf 1373 0 c8c 1a1 e0 1e1e 40
+  << 3       f7f8 dce0 0 2320 6868 3838 8788 1010
+ seed 3
+  +          f2f3 8181 8080 9a9b 9b9c f7f8 7171 1414
+  -          1111 7d7d 8182 9c9d 6464 f7f8 a8a9 f9fa
+  *          c3e2 fcfe fe7f c864 0 0 2d14 b65b
+  /          0 3f 0 0 0 52a8 0 0
+  compound   95d2 300 c001 cb66 ab74 0 fc0 fbf7
+  ==         0 0 0 0 0 0 0 0
+  !=         ffff ffff ffff ffff ffff ffff ffff ffff
+  <          ffff 0 ffff ffff ffff 0 ffff ffff
+  <=         ffff 0 ffff ffff ffff 0 ffff ffff
+  >          0 ffff 0 0 0 ffff 0 0
+  >=         0 ffff 0 0 0 ffff 0 0
+  &&         ffff ffff ffff ffff 0 0 ffff ffff
+  ||         ffff ffff ffff ffff ffff ffff ffff ffff
+  !          0 0 0 0 ffff 0 0 0
+  neg        fdfe 8081 feff 6464 0 808 f2f3 f8f9
+  plus       202 7f7f 101 9b9c 0 f7f8 d0d 707
+  ?:         202 202 101 9b9c 0 0 d0d 707
+  + scalar   404 8181 303 9d9e 202 f9fa f0f 909
+  scalar -   eeef 7172 eff0 5555 f0f1 f8f9 e3e4 e9ea
+  + 3        205 7f82 104 9b9f 3 f7fb d10 70a
+  %          202 101 101 9b9c 0 0 d0d 707
+  &          0 202 101 9a9c 0 0 404 505
+  |          f2f3 7f7f 7f7f ffff 9b9c f7f8 6d6d f0f
+  ^          f2f3 7d7d 7e7e 6563 9b9c f7f8 6969 a0a
+  <<         1010 dfc0 200 c000 0 dfe0 a1a0 700
+  >>         40 1fd 0 9 0 3dfe 68 7
+  ~          fdfd 8080 fefe 6463 ffff 807 f2f2 f8f8
+  << n       2020 f7f0 1010 b9c0 0 7f80 d0d0 7070
+  >> n       20 7f7 10 9b9 0 f7f d0 70
+  << 3       1010 fbf8 808 dce0 0 bfc0 6868 3838
+s32
+ seed 0
+  +          9b9b9b9c f7f7f7f8 68e8e8e9 94141414
+  -          64646464 f7f7f7f8 78f8f8f9 79f9f9fa
+  *          0 0 e168f078 ed11b65b
+  /          0 fd52a7fe fffffff2 0
+  compound   19e2ab74 0 ea3178c0 600fbf7
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          0 ffffffff 0 0
+  <=         0 ffffffff 0 0
+  >          ffffffff 0 ffffffff ffffffff
+  >=         ffffffff 0 ffffffff ffffffff
+  &&         0 0 ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          ffffffff 0 0 0
+  neg        0 8080808 8f0f0f0f f8f8f8f9
+  plus       0 f7f7f7f8 70f0f0f1 7070707
+  ?:         9b9b9b9c f7f7f7f8 f7f7f7f8 8d0d0d0d
+  + scalar   0 f7f7f7f8 70f0f0f1 7070707
+  scalar -   9b9b9b9c a3a3a3a4 2aaaaaab 94949495
+  + 3        3 f7f7f7fb 70f0f0f4 707070a
+  %          0 fffffffe 808081 7070707
+  &          0 0 70f0f0f0 5050505
+  |          9b9b9b9c f7f7f7f8 f7f7f7f9 8f0f0f0f
+  ^          9b9b9b9c f7f7f7f8 87070709 8a0a0a0a
+  <<         0 bfbfbfc0 3c3c3c40 e0e0e00
+  >>         0 fefefeff 1c3c3c3 38383
+  ~          ffffffff 8080807 8f0f0f0e f8f8f8f8
+  << n       0 efefeff0 e1e1e1e2 e0e0e0e
+  >> n       0 fbfbfbfc 38787878 3838383
+  << 3       0 bfbfbfc0 87878788 38383838
+ seed 1
+  +          80808080 65656565 f1717171 f7f7f7f8
+  -          81818182 63636363 28a8a8a9 f7f7f7f8
+  *          fd7dfe7f 912cc864 5f462d14 0
+  /          0 64 ffffffff fd52a7fe
+  compound   3f7fc001 942ec964 b0600fc0 0
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff ffffffff
+  <=         ffffffff 0 ffffffff ffffffff
+  >          0 ffffffff 0 0
+  >=         0 ffffffff 0 0
+  &&         ffffffff ffffffff ffffffff 0
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        fefefeff 9b9b9b9c 72f2f2f3 8080808
+  plus       1010101 64646464 8d0d0d0d f7f7f7f8
+  ?:         1010101 1010101 8d0d0d0d f7f7f7f8
+  + scalar   2020202 65656565 8e0e0e0e f8f8f8f9
+  scalar -   7e7e7e7e 1b1b1b1b f2727272 87878787
+  + 3        1010104 64646467 8d0d0d10 f7f7f7fb
+  %          1010101 0 f1717171 fffffffe
+  &          1010101 0 4040404 0
+  |          7f7f7f7f 65656565 ed6d6d6d f7f7f7f8
+  ^          7e7e7e7e 65656565 e9696969 f7f7f7f8
+  <<         2020202 46464640 86868680 dfdfe000
+  >>         808080 6464646 ff1a1a1a fffdfdfd
+  ~          fefefefe 9b9b9b9b 72f2f2f2 8080807
+  << n       4040404 91919190 34343434 dfdfdfe0
+  >> n       404040 19191919 e3434343 fdfdfdfe
+  << 3       8080808 23232320 68686868 bfbfbfc0
+ seed 2
+  +          7e7e7e7f 9a9a9a9b 9b9b9b9c 65656565
+  -          7f7f7f7f 9c9c9c9d 64646464 63636363
+  *          1810080 912cc864 0 912cc864
+  /          0 64 0 64
+  compound   4281c100 9630cb66 19e2ab74 942ec964
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff ffffffff 0 0
+  <=         ffffffff ffffffff 0 0
+  >          0 0 ffffffff ffffffff
+  >=         0 0 ffffffff ffffffff
+  &&         ffffffff ffffffff 0 ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 ffffffff 0
+  neg        1010101 64646464 0 9b9b9b9c
+  plus       fefefeff 9b9b9b9c 0 64646464
+  ?:         fefefeff 9b9b9b9c 9b9b9b9c 1010101
+  + scalar   fdfdfdfe 9a9a9a9b fefefeff 63636363
+  scalar -   80808081 e3e3e3e4 7f7f7f80 1b1b1b1c
+  + 3        fefeff02 9b9b9b9f 3 64646467
+  %          fefefeff 0 0 0
+  &          7e7e7e80 9a9a9a9c 0 0
+  |          ffffffff ffffffff 9b9b9b9c 65656565
+  ^          8181817f 65656563 9b9b9b9c 65656565
+  <<         fbfbfbfc 73737380 0 23232000
+  >>         ffbfbfbf fcdcdcdc 0 c8c8c
+  ~          1010100 64646463 ffffffff 9b9b9b9b
+  << n       f7f7f7f8 dcdcdce0 0 23232320
+  >> n       ffdfdfdf f3737373 0 c8c8c8c
+  << 3       f7f7f7f8 dcdcdce0 0 23232320
+ seed 3
+  +          72f2f2f3 81818181 80808080 9a9a9a9b
+  -          91111111 7d7d7d7d 81818182 9c9c9c9d
+  *          87a5c3e2 fafbfcfe fd7dfe7f 912cc864
+  /          0 3f 0 64
+  compound   9d5995d2 9060300 3f7fc001 9630cb66
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff ffffffff
+  <=         ffffffff 0 ffffffff ffffffff
+  >          0 ffffffff 0 0
+  >=         0 ffffffff 0 0
+  &&         ffffffff ffffffff ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        fdfdfdfe 80808081 fefefeff 64646464
+  plus       2020202 7f7f7f7f 1010101 9b9b9b9c
+  ?:         2020202 2020202 1010101 9b9b9b9c
+  + scalar   4040404 81818181 3030303 9d9d9d9e
+  scalar -   6eeeeeef f1717172 6fefeff0 d5555555
+  + 3        2020205 7f7f7f82 1010104 9b9b9b9f
+  %          2020202 1010101 1010101 0
+  &          0 2020202 1010101 9a9a9a9c
+  |          72f2f2f3 7f7f7f7f 7f7f7f7f ffffffff
+  ^          72f2f2f3 7d7d7d7d 7e7e7e7e 65656563
+  <<         10101010 dfdfdfc0 2020200 b9b9c000
+  >>         404040 1fdfdfd 8080 fff9b9b9
+  ~          fdfdfdfd 80808080 fefefefe 64646463
+  << n       20202020 f7f7f7f0 10101010 b9b9b9c0
+  >> n       202020 7f7f7f7 101010 f9b9b9b9
+  << 3       10101010 fbfbfbf8 8080808 dcdcdce0
+u32
+ seed 0
+  +          9b9b9b9c f7f7f7f8 68e8e8e9 94141414
+  -          64646464 f7f7f7f8 78f8f8f9 79f9f9fa
+  *          0 0 e168f078 ed11b65b
+  /          0 52a7fd52 0 0
+  compound   19e2ab74 0 ea3178c0 600fbf7
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff ffffffff
+  <=         ffffffff 0 ffffffff ffffffff
+  >          0 ffffffff 0 0
+  >=         0 ffffffff 0 0
+  &&         0 0 ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          ffffffff 0 0 0
+  neg        0 8080808 8f0f0f0f f8f8f8f9
+  plus       0 f7f7f7f8 70f0f0f1 7070707
+  ?:         0 0 70f0f0f1 7070707
+  + scalar   0 f7f7f7f8 70f0f0f1 7070707
+  scalar -   9b9b9b9c a3a3a3a4 2aaaaaab 94949495
+  + 3        3 f7f7f7fb 70f0f0f4 707070a
+  %          0 2 70f0f0f1 7070707
+  &          0 0 70f0f0f0 5050505
+  |          9b9b9b9c f7f7f7f8 f7f7f7f9 8f0f0f0f
+  ^          9b9b9b9c f7f7f7f8 87070709 8a0a0a0a
+  <<         0 bfbfbfc0 3c3c3c40 e0e0e00
+  >>         0 1efefeff 1c3c3c3 38383
+  ~          ffffffff 8080807 8f0f0f0e f8f8f8f8
+  << n       0 efefeff0 e1e1e1e2 e0e0e0e
+  >> n       0 7bfbfbfc 38787878 3838383
+  << 3       0 bfbfbfc0 87878788 38383838
+ seed 1
+  +          80808080 65656565 f1717171 f7f7f7f8
+  -          81818182 63636363 28a8a8a9 f7f7f7f8
+  *          fd7dfe7f 912cc864 5f462d14 0
+  /          0 64 1 52a7fd52
+  compound   3f7fc001 942ec964 b0600fc0 0
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 0 0
+  <=         ffffffff 0 0 0
+  >          0 ffffffff ffffffff ffffffff
+  >=         0 ffffffff ffffffff ffffffff
+  &&         ffffffff ffffffff ffffffff 0
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        fefefeff 9b9b9b9c 72f2f2f3 8080808
+  plus       1010101 64646464 8d0d0d0d f7f7f7f8
+  ?:         1010101 1010101 64646464 0
+  + scalar   2020202 65656565 8e0e0e0e f8f8f8f9
+  scalar -   7e7e7e7e 1b1b1b1b f2727272 87878787
+  + 3        1010104 64646467 8d0d0d10 f7f7f7fb
+  %          1010101 0 28a8a8a9 2
+  &          1010101 0 4040404 0
+  |          7f7f7f7f 65656565 ed6d6d6d f7f7f7f8
+  ^          7e7e7e7e 65656565 e9696969 f7f7f7f8
+  <<         2020202 46464640 86868680 dfdfe000
+  >>         808080 6464646 11a1a1a 3dfdfd
+  ~          fefefefe 9b9b9b9b 72f2f2f2 8080807
+  << n       4040404 91919190 34343434 dfdfdfe0
+  >> n       404040 19191919 23434343 3dfdfdfe
+  << 3       8080808 23232320 68686868 bfbfbfc0
+ seed 2
+  +          7e7e7e7f 9a9a9a9b 9b9b9b9c 65656565
+  -          7f7f7f7f 9c9c9c9d 64646464 63636363
+  *          1810080 912cc864 0 912cc864
+  /          1 0 0 64
+  compound   4281c100 9630cb66 19e2ab74 942ec964
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          0 ffffffff ffffffff 0
+  <=         0 ffffffff ffffffff 0
+  >          ffffffff 0 0 ffffffff
+  >=         ffffffff 0 0 ffffffff
+  &&         ffffffff ffffffff 0 ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 ffffffff 0
+  neg        1010101 64646464 0 9b9b9b9c
+  plus       fefefeff 9b9b9b9c 0 64646464
+  ?:         7f7f7f80 9b9b9b9c 0 1010101
+  + scalar   fdfdfdfe 9a9a9a9b fefefeff 63636363
+  scalar -   80808081 e3e3e3e4 7f7f7f80 1b1b1b1c
+  + 3        fefeff02 9b9b9b9f 3 64646467
+  %          7f7f7f7f 9b9b9b9c 0 0
+  &          7e7e7e80 9a9a9a9c 0 0
+  |          ffffffff ffffffff 9b9b9b9c 65656565
+  ^          8181817f 65656563 9b9b9b9c 65656565
+  <<         fbfbfbfc 73737380 0 23232000
+  >>         3fbfbfbf 4dcdcdc 0 c8c8c
+  ~          1010100 64646463 ffffffff 9b9b9b9b
+  << n       f7f7f7f8 dcdcdce0 0 23232320
+  >> n       1fdfdfdf 13737373 0 c8c8c8c
+  << 3       f7f7f7f8 dcdcdce0 0 23232320
+ seed 3
+  +          72f2f2f3 81818181 80808080 9a9a9a9b
+  -          91111111 7d7d7d7d 81818182 9c9c9c9d
+  *          87a5c3e2 fafbfcfe fd7dfe7f 912cc864
+  /          0 3f 0 0
+  compound   9d5995d2 9060300 3f7fc001 9630cb66
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff ffffffff
+  <=         ffffffff 0 ffffffff ffffffff
+  >          0 ffffffff 0 0
+  >=         0 ffffffff 0 0
+  &&         ffffffff ffffffff ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        fdfdfdfe 80808081 fefefeff 64646464
+  plus       2020202 7f7f7f7f 1010101 9b9b9b9c
+  ?:         2020202 2020202 1010101 9b9b9b9c
+  + scalar   4040404 81818181 3030303 9d9d9d9e
+  scalar -   6eeeeeef f1717172 6fefeff0 d5555555
+  + 3        2020205 7f7f7f82 1010104 9b9b9b9f
+  %          2020202 1010101 1010101 9b9b9b9c
+  &          0 2020202 1010101 9a9a9a9c
+  |          72f2f2f3 7f7f7f7f 7f7f7f7f ffffffff
+  ^          72f2f2f3 7d7d7d7d 7e7e7e7e 65656563
+  <<         10101010 dfdfdfc0 2020200 b9b9c000
+  >>         404040 1fdfdfd 8080 9b9b9
+  ~          fdfdfdfd 80808080 fefefefe 64646463
+  << n       20202020 f7f7f7f0 10101010 b9b9b9c0
+  >> n       202020 7f7f7f7 101010 9b9b9b9
+  << 3       10101010 fbfbfbf8 8080808 dcdcdce0
+s64
+ seed 0
+  +          ffffff9bffffff9c fffffff7fffffff8
+  -          6400000064 fffffff7fffffff8
+  *          0 0
+  /          0 fffffffd55555553
+  compound   4e8400002774 0
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          0 ffffffffffffffff
+  <=         0 ffffffffffffffff
+  >          ffffffffffffffff 0
+  >=         ffffffffffffffff 0
+  &&         0 0
+  ||         ffffffffffffffff ffffffffffffffff
+  !          ffffffffffffffff 0
+  neg        0 800000008
+  plus       0 fffffff7fffffff8
+  ?:         ffffff9bffffff9c fffffff7fffffff8
+  + scalar   0 fffffff7fffffff8
+  scalar -   ffffff9bffffff9c ffffffa3ffffffa4
+  + 3        3 fffffff7fffffffb
+  %          0 ffffffffffffffff
+  &          0 0
+  |          ffffff9bffffff9c fffffff7fffffff8
+  ^          ffffff9bffffff9c fffffff7fffffff8
+  <<         0 ffffffbfffffffc0
+  >>         0 fffffffeffffffff
+  ~          ffffffffffffffff 800000007
+  << n       0 ffffffeffffffff0
+  >> n       0 fffffffbfffffffc
+  << 3       0 ffffffbfffffffc0
+ seed 1
+  +          8000000080 6500000065
+  -          ffffff81ffffff82 6300000063
+  *          fe0000007f c800000064
+  /          0 64
+  compound   7e8100003f01 c900000064
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        fffffffeffffffff ffffff9bffffff9c
+  plus       100000001 6400000064
+  ?:         100000001 100000001
+  + scalar   200000002 6500000065
+  scalar -   7e0000007e 1b0000001b
+  + 3        100000004 6400000067
+  %          100000001 0
+  &          100000001 0
+  |          7f0000007f 6500000065
+  ^          7e0000007e 6500000065
+  <<         200000002 64000000640
+  >>         80000000 640000006
+  ~          fffffffefffffffe ffffff9bffffff9b
+  << n       400000004 19000000190
+  >> n       40000000 1900000019
+  << 3       800000008 32000000320
+ seed 2
+  +          ffffff7effffff7f ffffff9affffff9b
+  -          7f0000007f ffffff9cffffff9d
+  *          10000000080 c800000064
+  /          0 64
+  compound   818000004100 cb00000066
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          0 ffffffffffffffff
+  <=         0 ffffffffffffffff
+  >          ffffffffffffffff 0
+  >=         ffffffffffffffff 0
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        100000001 6400000064
+  plus       fffffffeffffffff ffffff9bffffff9c
+  ?:         ffffff7fffffff80 ffffff9bffffff9c
+  + scalar   fffffffdfffffffe ffffff9affffff9b
+  scalar -   ffffff80ffffff81 ffffffe3ffffffe4
+  + 3        ffffffff00000002 ffffff9bffffff9f
+  %          fffffffeffffffff 0
+  &          ffffff7effffff80 ffffff9affffff9c
+  |          ffffffffffffffff ffffffffffffffff
+  ^          810000007f 6500000063
+  <<         fffffffbfffffffc fffff37ffffff380
+  >>         ffffffffbfffffff fffffffcdffffffc
+  ~          100000000 6400000063
+  << n       fffffff7fffffff8 fffffcdffffffce0
+  >> n       ffffffffdfffffff fffffff37ffffff3
+  << 3       fffffff7fffffff8 fffffcdffffffce0
+ seed 3
+  +          7ffffff37ffffff3 8100000081
+  -          8000001080000011 7d0000007d
+  *          ffffffc4ffffffe2 1fc000000fe
+  /          0 3f
+  compound   c0000186800000d2 20200000100
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        fffffffdfffffffe ffffff80ffffff81
+  plus       200000002 7f0000007f
+  ?:         200000002 200000002
+  + scalar   400000004 8100000081
+  scalar -   7fffffef7fffffef 7fffff727fffff72
+  + 3        200000005 7f00000082
+  %          200000002 100000001
+  &          0 200000002
+  |          7ffffff37ffffff3 7f0000007f
+  ^          7ffffff37ffffff3 7d0000007d
+  <<         1000000010 1fc000001fc0
+  >>         40000000 1fc000001
+  ~          fffffffdfffffffd ffffff80ffffff80
+  << n       2000000020 7f0000007f0
+  >> n       20000000 7f0000007
+  << 3       1000000010 3f8000003f8
+u64
+ seed 0
+  +          ffffff9bffffff9c fffffff7fffffff8
+  -          6400000064 fffffff7fffffff8
+  *          0 0
+  /          0 55555552aaaaaaa8
+  compound   4e8400002774 0
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         0 0
+  ||         ffffffffffffffff ffffffffffffffff
+  !          ffffffffffffffff 0
+  neg        0 800000008
+  plus       0 fffffff7fffffff8
+  ?:         0 0
+  + scalar   0 fffffff7fffffff8
+  scalar -   ffffff9bffffff9c ffffffa3ffffffa4
+  + 3        3 fffffff7fffffffb
+  %          0 0
+  &          0 0
+  |          ffffff9bffffff9c fffffff7fffffff8
+  ^          ffffff9bffffff9c fffffff7fffffff8
+  <<         0 ffffffbfffffffc0
+  >>         0 1ffffffeffffffff
+  ~          ffffffffffffffff 800000007
+  << n       0 ffffffeffffffff0
+  >> n       0 7ffffffbfffffffc
+  << 3       0 ffffffbfffffffc0
+ seed 1
+  +          8000000080 6500000065
+  -          ffffff81ffffff82 6300000063
+  *          fe0000007f c800000064
+  /          0 64
+  compound   7e8100003f01 c900000064
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        fffffffeffffffff ffffff9bffffff9c
+  plus       100000001 6400000064
+  ?:         100000001 100000001
+  + scalar   200000002 6500000065
+  scalar -   7e0000007e 1b0000001b
+  + 3        100000004 6400000067
+  %          100000001 0
+  &          100000001 0
+  |          7f0000007f 6500000065
+  ^          7e0000007e 6500000065
+  <<         200000002 64000000640
+  >>         80000000 640000006
+  ~          fffffffefffffffe ffffff9bffffff9b
+  << n       400000004 19000000190
+  >> n       40000000 1900000019
+  << 3       800000008 32000000320
+ seed 2
+  +          ffffff7effffff7f ffffff9affffff9b
+  -          7f0000007f ffffff9cffffff9d
+  *          10000000080 c800000064
+  /          1 0
+  compound   818000004100 cb00000066
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          0 ffffffffffffffff
+  <=         0 ffffffffffffffff
+  >          ffffffffffffffff 0
+  >=         ffffffffffffffff 0
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        100000001 6400000064
+  plus       fffffffeffffffff ffffff9bffffff9c
+  ?:         ffffff7fffffff80 ffffff9bffffff9c
+  + scalar   fffffffdfffffffe ffffff9affffff9b
+  scalar -   ffffff80ffffff81 ffffffe3ffffffe4
+  + 3        ffffffff00000002 ffffff9bffffff9f
+  %          7f0000007f ffffff9bffffff9c
+  &          ffffff7effffff80 ffffff9affffff9c
+  |          ffffffffffffffff ffffffffffffffff
+  ^          810000007f 6500000063
+  <<         fffffffbfffffffc fffff37ffffff380
+  >>         3fffffffbfffffff 7fffffcdffffffc
+  ~          100000000 6400000063
+  << n       fffffff7fffffff8 fffffcdffffffce0
+  >> n       1fffffffdfffffff 1ffffff37ffffff3
+  << 3       fffffff7fffffff8 fffffcdffffffce0
+ seed 3
+  +          7ffffff37ffffff3 8100000081
+  -          8000001080000011 7d0000007d
+  *          ffffffc4ffffffe2 1fc000000fe
+  /          0 3f
+  compound   c0000186800000d2 20200000100
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        fffffffdfffffffe ffffff80ffffff81
+  plus       200000002 7f0000007f
+  ?:         200000002 200000002
+  + scalar   400000004 8100000081
+  scalar -   7fffffef7fffffef 7fffff727fffff72
+  + 3        200000005 7f00000082
+  %          200000002 100000001
+  &          0 200000002
+  |          7ffffff37ffffff3 7f0000007f
+  ^          7ffffff37ffffff3 7d0000007d
+  <<         1000000010 1fc000001fc0
+  >>         40000000 1fc000001
+  ~          fffffffdfffffffd ffffff80ffffff80
+  << n       2000000020 7f0000007f0
+  >> n       20000000 7f0000007
+  << 3       1000000010 3f8000003f8
+f32
+ seed 0
+  +          bf000000 c1000000 c0a00000 40ec0000
+  -          3f000000 c1000000 41300000 40e40000
+  *          80000000 80000000 c1c00000 3f680000
+  /          80000000 c0000000 bec00000 42680000
+  compound   3f400000 80000000 42400000 3f4c0000
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          0 ffffffff 0 0
+  <=         0 ffffffff 0 0
+  >          ffffffff 0 ffffffff ffffffff
+  >=         ffffffff 0 ffffffff ffffffff
+  &&         0 0 ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          ffffffff 0 0 0
+  neg        80000000 41000000 c0400000 c0e80000
+  plus       0 c1000000 40400000 40e80000
+  ?:         bf000000 c1000000 c1000000 3e000000
+  + scalar   0 c1000000 40400000 40e80000
+  scalar -   bf000000 40f00000 c0600000 c0f80000
+  + 3        40400000 c0a00000 40c00000 41240000
+ seed 1
+  +          501502f9 42ca0000 42c84000 c1000000
+  -          d01502f9 42c60000 c2c7c000 c1000000
+  *          501502f9 42c80000 41480000 80000000
+  /          2edbe6ff 42c80000 3aa3d70a c0000000
+  compound   60ad78ec 42c80000 461ae200 80000000
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff ffffffff
+  <=         ffffffff 0 ffffffff ffffffff
+  >          0 ffffffff 0 0
+  >=         0 ffffffff 0 0
+  &&         ffffffff ffffffff ffffffff 0
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        bf800000 c2c80000 be000000 41000000
+  plus       3f800000 42c80000 3e000000 c1000000
+  ?:         3f800000 3f800000 3e000000 c1000000
+  + scalar   40000000 42ca0000 3f900000 c0e00000
+  scalar -   501502f9 501502f9 501502f9 501502f9
+  + 3        40800000 42ce0000 40480000 c0a00000
+ seed 2
+  +          bf8020c5 bfc00000 bf000000 42ca0000
+  -          bf7fbe77 3f000000 3f000000 42c60000
+  *          3a83126f 3f000000 80000000 42c80000
+  /          4479ffff 3f000000 80000000 42c80000
+  compound   3b032336 40200000 3f400000 42c80000
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 0 0
+  <=         ffffffff 0 0 0
+  >          0 ffffffff ffffffff ffffffff
+  >=         0 ffffffff ffffffff ffffffff
+  &&         ffffffff ffffffff 0 ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 ffffffff 0
+  neg        3f800000 3f000000 80000000 c2c80000
+  plus       bf800000 bf000000 0 42c80000
+  ?:         bf800000 bf800000 bf000000 3f800000
+  + scalar   c0000000 bfc00000 bf800000 42c60000
+  scalar -   3f7fbe77 3eff7cee ba83126f c2c80083
+  + 3        40000000 40200000 40400000 42ce0000
+ seed 3
+  +          40b00000 501502f9 501502f9 bfc00000
+  -          bf000000 501502f9 d01502f9 3f000000
+  *          40f00000 50ba43b7 501502f9 3f000000
+  /          3f555555 4f6e6b28 2edbe6ff 3f000000
+  compound   41580000 50ba43b7 60ad78ec 40200000
+  ==         0 0 0 0
+  !=         ffffffff ffffffff ffffffff ffffffff
+  <          ffffffff 0 ffffffff 0
+  <=         ffffffff 0 ffffffff 0
+  >          0 ffffffff 0 ffffffff
+  >=         0 ffffffff 0 ffffffff
+  &&         ffffffff ffffffff ffffffff ffffffff
+  ||         ffffffff ffffffff ffffffff ffffffff
+  !          0 0 0 0
+  neg        c0200000 d01502f9 bf800000 3f000000
+  plus       40200000 501502f9 3f800000 bf000000
+  ?:         40200000 40200000 3f800000 bf800000
+  + scalar   40a00000 501502f9 40600000 40000000
+  scalar -   3f000000 d01502f9 40000000 40600000
+  + 3        40b00000 501502f9 40800000 40200000
+f64
+ seed 0
+  +          bfe0000000000000 c020000000000000
+  -          3fe0000000000000 c020000000000000
+  *          8000000000000000 8000000000000000
+  /          8000000000000000 c000000000000000
+  compound   3fe8000000000000 8000000000000000
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          0 ffffffffffffffff
+  <=         0 ffffffffffffffff
+  >          ffffffffffffffff 0
+  >=         ffffffffffffffff 0
+  &&         0 0
+  ||         ffffffffffffffff ffffffffffffffff
+  !          ffffffffffffffff 0
+  neg        8000000000000000 4020000000000000
+  plus       0 c020000000000000
+  ?:         bfe0000000000000 c020000000000000
+  + scalar   0 c020000000000000
+  scalar -   bfe0000000000000 401e000000000000
+  + 3        4008000000000000 c014000000000000
+ seed 1
+  +          4202a05f20080000 4059400000000000
+  -          c202a05f1ff80000 4058c00000000000
+  *          4202a05f20000000 4059000000000000
+  /          3ddb7cdfd9d7bdbb 4059000000000000
+  compound   4415af1d78b58c40 4059000000000000
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        bff0000000000000 c059000000000000
+  plus       3ff0000000000000 4059000000000000
+  ?:         3ff0000000000000 3ff0000000000000
+  + scalar   4000000000000000 4059400000000000
+  scalar -   4202a05f1ff80000 4202a05f1ce00000
+  + 3        4010000000000000 4059c00000000000
+ seed 2
+  +          bff004189374bc6a bff8000000000000
+  -          bfeff7ced916872b 3fe0000000000000
+  *          3f50624dd2f1a9fc 3fe0000000000000
+  /          408f400000000000 3fe0000000000000
+  compound   3f606466b1e5c0b9 4004000000000000
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        3ff0000000000000 3fe0000000000000
+  plus       bff0000000000000 bfe0000000000000
+  ?:         bff0000000000000 bff0000000000000
+  + scalar   c000000000000000 bff8000000000000
+  scalar -   3feff7ced916872b 3fdfef9db22d0e56
+  + 3        4000000000000000 4004000000000000
+ seed 3
+  +          4016000000000000 4202a05f20140000
+  -          bfe0000000000000 4202a05f1fec0000
+  *          401e000000000000 42174876e8000000
+  /          3feaaaaaaaaaaaab 41edcd6500000000
+  compound   402b000000000000 42174876e80f0000
+  ==         0 0
+  !=         ffffffffffffffff ffffffffffffffff
+  <          ffffffffffffffff 0
+  <=         ffffffffffffffff 0
+  >          0 ffffffffffffffff
+  >=         0 ffffffffffffffff
+  &&         ffffffffffffffff ffffffffffffffff
+  ||         ffffffffffffffff ffffffffffffffff
+  !          0 0
+  neg        c004000000000000 c202a05f20000000
+  plus       4004000000000000 4202a05f20000000
+  ?:         4004000000000000 4004000000000000
+  + scalar   4014000000000000 4202a05f20140000
+  scalar -   3fe0000000000000 c202a05f1fe80000
+  + 3        4016000000000000 4202a05f20180000
+0 failures

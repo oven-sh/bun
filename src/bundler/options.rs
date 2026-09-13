@@ -589,6 +589,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".mjs", Loader::Js),
     (b".cjs", Loader::Js),
     (b".css", Loader::Css),
+    (b".c", Loader::C),
     (b".ts", Loader::Ts),
     (b".tsx", Loader::Tsx),
     (b".mts", Loader::Ts),
@@ -638,6 +639,10 @@ impl DefaultLoaders {
         // compare. Within each arm, keys are fixed-width so `==` is a single
         // word compare (no memcmp loop).
         match ext.len() {
+            2 => match ext {
+                b".c" => Some(&Loader::C),
+                _ => None,
+            },
             3 => match ext {
                 b".js" => Some(&Loader::Jsx),
                 b".ts" => Some(&Loader::Ts),
@@ -1337,6 +1342,9 @@ pub struct BundleOptions<'a> {
     pub optimize_bytecode: bool,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
+    /// When every entry point is a C file they are one program: the first stays the entry point and
+    /// these are compiled and linked with it, as `cc a.c b.c c.c` would.
+    pub c_link_sources: Box<[Box<[u8]>]>,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1538,6 +1546,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
             compile_target_builtins: self.compile_target_builtins.clone(),
+            c_link_sources: self.c_link_sources.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1786,6 +1795,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
+            c_link_sources: Box::default(),
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

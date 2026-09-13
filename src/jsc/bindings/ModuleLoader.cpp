@@ -528,7 +528,11 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
-        ASSERT(res->success);
+        // An embedded module that failed to load (a `.c` file with an undefined symbol).
+        if (!res->success) {
+            throwException(scope, res->result.err, globalObject);
+            return {};
+        }
 
         auto tag = res->result.value.tag;
         switch (tag) {
@@ -550,7 +554,9 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
         }
 
         // A text file embedded by `bun build --compile`: the string is `module.exports`.
-        case SyntheticModuleType::ExportDefaultObject: {
+        // A C file embedded the same way: the object of its functions is.
+        case SyntheticModuleType::ExportDefaultObject:
+        case SyntheticModuleType::ExportsObject: {
             return { Kind::Exports, JSC::JSValue::decode(res->result.value.jsvalue_for_export) };
         }
 
@@ -983,7 +989,10 @@ static JSValue fetchESMSourceCode(
     }
 
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
-        ASSERT(res->success);
+        // An embedded module that failed to load (a `.c` file with an undefined symbol).
+        if (!res->success) {
+            RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
+        }
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
@@ -1047,6 +1056,20 @@ static JSValue fetchESMSourceCode(
                 RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
             }
             auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(WTF::move(function),
+                    JSC::SourceOrigin(), WTF::move(moduleKey)));
+            JSC::ensureStillAliveHere(value);
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+        }
+
+        // A C file embedded by `bun build --compile`: each function is a named export.
+        case SyntheticModuleType::ExportsObject: {
+            JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            if (!value) {
+                RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            }
+            auto function = generateJSValueModuleSourceCode(globalObject, value);
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(WTF::move(function),
                     JSC::SourceOrigin(), WTF::move(moduleKey)));

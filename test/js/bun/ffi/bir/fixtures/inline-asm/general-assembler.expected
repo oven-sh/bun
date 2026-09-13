@@ -1,0 +1,8 @@
+cmova b a
+mulq 121fa00ad77d7423 224a4396cc6d0110
+bswap 44332211 8877665544332211
+rdtsc 1
+fs 1 1
+xadd 40 42
+setc 1 0
+loop 45

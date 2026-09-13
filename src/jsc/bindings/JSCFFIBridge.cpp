@@ -2,6 +2,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/BunFFI.h>
+#include <JavaScriptCore/CModule.h>
 #include <JavaScriptCore/FFISignature.h>
 #include <JavaScriptCore/FFIType.h>
 #include <JavaScriptCore/FFIContext.h>
@@ -118,4 +119,59 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 {
     if (auto* callback = dynamicDowncast<JSC::JSFFICallback>(JSC::JSValue::decode(callbackValue)))
         callback->close();
+}
+
+// C compiled by bun_cc (BIR) and lowered to machine code by JSC's B3.
+
+using BunCModuleResolver = void* (*)(void* context, const char* name, size_t nameLength);
+
+// On success stores a +1 reference in `out`; otherwise leaves a TypeError pending.
+extern "C" JSC::EncodedJSValue Bun__CModule__create(
+    Zig::GlobalObject* globalObject,
+    const uint8_t* bir,
+    size_t birLength,
+    void* resolverContext,
+    BunCModuleResolver resolve,
+    JSC::FFI::CModule** out)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto module = JSC::FFI::CModule::tryCreate(std::span { bir, birLength }, [&](const CString& name) {
+        return resolve(resolverContext, name.data(), name.length());
+    });
+    if (!module) {
+        JSC::throwTypeError(globalObject, scope, module.error());
+        RELEASE_AND_RETURN(scope, {});
+    }
+    *out = &module.value().leakRef();
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+}
+
+extern "C" void Bun__CModule__deref(JSC::FFI::CModule* module)
+{
+    module->deref();
+}
+
+// Passes each `__attribute__((destructor))` function to `add`, last to run first (`add` is
+// `atexit`-like: last registered runs first). A module that has any is never freed: they run
+// when the process ends.
+extern "C" void Bun__CModule__registerDestructors(JSC::FFI::CModule* module, void (*add)(void (*)()))
+{
+    const auto& destructors = module->bir().destructors;
+    if (destructors.isEmpty())
+        return;
+    module->ref();
+    for (size_t i = destructors.size(); i--;)
+        add(reinterpret_cast<void (*)()>(module->functionTable()[destructors[i]]));
+}
+
+// { name: function } for every non-static function, typed from its C declaration.
+extern "C" JSC::EncodedJSValue Bun__CModule__createExports(Zig::GlobalObject* globalObject, JSC::FFI::CModule* module)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* exports = module->createExportsObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(exports));
 }

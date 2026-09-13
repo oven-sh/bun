@@ -1,0 +1,20 @@
+[package]
+name = "bun_cc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "bun-cc"
+path = "main.rs"
+
+[[bin]]
+name = "bun-cc-corpus"
+path = "corpus.rs"
+
+[lints]
+workspace = true
+
+[dependencies]

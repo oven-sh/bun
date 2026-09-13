@@ -51,6 +51,9 @@ pub enum Loader {
     Json5 = 19,
     Md = 20,
     Xml = 21,
+    /// A C source file, compiled by `bun_cc` + JavaScriptCore's B3: the module's exports are the
+    /// file's non-static functions.
+    C = 22,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -63,7 +66,7 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
-    Yaml = 18, Json5 = 19, Md = 20, Xml = 21,
+    Yaml = 18, Json5 = 19, Md = 20, Xml = 21, C = 22,
 );
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
@@ -87,6 +90,7 @@ bun_core::comptime_string_map! {
         b"yaml" => Loader::Yaml,
         b"json5" => Loader::Json5,
         b"xml" => Loader::Xml,
+        b"c" => Loader::C,
         b"wasm" => Loader::Wasm,
         b"napi" => Loader::Napi,
         b"node" => Loader::Napi,
@@ -121,6 +125,8 @@ impl Loader {
                 | Loader::Napi
                 | Loader::Sqlite
                 | Loader::SqliteEmbedded
+                // The compiled BIR, which the runtime loads under the original file name.
+                | Loader::C
                 // TODO: loader for reading bytes and creating module or instance
                 | Loader::Wasm
         )
@@ -140,7 +146,13 @@ impl Loader {
     pub fn can_be_run_by_bun(self) -> bool {
         matches!(
             self,
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Bunsh
+            Loader::Jsx
+                | Loader::Js
+                | Loader::Ts
+                | Loader::Tsx
+                | Loader::Wasm
+                | Loader::Bunsh
+                | Loader::C
         )
     }
 
@@ -158,6 +170,7 @@ impl Loader {
             Loader::Yaml => "input.yaml",
             Loader::Json5 => "input.json5",
             Loader::Xml => "input.xml",
+            Loader::C => "input.c",
             Loader::Wasm => "input.wasm",
             Loader::Napi => "input.node",
             Loader::Text => "input.txt",

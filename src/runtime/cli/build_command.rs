@@ -377,6 +377,16 @@ impl BuildCommand {
             }
         }
 
+        // `bun build main.c parser.c util.c`: one C program in several files, not several programs.
+        {
+            let entry_points = &this_transpiler.options.entry_points;
+            if entry_points.len() > 1 && entry_points.iter().all(|path| path.ends_with(b".c")) {
+                let mut all = core::mem::take(&mut this_transpiler.options.entry_points).into_vec();
+                this_transpiler.options.c_link_sources = all.split_off(1).into_boxed_slice();
+                this_transpiler.options.entry_points = all.into_boxed_slice();
+            }
+        }
+
         if ctx.bundler_options.outdir.is_empty()
             && !ctx.bundler_options.compile
             && fetcher.is_none()

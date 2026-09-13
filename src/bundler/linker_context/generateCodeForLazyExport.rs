@@ -374,10 +374,31 @@ pub(crate) fn generate_code_for_lazy_export(
     };
 
     // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
-    // output, so the part that holds the call must import it.
-    let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
-        if matches!(c.target.data, ExprData::ERequireCallTarget))
-        && this.options.output_format != crate::options::OutputFormat::Cjs;
+    // output, so every part that holds such a call must import it. The shapes a
+    // loader produces: the call itself (`.node`), and an object whose values are
+    // members of the call (`.c`: `{ f: require(<asset>).f }`).
+    fn runtime_require_calls(expr: &Expr) -> u32 {
+        match &expr.data {
+            ExprData::ECall(call) => {
+                if matches!(call.target.data, ExprData::ERequireCallTarget) {
+                    1
+                } else {
+                    runtime_require_calls(&call.target)
+                }
+            }
+            ExprData::EDot(dot) => runtime_require_calls(&dot.target),
+            ExprData::EObject(object) => object
+                .properties
+                .slice()
+                .iter()
+                .filter_map(|property| property.value.as_ref())
+                .map(runtime_require_calls)
+                .sum(),
+            _ => 0,
+        }
+    }
+    let prints_runtime_require = this.options.output_format != crate::options::OutputFormat::Cjs;
+    let calls_runtime_require = prints_runtime_require && runtime_require_calls(&expr) > 0;
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
@@ -474,6 +495,16 @@ pub(crate) fn generate_code_for_lazy_export(
                     let parts =
                         this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
+
+                    let require_calls = runtime_require_calls(&value);
+                    if prints_runtime_require && require_calls > 0 {
+                        this.graph.generate_runtime_symbol_import_and_use(
+                            source_index,
+                            Index::part(generated.1),
+                            b"__require",
+                            require_calls,
+                        )?;
+                    }
                 }
             }
 
@@ -514,7 +545,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         source_index,
                         Index::part(generated.1),
                         b"__require",
-                        1,
+                        runtime_require_calls(&expr),
                     )?;
                 }
             }

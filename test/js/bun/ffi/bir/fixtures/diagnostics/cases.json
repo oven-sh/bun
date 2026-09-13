@@ -1,0 +1,1066 @@
+[
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { return 1 }",
+  "line": 1,
+  "column": 24,
+  "message": "expected ';' before '}'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { return x; }",
+  "line": 1,
+  "column": 22,
+  "message": "use of undeclared identifier 'x'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) {\n  int a;\n  int a;\n}",
+  "line": 3,
+  "column": 7,
+  "message": "redefinition of 'a'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { int *p = 5; return 0; }",
+  "line": 1,
+  "column": 24,
+  "message": "incompatible types when initializing: cannot convert 'int' to 'int *'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int *p) { int x = p; return x; }",
+  "line": 1,
+  "column": 25,
+  "message": "incompatible types when initializing: cannot convert 'int *' to 'int'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "struct S { int a; }; int f(struct S s1) { return s1 + 1; }",
+  "line": 1,
+  "column": 53,
+  "message": "invalid operands to binary + ('struct S' and 'int')"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "struct S { int a; }; int f(struct S *s) { return *s + 1; }",
+  "line": 1,
+  "column": 53,
+  "message": "invalid operands to binary + ('struct S' and 'int')"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { 3 = 4; return 0; }",
+  "line": 1,
+  "column": 17,
+  "message": "expression is not assignable"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { int a[2]; int b[2]; a = b; return 0; }",
+  "line": 1,
+  "column": 37,
+  "message": "array type is not assignable"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int x) { return x.y; }",
+  "line": 1,
+  "column": 24,
+  "message": "member reference base type 'int' is not a struct or union"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "struct S { int a; }; int f(struct S *s) { return s->b; }",
+  "line": 1,
+  "column": 51,
+  "message": "no member named 'b' in 'struct S'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int x) { return *x; }",
+  "line": 1,
+  "column": 23,
+  "message": "indirection requires a pointer operand ('int' is invalid)"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int x) { return x(); }",
+  "line": 1,
+  "column": 24,
+  "message": "called object type 'int' is not a function or function pointer"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int g(int); int f(void) { return g(1, 2); }",
+  "line": 1,
+  "column": 35,
+  "message": "wrong number of arguments: function takes 1, 2 given"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { break; }",
+  "line": 1,
+  "column": 15,
+  "message": "'break' statement not in a loop or switch"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { continue; }",
+  "line": 1,
+  "column": 15,
+  "message": "'continue' statement not in a loop"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int x) { case 1: return x; }",
+  "line": 1,
+  "column": 16,
+  "message": "'case' label not within a switch statement"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int x) { switch (x) { case 1: case 1: return 0; } return 1; }",
+  "line": 1,
+  "column": 37,
+  "message": "duplicate case value 1"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { goto nowhere; }",
+  "line": 1,
+  "column": 20,
+  "message": "use of undeclared label 'nowhere'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { l: l: return 0; }",
+  "line": 1,
+  "column": 18,
+  "message": "redefinition of label 'l'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "void f(void) { return 1; }",
+  "line": 1,
+  "column": 16,
+  "message": "void function should not return a value"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { struct U u; return 0; }",
+  "line": 1,
+  "column": 24,
+  "message": "variable 'u' has incomplete type 'struct U'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int a[-1];",
+  "line": 1,
+  "column": 7,
+  "message": "array size is negative"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int g = f;",
+  "line": 1,
+  "column": 9,
+  "message": "use of undeclared identifier 'f'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int x = 1; int x = 2;",
+  "line": 1,
+  "column": 16,
+  "message": "redefinition of 'x'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void); double f(void);",
+  "line": 1,
+  "column": 21,
+  "message": "conflicting types for 'f'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(int a) { return 1; } int f(int a) { return 2; }",
+  "line": 1,
+  "column": 32,
+  "message": "redefinition of 'f'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int y; int g = y;",
+  "line": 1,
+  "column": 16,
+  "message": "initializer element is not a compile-time constant"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int a[2] = { 1, 2, 3 };",
+  "line": 1,
+  "column": 20,
+  "message": "excess elements in initializer"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "char s[2] = \"abc\";",
+  "line": 1,
+  "column": 13,
+  "message": "initializer string is too long for the array"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "struct P { int x; }; struct P p = { .q = 1 };",
+  "line": 1,
+  "column": 38,
+  "message": "no member named 'q' in 'struct P'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { int x; return &x + &x; }",
+  "line": 1,
+  "column": 32,
+  "message": "invalid operands to binary + ('int *' and 'int *')"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(double d) { return d % 2; }",
+  "line": 1,
+  "column": 28,
+  "message": "invalid operands to binary % ('double' and 'int')"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(double d) { return ~d; }",
+  "line": 1,
+  "column": 26,
+  "message": "invalid operand to unary ~ ('double')"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "unsigned signed x;",
+  "line": 1,
+  "column": 1,
+  "message": "both 'signed' and 'unsigned' in declaration specifiers"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int float x;",
+  "line": 1,
+  "column": 1,
+  "message": "invalid combination of type specifiers"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "x;",
+  "line": 1,
+  "column": 1,
+  "message": "expected a type before 'x'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { return 1 +; }",
+  "line": 1,
+  "column": 25,
+  "message": "expected an expression before ';'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { return (1; }",
+  "line": 1,
+  "column": 24,
+  "message": "expected ')' before ';'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { /* never closed",
+  "line": 1,
+  "column": 15,
+  "message": "unterminated /* comment"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "char *s = \"abc;\nint x;",
+  "line": 1,
+  "column": 11,
+  "message": "unterminated string literal"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int x = 'ab';",
+  "line": 1,
+  "column": 9,
+  "message": "multi-character character constants are not supported"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int x = 12abc;",
+  "line": 1,
+  "column": 9,
+  "message": "invalid integer constant '12abc'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int x = 99999999999999999999;",
+  "line": 1,
+  "column": 9,
+  "message": "integer constant is too large"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int x = 1 @ 2;",
+  "line": 1,
+  "column": 11,
+  "message": "unexpected character '@'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int a[1 / 0];",
+  "line": 1,
+  "column": 9,
+  "message": "division by zero in a constant expression"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "enum { Z = 5 % 0 };",
+  "line": 1,
+  "column": 14,
+  "message": "division by zero in a constant expression"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int s[1 << 40 >> 100];",
+  "line": 1,
+  "column": 9,
+  "message": "shift count is out of range in a constant expression"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "_Static_assert(sizeof(int) == 8, \"int is 4\");",
+  "line": 1,
+  "column": 1,
+  "message": "static assertion failed: int is 4"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) {",
+  "line": 1,
+  "column": 14,
+  "message": "expected '}' before end of file"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "struct S { struct S inner; };",
+  "line": 1,
+  "column": 21,
+  "message": "member has incomplete type 'struct S'"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "void v; ",
+  "line": 1,
+  "column": 6,
+  "message": "variable 'v' has type void"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int f(void) { int big[1 << 30][1 << 30]; return 0; }",
+  "line": 1,
+  "column": 31,
+  "message": "array is too large"
+ },
+ {
+  "about": "syntax and type errors are diagnosed",
+  "source": "int a[] = { [0x7fffffff] = 1 };",
+  "line": 1,
+  "column": 13,
+  "message": "object is too large"
+ },
+ {
+  "about": "unsupported constructs are diagnosed",
+  "source": "void f(int x) { __asm__(\"pushq %q0\" : \"+r\"(x)); }",
+  "line": 1,
+  "column": 17,
+  "message": "inline assembly: 'pushq' would disturb the stack frame or leave the statement, which the surrounding code cannot account for"
+ },
+ {
+  "about": "unsupported constructs are diagnosed",
+  "source": "int f(void) { return g(1); }",
+  "line": 1,
+  "column": 22,
+  "message": "call to undeclared function 'g'; implicit function declarations are not allowed"
+ },
+ {
+  "about": "unsupported constructs are diagnosed",
+  "source": "static int f(void); int g(void) { return f(); }",
+  "line": 1,
+  "column": 42,
+  "message": "static function 'f' is used but never defined"
+ },
+ {
+  "about": "bit fields",
+  "source": "struct S { int a : 3; } s; int *p = &s.a;",
+  "line": 1,
+  "column": 37,
+  "message": "cannot take the address of a bit-field"
+ },
+ {
+  "about": "bit fields",
+  "source": "struct S { int a : 33; };",
+  "line": 1,
+  "column": 16,
+  "message": "width of bit-field exceeds its type"
+ },
+ {
+  "about": "bit fields",
+  "source": "struct S { float a : 3; };",
+  "line": 1,
+  "column": 18,
+  "message": "bit-field has a non-integer type"
+ },
+ {
+  "about": "bit fields",
+  "source": "struct S { int a : 0; };",
+  "line": 1,
+  "column": 20,
+  "message": "a named bit-field cannot have zero width"
+ },
+ {
+  "about": "conditional directives",
+  "source": "int x = 'a;",
+  "line": 1,
+  "column": 9,
+  "message": "unterminated character constant"
+ },
+ {
+  "about": "gnu and c11 expression forms",
+  "source": "int f(int x) { return _Generic(x, long: 1); }",
+  "line": 1,
+  "column": 23,
+  "message": "_Generic selector of type 'int' is not compatible with any association"
+ },
+ {
+  "about": "gnu and c11 expression forms",
+  "source": "int f(int c) { switch (c) { case 1 ... 5: case 3: return 1; } return 0; }",
+  "line": 1,
+  "column": 43,
+  "message": "duplicate case value 3"
+ },
+ {
+  "about": "gnu and c11 expression forms",
+  "source": "int f(int c) { switch (c) { case 5 ... 1: return 1; } return 0; }",
+  "line": 1,
+  "column": 29,
+  "message": "empty case range"
+ },
+ {
+  "about": "variadic definitions",
+  "source": "#include <stdarg.h>\nint f(int n) { va_list ap; va_start(ap, n); return 0; }",
+  "line": 2,
+  "column": 28,
+  "message": "va_start used in a function that does not take variable arguments"
+ },
+ {
+  "about": "variadic definitions",
+  "source": "#include <stdarg.h>\nint f(int n, ...) { int x; va_start(x, n); return 0; }",
+  "line": 2,
+  "column": 28,
+  "message": "expected a va_list, got 'int'"
+ },
+ {
+  "about": "intrinsic headers are per architecture",
+  "source": "#include <arm_neon.h>\nint x;",
+  "line": 1,
+  "column": 2,
+  "message": "'arm_neon.h' file not found"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef float v2f __attribute__((vector_size(8))); v2f f(v2f a) { return a; }",
+  "line": 1,
+  "column": 74,
+  "message": "only 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef float v2f __attribute__((vector_size(8))); float f(v2f *p) { return (*p)[0]; }",
+  "line": 1,
+  "column": 78,
+  "message": "only 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int v8i __attribute__((vector_size(32))); v8i g; int f(void) { return g[0]; }",
+  "line": 1,
+  "column": 79,
+  "message": "only 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef char v4c __attribute__((vector_size(4))); v4c f(void);  int g(void) { f(); return 0; }",
+  "line": 1,
+  "column": 80,
+  "message": "only 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef double v8d __attribute__((vector_size(64))); void f(void) { v8d x = {0}; }",
+  "line": 1,
+  "column": 77,
+  "message": "only 16-byte vectors are supported yet"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int bad __attribute__((vector_size(12)));",
+  "line": 1,
+  "column": 43,
+  "message": "vector size must be a power of two that is a multiple of the element size"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef struct S { int x; } bad __attribute__((vector_size(16)));",
+  "line": 1,
+  "column": 59,
+  "message": "invalid vector element type 'struct S'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef _Bool bad __attribute__((vector_size(16)));",
+  "line": 1,
+  "column": 45,
+  "message": "invalid vector element type '_Bool'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a, F b) { return a + b; }",
+  "line": 1,
+  "column": 124,
+  "message": "invalid operands to binary + ('int __attribute__((vector_size(16)))' and 'float __attribute__((vector_size(16)))')"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(F a, F b) { return a & b; }",
+  "line": 1,
+  "column": 124,
+  "message": "invalid operands to binary & ('float __attribute__((vector_size(16)))' and 'float __attribute__((vector_size(16)))')"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(F a) { return ~a; }",
+  "line": 1,
+  "column": 117,
+  "message": "invalid operand to unary ~ ('float __attribute__((vector_size(16)))')"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); F f(V a) { return a; }",
+  "line": 1,
+  "column": 110,
+  "message": "incompatible types when returning: cannot convert 'int __attribute__((vector_size(16)))' to 'float __attribute__((vector_size(16)))'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int a) { return (V)a; }",
+  "line": 1,
+  "column": 119,
+  "message": "cannot cast 'int' to 'int __attribute__((vector_size(16)))'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int f(V a) { return a ? 1 : 2; }",
+  "line": 1,
+  "column": 112,
+  "message": "incompatible types when returning: cannot convert 'int __attribute__((vector_size(16)))' to 'int'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int f(V a) { if (a) return 1; return 0; }",
+  "line": 1,
+  "column": 116,
+  "message": "a condition requires a scalar operand, got 'int __attribute__((vector_size(16)))'"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a) { return __builtin_shufflevector(a, a, 0, 1, 2, 8); }",
+  "line": 1,
+  "column": 156,
+  "message": "shuffle index is out of range"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a, int i) { return __builtin_shufflevector(a, a, 0, 1, 2, i); }",
+  "line": 1,
+  "column": 163,
+  "message": "shuffle index must be a constant integer"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(V a) { V v = {1, 2, 3, 4, 5}; return v; }",
+  "line": 1,
+  "column": 116,
+  "message": "excess elements in vector initializer"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); int printf(const char *, ...); void f(V a) { printf(\"%d\", a); }",
+  "line": 1,
+  "column": 157,
+  "message": "cannot pass 'int __attribute__((vector_size(16)))' as a variadic argument"
+ },
+ {
+  "about": "vector diagnostics",
+  "source": "#include <stdarg.h>\ntypedef int V __attribute__((vector_size(16))); typedef float F __attribute__((vector_size(16))); V f(int n, ...) { va_list ap; va_start(ap, n); V v = va_arg(ap, V); va_end(ap); return v; }",
+  "line": 2,
+  "column": 152,
+  "message": "invalid type 'int __attribute__((vector_size(16)))' for va_arg"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "struct S { int a, b; }; _Atomic struct S s;",
+  "line": 1,
+  "column": 25,
+  "message": "_Atomic 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "struct S { int a, b; }; _Atomic(struct S) s;",
+  "line": 1,
+  "column": 25,
+  "message": "_Atomic 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "struct S { char c[16]; }; void f(struct S *p, struct S *q) { __atomic_load(p, q, 5); }",
+  "line": 1,
+  "column": 76,
+  "message": "__atomic_load on an object of type 'struct S' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "_Atomic long double x; void f(void) { x = 1; }",
+  "line": 1,
+  "column": 41,
+  "message": "an atomic operation on an object of type 'long double' is not supported: there are no 16-byte atomic operations"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "_Atomic __int128 x; void f(void) { x = 1; }",
+  "line": 1,
+  "column": 38,
+  "message": "an atomic operation on an object of type '__int128' is not supported: there are no 16-byte atomic operations"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "typedef int V __attribute__((vector_size(16))); _Atomic V v;",
+  "line": 1,
+  "column": 49,
+  "message": "_Atomic 'int __attribute__((vector_size(16)))' is not supported yet (only integer, pointer, float and double types of up to 8 bytes)"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "int f(int x) { return __atomic_load_n(x, 5); }",
+  "line": 1,
+  "column": 39,
+  "message": "the first argument of __atomic_load_n must be a pointer"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "int f(float *p) { return __atomic_fetch_add(p, 1, 5); }",
+  "line": 1,
+  "column": 26,
+  "message": "__atomic_fetch_add needs a pointer to an integer, got 'float'"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "int f(int *p) { return __atomic_fetch_add(p, 5); }",
+  "line": 1,
+  "column": 24,
+  "message": "__atomic_fetch_add takes three arguments"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "int f(int *p, long long *e) { return __atomic_compare_exchange_n(p, e, 1, 0, 5, 5); }",
+  "line": 1,
+  "column": 69,
+  "message": "the second argument of __atomic_compare_exchange_n must point to an object of the same size"
+ },
+ {
+  "about": "atomic diagnostics",
+  "source": "_Atomic int x; void f(void) { x.y = 1; }",
+  "line": 1,
+  "column": 32,
+  "message": "member reference base type '_Atomic(int)' is not a struct or union"
+ },
+ {
+  "about": "alloca in its spellings",
+  "source": "void *p = alloca(4);",
+  "line": 1,
+  "column": 11,
+  "message": "alloca outside of a function"
+ },
+ {
+  "about": "complex arithmetic",
+  "source": "double _Complex z; int f(void) { return z < z; }",
+  "line": 1,
+  "column": 43,
+  "message": "invalid operands to binary < ('double _Complex' and 'double _Complex')"
+ },
+ {
+  "about": "complex arithmetic",
+  "source": "double _Complex z; void *f(void) { return (void *)z; }",
+  "line": 1,
+  "column": 43,
+  "message": "cannot convert 'double _Complex' to 'void *'"
+ },
+ {
+  "about": "complex arithmetic",
+  "source": "long double _Complex z; double f(void) { return __real__ z; }",
+  "line": 1,
+  "column": 58,
+  "message": "computing with values of type 'long double _Complex' is not supported yet"
+ },
+ {
+  "about": "computed goto bytecode interpreter",
+  "source": "void f(void) { goto *&&missing; }",
+  "line": 1,
+  "column": 24,
+  "message": "use of undeclared label 'missing'"
+ },
+ {
+  "about": "computed goto bytecode interpreter",
+  "source": "void f(int n) { void *p = &&l; { int a[n]; l: a[0] = 0; } goto *p; }",
+  "line": 1,
+  "column": 59,
+  "message": "a computed goto cannot target a label in the scope of a variable length array"
+ },
+ {
+  "about": "computed goto bytecode interpreter",
+  "source": "void f(void) { goto *1.5; }",
+  "line": 1,
+  "column": 16,
+  "message": "the operand of 'goto *' must be a pointer"
+ },
+ {
+  "about": "int128 abi varargs and diagnostics",
+  "source": "__int128 x; int f(void) { switch (x) { case 1: return 1; } return 0; }",
+  "line": 1,
+  "column": 35,
+  "message": "a switch on a 128-bit integer is not supported yet"
+ },
+ {
+  "about": "int128 abi varargs and diagnostics",
+  "source": "struct S { __int128 x : 3; };",
+  "line": 1,
+  "column": 21,
+  "message": "bit-field has a non-integer type"
+ },
+ {
+  "about": "int128 abi varargs and diagnostics",
+  "source": "typedef __int128 V __attribute__((vector_size(16)));",
+  "line": 1,
+  "column": 46,
+  "message": "invalid vector element type '__int128'"
+ },
+ {
+  "about": "int128 abi varargs and diagnostics",
+  "source": "_Atomic __int128 x; __int128 f(void) { return x; }",
+  "line": 1,
+  "column": 47,
+  "message": "an atomic operation on an object of type '__int128' is not supported: there are no 16-byte atomic operations"
+ },
+ {
+  "about": "int128 abi varargs and diagnostics",
+  "source": "int g(void); __int128 x = (__int128)1 << 100 | g();",
+  "line": 1,
+  "column": 46,
+  "message": "initializer element is not a compile-time constant"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "int n = 3; int a[n];",
+  "line": 1,
+  "column": 17,
+  "message": "a variable length array cannot be declared at file scope"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "void f(int n) { static int a[n]; }",
+  "line": 1,
+  "column": 28,
+  "message": "a variable length array must have automatic storage duration"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "void f(int n) { extern int a[n]; }",
+  "line": 1,
+  "column": 28,
+  "message": "a variable length array must have automatic storage duration"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "void f(int n) { int a[n] = {0}; }",
+  "line": 1,
+  "column": 21,
+  "message": "a variable length array cannot be initialized"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "void f(int n) { struct S { int a[n]; } s; }",
+  "line": 1,
+  "column": 32,
+  "message": "member has incomplete type 'int [*]'"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "void f(int n) { int a[*]; }",
+  "line": 1,
+  "column": 22,
+  "message": "'[*]' is only allowed in a parameter declaration"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "int f(int n) { goto inside; { int a[n]; inside: a[0] = 1; return a[0]; } }",
+  "line": 1,
+  "column": 21,
+  "message": "goto into the scope of a variable length array"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "int f(int n) { { int a[n]; a[0] = 0; mid: a[0]++; } goto mid; }",
+  "line": 1,
+  "column": 58,
+  "message": "goto into the scope of a variable length array"
+ },
+ {
+  "about": "vla diagnostics",
+  "source": "int f(int n, int k) { switch (k) { int a[n]; case 1: a[0] = 1; return a[0]; } return 0; }",
+  "line": 1,
+  "column": 46,
+  "message": "switch jumps into the scope of a variable length array"
+ },
+ {
+  "about": "smaller fixes",
+  "source": "void f(int n, int a[*]) { }",
+  "line": 1,
+  "column": 20,
+  "message": "'[*]' is only allowed in a declaration that is not a function definition"
+ },
+ {
+  "about": "thread local objects",
+  "source": "_Thread_local int t; int *p = &t;",
+  "line": 1,
+  "column": 31,
+  "message": "the address of a thread-local object is not a constant"
+ },
+ {
+  "about": "thread local objects",
+  "source": "void f(void) { _Thread_local int t; }",
+  "line": 1,
+  "column": 34,
+  "message": "a block-scope thread-local variable must be static or extern"
+ },
+ {
+  "about": "thread local objects",
+  "source": "extern int t; _Thread_local int t;",
+  "line": 1,
+  "column": 33,
+  "message": "'t' is thread-local in one declaration and not in another"
+ },
+ {
+  "about": "thread local objects",
+  "source": "extern _Thread_local int elsewhere;\nint f(void) {\n  return elsewhere;\n}",
+  "line": 3,
+  "column": 10,
+  "message": "thread-local variable 'elsewhere' is declared but not defined in any translation unit"
+ },
+ {
+  "about": "aliases are other names for the target",
+  "source": "void f(void) __attribute__((alias(\"nowhere\")));",
+  "line": 1,
+  "column": 34,
+  "message": "alias target 'nowhere' must be a function declared earlier in this translation unit"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "struct __attribute__((ms_struct)) s { int a : 3; };",
+  "line": 1,
+  "column": 32,
+  "message": "__attribute__((ms_struct)) is not supported: it changes how the code must be compiled"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "__attribute__((naked)) void f(void) {}",
+  "line": 1,
+  "column": 21,
+  "message": "__attribute__((naked)) is not supported: it changes how the code must be compiled"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "void f(void) __attribute__((ms_abi));",
+  "line": 1,
+  "column": 35,
+  "message": "__attribute__((ms_abi)) is not supported on this target: it changes the calling convention"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "struct __attribute__((scalar_storage_order(\"big-endian\"))) s { int a; };",
+  "line": 1,
+  "column": 43,
+  "message": "__attribute__((scalar_storage_order)) is not supported: it changes how the code must be compiled"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "typedef int t __attribute__((mode(XX)));",
+  "line": 1,
+  "column": 34,
+  "message": "unknown machine mode 'XX'"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "typedef float t __attribute__((mode(SI)));",
+  "line": 1,
+  "column": 36,
+  "message": "mode 'SI' needs an integer type, not 'float'"
+ },
+ {
+  "about": "attributes that change meaning are implemented or refused",
+  "source": "int f(void) { int g(void) { return 1; } return g(); }",
+  "line": 1,
+  "column": 19,
+  "message": "nested functions (a GNU C extension) are not supported: calling one through a pointer needs code on an executable stack"
+ },
+ {
+  "about": "builtins the libraries use",
+  "source": "int f(int a, _Bool *r) { return __builtin_add_overflow(a, a, r); }",
+  "line": 1,
+  "column": 33,
+  "message": "__builtin_add_overflow needs integer operands of at most 64 bits, not '_Bool'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "const int x = 1; void f(void) { x = 2; }",
+  "line": 1,
+  "column": 35,
+  "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "void f(const int *p) { *p = 2; }",
+  "line": 1,
+  "column": 27,
+  "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "void f(const int *p) { (*p)++; }",
+  "line": 1,
+  "column": 28,
+  "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "struct s { int a; }; void f(const struct s *p) { p->a += 1; }",
+  "line": 1,
+  "column": 55,
+  "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "struct s { const int a; }; void f(struct s *p) { p->a = 1; }",
+  "line": 1,
+  "column": 55,
+  "message": "cannot assign to an lvalue of const-qualified type 'const int'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "void f(int *const p) { p = 0; }",
+  "line": 1,
+  "column": 26,
+  "message": "cannot assign to an lvalue of const-qualified type 'int * const'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "void f(const char c[4]) { c[0] = 1; }",
+  "line": 1,
+  "column": 32,
+  "message": "cannot assign to an lvalue of const-qualified type 'const char'"
+ },
+ {
+  "about": "const is a real qualifier",
+  "source": "int f(const char *); int f(char *);",
+  "line": 1,
+  "column": 26,
+  "message": "conflicting types for 'f'"
+ },
+ {
+  "about": "constructors and destructors are listed",
+  "source": "struct s { int x; }; __attribute__((constructor)) void bad(struct s v) { (void)v; }",
+  "line": 1,
+  "column": 56,
+  "message": "a constructor must take and return scalars, as in 'void f(void)'"
+ },
+ {
+  "about": "flexible array members and zero length arrays",
+  "source": "struct m { int n; char t[]; }; int f(void) { struct m x = { 1, \"a\" }; return x.n; }",
+  "line": 1,
+  "column": 55,
+  "message": "a flexible array member can only be initialized in an object with static storage duration"
+ },
+ {
+  "about": "gnu c corner cases that tcctest exercises",
+  "source": "int f(unsigned __int128 *p, unsigned __int128 *e) { return __atomic_compare_exchange_n(p, e, 1, 0, 5, 5); }",
+  "line": 1,
+  "column": 60,
+  "message": "__atomic_compare_exchange_n on an object of type 'unsigned __int128' is not supported: there are no 16-byte atomic operations"
+ },
+ {
+  "about": "inline assembly that needs no assembler",
+  "source": "int f(int x) { __asm__(\"frobnicate %0\" : \"+r\"(x)); return x; }",
+  "line": 1,
+  "column": 16,
+  "message": "inline assembly: unsupported instruction 'frobnicate'"
+ },
+ {
+  "about": "inline assembly that needs no assembler",
+  "source": "int f(void) { int x; __asm__(\"cpuid\" : \"=r\"(x) : \"a\"(0)); return x; }",
+  "line": 1,
+  "column": 45,
+  "message": "inline assembly is not supported yet (an output of 'cpuid' that is not in a named register)"
+ },
+ {
+  "about": "inline assembly that needs no assembler",
+  "source": "__asm__(\".globl x\");",
+  "line": 1,
+  "column": 1,
+  "message": "inline assembly is not supported yet"
+ },
+ {
+  "about": "old style definitions and unprototyped calls",
+  "source": "int f(a, b) int c; { return a; }",
+  "line": 1,
+  "column": 17,
+  "message": "'c' is not a parameter of the function"
+ },
+ {
+  "about": "pragma pack and push macro",
+  "source": "#pragma pack(3)\nint x;",
+  "line": 1,
+  "column": 1,
+  "message": "#pragma pack expects 1, 2, 4, 8 or 16"
+ },
+ {
+  "about": "range designators and obsolete spellings",
+  "source": "int a[4] = { [3 ... 1] = 0 };",
+  "line": 1,
+  "column": 14,
+  "message": "array range designator is empty"
+ },
+ {
+  "about": "range designators and obsolete spellings",
+  "source": "int a[4] = { [1 ... 4] = 0 };",
+  "line": 1,
+  "column": 14,
+  "message": "array designator index exceeds the array bounds"
+ }
+]

@@ -137,12 +137,12 @@ unsafe extern "Rust" {
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
-    /// builtin / standalone-graph module.
+    /// builtin / standalone-graph module; `Err` when it is one that failed to load.
     pub(crate) safe fn __bun_fetch_builtin_module(
         jsc_vm: &VirtualMachine,
         global: &JSGlobalObject,
         specifier: &bun_core::String,
-    ) -> Option<ResolvedSource>;
+    ) -> crate::JsResult<Option<ResolvedSource>>;
 }
 
 #[unsafe(no_mangle)]
@@ -154,11 +154,15 @@ extern "C" fn Bun__fetchBuiltinModule(
 ) -> bool {
     jsc::mark_binding();
     match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
-        Some(resolved) => {
+        Ok(Some(resolved)) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             true
         }
-        None => false,
+        Ok(None) => false,
+        Err(err) => {
+            *ret = ErrorableResolvedSource::err(global_object.take_error(err));
+            true
+        }
     }
 }
 

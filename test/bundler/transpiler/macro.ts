@@ -23,3 +23,7 @@ export async function ireturnapromise() {
   setTimeout(() => resolve("aaa"), 100);
   return promise;
 }
+
+export function symbolKeys() {
+  return { v: 2, [Symbol.for("s")]: 1, [Symbol("d")]: 3, [Symbol()]: 4 };
+}

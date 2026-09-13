@@ -1,0 +1,9 @@
+{
+  "name": "carbonium",
+  "version": "1.0.1",
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^3.10.1",
+    "@typescript-eslint/parser": "^3.10.1",
+    "eslint": "^7"
+  }
+}

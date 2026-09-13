@@ -32,13 +32,13 @@ impl Stream {
     /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
     /// the sole live borrow on this side of the lock.
     #[inline]
-    pub fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
+    pub(crate) fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
         // Route through the shared `from_attached` accessor (one centralised
         // unsafe); see INVARIANT above.
         self.buffer.map(ThreadSafeStreamBuffer::from_attached)
     }
 
-    pub fn detach(&mut self) {
+    pub(crate) fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // Intrusive refcount decrement.
             // `buffer` is a live `ThreadSafeStreamBuffer::new` heap allocation;
@@ -55,27 +55,27 @@ impl Stream {
 
 impl<'a> HTTPRequestBody<'a> {
     /// `HTTPRequestBody.deinit()` — only the `Stream` arm owns a ref.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         if let HTTPRequestBody::Stream(stream) = self {
             stream.detach();
         }
     }
 
-    pub fn is_stream(&self) -> bool {
+    pub(crate) fn is_stream(&self) -> bool {
         matches!(self, HTTPRequestBody::Stream(_))
     }
 
     /// Borrow the in-memory byte payload, if any. `Sendfile` / `Stream` have no
     /// contiguous slice and return `b""` (callers branch on the variant before
     /// reaching for this).
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             HTTPRequestBody::Bytes(bytes) => bytes,
             _ => b"",
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             HTTPRequestBody::Bytes(bytes) => bytes.len(),
             HTTPRequestBody::Sendfile(sendfile) => sendfile.content_size,

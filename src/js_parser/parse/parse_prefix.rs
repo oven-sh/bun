@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -62,7 +62,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
-        p.parse_paren_expr(loc, level, ParenExprOpts::default())
+        p.parse_paren_expr(
+            loc,
+            level,
+            ParenExprOpts {
+                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                ..Default::default()
+            },
+        )
     }
 
     #[inline]
@@ -119,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::PrivateIdentifier { ref_ }, loc))
     }
 
-    fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_identifier(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
 
@@ -143,7 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if (raw.as_ptr() == name.as_ptr() && raw.len() == name.len())
                     || AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAsync
                 {
-                    return p.parse_async_prefix_expr(name_range, level);
+                    return p.parse_async_prefix_expr(name_range, level, flags);
                 }
             }
 
@@ -529,7 +536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
+        p.parse_fn_expr(loc, false)
     }
 
     fn pfx_t_class(p: &mut Self) -> PResult<Expr> {
@@ -991,7 +998,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Before splitting this up, this used 3 KB of stack space per call.
-    pub fn parse_prefix(
+    pub(crate) fn parse_prefix(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
@@ -1003,9 +1010,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
-            T::TIdentifier => Self::pfx_t_identifier(p, level),
+            T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),
             T::TTrue => Self::pfx_t_true(p),
             T::TNull => Self::pfx_t_null(p),

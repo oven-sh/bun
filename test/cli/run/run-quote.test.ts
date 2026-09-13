@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRunAsScript, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRunAsScript, tempDir } from "harness";
 
 it("should handle quote escapes", () => {
   const package_json = JSON.stringify({
@@ -9,13 +9,13 @@ it("should handle quote escapes", () => {
   });
   expect(package_json).toContain('\\"');
   expect(package_json).toContain("\\\\");
-  const dir = tempDirWithFiles("run-quote", { "package.json": package_json });
+  using dir = tempDir("run-quote", { "package.json": package_json });
   const { stdout } = bunRunAsScript(dir, "test");
   expect(stdout).toBe(`test\\${dir}`);
 });
 
 it("keeps pass-through arguments containing tabs and question marks as single words", async () => {
-  const dir = tempDirWithFiles("run-quote-passthrough", {
+  await using dir = tempDir("run-quote-passthrough", {
     "package.json": JSON.stringify({
       scripts: {
         args: `${bunExe()} print-args.js`,

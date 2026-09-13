@@ -111,12 +111,6 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         &self.buffer.as_ref()[..self.pos]
     }
 
-    /// Current cursor position.
-    #[inline]
-    pub fn get_pos(&self) -> Result<usize> {
-        Ok(self.pos)
-    }
-
     /// The read methods live directly on `FixedBufferStream`, so this just
     /// returns `self` to keep call-site shape
     /// (`stream.reader().read_int_le::<T>()`).

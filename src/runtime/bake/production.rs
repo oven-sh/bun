@@ -23,13 +23,13 @@ use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -83,7 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -112,14 +112,17 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
     // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread.
-        unsafe { (*p).destroy() };
+        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
+        // queued work is released here rather than by a thread teardown.
+        unsafe {
+            (*p).release_queued_work();
+            (*p).destroy()
+        };
     });
 
     // A special global object is used to allow registering virtual modules
@@ -140,23 +143,13 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        let offline = ctx
             .debug
             .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Offline;
-        // Note: `bun_resolver::options::BundleOptions` has no
-        // `prefer_latest_install` field; compute the value once
-        // and assign only to `b.options` (which does carry it). The resolver
-        // never reads it.
-        let prefer_latest = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Latest;
+            .unwrap_or(OfflineMode::Online);
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = prefer_latest;
+        b.options.install_preference = offline;
         // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
@@ -203,7 +196,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
+    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
     // borrow `vm` (the VirtualMachine) and the body below can keep using it.
     //
@@ -255,7 +248,7 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     Global::exit(1);
 }
 
-pub(super) fn write_sourcemap_to_disk(
+fn write_sourcemap_to_disk(
     file: &OutputFile,
     bundled_outputs: &[OutputFile],
     source_maps: &mut StringArrayHashMap<OutputFileIndex>,
@@ -281,7 +274,7 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
     let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
@@ -352,7 +345,8 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
+    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
@@ -532,7 +526,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
@@ -568,7 +562,6 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
                 entry.abs_path,
             )),
-            prefix: Box::from(fsr.prefix),
             ignore_underscores: fsr.ignore_underscores,
             ignore_dirs: fsr
                 .ignore_dirs
@@ -663,7 +656,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -709,7 +702,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
                         bun_core::handle_error_return_trace(err);
                         Output::err(
                             err,
@@ -720,7 +713,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
                             bun_core::handle_error_return_trace(err);
                             Output::err(
                                 err,
@@ -749,12 +742,12 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
+                                    let str = BunString::create_format(format_args!(
                                         "bake:/{}",
                                         BStr::new(without_prefix)
                                     ));
-                                    str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] =
+                                        str.thread_isolated_copy();
                                 }
                             }
 
@@ -775,7 +768,11 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                         OutputKind::Asset => {}
                         OutputKind::Bytecode => {}
                         OutputKind::Sourcemap => {}
-                        OutputKind::ModuleInfo => {}
+                        OutputKind::ModuleInfo
+                        | OutputKind::BuiltinBytecode
+                        | OutputKind::BytecodeStringTable
+                        | OutputKind::ModuleInfoStringTable
+                        | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }
@@ -800,7 +797,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
+            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
                 bun_core::handle_error_return_trace(err);
                 Output::err(
                     err,
@@ -836,7 +833,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?;
             client_entry_urls
                 .put_index(global, u32::try_from(i).expect("int cast"), str)
@@ -940,7 +937,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                 BStr::new(public_path),
                 BStr::new(&output_file.dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?
             .protected(),
         );
@@ -978,7 +975,6 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
 
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
-        // defer params_buf.clearRetainingCapacity()
         let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
         let params_buf = &mut **params_guard;
 
@@ -991,34 +987,13 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
-        pattern.prepend_part(route.part);
-        match route.part {
-            framework_router::Part::Param(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAll(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAllOptional(_) => {
-                return Err(js_err(global.throw(format_args!(
-                    "catch-all routes are not supported in static site generation",
-                ))));
-            }
-            _ => {}
-        }
         let mut file_count: u32 = 1;
-        if route.file_layout.is_some() {
-            file_count += 1;
-        }
-        let mut next: Option<framework_router::RouteIndex> = route.parent;
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            pattern.prepend_part(parent.part);
-            match parent.part {
-                framework_router::Part::Param(name) => {
-                    params_buf.push(name);
-                }
-                framework_router::Part::CatchAll(name) => {
+        let mut next: Option<framework_router::RouteIndex> = Some(route_index);
+        while let Some(current_index) = next {
+            let current = router.route_ptr(current_index);
+            pattern.prepend_part(current.part);
+            match current.part {
+                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
                 framework_router::Part::CatchAllOptional(_) => {
@@ -1026,12 +1001,12 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                _ => {}
+                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if parent.file_layout.is_some() {
+            if current.file_layout.is_some() {
                 file_count += 1;
             }
-            next = parent.parent;
+            next = current.parent;
         }
 
         // Fill styles and file_list
@@ -1115,11 +1090,11 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                pattern_string.to_js(global).map_err(js_err)?,
+                pattern_string.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
-        let mut src_path = BunString::clone_utf8(resolve_path::relative(
+        let src_path = BunString::clone_utf8(resolve_path::relative(
             cwd,
             pt.input_file(main_file_route_index).abs_path(),
         ));
@@ -1127,7 +1102,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
+                src_path.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
@@ -1147,7 +1122,8 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
                         route.r#type.get(),
                         pt.output_file(main_file_route_index)
                             .bake_extra
-                            .fully_static,
+                            .route
+                            .is_fully_static(),
                     )
                     .bits(),
                 ),
@@ -1159,7 +1135,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             // (slice iterators are ExactSize + DoubleEnded).
             let param_info_array =
                 JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param)
+                    bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;
             route_param_info
@@ -1188,7 +1164,7 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            BunString::init(&*root_dir_path),
+            &BunString::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,
@@ -1206,7 +1182,8 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
     // above accessed the same allocation through `vm_ptr`, invalidating the
     // earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise));
+    vm.wait_for_promise(AnyPromise::Normal(render_promise))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
@@ -1245,7 +1222,8 @@ fn load_module(
     let vm_ref = VirtualMachine::get();
     vm_ref
         .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise));
+        .wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
@@ -1290,14 +1268,14 @@ fn bake_get_on_module_namespace(
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
-// All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
+// All args are by-value `JSValue` / borrowed `&BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
 // No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
     safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
         // Output directory path (e.g., "./dist")
-        out_base: BunString,
+        out_base: &BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
         all_server_files: JSValue,
         // Framework prerender functions by router type
@@ -1322,7 +1300,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
+extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1339,10 +1317,10 @@ pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdResolve(
+extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
-    a_str: BunString,
-    specifier_str: BunString,
+    a_str: &BunString,
+    specifier_str: &BunString,
 ) -> BunString {
     let specifier = specifier_str.to_utf8();
 
@@ -1362,7 +1340,7 @@ pub(super) extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead();
+        return BunString::DEAD;
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1387,9 +1365,8 @@ pub(super) extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1422,10 +1399,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
-            match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            }
+            ty.collision_noun()
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
         bun_core::pretty_errorln!(
@@ -1448,26 +1422,22 @@ impl framework_router::InsertionHandler for EntryPointMap {
 pub struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
-    pub entry_points: EntryPointMap,
-    pub bundled_outputs: Vec<OutputFile>,
+    pub(crate) entry_points: EntryPointMap,
+    pub(crate) bundled_outputs: Vec<OutputFile>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub module_keys: Vec<BunString>,
+    pub(crate) module_keys: Vec<BunString>,
     /// Unordered
-    pub module_map: StringArrayHashMap<OutputFileIndex>,
-    pub source_maps: StringArrayHashMap<OutputFileIndex>,
+    pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
+    pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // Note: stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub loaded_files: AutoBitSet,
+    pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
     // Strong is required for JSValue struct fields. `None` is the pre-init
     // state; `PerThread::init` fills it. Strong's Drop releases the GC root.
-    pub all_server_files: Option<bun_jsc::Strong>,
+    pub(crate) all_server_files: Option<bun_jsc::Strong>,
     /// `attach()` was called and Drop should detach. The placeholder created in
     /// `build_command` before `init` must not call into C++ on drop.
     attached: bool,
@@ -1486,7 +1456,7 @@ unsafe extern "C" {
 impl PerThread {
     /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
     #[inline]
-    pub fn vm(&self) -> &VirtualMachine {
+    pub(crate) fn vm(&self) -> &VirtualMachine {
         // BackRef invariant: VM outlives `PerThread` (set in `init`/`placeholder`
         // from `init_bake`).
         self.vm.get()
@@ -1506,7 +1476,9 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
+            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
+            // write provenance); outlives `PerThread`.
+            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1514,7 +1486,7 @@ impl PerThread {
     }
 
     /// After initializing, call `attach`
-    pub fn init(
+    pub(crate) fn init(
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
@@ -1526,8 +1498,9 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
+        // (non-null, write provenance); outlives PerThread.
+        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,
@@ -1547,7 +1520,7 @@ impl PerThread {
         })
     }
 
-    pub fn attach(&mut self) {
+    pub(crate) fn attach(&mut self) {
         // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
         // VM lifetime); C++ stores `pt` opaquely and hands it back via
         // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
@@ -1557,20 +1530,20 @@ impl PerThread {
         self.attached = true;
     }
 
-    pub fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
+    pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
         self.entry_points.files.values()[id.get() as usize]
     }
 
-    pub fn input_file(&self, id: OpaqueFileId) -> InputFile {
+    pub(crate) fn input_file(&self, id: OpaqueFileId) -> InputFile {
         self.entry_points.files.keys()[id.get() as usize]
     }
 
-    pub fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
+    pub(crate) fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
         &self.bundled_outputs[self.output_index(id).get() as usize]
     }
 
     // Must be run at the top of the event loop
-    pub fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
+    pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
         let global = self.global();
         load_module(
             self.vm.as_ptr(),
@@ -1588,7 +1561,7 @@ impl PerThread {
     // What could be done here is generating a new index type, which is
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
-    pub fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
+    pub(crate) fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
         let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
@@ -1618,7 +1591,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1632,35 +1605,21 @@ pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> Bun
             .value
             .to_bun_string_ref();
     }
-    BunString::dead()
-}
-
-#[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
+    BunString::DEAD
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
-    pub const fn new(ty: u8, no_client: bool) -> Self {
+    pub(crate) const fn new(ty: u8, no_client: bool) -> Self {
         // type: bits 0..8, no_client: bit 8, unused: bits 9..32
         TypeAndFlags((ty as i32) | ((no_client as i32) << 8))
     }
 
-    pub const fn bits(self) -> i32 {
+    pub(crate) const fn bits(self) -> i32 {
         self.0
     }
 }

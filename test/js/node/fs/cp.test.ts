@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -28,7 +28,7 @@ for (const [name, copy] of impls) {
 
   describe("fs." + name, () => {
     test("single file", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
 
@@ -38,7 +38,7 @@ for (const [name, copy] of impls) {
     });
 
     test("refuse to copy directory with 'recursive: false'", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
 
@@ -50,7 +50,7 @@ for (const [name, copy] of impls) {
     });
 
     test("recursive directory structure - no destination", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b/e.txt": "e",
         "from/c.txt": "c",
@@ -66,7 +66,7 @@ for (const [name, copy] of impls) {
     });
 
     test("recursive directory structure - overwrite existing files by default", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b/e.txt": "e",
         "from/c.txt": "c",
@@ -87,7 +87,7 @@ for (const [name, copy] of impls) {
     });
 
     test("recursive directory structure - 'force: false' does not overwrite existing files", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "lose",
         "from/b/e.txt": "e",
         "from/c.txt": "c",
@@ -108,7 +108,7 @@ for (const [name, copy] of impls) {
     });
 
     test("'force: false' on a single file doesn't override", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "lose",
         "result/a.txt": "win",
       });
@@ -119,7 +119,7 @@ for (const [name, copy] of impls) {
     });
 
     test("'force: true' on a single file does override", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "win",
         "result/a.txt": "lose",
       });
@@ -130,7 +130,7 @@ for (const [name, copy] of impls) {
     });
 
     test("'force: false' + 'errorOnExist: true' can throw", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "lose",
         "result/a.txt": "win",
       });
@@ -147,7 +147,7 @@ for (const [name, copy] of impls) {
     });
 
     test("symlinks - single file", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
 
@@ -166,7 +166,7 @@ for (const [name, copy] of impls) {
     });
 
     test("symlinks - single file recursive", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
 
@@ -180,7 +180,7 @@ for (const [name, copy] of impls) {
     });
 
     test("symlinks - directory recursive", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
         "from/dir/c.txt": "c",
@@ -201,7 +201,7 @@ for (const [name, copy] of impls) {
     });
 
     test("symlinks - directory recursive 2", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
         "from/dir/c.txt": "c",
@@ -226,7 +226,7 @@ for (const [name, copy] of impls) {
       // Previously the ELOOP fallback on Linux/FreeBSD called symlink(src, dest),
       // so the copied link's target string was the path of the *source* symlink
       // and every copied link pointed back into the source tree.
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "target.txt": "hello",
         "from/keep": "",
       });
@@ -267,7 +267,7 @@ for (const [name, copy] of impls) {
       // node resolves a relative link target against the directory of the
       // source link and writes the absolute result into the copy. A verbatim
       // copy of the link (e.g. a whole-tree clonefile) would keep "../a.txt".
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/sub/keep.txt": "keep",
       });
@@ -282,7 +282,7 @@ for (const [name, copy] of impls) {
     });
 
     test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/d/f.txt": "x",
       });
       fs.chmodSync(join(basename, "from", "d", "f.txt"), 0o600);
@@ -302,7 +302,7 @@ for (const [name, copy] of impls) {
     });
 
     test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
       mkfifo(join(basename, "from", "pipe"), 0o666);
@@ -313,7 +313,7 @@ for (const [name, copy] of impls) {
     });
 
     test("filter - works", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
       });
@@ -334,7 +334,7 @@ for (const [name, copy] of impls) {
     });
 
     test("filter - paths given are correct and relative", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
       });
@@ -342,7 +342,7 @@ for (const [name, copy] of impls) {
       const filter = jest.fn((src: string) => true);
 
       let prev = process.cwd();
-      process.chdir(basename);
+      process.chdir(String(basename));
 
       await copy(join(basename, "from"), join(basename, "result"), {
         filter,
@@ -359,7 +359,7 @@ for (const [name, copy] of impls) {
     });
 
     test("trailing slash", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
       });
@@ -371,7 +371,7 @@ for (const [name, copy] of impls) {
     });
 
     test("copy directory will ensure directory exists", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
       });
@@ -385,7 +385,7 @@ for (const [name, copy] of impls) {
     });
 
     test("relative paths for directories", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",
         "from/a.dir": { "c.txt": "c" },
@@ -394,7 +394,7 @@ for (const [name, copy] of impls) {
       const filter = jest.fn((src: string) => true);
 
       let prev = process.cwd();
-      process.chdir(basename);
+      process.chdir(String(basename));
 
       await copy("from", "result", {
         recursive: true,
@@ -406,7 +406,7 @@ for (const [name, copy] of impls) {
     });
 
     test.if(process.platform === "win32")("should not throw EBUSY when copying the same file on windows", async () => {
-      const basename = tempDirWithFiles("cp", {
+      await using basename = tempDir("cp", {
         "hey": "hi",
       });
 
@@ -450,7 +450,7 @@ test.skipIf(!isWindows)("cpSync over symlinks does not leak Windows handles", ()
   };
 
   const N = 64;
-  const basename = tempDirWithFiles("cp-symlink-leak", {
+  using basename = tempDir("cp-symlink-leak", {
     "from/target.txt": "hello",
   });
   for (let i = 0; i < N; i++) {
@@ -476,7 +476,7 @@ test.skipIf(!isWindows)("cpSync over symlinks does not leak Windows handles", ()
 // links (Node's dereference:false default), and creating the copied link must not
 // require symlink privilege (junction fallback).
 test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the original target", () => {
-  const basename = tempDirWithFiles("cp-junction", {
+  using basename = tempDir("cp-junction", {
     "from/real/inner.txt": "inner",
   });
   fs.symlinkSync(join(basename, "from", "real"), join(basename, "from", "junction"), "junction");
@@ -498,7 +498,7 @@ test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the ori
 // `\\?\UNC\server\share\...`. The copied link's target must come out as the absolute
 // `\\server\share\...` form (libuv `fs__realpath_handle`), not a dangling relative path.
 test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC target as a working link", () => {
-  const basename = tempDirWithFiles("cp-unc-link", {
+  using basename = tempDir("cp-unc-link", {
     "from/keep.txt": "keep",
     "real/inner.txt": "inner",
   });

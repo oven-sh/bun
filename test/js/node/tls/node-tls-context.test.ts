@@ -667,7 +667,6 @@ it("accepts every BoringSSL named group (and alias) as ecdhCurve", () => {
     "secp521r1",
     "X25519",
     "x25519",
-    "X25519Kyber768Draft00",
     "X25519MLKEM768",
     "MLKEM1024",
   ];

@@ -20,7 +20,7 @@ pub enum Authentication {
 }
 
 pub struct SASLContinue {
-    pub data: Data,
+    pub(crate) data: Data,
     // r/s/i are sub-slices borrowed from `data.slice()` (self-referential).
     // `RawSlice` encapsulates the back-reference invariant: the backing `data`
     // buffer outlives every `SASLContinue` (it is a sibling field), so the safe

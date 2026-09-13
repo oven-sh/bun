@@ -60,7 +60,8 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
 
     Ref<JSPerformanceObserverCallback> protectedThis(*this);
 
-    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(m_data->callback()->globalObject());
+    // The callback's realm may be a node:vm context, which has no DOM wrapper structures.
+    auto& globalObject = *defaultGlobalObject(m_data->callback()->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);
@@ -90,14 +91,6 @@ void JSPerformanceObserverCallback::visitJSFunction(JSC::AbstractSlotVisitor& vi
 void JSPerformanceObserverCallback::visitJSFunction(JSC::SlotVisitor& visitor)
 {
     m_data->visitJSFunction(visitor);
-}
-
-JSC::JSValue toJS(PerformanceObserverCallback& impl)
-{
-    if (!static_cast<JSPerformanceObserverCallback&>(impl).callbackData())
-        return jsNull();
-
-    return static_cast<JSPerformanceObserverCallback&>(impl).callbackData()->callback();
 }
 
 } // namespace WebCore

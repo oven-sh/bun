@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // Gate network tests behind environment variable to avoid CI flakes
@@ -77,7 +77,7 @@ testHttpsRequest();
   });
 
   test("should validate NODE_USE_SYSTEM_CA environment variable parsing", async () => {
-    const testDir = tempDirWithFiles("node-use-system-ca-env", {});
+    await using testDir = tempDir("node-use-system-ca-env", {});
 
     const testScript = `
 // Test that the environment variable is read correctly

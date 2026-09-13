@@ -53,7 +53,7 @@ pub(super) use super::hir_builder::FunctionNode;
 type RefSet = std::collections::HashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
-pub fn lower(
+pub(crate) fn lower(
     func: &FunctionNode<'_>,
     _id: Option<&str>,
     host: &dyn Host,
@@ -589,7 +589,7 @@ impl<'h> CaptureWalker<'h> {
             }
             StmtData::SThrow(t) => self.walk_expr(&t.value),
             StmtData::SIf(i) => {
-                self.walk_expr(&i.test_);
+                self.walk_expr(&i.test);
                 self.walk_stmt(&i.yes);
                 if let Some(no) = &i.no {
                     self.walk_stmt(no);
@@ -600,7 +600,7 @@ impl<'h> CaptureWalker<'h> {
                 if let Some(init) = &f.init {
                     self.walk_stmt(init);
                 }
-                if let Some(test) = &f.test_ {
+                if let Some(test) = &f.test {
                     self.walk_expr(test);
                 }
                 if let Some(update) = &f.update {
@@ -624,15 +624,15 @@ impl<'h> CaptureWalker<'h> {
                 self.pop_scope();
             }
             StmtData::SWhile(w) => {
-                self.walk_expr(&w.test_);
+                self.walk_expr(&w.test);
                 self.walk_stmt(&w.body);
             }
             StmtData::SDoWhile(d) => {
                 self.walk_stmt(&d.body);
-                self.walk_expr(&d.test_);
+                self.walk_expr(&d.test);
             }
             StmtData::SSwitch(s) => {
-                self.walk_expr(&s.test_);
+                self.walk_expr(&s.test);
                 self.push_scope(s.body_loc);
                 for case in s.cases.slice() {
                     if let Some(v) = &case.value {
@@ -646,7 +646,7 @@ impl<'h> CaptureWalker<'h> {
                 self.push_scope(stmt_loc);
                 self.walk_stmts(t.body.slice());
                 self.pop_scope();
-                if let Some(catch) = &t.catch_ {
+                if let Some(catch) = &t.catch {
                     self.push_scope(catch.loc);
                     if let Some(binding) = &catch.binding {
                         self.walk_binding_decl(binding);
@@ -729,7 +729,7 @@ impl<'h> CaptureWalker<'h> {
             }
             ExprData::ESpread(s) => self.walk_expr(&s.value),
             ExprData::EIf(c) => {
-                self.walk_expr(&c.test_);
+                self.walk_expr(&c.test);
                 self.walk_expr(&c.yes);
                 self.walk_expr(&c.no);
             }

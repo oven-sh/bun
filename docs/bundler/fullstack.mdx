@@ -6,7 +6,7 @@ description: "Build fullstack applications with Bun's integrated dev server that
 To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
-import { serve } from "bun";
+import { serve, sql } from "bun";
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
@@ -29,7 +29,7 @@ const server = serve({
       },
       async POST(req) {
         const { name, email } = await req.json();
-        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email}) RETURNING *`;
         return Response.json(user);
       },
     },
@@ -207,7 +207,7 @@ When `development` is `true`, Bun:
 - Includes the SourceMap header in the response so that devtools can show the original source code
 - Disables minification
 - Re-bundles assets on each request to a `.html` file
-- Enables hot module reloading (unless `hmr: false` is set)
+- Enables hot module reloading (unless you set `hmr: false`)
 
 ### Advanced Development Configuration
 
@@ -272,7 +272,7 @@ serve({
 
 If you'd rather not add a build step, set `development: false` in `Bun.serve()`.
 
-This:
+With this setting, Bun:
 
 - Enables in-memory caching of bundled assets. Bun bundles assets lazily on the first request to an `.html` file and caches the result in memory until the server restarts.
 - Enables `Cache-Control` and `ETag` headers
@@ -399,7 +399,7 @@ serve({
 
 ## Plugins
 
-Bun's bundler plugins are also supported when bundling static routes.
+Bun also supports bundler plugins when bundling static routes.
 
 To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
 
@@ -452,7 +452,7 @@ Alternatively, you can import TailwindCSS in your CSS file:
 
 ### Custom Plugins
 
-Any JS file or module that exports a valid bundler plugin object (an object with a `name` and a `setup` field) can be placed in the plugins array:
+The plugins array accepts any JS file or module that exports a valid bundler plugin object (an object with a `name` and a `setup` field):
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]
@@ -498,7 +498,7 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 ```
 
 <Note>
-  This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
+  Bun only replaces literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
   process.env; env.FOO`.
 
 If an environment variable is not set, you may see runtime errors like `ReferenceError: process
@@ -508,9 +508,23 @@ If an environment variable is not set, you may see runtime errors like `Referenc
 
 See [HTML & static sites](/bundler/html-static#inline-environment-variables) for build-time configuration and examples.
 
+## Sourcemaps
+
+In development, Bun generates linked sourcemaps for bundled routes and serves them alongside the JavaScript and CSS chunks. In production (`development: false`), sourcemaps are disabled by default so the server does not expose your original source code.
+
+To override the default, set the `sourcemap` option in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+sourcemap = "linked" # serve sourcemaps in production too
+# sourcemap = "inline"   # embed sourcemaps in the chunks
+# sourcemap = "external" # emit .map files without a sourceMappingURL comment
+# sourcemap = false      # never generate sourcemaps
+```
+
 ## How It Works
 
-Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for Bun's bundler, generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
+Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files and uses them as entrypoints for Bun's bundler. Bun then generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files and serves the result.
 
 ### Processing Pipeline
 
@@ -518,7 +532,7 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 <Step title="1. <script> Processing">
 - Transpiles TypeScript, JSX, and TSX in `<script>` tags
 - Bundles imported dependencies
-- Generates sourcemaps for debugging
+- Generates sourcemaps for debugging in development
 - Minifies when `development` is not `true` in `Bun.serve()`
 
 ```html title="index.html" icon="file-code"
@@ -537,8 +551,8 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 
 </Step>
 <Step title="3. <img> & Asset Processing">
-- Links to assets are rewritten to include content-addressable hashes in URLs
-- Small assets in CSS files are inlined into `data:` URLs, reducing the total number of HTTP requests sent over the wire
+- Rewrites links to assets to include content-addressable hashes in URLs
+- Inlines small assets in CSS files into `data:` URLs, reducing the total number of HTTP requests sent over the wire
 </Step>
 <Step title="4. HTML Rewriting">
 - Combines all `<script>` tags into a single `<script>` tag with a content-addressable hash in the URL
@@ -546,8 +560,8 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 - Outputs a new HTML file
 </Step>
 <Step title="5. Serving">
-- All the output files from the bundler are exposed as static routes, using the same mechanism internally as when you pass a Response object to `static` in `Bun.serve()`.
-- This works similarly to how `Bun.build` processes HTML files.
+- Exposes all the output files from the bundler as static routes, using the same mechanism internally as when you pass a Response object to `routes` in `Bun.serve()`.
+- This pipeline works similarly to how `Bun.build` processes HTML files.
 </Step>
 </Steps>
 
@@ -1073,4 +1087,4 @@ export default function handler(req, res) {
 - Built-in SSR support
 - Enhanced plugin ecosystem
 
-<Note>This is a work in progress. Features and APIs may change.</Note>
+<Note>The fullstack dev server is a work in progress. Features and APIs may change.</Note>

@@ -9,11 +9,11 @@ pub struct IndexStringMap {
 }
 
 impl IndexStringMap {
-    pub fn get(&self, index: IndexInt) -> Option<&[u8]> {
+    pub(crate) fn get(&self, index: IndexInt) -> Option<&[u8]> {
         self.map.get(&index).map(|v| v.as_ref())
     }
 
-    pub fn put(
+    pub(crate) fn put(
         &mut self,
         index: IndexInt,
         value: impl AsRef<[u8]>,

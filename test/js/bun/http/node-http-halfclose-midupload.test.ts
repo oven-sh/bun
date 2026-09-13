@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
 import http from "node:http";
+import type { Socket } from "node:net";
 
 // Staged variant of test/js/bun/test/parallel/
 // test-http-should-not-emit-or-throw-error-when-writing-after-socket.end.ts,
 // which times out on the Windows agents with no output. Each stage is awaited
 // separately so a platform hang names the stage it stalled in instead of
 // timing out silently: the server half-closes (res.socket.end()) while the
-// client is mid-upload, a write() after that must succeed silently, the
-// client's failed upload must not strand the connection, and server.close()
-// must complete once the connection dies.
+// client is mid-upload, and a write() after that must succeed silently.
+// Teardown is explicit: the half-closed connection is not guaranteed to close
+// on its own (node behaves the same - after a raw socket.end() mid-upload no
+// peer signal may ever arrive), but destroy must always deliver 'close'.
 async function runTeardownStages(bind: string | undefined, url: (port: number) => string) {
   const stages: string[] = [];
   const stage = (name: string) => {
@@ -18,9 +20,11 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
 
   const writeResult = Promise.withResolvers<boolean>();
   const connectionClosed = Promise.withResolvers<void>();
+  let socket: Socket | undefined;
 
   const server = http.createServer((req, res) => {
     stage("request-received");
+    socket = req.socket;
     res.writeHead(200, { "Connection": "close" });
     res.socket.end();
     stage("socket-ended");
@@ -60,12 +64,20 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
       ),
     ]);
 
-  expect(await withTimeout(writeResult.promise, "write-after-end")).toBeTrue();
-  await withTimeout(fetchSettled, "fetch-settled");
-  await withTimeout(connectionClosed.promise, "connection-closed");
-  const serverClosed = new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
-  await withTimeout(serverClosed, "server-closed");
-  expect(stages).toContain("write-returned");
+  try {
+    expect(await withTimeout(writeResult.promise, "write-after-end")).toBeTrue();
+    await withTimeout(fetchSettled, "fetch-settled");
+    // Not server.closeAllConnections(): bun's implementation also stops the
+    // server, which makes the disposal/close below reject.
+    socket?.destroy();
+    await withTimeout(connectionClosed.promise, "connection-closed");
+    const serverClosed = new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
+    await withTimeout(serverClosed, "server-closed");
+    expect(stages).toContain("write-returned");
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
 }
 
 test(

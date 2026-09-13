@@ -79,7 +79,7 @@ Bun ships as a single, dependency-free binary and includes a runtime, package ma
 - Test Runner: Jest-compatible, TypeScript-first tests with snapshots, DOM, and watch mode.
 - Bundler: Native bundling for JS/TS/JSX with splitting, plugins, and HTML imports.
 
-Explore each area using the cards above. Each section is structured with an overview, quick examples, reference, and best practices for fast scanning and deep dives.
+Explore each area using the cards above. Each section is structured with an overview, short examples, reference, and best practices for fast scanning and deep dives.
 
 ---
 
@@ -93,7 +93,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as **a drop
 bun run index.tsx  # TS and JSX supported by default
 ```
 
-The `bun` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes.
+The `bun` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager. All three are significantly faster than existing tools, and you can use them in existing Node.js projects with little to no changes.
 
 ```bash terminal icon="terminal"
 bun run start                 # run the `start` script
@@ -105,7 +105,7 @@ bunx cowsay 'Hello, world!'   # execute a package
 
 ## What is a runtime?
 
-JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google)
+JavaScript (or, more formally, ECMAScript) is only a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google)
 and JavaScriptCore (developed by Apple). Both are open source.
 
 But most JavaScript programs don't run in a vacuum. They need a way to access the outside world to perform useful tasks. This is where _runtimes_ come in. They implement additional APIs and make them available to the JavaScript programs they execute.

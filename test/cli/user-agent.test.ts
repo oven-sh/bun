@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("--user-agent flag", () => {
   test("custom user agent is sent in HTTP requests", async () => {
@@ -26,7 +26,7 @@ try {
 }
 `;
 
-    const dir = tempDirWithFiles("user-agent-test", {
+    await using dir = tempDir("user-agent-test", {
       "test.js": testScript,
     });
 
@@ -63,7 +63,7 @@ try {
 }
 `;
 
-    const dir = tempDirWithFiles("user-agent-default-test", {
+    await using dir = tempDir("user-agent-default-test", {
       "test.js": testScript,
     });
 

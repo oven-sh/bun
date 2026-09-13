@@ -25,6 +25,8 @@ pub enum Error {
     AccessDenied,
     #[error("WriteFailed")]
     WriteFailed,
+    #[error("CurrentWorkingDirectoryUnlinked")]
+    CurrentWorkingDirectoryUnlinked,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }
@@ -45,6 +47,7 @@ impl Error {
             Self::FileNotFound => "FileNotFound",
             Self::AccessDenied => "AccessDenied",
             Self::WriteFailed => "WriteFailed",
+            Self::CurrentWorkingDirectoryUnlinked => "CurrentWorkingDirectoryUnlinked",
             Self::Alloc(_) => "OutOfMemory",
         }
     }

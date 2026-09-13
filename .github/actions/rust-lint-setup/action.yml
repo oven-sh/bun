@@ -1,0 +1,77 @@
+name: Rust lint setup
+description: >
+  Shared setup for the jobs in rust-lints.yml: LLVM from apt.llvm.org, Bun,
+  an optional pinned Rust toolchain, `bun install`, and the configure + ninja
+  step that produces what cargo needs before it can resolve the workspace.
+
+inputs:
+  bun-version:
+    description: "Bun release to install."
+    required: true
+  llvm-version:
+    description: "LLVM major version to install from apt.llvm.org."
+    required: true
+  toolchain:
+    description: >
+      Rust toolchain to install (minimal profile) and set as the directory
+      override. Empty leaves rustup alone; the job's own RUSTUP_TOOLCHAIN
+      applies.
+    default: ""
+  components:
+    description: "Space-separated rustup components to add to `toolchain`, e.g. `clippy` or `miri rust-src`."
+    default: ""
+  ninja-targets:
+    description: "Space-separated ninja targets to build after configure."
+    default: "clone-lolhtml clone-rust-argon2"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      uses: ./.github/actions/setup-bun
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Setup system deps
+      # cmake/ninja for `--configure-only`; clang for toolchain detection
+      # (configure resolves cfg.cc/cxx even though nothing here compiles C++).
+      shell: bash
+      env:
+        LLVM_VERSION_MAJOR: ${{ inputs.llvm-version }}
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
+
+    - name: Setup Rust
+      if: inputs.toolchain != ''
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        args=()
+        for c in $COMPONENTS; do args+=(--component "$c"); done
+        rustup toolchain install "$TOOLCHAIN" --profile minimal "${args[@]}"
+        rustup override set "$TOOLCHAIN"
+
+    - name: Enable rustc annotations
+      # rustc/clippy diagnostics → inline PR annotations
+      shell: bash
+      run: echo "::add-matcher::.github/rust-matcher.json"
+
+    - name: Configure
+      # Cargo can't resolve the workspace until `clone-lolhtml` and
+      # `clone-rust-argon2` have extracted the vendored path deps into vendor/
+      # through the same ninja edges the real build uses, and
+      # bun_core/build.rs needs the build_options.rs that configure writes.
+      # `codegen` writes the include!() sources under build/debug/codegen that
+      # bun_runtime/bun_jsc/bun_core can't be checked without.
+      shell: bash
+      env:
+        NINJA_TARGETS: ${{ inputs.ninja-targets }}
+      run: |
+        bun install --frozen-lockfile
+        bun scripts/build.ts --configure-only
+        ninja -C build/debug $NINJA_TARGETS

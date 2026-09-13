@@ -9,6 +9,43 @@ use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
+
+/// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
+/// with (here and in `HTMLRewriter`), so lol_html's rewriter/tokenizer
+/// machinery is instantiated once rather than once per sink closure type.
+pub enum OutputSink<'a> {
+    /// `HTMLRewriter`'s response pipe: every chunk is appended to its staging
+    /// buffer (statically dispatched — this is the throughput-sensitive user).
+    /// The pipe owns the rewriter that owns this sink, so the back-reference
+    /// invariant holds structurally.
+    Buffer(bun_ptr::BackRef<bun_ptr::JsCell<Vec<u8>>>),
+    /// The bundler's HTML scanner.
+    Callback(Box<dyn FnMut(&[u8]) + 'a>),
+}
+
+impl lol_html::OutputSink for OutputSink<'_> {
+    #[inline]
+    fn handle_chunk(&mut self, chunk: &[u8]) {
+        match self {
+            // lol-html signals end-of-document with one zero-length chunk.
+            OutputSink::Buffer(buffer) => {
+                if !chunk.is_empty() {
+                    buffer.with_mut(|buffer| buffer.extend_from_slice(chunk));
+                }
+            }
+            OutputSink::Callback(callback) => Self::call(callback, chunk),
+        }
+    }
+}
+
+impl OutputSink<'_> {
+    // Out of line so the per-chunk sink call lol_html inlines everywhere stays small.
+    #[cold]
+    #[inline(never)]
+    fn call(callback: &mut (dyn FnMut(&[u8]) + '_), chunk: &[u8]) {
+        callback(chunk)
+    }
+}
 use lol_html::html_content::Element;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
@@ -43,7 +80,8 @@ impl<'a> HTMLScanner<'a> {
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
             'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
+                else {
                     break 'blk input_path;
                 };
                 let ext = &input_path[index_of_dot..];
@@ -84,11 +122,11 @@ impl<'a> HTMLScanner<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_write_html(&mut self, bytes: &[u8]) {
+    fn on_write_html(&mut self, bytes: &[u8]) {
         let _ = bytes; // bytes are not written in scan phase
     }
 
-    pub(crate) fn on_html_parse_error(&mut self, message: &[u8]) {
+    fn on_html_parse_error(&mut self, message: &[u8]) {
         // Vec/Box allocations abort on OOM; just call. `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
         let _ = self
@@ -96,7 +134,7 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub(crate) fn on_tag(
+    fn on_tag(
         &mut self,
         _element: &mut Element<'_, '_>,
         path: &[u8],
@@ -165,13 +203,13 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
 #[derive(Clone, Copy)]
-pub struct TagHandler {
+struct TagHandler {
     /// CSS selector to match elements
-    pub selector: &'static str,
+    pub(crate) selector: &'static str,
     /// The attribute to extract the URL from
-    pub url_attribute: &'static str,
+    pub(crate) url_attribute: &'static str,
     /// The kind of import to create
-    pub kind: ImportKind,
+    pub(crate) kind: ImportKind,
 }
 
 impl TagHandler {
@@ -184,7 +222,7 @@ impl TagHandler {
     }
 }
 
-pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
+const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -342,12 +380,12 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         // lol-html signals end-of-document with one zero-length chunk; the
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
-        let output_sink = move |chunk: &[u8]| {
+        let output_sink = OutputSink::Callback(Box::new(move |chunk: &[u8]| {
             if !chunk.is_empty() {
                 // SAFETY: see `on_tag` above.
                 unsafe { (*this_ptr).on_write_html(chunk) }
             }
-        };
+        }));
 
         // The rewriter — the sole holder of `this_ptr`-derived aliases — is
         // consumed (or dropped on a failed `write`) inside this closure, so

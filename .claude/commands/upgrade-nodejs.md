@@ -27,8 +27,8 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
   - Update `Bun__versions_v8` with the V8 version (find using command below)
 
 ### 4. N-API Version
-- `src/napi/js_native_api.h`
-  - Update `NAPI_VERSION` define (check Node.js release notes)
+- `src/runtime/napi/js_native_api_types.h`
+  - Update `NAPI_VERSION` define (check Node.js release notes; see `src/runtime/napi/README.md` for the header resync procedure)
 
 ## Files That May Need Updates
 

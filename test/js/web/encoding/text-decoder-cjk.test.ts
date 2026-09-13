@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import "harness";
 
 test("TextDecoder - Shift_JIS encoding", () => {
   const decoder = new TextDecoder("shift_jis");
@@ -150,6 +151,27 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
     }
   });
 
+  // https://encoding.spec.whatwg.org/#dom-textdecoder-decode: a chunk with no
+  // bytes gives the decoder nothing to process, so a pending lead byte must
+  // survive it, whether the trail byte or the end of the stream comes next.
+  test.each([
+    ["big5", [0xa4], [0x40], "一"],
+    ["shift_jis", [0x88], [0xea], "一"],
+    ["euc-kr", [0xec], [0xe9], "一"],
+    ["gbk", [0xd2], [0xbb], "一"],
+    ["euc-jp", [0xb0], [0xec], "一"],
+  ])("%s: an empty {stream: true} chunk keeps a pending lead byte", (encoding, lead, trail, expected) => {
+    const completed = new TextDecoder(encoding);
+    expect(completed.decode(new Uint8Array(lead), { stream: true })).toBe("");
+    expect(completed.decode(new Uint8Array(), { stream: true })).toBe("");
+    expect(completed.decode(new Uint8Array(trail))).toBe(expected);
+
+    const flushed = new TextDecoder(encoding);
+    expect(flushed.decode(new Uint8Array(lead), { stream: true })).toBe("");
+    expect(flushed.decode(new Uint8Array(), { stream: true })).toBe("");
+    expect(flushed.decode()).toBe("\uFFFD");
+  });
+
   test("reusing a decoder after a flushing decode starts a fresh stream", () => {
     // End the first stream in JIS X 0208 mode; a fresh stream must start in
     // ASCII so plain ASCII bytes decode as themselves.
@@ -164,6 +186,84 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
     expect(d2.decode(new Uint8Array([0xa4]), { stream: true })).toBe("");
     expect(d2.decode(new Uint8Array([0x40]))).toBe("一");
     expect(d2.decode(new Uint8Array([0x40]))).toBe("@");
+  });
+});
+
+describe("TextDecoder - fatal mode", () => {
+  const INVALID = "ERR_ENCODING_INVALID_ENCODED_DATA";
+
+  test.each([
+    // A lead byte followed by a byte that is not a valid trail; the ASCII
+    // byte is decoded on its own afterwards.
+    ["shift_jis", [0x82, 0x20], "\uFFFD "],
+    ["big5", [0xa4, 0x20], "\uFFFD "],
+    ["gbk", [0x81, 0x20], "\uFFFD "],
+    ["euc-kr", [0xbe, 0x20], "\uFFFD "],
+    ["euc-jp", [0x8f, 0xb0, 0x20], "\uFFFD "],
+    // A four-byte sequence broken at its last byte: 0x30 is re-read as "0"
+    // and 0x81 as a new lead, which 0x20 then breaks as well.
+    ["gb18030", [0x81, 0x30, 0x81, 0x20], "\uFFFD0\uFFFD "],
+    // Two escape sequences with nothing in between.
+    ["iso-2022-jp", [0x1b, 0x24, 0x42, 0x1b, 0x28, 0x42], "\uFFFD"],
+    // Unmapped single bytes.
+    ["iso-8859-7", [0xae], "\uFFFD"],
+    ["windows-1253", [0xaa], "\uFFFD"],
+  ])("%s: invalid input throws, or is replaced without fatal", (encoding, bytes, replaced) => {
+    const input = new Uint8Array(bytes);
+    expect(() => new TextDecoder(encoding, { fatal: true }).decode(input)).toThrowWithCode(TypeError, INVALID);
+    expect(() => new TextDecoder(encoding, { fatal: true }).decode(input)).toThrow(
+      `The encoded data was not valid for encoding ${encoding}`,
+    );
+    expect(new TextDecoder(encoding).decode(input)).toBe(replaced);
+  });
+
+  test.each([
+    ["shift_jis", [0x82]],
+    ["big5", [0xa4]],
+    ["gb18030", [0x81, 0x30, 0x81]],
+    ["euc-jp", [0x8f, 0xb0]],
+    ["iso-2022-jp", [0x1b, 0x24, 0x42, 0x30]],
+  ])("%s: a truncated sequence is held back by {stream: true} and throws when flushed", (encoding, bytes) => {
+    const streamed = new TextDecoder(encoding, { fatal: true });
+    expect(streamed.decode(new Uint8Array(bytes), { stream: true })).toBe("");
+    expect(() => streamed.decode()).toThrowWithCode(TypeError, INVALID);
+
+    expect(() => new TextDecoder(encoding, { fatal: true }).decode(new Uint8Array(bytes))).toThrowWithCode(
+      TypeError,
+      INVALID,
+    );
+  });
+
+  test("x-user-defined has no invalid bytes", () => {
+    const decoded = new TextDecoder("x-user-defined", { fatal: true }).decode(new Uint8Array([0x80, 0xff, 0x41]));
+    expect(Array.from(decoded, c => c.codePointAt(0))).toEqual([0xf780, 0xf7ff, 0x41]);
+  });
+
+  test("a decoder stays usable after a throwing decode", () => {
+    const d = new TextDecoder("shift_jis", { fatal: true });
+    expect(() => d.decode(new Uint8Array([0x82]))).toThrowWithCode(TypeError, INVALID);
+    expect(d.decode(new Uint8Array([0x82, 0xa0]))).toBe("あ");
+
+    // Also when the throwing decode is the flush of a stream.
+    expect(d.decode(new Uint8Array([0x82]), { stream: true })).toBe("");
+    expect(() => d.decode(new Uint8Array([0x20]))).toThrowWithCode(TypeError, INVALID);
+    expect(d.decode(new Uint8Array([0x82, 0xa0]))).toBe("あ");
+  });
+
+  // A fatal error inside a stream discards what the decoder had pending (a
+  // lead byte, the ISO-2022-JP mode); the stream's next {stream: true} chunk
+  // decodes from a fresh decoder, as in Firefox.
+  test.each([
+    // ESC $ B enters two-byte mode, in which a bare LF is an error. Had the
+    // mode survived the throw, "AB" would decode as the pair 0x41 0x42 (U+758E).
+    ["iso-2022-jp", [0x1b, 0x24, 0x42, 0x30, 0x0a], [0x41, 0x42], "AB"],
+    ["shift_jis", [0x82, 0x20], [0x41], "A"],
+    ["gb18030", [0x81, 0x30, 0x81, 0x20], [0x41], "A"],
+  ])("%s: a fatal error inside a stream discards the decoder state", (encoding, bad, next, expected) => {
+    const d = new TextDecoder(encoding, { fatal: true });
+    expect(() => d.decode(new Uint8Array(bad), { stream: true })).toThrowWithCode(TypeError, INVALID);
+    expect(d.decode(new Uint8Array(next), { stream: true })).toBe(expected);
+    expect(d.decode()).toBe("");
   });
 });
 

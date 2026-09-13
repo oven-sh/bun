@@ -107,6 +107,23 @@ pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> R
 }
 
 #[inline]
+pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
+    let mode = rustix::fs::Mode::from_raw_mode(mode);
+    let dir = dir.as_borrowed_fd();
+    retry(|| {
+        rustix::fs::openat2(
+            dir,
+            path.as_cstr(),
+            oflags,
+            mode,
+            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+        )
+    })
+    .map(own_fd)
+}
+
+#[inline]
 pub(crate) fn read(fd: Fd, buf: &mut [u8]) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::read(fd, buf))
@@ -368,7 +385,7 @@ pub(crate) unsafe fn pwritev(
 // `-errno` returns, which callers decode via `GetErrno for isize`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
+/// Raw `read(2)` — libc-convention return (for `linux::read`).
 ///
 /// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
 /// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
@@ -382,14 +399,6 @@ pub(crate) unsafe fn pwritev(
 pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
     // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
     unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
-}
-
-/// Raw `write(2)` — libc-convention return. See `read_raw` for why this
-/// bypasses rustix's typed wrapper.
-#[inline]
-pub(crate) unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
-    // SAFETY: raw `write(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
 /// Raw `epoll_ctl(2)` — libc-convention return.

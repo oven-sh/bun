@@ -189,3 +189,178 @@ test("net entries are instanceof PerformanceEntry", async () => {
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
   expect(entry.entryType).toBe("net");
 });
+
+test("re-wrapped native entries, timing and observer keep JS identity", async () => {
+  const name = "identity-" + Math.random();
+  performance.mark(name);
+  expect(performance.getEntriesByName(name)[0]).toBe(performance.getEntriesByName(name)[0]);
+  expect(performance.timing).toBe(performance.timing);
+
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const observer = new PerformanceObserver((list, obs) => {
+    obs.disconnect();
+    resolve(obs === observer && list.getEntries()[0] === list.getEntries()[0]);
+  });
+  observer.observe({ entryTypes: ["mark"] });
+  performance.mark(name + "-2");
+  expect(await promise).toBe(true);
+});
+
+test("PerformanceObserver delivers entries to a callback created in a node:vm context", async () => {
+  // A context has no PerformanceObserver of its own. A test runner or a sandbox hands it the host class,
+  // and the callback is then a function of the context's realm. Delivery used to crash the process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+       const perfHooks = require("node:perf_hooks");
+
+       // Only its source is used: a context evaluates it, so the function belongs to the context's realm.
+       function contextCallback(list, observer) {
+         observer.disconnect();
+         report({ receiver: this, passed: observer, list, names: list.getEntries().map(entry => entry.name) });
+       }
+       const callbackSource = "(" + contextCallback + ")";
+       const check = ({ receiver, passed, list, names }, observer, callback) => ({
+         foreignCallback: !(callback instanceof Function),
+         receiver: receiver === observer,
+         observer: passed === observer,
+         list: list instanceof PerformanceObserverEntryList,
+         names,
+       });
+
+       // The context gets the host class and constructs the observer itself.
+       function insideTheContext() {
+         const { promise, resolve } = Promise.withResolvers();
+         const context = vm.createContext({
+           PerformanceObserver,
+           performance,
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const { observer, callback } = vm.runInContext(
+           "const callback = " + callbackSource + ";" +
+           "const observer = new PerformanceObserver(callback);" +
+           "observer.observe({ entryTypes: ['mark'] });" +
+           "performance.mark('inside-the-context');" +
+           "({ observer, callback });",
+           context,
+         );
+         return promise;
+       }
+
+       // The host constructs the observer around a function that a context returned.
+       function fromTheHost(Observer, options, trigger) {
+         const { promise, resolve } = Promise.withResolvers();
+         const callback = vm.runInNewContext(callbackSource, {
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const observer = new Observer(callback);
+         observer.observe(options);
+         trigger?.();
+         return promise;
+       }
+
+       (async () => {
+         performance.measure("buffered", { start: 0, end: 1 });
+         console.log(
+           JSON.stringify({
+             insideTheContext: await insideTheContext(),
+             globalClass: await fromTheHost(PerformanceObserver, { entryTypes: ["mark"] }, () => performance.mark("global")),
+             perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
+               performance.mark("perf_hooks"),
+             ),
+             // observe({ buffered: true }) delivers before it returns, not from a task.
+             buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
+           }),
+         );
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const delivered = { foreignCallback: true, receiver: true, observer: true, list: true };
+  expect(JSON.parse(stdout)).toEqual({
+    insideTheContext: { ...delivered, names: ["inside-the-context"] },
+    globalClass: { ...delivered, names: ["global"] },
+    perfHooksClass: { ...delivered, names: ["perf_hooks"] },
+    buffered: { ...delivered, names: ["buffered"] },
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {
+  // These used to be patched onto the prototypes when node:perf_hooks was first required,
+  // so JSON.stringify(performance.mark(...)) dropped `detail` until then.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const mark = performance.mark("m", { detail: { a: 1 } });
+       const measure = performance.measure("mm", { start: 0, end: 1, detail: [1, 2] });
+       const json = [JSON.parse(JSON.stringify(mark)), JSON.parse(JSON.stringify(measure))];
+       const { inspect } = require("node:util");
+       const custom = Symbol.for("nodejs.util.inspect.custom");
+       const result = {
+         json,
+         inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
+         nativeInspected: Bun.inspect(mark),
+         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
+         // and the hook has to fall back to the default formatting there instead of throwing
+         // from the brand-checked toJSON.
+         protos: [
+           inspect(PerformanceMark.prototype),
+           Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMark.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0],
+         ],
+         descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
+         toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
+         generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
+       };
+       // util.inspect forwards an option it does not know to the hook as-is, so the hook's copy
+       // of the options has to cope with an index key.
+       result.indexOption = inspect(mark, { 0: 1 }).split("\\n")[0];
+       // The hook copies the options the way { ...options } does: a setter that userland put on
+       // Object.prototype under one of the option names must not run.
+       Object.defineProperty(Object.prototype, "showHidden", { configurable: true, set() { throw new Error("setter ran"); } });
+       result.polluted = inspect(mark).split("\\n")[0];
+       console.log(JSON.stringify(result));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  expect(result.json).toEqual([
+    { name: "m", entryType: "mark", startTime: expect.any(Number), duration: 0, detail: { a: 1 } },
+    { name: "mm", entryType: "measure", startTime: 0, duration: 1, detail: [1, 2] },
+  ]);
+  expect(result.inspected[0]).toStartWith("PerformanceMark {\n  name: 'm',");
+  expect(result.inspected[0]).toContain("detail: { a: 1 }");
+  expect(result.inspected[1]).toBe("PerformanceMeasure [Object]");
+  expect(result.inspected[2]).toBe("PerformanceMark {}");
+  expect(result.nativeInspected).toStartWith("PerformanceMark {\n  name: 'm',");
+  expect(result.protos).toEqual([
+    "PerformanceEntry [PerformanceMark] { detail: [Getter] }",
+    "PerformanceEntry {",
+    "PerformanceMark {",
+    "PerformanceMeasure {",
+  ]);
+  expect(result.descriptor).toEqual({
+    value: "[nodejs.util.inspect.custom]",
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  expect(result.toJSONEnumerable).toBe(false);
+  expect(result.generic).toBe("Fake { z: 1 }");
+  expect(result.indexOption).toBe("PerformanceMark {");
+  expect(result.polluted).toBe("PerformanceMark {");
+  expect(exitCode).toBe(0);
+});

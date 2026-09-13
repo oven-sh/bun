@@ -9,22 +9,26 @@
  * cuts the resident binary pages roughly in half with no change to the binary's
  * size and no change to what the code does.
  *
- * How: `functrace.c` is an injected-library shim that plants a breakpoint (INT3
- * on x86-64, BRK on arm64) at every function's first instruction and restores
- * it the first time it fires, so it records exactly the functions a run enters.
- * We run a handful of representative workloads, map every recorded address back
- * to its linker-visible name (`nm` on the unstripped binary), and emit those
- * names in first-entry order. Symbols the linker cannot find are ignored, so
- * the file degrades gracefully as code moves.
+ * How: a tracer plants a breakpoint (INT3 on x86-64, BRK on arm64) at every
+ * function's first instruction and restores it the first time it fires, so it
+ * records exactly the functions a run enters. On linux and macOS that is
+ * `functrace.c`, a library injected into the traced process; on Windows it is
+ * `functrace-windows.c`, which runs the process as its debuggee and does the
+ * same from outside. We run a handful of representative workloads, map every
+ * recorded address back to its linker-visible name (`readTextSymbols`: nm on
+ * the unstripped binary, or on Windows the maps the link wrote beside it — see
+ * windows-symbols.ts), and emit those names in first-entry order. Symbols the
+ * linker cannot find are ignored, so the file degrades gracefully as code moves.
  *
  * This replaced an earlier page-fault tracer. A page trace lists every function
  * that shares a page with a hot one, so ~5k real entries turned into ~38k
  * names, most of which never ran; the extra names still sort to the front and
  * dilute the hot set. Recording exact entries lists only what ran.
  *
- * One workload runs under `ptyrun.c`, on a pseudo-terminal: bun's stdio, tty
- * and readline code is a different path on a terminal than on a pipe, and the
- * functions it reaches are a couple of thousand that no other workload touches.
+ * One workload runs on a pseudo-terminal (`ptyrun.c`; a pseudo console on
+ * Windows): bun's stdio, tty and readline code is a different path on a
+ * terminal than on a pipe, and the functions it reaches are a couple of
+ * thousand that no other workload touches.
  *
  * The file is never committed. Release builds generate it from their own pass-1
  * binary and relink against it; canary builds inherit the last successful
@@ -38,16 +42,18 @@
  * linked with a file generated from the plain release build lands at 22.6 MB,
  * and at 21.6 MB with its own.
  *
- * Linux x86-64/arm64 and macOS arm64. Linux is the lld `--symbol-ordering-file`
- * input; macOS is Apple ld's `-order_file`.
+ * Linux x86-64/arm64, macOS arm64, and Windows x64/arm64. Linux is the lld
+ * `--symbol-ordering-file` input, macOS Apple ld's `-order_file`, Windows
+ * lld-link's `/order:@`; all three take one symbol name per line.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readWindowsTextSymbols } from "./windows-symbols.ts";
 
-const STARTS_HEADER_WORDS = 3; // must match functrace.c: magic, version, count
+const STARTS_HEADER_WORDS = 3; // must match functrace.c and functrace-windows.c: magic, version, count
 const TRACE_HEADER_WORDS = 5; // magic, version, slide, starts, count
 const STARTS_MAGIC = 0x4e55425354525453n; // "STRTSBUN"
 const TRACE_MAGIC = 0x4e55424543415254n; // "TRACEBUN"
@@ -116,7 +122,10 @@ export function runCommand(cmd: string[], options: RunOptions = {}) {
 export interface GenerateOptions {
   /** Build directory holding the unstripped binary. */
   buildDir: string;
-  /** Unstripped binary to trace. Defaults to `bun-profile`; an assertions build names it differently. */
+  /**
+   * Unstripped binary to trace, without the `.exe` Windows adds. Defaults to
+   * `bun-profile`; an assertions build names it differently.
+   */
   exeName?: string;
   /** Where to write the order file. Defaults to `<buildDir>/linker.order`. */
   outPath?: string;
@@ -127,33 +136,55 @@ export interface GenerateOptions {
 }
 
 /**
- * Linker-visible function names, by address. Multiple names can share one
- * address (aliases, and ICF on darwin), and the order file must list every name
- * the linker might know a function by. On macOS nm prints names with the C
- * leading underscore, which is also what `-order_file` expects, so no
- * stripping — lld and ld take exactly what nm gave.
+ * Linker-visible function names by link-time address, for every function in
+ * the binary. Multiple names can share one address (aliases, and functions the
+ * linker folded together), and the order file must list every name the linker
+ * might know a function by, so nothing is collapsed here. Names are taken
+ * exactly as the tool prints them: on macOS that includes the C leading
+ * underscore, which is also what `-order_file` expects.
+ *
+ * ELF and Mach-O binaries carry their symbol table, so nm reads it off the
+ * binary. A PE does not, so a Windows binary is read through the maps the link
+ * wrote next to it (windows-symbols.ts).
  */
-function readSymbolTable(bunProfile: string): Map<number, string[]> {
-  // Bare `nm` with no GNU-only long options: the regex below is the
-  // defined-text-symbol filter, and nothing here depends on output order.
-  const nm = process.env.NM || "nm";
-  const r = runCommand([nm, bunProfile]);
-  if (r.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${r.stderr}`);
+export function readTextSymbols(exe: string): Map<number, string[]> {
+  if (exe.toLowerCase().endsWith(".exe")) return readWindowsTextSymbols(exe);
 
   const symbols = new Map<number, string[]>();
-  for (const line of r.stdout.toString().split("\n")) {
-    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
+  // $NM, else whichever nm is installed. Bare, with no GNU-only long options:
+  // the regex is the defined-text-symbol filter, and nothing depends on order.
+  const tools = [process.env.NM, "llvm-nm", "nm"].filter((tool): tool is string => !!tool);
+  const failures: string[] = [];
+  let listing: string | undefined;
+  for (const nm of tools) {
+    let r: ReturnType<typeof runCommand>;
+    try {
+      r = runCommand([nm, exe]);
+    } catch (error) {
+      failures.push((error as Error).message); // not installed
+      continue;
+    }
+    if (r.status === 0) {
+      listing = r.stdout.toString();
+      break;
+    }
+    failures.push(`${nm} exited ${r.status}: ${r.stderr.toString().trim()}`);
+  }
+  if (listing === undefined) throw new Error(`cannot list ${exe}'s symbols:\n${failures.join("\n")}`);
+
+  for (const line of listing.split("\n")) {
+    const m = /^([0-9a-f]+) [tT] (\S+)$/.exec(line);
     if (!m) continue;
     const address = parseInt(m[1]!, 16);
     const names = symbols.get(address);
-    if (names) names.push(m[3]!);
-    else symbols.set(address, [m[3]!]);
+    if (names) names.push(m[2]!);
+    else symbols.set(address, [m[2]!]);
   }
-  if (symbols.size === 0) throw new Error(`${nm} reported no text symbols — is ${bunProfile} stripped?`);
+  if (symbols.size === 0) throw new Error(`nm listed no text symbols — is ${exe} stripped?`);
   return symbols;
 }
 
-/** Write function starts for functrace.c: u64 magic, version, count, addresses. */
+/** Write function starts for the tracer: u64 magic, version, count, addresses. */
 function writeStarts(path: string, addresses: number[]): void {
   const buffer = new ArrayBuffer((STARTS_HEADER_WORDS + addresses.length) * 8);
   const words = new BigUint64Array(buffer);
@@ -164,7 +195,7 @@ function writeStarts(path: string, addresses: number[]): void {
   writeFileSync(path, new Uint8Array(buffer));
 }
 
-/** Read a trace functrace.c wrote: first-entry addresses, slide already removed. */
+/** Read a trace the tracer wrote: first-entry addresses, slide already removed. */
 function readTrace(path: string, name: string): number[] {
   const raw = readFileSync(path);
   if (raw.byteLength < TRACE_HEADER_WORDS * 8) throw new Error(`workload "${name}" wrote a truncated trace`);
@@ -178,40 +209,104 @@ function readTrace(path: string, name: string): number[] {
   return out;
 }
 
+/** A built tracer: how to run one workload under it. */
+interface Tracer {
+  /** The linker option the resulting file is for, named in its header. */
+  linker: string;
+  /** The command that runs `exe` with the workload's arguments under trace, and the environment that arms it. */
+  launch(workload: Workload, exe: string): { cmd: string[]; env: Record<string, string> };
+}
+
+/**
+ * functrace.c rides into the traced process on the loader's preload variable.
+ * The terminal workload runs under ptyrun.c, which is then the traced process's
+ * parent, so it is handed the preload to pass down rather than loading it itself.
+ */
+function buildUnixTracer(scratch: string): Tracer {
+  const darwin = process.platform === "darwin";
+  const tracer = join(scratch, darwin ? "functrace.dylib" : "functrace.so");
+  const ptyrun = join(scratch, "ptyrun");
+  const cc = process.env.CC || "cc";
+  const build = runCommand(
+    darwin
+      ? [cc, "-O2", "-dynamiclib", "-fPIC", "-o", tracer, join(here, "functrace.c")]
+      : [cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "functrace.c"), "-ldl", "-lpthread"],
+  );
+  if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
+  const pty = runCommand([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
+  if (pty.status !== 0) throw new Error(`failed to build the pty runner with ${cc}\n${pty.stderr}`);
+
+  const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
+  return {
+    linker: darwin ? "ld -order_file" : "lld --symbol-ordering-file",
+    launch: (workload, exe) =>
+      workload.tty
+        ? { cmd: [ptyrun, exe, ...workload.args], env: { PTYRUN_PRELOAD: tracer } }
+        : { cmd: [exe, ...workload.args], env: { [preloadVar]: tracer } },
+  };
+}
+
+/**
+ * functrace-windows.c is a debugger, so it runs the workload itself, and puts
+ * it on a pseudo console when asked to. Built with clang-cl when there is one
+ * (LLVM is on every bun dev machine and CI image), else with cl, which needs a
+ * Visual Studio developer shell; $CC names one explicitly.
+ */
+function buildWindowsTracer(scratch: string): Tracer {
+  const tracer = join(scratch, "functrace.exe");
+  const failures: string[] = [];
+  for (const cc of process.env.CC ? [process.env.CC] : ["clang-cl", "cl"]) {
+    // clang-cl links with whatever `link` is first on PATH, which on a machine
+    // with git is as likely to be coreutils' as MSVC's; lld-link ships beside it.
+    const linker = /clang-cl/i.test(basename(cc)) ? ["-fuse-ld=lld"] : [];
+    let build: ReturnType<typeof runCommand>;
+    try {
+      build = runCommand([cc, "/nologo", "/O2", ...linker, join(here, "functrace-windows.c"), `/Fe:${tracer}`], {
+        cwd: scratch, // cl drops the .obj in the working directory
+      });
+    } catch (error) {
+      failures.push((error as Error).message); // not installed
+      continue;
+    }
+    if (build.status === 0) break;
+    failures.push(`${cc} exited ${build.status}:\n${build.stdout}${build.stderr}`); // cl reports errors on stdout
+  }
+  if (!existsSync(tracer)) {
+    throw new Error(`failed to build the tracer — needs clang-cl, or cl in a developer shell:\n${failures.join("\n")}`);
+  }
+  return {
+    linker: "lld-link /order",
+    launch: (workload, exe) => {
+      const env: Record<string, string> = {};
+      if (workload.tty) env.BUN_FUNCTRACE_TTY = "1";
+      return { cmd: [tracer, exe, ...workload.args], env };
+    },
+  };
+}
+
 export function generateOrderFile(options: GenerateOptions): { count: number; outPath: string } {
   const buildDir = resolve(options.buildDir);
   const outPath = resolve(options.outPath ?? join(buildDir, "linker.order"));
   const minFunctions = options.minFunctions ?? MIN_FUNCTIONS;
   const log = (message: string) => options.verbose && console.log(message);
 
-  const darwin = process.platform === "darwin";
-  if (process.platform !== "linux" && !(darwin && process.arch === "arm64")) {
-    throw new Error("the order file tracer builds on linux x86-64/arm64 or macOS arm64");
+  const windows = process.platform === "win32";
+  if (process.platform !== "linux" && !windows && !(process.platform === "darwin" && process.arch === "arm64")) {
+    throw new Error("the order file tracer builds on linux x86-64/arm64, macOS arm64, or Windows x64/arm64");
   }
 
-  // The unstripped binary: its symbol table is what maps addresses back to names.
-  const bunProfile = join(buildDir, options.exeName ?? "bun-profile");
+  // The unstripped binary: its symbols are what map addresses back to names.
+  const bunProfile = join(buildDir, (options.exeName ?? "bun-profile") + (windows ? ".exe" : ""));
   if (!existsSync(bunProfile)) {
     throw new Error(`${bunProfile} not found — build it first (bun run build:release)`);
   }
 
   const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-"));
   try {
-    // ── Build the tracer and the pty runner ───────────────────────────────────
-    const tracer = join(scratch, darwin ? "functrace.dylib" : "functrace.so");
-    const ptyrun = join(scratch, "ptyrun");
-    const cc = process.env.CC || "cc";
-    const build = runCommand(
-      darwin
-        ? [cc, "-O2", "-dynamiclib", "-fPIC", "-o", tracer, join(here, "functrace.c")]
-        : [cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "functrace.c"), "-ldl", "-lpthread"],
-    );
-    if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
-    const pty = runCommand([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
-    if (pty.status !== 0) throw new Error(`failed to build the pty runner with ${cc}\n${pty.stderr}`);
+    const tracer = windows ? buildWindowsTracer(scratch) : buildUnixTracer(scratch);
 
     // ── Symbol table and function starts ──────────────────────────────────────
-    const symbols = readSymbolTable(bunProfile);
+    const symbols = readTextSymbols(bunProfile);
     const startsPath = join(scratch, "starts.bin");
     writeStarts(
       startsPath,
@@ -287,13 +382,10 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
     const seen = new Set<string>();
     for (const [i, workload] of workloads.entries()) {
       const out = join(scratch, `trace-${i}.bin`);
-      // The tracer loads into the traced process and nowhere else. On a terminal
-      // ptyrun is the parent, so it is the one that hands the preload down.
-      const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
-      const preload = workload.tty ? { PTYRUN_PRELOAD: tracer } : { [preloadVar]: tracer };
-      const r = runCommand(workload.tty ? [ptyrun, bunProfile, ...workload.args] : [bunProfile, ...workload.args], {
+      const { cmd, env } = tracer.launch(workload, bunProfile);
+      const r = runCommand(cmd, {
         env: {
-          ...preload,
+          ...env,
           BUN_FUNCTRACE_STARTS: startsPath,
           BUN_FUNCTRACE_OUT: out,
           BUN_DEBUG_QUIET_LOGS: "1",
@@ -332,7 +424,7 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
     }
 
     const header = [
-      `# ${darwin ? "ld -order_file" : "lld --symbol-ordering-file"}: functions bun executes while starting up,`,
+      `# ${tracer.linker}: functions bun executes while starting up,`,
       "# in first-entry order, so they land together at the front of .text.",
       "# Generated by scripts/orderfile/generate.ts — not committed.",
       `# ${order.length} functions from ${workloads.length} workloads.`,

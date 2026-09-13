@@ -277,7 +277,6 @@ const {
   kPathValidation,
   kPrivateConstructor,
   kReset,
-  kSendHeaders,
   kSessionTicket,
   kTrailers,
   kVersionNegotiation,
@@ -2405,32 +2404,6 @@ class QuicStream {
     this.#handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
   }
 
-  /**
-   * Send a block of headers. The headers are formatted as an array
-   * of key, value pairs. The reason we don't use a Headers object
-   * here is because this needs to be able to represent headers like
-   * :method which the high-level Headers API does not allow.
-   *
-   * Note that QUIC in general does not support headers. This method
-   * is in place to support HTTP3 and is therefore not generally
-   * exposed except via a private symbol.
-   * @param {object} headers
-   * @returns {boolean} true if the headers were scheduled to be sent.
-   */
-  [kSendHeaders](headers, kind = kHeadersKindInitial, flags = kHeadersFlagsTerminal) {
-    validateObject(headers, "headers");
-    if (getQuicSessionState(this.#inner.session).headersSupported === 2) {
-      throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
-    }
-    if (this.pending) {
-      debug("pending stream enqueuing headers", headers);
-    } else {
-      debug(`stream ${this.id} sending headers`, headers);
-    }
-    const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
-    return this.#handle.sendHeaders(kind, headerString, flags);
-  }
-
   [kFinishClose](error) {
     const inner = this.#inner;
     inner.pendingClose ??= PromiseWithResolvers();
@@ -3807,10 +3780,6 @@ class QuicSession {
   /** @type {boolean} */
   get [kHandshakeCompleted]() {
     return this.#inner.handshakeCompleted;
-  }
-
-  get [kVerifyPeer]() {
-    return this.#inner.verifyPeer;
   }
 
   set [kVerifyPeer](value) {

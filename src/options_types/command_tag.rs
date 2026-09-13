@@ -42,6 +42,8 @@ pub enum Tag {
     PublishCommand,
     AuditCommand,
     WhyCommand,
+    DedupeCommand,
+    PruneCommand,
     FuzzilliCommand,
 }
 
@@ -82,6 +84,8 @@ impl Tag {
             Tag::PublishCommand => b'k',
             Tag::AuditCommand => b'A',
             Tag::WhyCommand => b'W',
+            Tag::DedupeCommand => b'd',
+            Tag::PruneCommand => b'N',
             Tag::FuzzilliCommand => b'F',
         }
     }
@@ -100,6 +104,8 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
@@ -119,12 +125,14 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
-    pub const COUNT: usize = <Self as Enum>::LENGTH;
+    pub(crate) const COUNT: usize = <Self as Enum>::LENGTH;
 
     /// Every variant, for const iteration (enum_map's `from_usize` is not const).
     /// The length check in the uniqueness assertion below fails to compile if a
@@ -161,6 +169,8 @@ impl Tag {
         Self::PublishCommand,
         Self::AuditCommand,
         Self::WhyCommand,
+        Self::DedupeCommand,
+        Self::PruneCommand,
         Self::FuzzilliCommand,
     ];
 
@@ -189,7 +199,7 @@ const _: () = {
 /// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
 /// init code on the startup path.
 #[repr(transparent)]
-pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);
+pub struct TagTable<V: 'static>(pub(crate) [V; Tag::COUNT]);
 
 impl<V> core::ops::Index<Tag> for TagTable<V> {
     type Output = V;
@@ -218,6 +228,8 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -237,6 +249,8 @@ pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -244,6 +258,8 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     let mut a = [true; Tag::COUNT];
     a[Tag::AddCommand as usize] = false;
     a[Tag::AuditCommand as usize] = false;
+    a[Tag::DedupeCommand as usize] = false;
+    a[Tag::PruneCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;

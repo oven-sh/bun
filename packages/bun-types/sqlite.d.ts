@@ -136,6 +136,13 @@ declare module "bun:sqlite" {
     static open(filename: string, options?: number | DatabaseOptions): Database;
 
     /**
+     * Maximum number of distinct SQL strings {@link Database.query} keeps
+     * cached per `Database`. Least-recently-used entries are evicted first.
+     * @default 20
+     */
+    static MAX_QUERY_CACHE_SIZE: number;
+
+    /**
      * Execute a SQL query **without returning any results**.
      *
      * This does not cache the query. To run a query multiple times, use {@link prepare} instead.
@@ -264,24 +271,33 @@ declare module "bun:sqlite" {
     /**
      * Close the database connection.
      *
-     * It is safe to call this method multiple times. If the database is already
-     * closed, this is a no-op. Running queries after the database has been
-     * closed throws an error.
+     * Statements created with {@link Database.query} are finalized
+     * immediately. With `throwOnError` unset or `false`, statements created
+     * with {@link Database.prepare} keep working until they are finalized or
+     * garbage collected, and the underlying connection is released after the
+     * last one (`sqlite3_close_v2`). With `throwOnError: true`, every
+     * outstanding statement is finalized, the connection is released
+     * immediately (`sqlite3_close`), and an error is thrown if SQLite fails
+     * to close it.
+     *
+     * It is safe to call this method multiple times. If the database is
+     * already closed, this is a no-op. Creating new statements after close
+     * throws; using a statement that close finalized throws
+     * `Database has closed`, except `toString()`, which returns an empty
+     * string, and `finalize()`, which stays safe to call.
      *
      * @example
      * ```ts
      * db.close();
      * ```
-     * This is called automatically when the database instance is garbage collected.
-     *
-     * Internally, this calls `sqlite3_close_v2`.
+     * If a `Database` is garbage collected without being closed, the
+     * connection is released once every statement created from it has also
+     * been finalized or collected. `using db = ...` calls `close(true)`.
      */
     close(
       /**
-       * If `true`, throw an error if the database is in use
+       * If `true`, finalize every outstanding statement and throw if the connection fails to close
        * @default false
-       *
-       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
        *
        * Learn more in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
        *

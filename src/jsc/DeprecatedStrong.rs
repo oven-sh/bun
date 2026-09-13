@@ -76,32 +76,6 @@ impl DeprecatedStrong {
     pub fn get(&self) -> JSValue {
         self.raw
     }
-
-    pub fn unref(&mut self) {
-        self.raw.unprotect();
-        #[cfg(debug_assertions)]
-        if let Some(_safety) = &mut self._safety {
-            if _safety.ref_count == 1 {
-                // SAFETY: ptr was produced by heap::alloc in `init` and not yet freed.
-                unsafe {
-                    debug_assert!((*_safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
-                    (*_safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                    // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
-                    drop(bun_core::heap::take(
-                        _safety
-                            .ptr
-                            .as_ptr()
-                            .cast::<ManuallyDrop<DeprecatedStrong>>(),
-                    ));
-                }
-                // Neutralize so Drop is a no-op (see top-of-file refcount contract).
-                self._safety = None;
-                self.raw = JSValue::ZERO;
-                return;
-            }
-            _safety.ref_count -= 1;
-        }
-    }
 }
 
 impl Drop for DeprecatedStrong {

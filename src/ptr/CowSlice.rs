@@ -169,7 +169,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// Create a Cow that wraps a static slice.
     ///
     /// `Drop` is safe to call, but will have no effect.
-    pub const fn init_static(data: &'static [T]) -> Self {
+    pub(crate) const fn init_static(data: &'static [T]) -> Self {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
             ptr: data.as_ptr().cast_mut(),
@@ -302,21 +302,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         }
 
         Ok(())
-    }
-
-    /// Does not include debug safety checks.
-    ///
-    /// `data` is the logical slice. For `Z = true` with `is_owned = true`, the
-    /// backing allocation must physically hold `data.len() + 1` elements (the
-    /// sentinel beyond the slice), as `Drop` frees the physical length.
-    pub fn init_unchecked(data: &[T], is_owned: bool) -> Self {
-        Self {
-            // SAFETY: const semantics are enforced by is_owned flag
-            ptr: data.as_ptr().cast_mut(),
-            flags: Flags::new(data.len(), is_owned),
-            #[cfg(debug_assertions)]
-            debug: None,
-        }
     }
 }
 

@@ -1,0 +1,403 @@
+[
+  {
+    "name": "audit-fix-old-tap",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "572-entry real tree; `name` on every entry, 66 inBundle, dep-level bundleDependencies, os/cpu, deps duplicated in dependencies+optionalDependencies, 61 same-version copies (dedupe/idempotency)"
+  },
+  {
+    "name": "audit-linked-package",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 3,
+    "workspaces": false,
+    "notes": "v3; link entry to a `resolved/` folder target that does not exist on disk; not on disk in arborist either: resolved/electron-test-app/package.json (entry resolved/electron-test-app)"
+  },
+  {
+    "name": "audit-omit",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "751-entry real tree; root peer/optional/dev groups, peerDependenciesMeta, os/cpu, inBundle, 134 same-version nested copies, deps in both dependencies+optionalDependencies"
+  },
+  {
+    "name": "bundle-metadep-duplication--x",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root bundleDependencies with 2 transitive deps and a cycle, all inBundle (B2)"
+  },
+  {
+    "name": "carbonium",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "127-entry real tree; peerDependenciesMeta, bins, 5 same-version nested copies (dedupe/idempotency)"
+  },
+  {
+    "name": "cli-750",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "link chain: root -> `app` folder -> `lib` folder, entries with `name` differing from folder"
+  },
+  {
+    "name": "dedupe-lockfile",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "nested copy of a dep alongside a different hoisted major"
+  },
+  {
+    "name": "dep-installed-without-bin-link",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "two registry deps with bin + engines"
+  },
+  {
+    "name": "dep-missing-resolved",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "235-entry real tree; one registry entry without `resolved`, one stray `{}` entry (B4/B6)"
+  },
+  {
+    "name": "edit-package-json--changed",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root peer + optional + dev groups; package.json edited so it disagrees with the lockfile"
+  },
+  {
+    "name": "edit-package-json--ok",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root peer + optional + dev groups in sync with package.json"
+  },
+  {
+    "name": "edit-package-json--removed",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root peer + optional + dev groups; a dep removed from package.json but still locked"
+  },
+  {
+    "name": "edit-package-json--workspaces-changed",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspaces a/b in the lockfile, workspace c added on disk (stale lockfile)"
+  },
+  {
+    "name": "engine-specification",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "registry dep with an unsatisfiable `engines`"
+  },
+  {
+    "name": "external-link-dep",
+    "root": "external-link-dep",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "`file:` specs into a registry package's own folder (aliases of abbrev) plus an out-of-tree link to `../cli-750` (B4); project lives in `external-link-dep/` because the lockfile references paths outside it"
+  },
+  {
+    "name": "external-link--root",
+    "root": "root",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "fsParent `{}` placeholder entries for `../a`, `../i`, `../m` and file: dir targets living inside those parents' node_modules (B6); project lives in `root/` because the lockfile references paths outside it"
+  },
+  {
+    "name": "flow-outdated",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "plain registry tree with an outdated dep"
+  },
+  {
+    "name": "link-dep-lifecycle-scripts",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "`file:./a` link to an in-tree folder"
+  },
+  {
+    "name": "minimist-git-dep",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "single git+ssh resolution on a root dep, root peerDependencies"
+  },
+  {
+    "name": "minimist-git-metadep",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "git resolution as a transitive dep next to a stray `{}` entry (B6)"
+  },
+  {
+    "name": "old-package-lock",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 1,
+    "workspaces": false,
+    "notes": "lockfileVersion 1 (`dependencies` tree), 2 registry deps (B3)"
+  },
+  {
+    "name": "optional-dep-allinstall-fail",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root optionalDependencies, single optional-flagged entry"
+  },
+  {
+    "name": "optional-dep-install-fail",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root optionalDependencies, single optional-flagged entry"
+  },
+  {
+    "name": "optional-dep-postinstall-fail",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root optionalDependencies, single optional-flagged entry"
+  },
+  {
+    "name": "optional-dep-preinstall-fail",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root optionalDependencies, single optional-flagged entry"
+  },
+  {
+    "name": "optional-engine-specification",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "same tree as engine-specification, dep declared optional in package.json"
+  },
+  {
+    "name": "peer-dep-cycle-nested-with-sw",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "peer dependency cycle with a nested copy, `name` on entries"
+  },
+  {
+    "name": "peer-dep-cycle-with-sw",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "peer dependency cycle between hoisted entries"
+  },
+  {
+    "name": "pnpm",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "npm lockfile written over a pnpm `.pnpm/` layout: link entries into `node_modules/.pnpm/...` keys, `{}` entries (link targets live in node_modules and are not copied)"
+  },
+  {
+    "name": "prune-lockfile-omit-dev",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "extraneous entries plus a dev-only entry, none with `resolved`"
+  },
+  {
+    "name": "prune-lockfile-optional-peer",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 3,
+    "workspaces": false,
+    "notes": "v3; peerDependenciesMeta optional peer that is present in the tree (B8)"
+  },
+  {
+    "name": "prune-lockfile",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "single extraneous entry without `resolved`"
+  },
+  {
+    "name": "rebuild-foreground-scripts",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "two entries with hasInstallScript and no `resolved`"
+  },
+  {
+    "name": "test-package-with-shrinkwrap",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "one registry dep whose tarball ships an npm-shrinkwrap.json (nothing special in the lockfile itself)"
+  },
+  {
+    "name": "testing-bundledeps-sw",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "dep-level bundleDependencies: bundler + bundled a/b nested inBundle, unbundled c, codeload tarball resolutions (B9)"
+  },
+  {
+    "name": "testing-peer-dep-conflict-chain",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "chain of peerDependencies present in the tree"
+  },
+  {
+    "name": "testing-peer-deps-nested",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "peerDependencies satisfied by nested copies, `name` on entries"
+  },
+  {
+    "name": "testing-rebuild-bundle-reified",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "dep-level bundleDependencies with an inBundle entry that has hasInstallScript"
+  },
+  {
+    "name": "testing-rebuild-bundle--a",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "root bundleDependencies with a single inBundle registry dep (B2)"
+  },
+  {
+    "name": "testing-rebuild-bundle",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "dep-level bundleDependencies with an inBundle entry that has hasInstallScript"
+  },
+  {
+    "name": "testing-rebuild-bundle--parent",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "dep-level bundleDependencies reached through a parent dep (B9)"
+  },
+  {
+    "name": "testing-rebuild-script-env-flags",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "every spec is `\"\"`, no entry has `resolved`, a dep listed in both dependencies+optionalDependencies (B4/B5)"
+  },
+  {
+    "name": "two-bundled-deps",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "422-entry real tree; dep-level bundles, 129 entries without `resolved`, root edges missing from packages[\"\"] (B6)"
+  },
+  {
+    "name": "update-exact-version",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": false,
+    "notes": "single exactly-pinned registry dep"
+  },
+  {
+    "name": "workspaces-add-new-dep",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "single workspace `a` at the fixture root, no registry deps"
+  },
+  {
+    "name": "workspaces-conflicting-versions-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "two workspaces pinning different versions of the root's dep, nested under each workspace"
+  },
+  {
+    "name": "workspaces-ignore-nm-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspaces glob `packages/**`"
+  },
+  {
+    "name": "workspaces-need-update",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspaces a/b whose package.json files have no `name` (Bun rejects nameless workspaces)"
+  },
+  {
+    "name": "workspaces-non-simplistic",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspace with a scoped transitive dep chain, minified lockfile, root devDependencies"
+  },
+  {
+    "name": "workspaces-not-root",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "three workspaces sharing hoisted registry deps, `\"\"` specs, root package.json without a name"
+  },
+  {
+    "name": "workspaces-prefer-linking-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspace named `abbrev` satisfying another workspace's `abbrev` dep"
+  },
+  {
+    "name": "workspaces-shared-deps-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "three workspaces sharing hoisted registry deps, one with a bin"
+  },
+  {
+    "name": "workspaces-simple-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "two workspaces at the fixture root"
+  },
+  {
+    "name": "workspaces-top-level-link-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "root depends on its own workspace by version range"
+  },
+  {
+    "name": "workspaces-transitive-deps-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspace plus dev-only registry deps"
+  },
+  {
+    "name": "workspaces-version-unsatisfied-virtual",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 2,
+    "workspaces": true,
+    "notes": "workspace `abbrev@2` shadowed by a nested registry abbrev@1.1.1 for a workspace that pins =1.1.1"
+  },
+  {
+    "name": "workspaces-with-overrides",
+    "lockfile": "package-lock.json",
+    "lockfileVersion": 3,
+    "workspaces": true,
+    "notes": "v3; package.json `overrides` forcing a version the workspace's range does not ask for (#55)"
+  }
+]

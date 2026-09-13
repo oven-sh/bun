@@ -30,7 +30,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -153,7 +152,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamBYOBReaderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamBYOBReaderPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamBYOBReaderPrototype>(vm)) JSReadableStreamBYOBReaderPrototype(vm, structure);
+        JSReadableStreamBYOBReaderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamBYOBReaderPrototype))) JSReadableStreamBYOBReaderPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -167,7 +166,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -212,23 +211,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSReadableStreamBYOBReaderConstr
 
 template<> GCClient::IsoSubspace* JSReadableStreamBYOBReaderConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamBYOBReaderConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBReaderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBReaderConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBReaderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBReaderConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBReaderConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamBYOBReaderConstructor, m_subspaceForReadableStreamBYOBReaderConstructor));
 }
 
 template<> void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ReadableStreamBYOBReader"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSReadableStreamBYOBReader::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "ReadableStreamBYOBReader"_s, JSReadableStreamBYOBReader::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStreamBYOBReader>(vm, globalObject));
 }
 
@@ -274,23 +264,23 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototype_inspectCustom, (JSG
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "stream"_s, thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined());
     size_t requestCount;
     {
         WTF::Locker locker { thisObject->cellLock() };
         requestCount = thisObject->m_readIntoRequests.size();
     }
-    data->putDirect(vm, Identifier::fromString(vm, "readIntoRequests"_s), jsNumber(requestCount), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "readIntoRequests"_s, jsNumber(requestCount));
+    Bun::putDirectNamed(vm, data, "close"_s, thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBReader"_s, data));
 }
 
 void JSReadableStreamBYOBReaderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamBYOBReader::info(), JSReadableStreamBYOBReaderPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamBYOBReader::info(), JSReadableStreamBYOBReaderPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBReaderPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSReadableStreamBYOBReader
@@ -324,7 +314,7 @@ void JSReadableStreamBYOBReader::destroy(JSCell* cell)
 
 Structure* JSReadableStreamBYOBReader::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamBYOBReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -346,12 +336,7 @@ JSValue JSReadableStreamBYOBReader::getConstructor(VM& vm, const JSGlobalObject*
 
 GCClient::IsoSubspace* JSReadableStreamBYOBReader::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamBYOBReader, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBReader = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBReader = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBReader, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamBYOBReader, m_subspaceForReadableStreamBYOBReader));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamBYOBReader);
@@ -429,44 +414,38 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     if (!reader) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.read can only be called on a ReadableStreamBYOBReader"_s))));
 
-    // A promise-returning operation turns argument-conversion failures into rejections.
-    BYOBReadArguments arguments;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        arguments = convertBYOBReadArguments(vm, lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
-            RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown)));
-        }
-    }
-    JSArrayBufferView* view = arguments.view;
-    uint64_t minRequested = arguments.min;
+    // WebIDL: a promise-returning operation turns argument-conversion failures into rejections.
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        BYOBReadArguments arguments = convertBYOBReadArguments(vm, lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSArrayBufferView* view = arguments.view;
+        uint64_t minRequested = arguments.min;
 
-    if (!view->byteLength())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() must have a non-zero byteLength"_s))));
-    RefPtr<ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
-    if (!viewedBuffer || !viewedBuffer->byteLength())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a zero-length ArrayBuffer"_s))));
-    if (viewedBuffer->isDetached() || view->isDetached())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a detached ArrayBuffer"_s))));
-    if (!minRequested)
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'min' option must be greater than 0"_s))));
-    TypedArrayType viewType = typedArrayType(view->type());
-    uint64_t minLimit = viewType == TypeDataView ? static_cast<uint64_t>(view->byteLength()) : static_cast<uint64_t>(view->length());
-    if (minRequested > minLimit)
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "The 'min' option cannot be larger than the view passed to read()"_s))));
-    if (!reader->m_stream)
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
+        if (!view->byteLength())
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() must have a non-zero byteLength"_s)));
+        RefPtr<ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
+        if (!viewedBuffer || !viewedBuffer->byteLength())
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a zero-length ArrayBuffer"_s)));
+        if (viewedBuffer->isDetached() || view->isDetached())
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a detached ArrayBuffer"_s)));
+        if (!minRequested)
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'min' option must be greater than 0"_s)));
+        TypedArrayType viewType = typedArrayType(view->type());
+        uint64_t minLimit = viewType == TypeDataView ? static_cast<uint64_t>(view->byteLength()) : static_cast<uint64_t>(view->length());
+        if (minRequested > minLimit)
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "The 'min' option cannot be larger than the view passed to read()"_s)));
+        if (!reader->m_stream)
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s)));
 
-    auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
-    auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
-    auto* readIntoRequest = JSReadIntoRequest::create(vm, runtime->readIntoRequestStructure(domGlobalObject), ReadIntoRequestKind::Promise, promise);
-    readableStreamBYOBReaderRead(lexicalGlobalObject, reader, view, minRequested, readIntoRequest);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(promise);
+        auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
+        auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
+        auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
+        auto* readIntoRequest = JSReadIntoRequest::create(vm, runtime->readIntoRequestStructure(domGlobalObject), ReadIntoRequestKind::Promise, promise);
+        readableStreamBYOBReaderRead(lexicalGlobalObject, reader, view, minRequested, readIntoRequest);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return promise;
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_releaseLock, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

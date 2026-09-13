@@ -81,12 +81,16 @@ export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }
+  const allow = "#[allow(dead_code, unreachable_pub, unused)]";
   const rs = [
     ...banner("//"),
+    allow,
     `pub const CLASS_STRUCTURAL: u8 = ${hex(STRUCTURAL)};`,
+    allow,
     `pub const CLASS_WHITESPACE: u8 = ${hex(WHITESPACE)};`,
     "",
     "/// `LUT_LO[b & 0xF] & LUT_HI[b >> 4]` for every byte `b`.",
+    allow,
     "#[rustfmt::skip]",
     "pub const JSON_BYTE_CLASS: [u8; 256] = [",
     ...table,

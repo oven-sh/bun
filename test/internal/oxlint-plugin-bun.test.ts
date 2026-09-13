@@ -5,7 +5,7 @@
 // pointing oxlint at fixture files with a minimal config.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "path";
 
@@ -18,11 +18,19 @@ const oxlintBin = path.join(root, "node_modules", "oxlint", "bin", "oxlint");
 const RULE = "bun(no-duplicate-conditional-property-access)";
 
 // oxlint ships a prebuilt NAPI binding that aborts when loaded under the
-// ASAN build; the rule is still enforced in CI by the Lint JavaScript
-// workflow (release bun), so skip here. Also skip if the repo's
-// devDependencies haven't been installed yet.
-const skip = isASAN || !existsSync(oxlintBin);
+// ASAN build. What is under test is the lint result, not the runtime that
+// hosts oxlint, so under ASAN run it with the release bun on PATH (CI agents
+// and dev machines have one) and skip only when there is none. Also skip if
+// the repo's devDependencies haven't been installed yet.
+const runtime = isASAN ? releaseBunOnPath() : bunExe();
+const skip = runtime === null || !existsSync(oxlintBin);
 const describeOxlint = skip ? describe.skip : describe;
+
+function releaseBunOnPath(): string | null {
+  const found = Bun.which("bun");
+  if (found === null || realpathSync(found) === realpathSync(bunExe())) return null;
+  return found;
+}
 
 async function runOxlint(files: Record<string, string>) {
   using dir = tempDir("oxlint-plugin-bun", {
@@ -36,7 +44,7 @@ async function runOxlint(files: Record<string, string>) {
     }),
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), oxlintBin, "--config=oxlint.json", "--format=github", "."],
+    cmd: [runtime!, oxlintBin, "--config=oxlint.json", "--format=github", "."],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -220,7 +228,7 @@ describeOxlint("src/js lint", () => {
   // property into a local before the check; this guards against new ones.
   test("bun run lint is clean on src/js", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), oxlintBin, "--config=oxlint.json", "--format=github", "src/js"],
+      cmd: [runtime!, oxlintBin, "--config=oxlint.json", "--format=github", "src/js"],
       cwd: root,
       env: bunEnv,
       stdout: "pipe",

@@ -83,6 +83,48 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     }
   });
 
+  // A payload over one DATA frame (16 KiB) is not corked frame by frame: send_data batches
+  // the frame headers and points at the payload slices, and the batch leaves as one writev.
+  // When writev takes nothing, the same slices are copied into the session's write buffer
+  // and drained on writable. Every u32 holds its own offset, so a slice taken from the
+  // wrong place or with the wrong length changes the bytes, not only their count.
+  const batchBody = Buffer.alloc(3 * 16384 + 4096);
+  for (let i = 0; i < batchBody.length; i += 4) batchBody.writeUInt32LE(i, i);
+
+  test.each([
+    ["writev takes the batch", () => {}],
+    ["writev → 0 re-buffers the batch", () => fault.set({ syscall: "writev", action: "zero", repeat: -1 })],
+  ])("multi-frame DATA batch arrives intact: %s", async (_, arm) => {
+    const chunks: Buffer[] = [];
+    const { promise: gotBody, resolve } = Promise.withResolvers<void>();
+    using server = await makeServer(stream => {
+      stream.on("data", c => chunks.push(c));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end();
+        resolve();
+      });
+    });
+    const client = http2.connect(server.url);
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      arm();
+      req.write(batchBody);
+      req.end();
+      await once(req, "response");
+      await once(req, "end");
+      await gotBody;
+      const received = Buffer.concat(chunks);
+      expect(received.length).toBe(batchBody.length);
+      expect(received.equals(batchBody)).toBe(true);
+    } finally {
+      fault.clear();
+      client.close();
+    }
+  });
+
   test("recv → short reads at HTTP/2 frame header boundary (9 bytes) still parse correctly", async () => {
     // HTTP/2 frame header is exactly 9 bytes; clamping recv to 9 forces the
     // frame parser to reassemble header and payload across separate reads.

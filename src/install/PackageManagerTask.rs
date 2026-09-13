@@ -13,36 +13,35 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
-    RepositoryExt as _, Resolution,
+    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
 };
-
-use bun_dotenv as dot_env;
 
 /// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
 /// TODO: lifetime — Task lives in an intrusive cross-thread queue
 /// (`next`, `package_manager` BACKREF). A `&'a mut NetworkTask` cannot soundly
 /// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task<'a> {
-    pub tag: Tag,
-    pub request: Request<'a>,
-    pub data: Data,
+    pub(crate) tag: Tag,
+    pub(crate) request: Request<'a>,
+    pub(crate) data: Data,
     /// default: `Status::Waiting`
-    pub status: Status,
+    pub(crate) status: Status,
     /// default: `thread_pool::Task { callback: Task::callback }`
-    pub threadpool_task: thread_pool::Task,
-    pub log: Log,
-    pub id: Id,
+    pub(crate) threadpool_task: thread_pool::Task,
+    pub(crate) log: Log,
+    pub(crate) id: Id,
     /// default: `None`
-    pub err: Option<crate::Error>,
+    pub(crate) err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
-    pub package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
+    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
     /// default: `None`
-    pub apply_patch_task: Option<Box<PatchTask>>,
+    pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
+    pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub next: bun_threading::Link<Task<'a>>,
+    pub(crate) next: bun_threading::Link<Task<'a>>,
 }
 
 /// Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
@@ -73,6 +72,7 @@ pub(crate) fn uninit() -> Task<'static> {
         },
         err: None,
         apply_patch_task: None,
+        git_finalize: None,
         next: bun_threading::Link::new(),
     }
 }
@@ -101,11 +101,11 @@ impl core::fmt::Display for Id {
 
 impl Id {
     #[inline]
-    pub fn get(self) -> u64 {
+    pub(crate) fn get(self) -> u64 {
         self.0
     }
 
-    pub fn for_npm_package(package_name: &[u8], package_version: semver::Version) -> Id {
+    pub(crate) fn for_npm_package(package_name: &[u8], package_version: semver::Version) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"npm-package:");
         hasher.update(package_name);
@@ -120,14 +120,14 @@ impl Id {
         Id(hasher.final_())
     }
 
-    pub fn for_manifest(name: &[u8]) -> Id {
+    pub(crate) fn for_manifest(name: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"manifest:");
         hasher.update(name);
         Id(hasher.final_())
     }
 
-    pub fn for_tarball(url: &[u8]) -> Id {
+    pub(crate) fn for_tarball(url: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"tarball:");
         hasher.update(url);
@@ -136,19 +136,28 @@ impl Id {
 
     // These cannot change:
     // We persist them to the filesystem.
-    pub fn for_git_clone(url: &[u8]) -> Id {
+    pub(crate) fn for_git_clone(url: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
         // @truncate to u61 then widen to u64 — keep low 61 bits
         Id((4u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 
-    pub fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {
+    pub(crate) fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
         hasher.update(b"@");
         hasher.update(resolved);
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
+    }
+
+    /// Not persisted: only keys the in-memory `git_commits` cache and `task_queue`.
+    pub(crate) fn for_git_commit(url: &[u8], committish: &[u8]) -> Id {
+        let mut hasher = Wyhash11::init(0);
+        hasher.update(url);
+        hasher.update(b"#");
+        hasher.update(committish);
+        Id((6u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 }
 
@@ -163,12 +172,14 @@ impl<'a> Task<'a> {
         PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest<'a>, mut request_package_manifest_mut;
         Extract         => request_extract          @ extract:          ExtractRequest<'a>,         mut request_extract_mut;
         GitClone        => request_git_clone        @ git_clone:        GitCloneRequest,            mut request_git_clone_mut;
+        GitCommit       => request_git_commit       @ git_commit:       GitCommitRequest,           mut request_git_commit_mut;
         GitCheckout     => request_git_checkout     @ git_checkout:     GitCheckoutRequest,         mut request_git_checkout_mut;
         LocalTarball    => request_local_tarball    @ local_tarball:    LocalTarballRequest,        mut request_local_tarball_mut;
     }
 
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: data;
+        GitCommit       => data_git_commit       @ git_commit:       Vec<u8>,     mut data_git_commit_mut;
         GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
     }
 
@@ -176,19 +187,19 @@ impl<'a> Task<'a> {
     // `Tag::LocalTarball` writes its result into `data.extract` (same payload
     // type as `Tag::Extract`), so `data_extract*` accepts both tags.
     #[inline]
-    pub fn data_extract(&self) -> &ExtractData {
+    pub(crate) fn data_extract(&self) -> &ExtractData {
         debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
         // SAFETY: tag-guarded; `ManuallyDrop` deref.
         unsafe { &*self.data.extract }
     }
     #[inline]
-    pub fn data_git_clone(&self) -> Fd {
+    pub(crate) fn data_git_clone(&self) -> Fd {
         debug_assert!(self.tag == Tag::GitClone);
         // SAFETY: tag-guarded; `Fd` is `Copy`.
         unsafe { *self.data.git_clone }
     }
 
-    pub fn deinit_payload(&mut self) {
+    pub(crate) fn deinit_payload(&mut self) {
         // SAFETY: `tag` discriminates both unions, set once at enqueue.
         unsafe {
             match self.tag {
@@ -202,6 +213,10 @@ impl<'a> Task<'a> {
                 }
                 Tag::GitClone => {
                     ManuallyDrop::drop(&mut self.request.git_clone);
+                }
+                Tag::GitCommit => {
+                    ManuallyDrop::drop(&mut self.request.git_commit);
+                    ManuallyDrop::drop(&mut self.data.git_commit);
                 }
                 Tag::GitCheckout => {
                     ManuallyDrop::drop(&mut self.request.git_checkout);
@@ -217,14 +232,23 @@ impl<'a> Task<'a> {
 }
 
 impl<'a> Task<'a> {
-    pub unsafe fn callback(task: *mut thread_pool::Task) {
+    pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this_raw: *mut Task<'a> =
+            unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        // The terminal `resolve_tasks.push` hands the task to the main thread
+        // (which may recycle it while this fn still runs `Output::flush()`),
+        // so the pushed pointer is derived from the raw receiver, not from the
+        // `&mut` below, and nothing touches `this` after the push.
+        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
+        // a phantom on `&mut NetworkTask` borrows that the queue never reads
+        // through); erasing to `'static` is sound for the queue.
+        let task = unsafe { core::ptr::NonNull::new_unchecked(this_raw) }.cast::<Task<'static>>();
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this };
+        let this: &mut Task<'a> = unsafe { &mut *this_raw };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -314,8 +338,8 @@ impl<'a> Task<'a> {
                         manifest.name.slice(),
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
-                        // boundary only (callee touches `cache_directory_` /
-                        // `temporary_directory` lazily).
+                        // boundary only (callee touches `cache_directory` /
+                        // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
@@ -391,115 +415,11 @@ impl<'a> Task<'a> {
                     };
                     this.status = Status::Success;
                 }
-                Tag::GitClone => {
-                    // SAFETY: tag == GitClone discriminates the union
-                    let req = unsafe { &mut *this.request.git_clone };
-                    let name = req.name.slice();
-                    let url = req.url.slice();
-                    let mut attempt: u8 = 1;
-
-                    let dir = 'brk: {
-                        if let Some(https) = Repository::try_https(url) {
-                            match Repository::download(
-                                req.env,
-                                &mut this.log,
-                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                unsafe { &mut *manager }.get_cache_directory(),
-                                this.id,
-                                name,
-                                https,
-                                attempt,
-                            ) {
-                                Ok(d) => break 'brk Some(d),
-                                Err(err) => {
-                                    // Exit early if git checked and could
-                                    // not find the repository, skip ssh
-                                    if err == crate::Error::RepositoryNotFound {
-                                        this.err = Some(err);
-                                        this.status = Status::Fail;
-                                        this.data = Data {
-                                            git_clone: ManuallyDrop::new(Fd::invalid()),
-                                        };
-                                        break 'body;
-                                    }
-
-                                    this.err = Some(err);
-                                    this.status = Status::Fail;
-                                    this.data = Data {
-                                        git_clone: ManuallyDrop::new(Fd::invalid()),
-                                    };
-                                    attempt += 1;
-                                    break 'brk None;
-                                }
-                            }
-                        }
-                        None
-                    };
-
-                    let dir = match dir {
-                        Some(d) => d,
-                        None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
-                                match Repository::download(
-                                    req.env,
-                                    &mut this.log,
-                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                    unsafe { &mut *manager }.get_cache_directory(),
-                                    this.id,
-                                    name,
-                                    ssh,
-                                    attempt,
-                                ) {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        this.err = Some(err);
-                                        this.status = Status::Fail;
-                                        this.data = Data {
-                                            git_clone: ManuallyDrop::new(Fd::invalid()),
-                                        };
-                                        break 'body;
-                                    }
-                                }
-                            } else {
-                                break 'body;
-                            }
-                        }
-                    };
-
-                    this.err = None;
-                    this.data = Data {
-                        git_clone: ManuallyDrop::new(dir.into_raw()),
-                    };
-                    this.status = Status::Success;
+                Tag::GitClone | Tag::GitCheckout => {
+                    crate::git_runner::Finalize::run(this);
                 }
-                Tag::GitCheckout => {
-                    // SAFETY: tag == GitCheckout discriminates the union
-                    let git_checkout = unsafe { &mut *this.request.git_checkout };
-                    let data = match Repository::checkout(
-                        git_checkout.env,
-                        &mut this.log,
-                        // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                        unsafe { &mut *manager }.get_cache_directory(),
-                        git_checkout.repo_dir,
-                        git_checkout.name.slice(),
-                        git_checkout.url.slice(),
-                        git_checkout.resolved.slice(),
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            this.err = Some(err);
-                            this.status = Status::Fail;
-                            this.data = Data {
-                                git_checkout: ManuallyDrop::new(ExtractData::default()),
-                            };
-                            break 'body;
-                        }
-                    };
-
-                    this.data = Data {
-                        git_checkout: ManuallyDrop::new(data),
-                    };
-                    this.status = Status::Success;
+                Tag::GitCommit => {
+                    unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
                 Tag::LocalTarball => {
                     // `tarball_path` and `normalize` are computed on the main thread when the
@@ -542,7 +462,7 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                bun_core::handle_oom(pt.apply());
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -558,12 +478,8 @@ impl<'a> Task<'a> {
                 }
             }
         }
-        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
-        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
-        // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` is sound for the queue.
-        // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
-        // shared raw deref — no `&mut PackageManager` is formed.
+        // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
+        // via a shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
             (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
             PackageManager::wake_raw(manager);
@@ -606,6 +522,8 @@ pub enum Tag {
     GitClone = 2,
     GitCheckout = 3,
     LocalTarball = 4,
+    /// `git log`: resolve a committish of a cloned repository to a commit SHA.
+    GitCommit = 5,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -617,68 +535,68 @@ pub enum Status {
 
 /// Untagged union. Discriminated externally by `Task.tag`.
 pub union Data {
-    pub package_manifest: ManuallyDrop<npm::PackageManifest>,
-    pub extract: ManuallyDrop<ExtractData>,
-    pub git_clone: ManuallyDrop<Fd>,
-    pub git_checkout: ManuallyDrop<ExtractData>,
+    pub(crate) package_manifest: ManuallyDrop<npm::PackageManifest>,
+    pub(crate) extract: ManuallyDrop<ExtractData>,
+    pub(crate) git_clone: ManuallyDrop<Fd>,
+    /// The commit SHA.
+    pub(crate) git_commit: ManuallyDrop<Vec<u8>>,
+    pub(crate) git_checkout: ManuallyDrop<ExtractData>,
 }
 
 /// Untagged union. Discriminated externally by `Task.tag`.
 pub union Request<'a> {
     /// package name
     // todo: Registry URL
-    pub package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
-    pub extract: ManuallyDrop<ExtractRequest<'a>>,
-    pub git_clone: ManuallyDrop<GitCloneRequest>,
-    pub git_checkout: ManuallyDrop<GitCheckoutRequest>,
-    pub local_tarball: ManuallyDrop<LocalTarballRequest>,
+    pub(crate) package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
+    pub(crate) extract: ManuallyDrop<ExtractRequest<'a>>,
+    pub(crate) git_clone: ManuallyDrop<GitCloneRequest>,
+    pub(crate) git_commit: ManuallyDrop<GitCommitRequest>,
+    pub(crate) git_checkout: ManuallyDrop<GitCheckoutRequest>,
+    pub(crate) local_tarball: ManuallyDrop<LocalTarballRequest>,
 }
 
 pub struct PackageManifestRequest<'a> {
-    pub name: StringOrTinyString,
+    pub(crate) name: StringOrTinyString,
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub network: &'a mut NetworkTask,
+    pub(crate) network: &'a mut NetworkTask,
 }
 
 pub struct ExtractRequest<'a> {
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub network: &'a mut NetworkTask,
-    pub tarball: ExtractTarball,
+    pub(crate) network: &'a mut NetworkTask,
+    pub(crate) tarball: ExtractTarball,
 }
 
 pub struct GitCloneRequest {
-    pub name: StringOrTinyString,
-    pub url: StringOrTinyString,
-    // `Map` owns its storage; store a
-    // `&'static` into the global `Repository.shared_env` instead — see `SharedEnv::get`.
-    pub env: &'static dot_env::Map,
-    pub dep_id: DependencyID,
-    pub res: Resolution,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) url: StringOrTinyString,
+    pub(crate) res: Resolution,
+}
+
+pub struct GitCommitRequest {
+    /// The clone task whose bare repository is searched.
+    pub(crate) clone_id: Id,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) url: StringOrTinyString,
+    pub(crate) committish: StringOrTinyString,
 }
 
 pub struct GitCheckoutRequest {
-    pub repo_dir: Fd,
-    pub dependency_id: DependencyID,
-    pub name: StringOrTinyString,
-    pub url: StringOrTinyString,
-    pub resolved: StringOrTinyString,
-    pub resolution: Resolution,
-    // See the note on `GitCloneRequest.env`.
-    pub env: &'static dot_env::Map,
+    pub(crate) repo_dir: Fd,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) url: StringOrTinyString,
+    pub(crate) resolved: StringOrTinyString,
+    pub(crate) resolution: Resolution,
 }
 
 pub struct LocalTarballRequest {
-    pub tarball: ExtractTarball,
-    /// Path to read the tarball from. May be the same as `tarball.url` (when
-    /// `normalize` is true) or an absolute path joined with a workspace
-    /// directory. Computed on the main thread in `enqueueLocalTarball` because
-    /// resolving it requires reading `lockfile.packages` / `string_bytes`,
-    /// which can be reallocated concurrently by the main thread while this
-    /// task runs on a ThreadPool worker.
-    pub tarball_path: StringOrTinyString,
+    pub(crate) tarball: ExtractTarball,
+    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
+    pub(crate) tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.
-    pub normalize: bool,
+    pub(crate) normalize: bool,
 }

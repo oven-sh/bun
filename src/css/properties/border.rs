@@ -51,11 +51,11 @@ pub(crate) type Border = GenericBorder<LineStyle, 10>;
 #[derive(Clone)]
 pub struct GenericBorder<S, const P: u8> {
     /// The width of the border.
-    pub width: BorderSideWidth,
+    pub(crate) width: BorderSideWidth,
     /// The border style.
-    pub style: S,
+    pub(crate) style: S,
     /// The border color.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
 }
 
 impl<S, const P: u8> super::GenericBorderImpl for GenericBorder<S, P>
@@ -160,7 +160,7 @@ where
         out
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
+    fn deep_clone(&self, arena: &Bump) -> Self {
         css::implement_deep_clone(self, arena)
     }
 
@@ -168,7 +168,7 @@ where
     /// discriminant `Q`. The fields are identical regardless of `P`. Needed
     /// when one logical value must be emitted as two distinct physical
     /// `Property` variants (e.g. inline-start → BorderLeft + BorderRight).
-    pub(crate) fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
+    fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
         let cloned = self.deep_clone(arena);
         GenericBorder {
             width: cloned.width,
@@ -209,7 +209,7 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    pub fn is_compatible(self, _: &Browsers) -> bool {
+    pub(crate) fn is_compatible(self, _: &Browsers) -> bool {
         true
     }
 }
@@ -233,14 +233,14 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
             _ => true,
         }
     }
 
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
         // css.implementDeepClone — Length is value-type; Clone suffices.
         self.clone()
     }
@@ -417,14 +417,14 @@ struct BorderShorthand {
 }
 
 impl BorderShorthand {
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    fn eql(&self, rhs: &Self) -> bool {
         css::generic::eql(&self.width, &rhs.width)
             && css::generic::eql(&self.style, &rhs.style)
             && css::generic::eql(&self.color, &rhs.color)
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub(crate) fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
     where
         S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
@@ -536,7 +536,7 @@ bitflags::bitflags! {
 }
 
 impl BorderProperty {
-    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
+    fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // An explicit match over every PropertyIdTag whose name starts
         // with "border" and has a matching const above — keep in sync when new
         // Border* PropertyIdTag variants are added.

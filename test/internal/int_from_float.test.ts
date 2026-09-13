@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 
 /**
  * Tests for bun.intFromFloat function
@@ -23,7 +23,7 @@ function normalizeCSSOutput(output: string): string {
 describe("bun.intFromFloat function", () => {
   test("handles normal finite values within range", async () => {
     // Test CSS dimension serialization which uses intFromFloat(i32, value)
-    const dir = tempDirWithFiles("int-from-float-normal", {
+    await using dir = tempDir("int-from-float-normal", {
       "input.css": ".test { width: 42px; height: -10px; margin: 0px; }",
     });
 
@@ -48,7 +48,7 @@ describe("bun.intFromFloat function", () => {
 
   test("handles extremely large values (original crash case)", async () => {
     // This was the original failing case - large values should not crash
-    const dir = tempDirWithFiles("int-from-float-large", {
+    await using dir = tempDir("int-from-float-large", {
       "input.css": `
 .test-large { border-radius: 3.40282e38px; }
 .test-negative-large { border-radius: -3.40282e38px; }
@@ -78,7 +78,7 @@ describe("bun.intFromFloat function", () => {
 
   test("handles percentage values", async () => {
     // Test percentage conversion which uses intFromFloat(i32, value)
-    const dir = tempDirWithFiles("int-from-float-percentage", {
+    await using dir = tempDir("int-from-float-percentage", {
       "input.css": `
 .test-percent1 { width: 50%; }
 .test-percent2 { width: 100.0%; }
@@ -113,7 +113,7 @@ describe("bun.intFromFloat function", () => {
 
   test("fractional values that should not convert to int", async () => {
     // Test that fractional values are properly handled
-    const dir = tempDirWithFiles("int-from-float-fractional", {
+    await using dir = tempDir("int-from-float-fractional", {
       "input.css": `
 .test-frac { 
   width: 10.5px;

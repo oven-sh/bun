@@ -197,7 +197,7 @@ export const profiles = {
   },
 
   /**
-   * CI: compile libbun_rust.a only. Target platform via --os/--arch
+   * CI: compile libbun_runtime.a only. Target platform via --os/--arch
    * overrides (cargo `--target <triple>`). Superseded in CI by
    * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
    */
@@ -227,6 +227,15 @@ export const profiles = {
   "ci-rust-and-link": {
     buildType: "Release",
     mode: "rust-and-link",
+    ci: true,
+    buildkite: true,
+    webkit: "prebuilt",
+  },
+
+  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
+  "ci-build": {
+    buildType: "Release",
+    mode: "archive-link",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",

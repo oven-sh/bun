@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -173,6 +173,34 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString()).toBe("true\n");
     expect(exitCode).toBe(0);
   });
+
+  // The hoist patterns in [install] are regexes. Compiling them while
+  // bunfig.toml loaded initialized JSC before `bun -p` could turn on eval
+  // mode, so the script's completion value was dropped and every --print
+  // printed undefined.
+  describe.each(["hoistPattern", "publicHoistPattern"])("with install.%s in bunfig.toml", key => {
+    test.concurrent.each([
+      { expr: "Math.max(1, 9)", expected: "9" },
+      { expr: "[1, 2].map(x => x * 2)", expected: "[ 2, 4 ]" },
+      { expr: "1 + 1", expected: "2" },
+      { expr: "(await 1) + 1", expected: "2" },
+    ])("bun -p $expr", async ({ expr, expected }) => {
+      using dir = tempDir("eval-install-pattern", {
+        "bunfig.toml": `[install]\n${key} = ["*eslint*", "!eslint-plugin-*"]\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-p", expr],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
@@ -289,4 +317,34 @@ test("process._eval (undefined for normal run)", async () => {
   expect(stdout.toString("utf8")).toEqual("undefined\n");
 
   rmSync(cwd, { recursive: true, force: true });
+});
+
+test("uncaught error from a CommonJS-sniffed eval entry reports and exits 1", async () => {
+  // The presence of require() makes the eval source evaluate as CommonJS,
+  // which used to swallow a top-level throw entirely: no stderr output and
+  // exit code 0.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("assert"); throw new Error("eval-cjs-uncaught");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("eval-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-"],
+    env: bunEnv,
+    stdin: Buffer.from(`require("assert"); throw new Error("stdin-cjs-uncaught");`),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("stdin-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

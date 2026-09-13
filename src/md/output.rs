@@ -6,8 +6,8 @@
 //! so their failures land on the same flag.
 
 pub struct OutputBuffer {
-    pub list: Vec<u8>,
-    pub oom: bool,
+    pub(crate) list: Vec<u8>,
+    pub(crate) oom: bool,
 }
 
 impl OutputBuffer {

@@ -179,3 +179,55 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+describe("verifyClient", () => {
+  test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
+    let announcedStreams = 0;
+    const serverClosed = Promise.withResolvers<any>();
+    await using server = await listen(
+      (serverSession: any) => {
+        serverSession.onerror = () => {};
+        serverSession.onstream = (stream: any) => {
+          announcedStreams++;
+          stream.closed.catch(() => {});
+        };
+        serverSession.closed.then(
+          () => serverClosed.resolve(undefined),
+          (err: any) => serverClosed.resolve(err),
+        );
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["quic-test"],
+        verifyClient: true,
+        transportParams: { maxIdleTimeout: 5 },
+      },
+    );
+
+    const client = await connect(server.address, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    const clientClosed = client.closed.then(
+      () => undefined,
+      (err: any) => err,
+    );
+    client.opened.catch(() => {});
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("early body") });
+    stream.closed.catch(() => {});
+
+    const [serverError, clientError] = await Promise.all([serverClosed.promise, clientClosed]);
+    expect({
+      announcedStreams,
+      server: serverError?.code,
+      client: clientError?.code,
+    }).toEqual({
+      announcedStreams: 0,
+      server: "ERR_QUIC_TRANSPORT_ERROR",
+      client: "ERR_QUIC_TRANSPORT_ERROR",
+    });
+  });
+});

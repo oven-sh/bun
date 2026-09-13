@@ -77,13 +77,13 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(unsafe { items[0].assume_init_read() })
     }
 
-    pub fn write_all(&self, items: &[T]) -> Result<(), ChannelError> {
+    pub(crate) fn write_all(&self, items: &[T]) -> Result<(), ChannelError> {
         let n = self.write_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
     }
 
-    pub fn read_all(&self, items: &mut [T]) -> Result<(), ChannelError> {
+    pub(crate) fn read_all(&self, items: &mut [T]) -> Result<(), ChannelError> {
         let n = self.read_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())

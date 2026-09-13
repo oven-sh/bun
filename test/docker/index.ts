@@ -13,6 +13,7 @@ export type ServiceName =
   | "mysql_plain"
   | "mysql_native_password"
   | "mysql_tls"
+  | "mariadb_plain"
   | "redis_plain"
   | "redis_unified"
   | "minio"
@@ -50,6 +51,7 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
   },
   mysql_plain: { ports: [3306] },
   mysql_native_password: { ports: [3306] },
+  mariadb_plain: { ports: [3306] },
   mysql_tls: {
     ports: [3306],
     tls: {

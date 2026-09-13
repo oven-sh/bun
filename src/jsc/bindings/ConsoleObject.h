@@ -3,20 +3,9 @@
 #include "root.h"
 
 #include <JavaScriptCore/ConsoleClient.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
-#include <JavaScriptCore/InspectorConsoleAgent.h>
-
-namespace Inspector {
-class InspectorConsoleAgent;
-class InspectorDebuggerAgent;
-class InspectorScriptProfilerAgent;
-} // namespace Inspector
 namespace Bun {
-using InspectorConsoleAgent = Inspector::InspectorConsoleAgent;
-using InspectorDebuggerAgent = Inspector::InspectorDebuggerAgent;
-using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
 using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
@@ -28,16 +17,6 @@ public:
         : JSC::ConsoleClient()
     {
         m_client = client;
-    }
-
-    static bool logToSystemConsole();
-    static void setLogToSystemConsole(bool);
-
-    Inspector::InspectorConsoleAgent* consoleAgent() { return m_consoleAgent; }
-    void setDebuggerAgent(InspectorDebuggerAgent* agent) { m_debuggerAgent = agent; }
-    void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent* agent)
-    {
-        m_scriptProfilerAgent = agent;
     }
 
     void* m_client;
@@ -57,16 +36,6 @@ private:
     void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
     void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
     void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-
-    void warnUnimplemented(const String& method);
-    void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject*,
-        Ref<Inspector::ScriptArguments>&&);
-
-    Inspector::InspectorConsoleAgent* m_consoleAgent;
-    Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
-    Inspector::InspectorScriptProfilerAgent* m_scriptProfilerAgent { nullptr };
-    Vector<String> m_profiles;
-    bool m_profileRestoreBreakpointActiveValue { false };
 };
 
 } // namespace Zig

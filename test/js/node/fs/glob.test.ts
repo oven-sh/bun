@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDirWithFiles } from "harness";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 
 let tmp: string;
@@ -270,7 +270,7 @@ describe("fs.promises.glob", () => {
 
 describe("fs.globSync exclude with withFileTypes", () => {
   it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {
-    const dir = tempDirWithFiles("glob-exclude-dirent", {
+    using dir = tempDir("glob-exclude-dirent", {
       "skip/inner.txt": "x",
       "keep/inner.txt": "y",
     });

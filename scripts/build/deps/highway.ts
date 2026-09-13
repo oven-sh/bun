@@ -14,6 +14,11 @@ import type { Dependency, DirectBuild } from "../source.ts";
 
 const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 
+// The scalable SVE/SVE2 targets and SVE_256, which Highway starts building at clang >= 22, stay
+// off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
+// fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
+const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
+
 export const highway: Dependency = {
   name: "highway",
 
@@ -46,7 +51,10 @@ export const highway: Dependency = {
       // -fno-exceptions / -fmath-errno aren't CLOptions (clang-cl warns
       // "unknown argument ignored"). globalFlags supplies /EHs-c- and /GR-
       // on Windows; upstream's MSVC branch additionally sets the STL macro.
-      cflags: cfg.windows ? ["-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"],
+      cflags: [
+        `-D${disabledTargets}`,
+        ...(cfg.windows ? ["-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"]),
+      ],
     };
 
     // clang-cl on arm64-windows doesn't define __ARM_NEON even though NEON
@@ -63,5 +71,6 @@ export const highway: Dependency = {
     // Highway's public header is <hwy/highway.h> but it includes siblings
     // via "" paths — need both the root and the hwy/ subdir in -I.
     includes: [".", "hwy"],
+    defines: [disabledTargets],
   }),
 };

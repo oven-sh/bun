@@ -59,12 +59,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSFFIFunction, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFFIFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFFIFunction = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSFFIFunction, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForFFIFunction, m_subspaceForFFIFunction));
     }
 
     DECLARE_EXPORT_INFO;
@@ -75,7 +70,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     const CFFIFunction function() const { return m_function; }

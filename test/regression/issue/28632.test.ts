@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/28632
 import { SQL } from "bun";
 import { beforeAll, expect, test } from "bun:test";
-import { describeWithContainer, isASAN, isDebug, isDockerEnabled } from "harness";
+import { describeWithContainer, isASAN, isDebug, isDockerEnabled, rss } from "harness";
 
 if (isDockerEnabled()) {
   describeWithContainer(
@@ -52,15 +52,21 @@ if (isDockerEnabled()) {
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterWarmup = process.memoryUsage.rss();
+        const rssAfterWarmup = rss();
 
-        // Run queries — each re-decodes 50 column definitions
+        // Run queries — each re-decodes 50 column definitions. Collect every 500
+        // so the RSS delta reflects the name_or_index leak rather than the
+        // controller's opportunistic-GC cadence (which no longer fires at this
+        // allocation volume): without this, peak uncollected garbage between
+        // opportunistic passes commits extra MarkedBlock pages that Bun.gc(true)
+        // at the end does not synchronously decommit.
         for (let i = 0; i < 5000; i++) {
           await sql`SELECT * FROM leak_test_28632 WHERE primary_id = ${"123"} LIMIT 1`;
+          if (i % 500 === 499) Bun.gc(true);
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterQueries = process.memoryUsage.rss();
+        const rssAfterQueries = rss();
 
         const growthMB = (rssAfterQueries - rssAfterWarmup) / 1024 / 1024;
 

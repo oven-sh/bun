@@ -10,7 +10,7 @@ namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeSqlite)
 {
-    INIT_NATIVE_MODULE(5);
+    INIT_NATIVE_MODULE(NodeSqlite, 5);
 
     put(JSC::Identifier::fromString(vm, "DatabaseSync"_s),
         globalObject->m_JSDatabaseSyncClassStructure.constructorInitializedOnMainThread(globalObject));

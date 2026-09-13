@@ -360,6 +360,59 @@ describe("Glob.match", () => {
     expect(glob.match("{")).toBeFalse();
   });
 
+  test("wide brace group with matching alternatives and failing tail is not quadratic", () => {
+    // A group of N alternatives that each match the subject prefix, followed by
+    // a tail that then fails, used to cost O(BRACE_BRANCH_BUDGET * N) because
+    // every budgeted attempt re-scanned the whole group to find the closing `}`.
+    // With the close-brace index cached per group that scan is O(1), so the
+    // whole match() is O(N). Unfixed, each case below takes ~5 s release /
+    // ~30 s ASAN; fixed, low single-digit ms. The 2 s budget is >100x headroom
+    // over the fixed cost and >10x under the unfixed cost even in release.
+    const budgetMs = 2000;
+
+    for (const [label, pattern, path] of [
+      ["150k '*' alternatives", "{" + Buffer.alloc(300_000, "*,").toString() + "*}b", "az"],
+      ["300k literal-prefix alternatives", "{" + Buffer.alloc(600_000, "a,").toString() + "a}b", "az"],
+      ["750k empty alternatives", "{" + Buffer.alloc(750_000, ",").toString() + "a}", "a"],
+    ] as const) {
+      const glob = new Glob(pattern);
+      const t0 = performance.now();
+      glob.match(path);
+      const elapsed = performance.now() - t0;
+      if (elapsed >= budgetMs) {
+        throw new Error(`${label}: match() took ${elapsed.toFixed(0)} ms (budget ${budgetMs} ms)`);
+      }
+    }
+
+    // Correctness is unchanged for the shapes above. Use smaller groups so the
+    // pre-existing branch budget (which makes very wide groups return false
+    // regardless of the fix) isn't hit.
+    expect(new Glob("{" + Buffer.alloc(1000, "*,").toString() + "*}b").match("ab")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, "*,").toString() + "*}b").match("az")).toBeFalse();
+    expect(new Glob("{" + Buffer.alloc(1000, "a,").toString() + "a}b").match("ab")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, "a,").toString() + "a}b").match("az")).toBeFalse();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("a")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("")).toBeTrue();
+    expect(new Glob("{" + Buffer.alloc(1000, ",").toString() + "a}").match("b")).toBeFalse();
+  });
+
+  test("literal ',' or '}' after sequential brace groups", () => {
+    // A `,`/`}` past the second group's `}` is a literal. Previously
+    // `brace_depth` was set from the stack length (which still holds the first
+    // group's frame) so the literal was treated as a separator and the whole
+    // tail was skipped.
+    expect(new Glob("{a,b}{c,d},x").match("ac,x")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},x").match("bd,x")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},x").match("ac")).toBeFalse();
+    expect(new Glob("{a,b}{c,d}}x").match("ac}x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("a/c,x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("b/d,x")).toBeTrue();
+    expect(new Glob("{a,b}/{c,d},x").match("a/c")).toBeFalse();
+    // Single group followed by a literal `,` already worked; keep covered.
+    expect(new Glob("{a,b},x").match("a,x")).toBeTrue();
+    expect(new Glob("{a,b},x").match("b,x")).toBeTrue();
+  });
+
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
   // using the `[...]` syntax, it tries to match each char in the brackets. With

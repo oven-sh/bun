@@ -46,19 +46,6 @@ static inline size_t findListener(const SimpleEventListenerVector& listeners, Ev
     return notFound;
 }
 
-void IdentifierEventListenerMap::replace(const JSC::Identifier& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, bool once)
-{
-    Locker locker { m_lock };
-
-    auto* listeners = find(eventType);
-    ASSERT(listeners);
-    size_t index = findListener(*listeners, oldListener);
-    ASSERT(index != notFound);
-    auto& registeredListener = listeners->at(index);
-    registeredListener->markAsRemoved();
-    registeredListener = SimpleRegisteredEventListener::create(WTF::move(newListener), once);
-}
-
 bool IdentifierEventListenerMap::add(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
 {
     Locker locker { m_lock };

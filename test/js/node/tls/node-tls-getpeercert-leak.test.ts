@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { isASAN, isDebug } from "harness";
+import { isASAN, isDebug, rss } from "harness";
 import type { AddressInfo } from "node:net";
 import type { TLSSocket } from "node:tls";
 import { join } from "path";
@@ -73,10 +73,10 @@ it.skipIf(isDebug)(
       // regardless of leaks, so take the baseline after warmup.
       const perRound = 5_000;
       for (let round = 0; round < 8; round++) spin(perRound);
-      const baseline = process.memoryUsage.rss();
+      const baseline = rss();
 
       for (let round = 0; round < 15; round++) spin(perRound);
-      const after = process.memoryUsage.rss();
+      const after = rss();
       const growth = after - baseline;
 
       // Unpatched, the BIO leak alone is ~800 bytes/call → ~60MB over the

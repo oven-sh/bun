@@ -1,3 +1,3 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`bun pm migrate 1`] = `"E7F4C15F76D43059-37ed01456afdc149-B17A9541F8322712-04892ad4e094e703"`;
+exports[`bun pm migrate 1`] = `"489DDF3D3023F6B8-df70ea6557e96748-904B1FF3B0E87F8A-b7febd1f94845cec"`;

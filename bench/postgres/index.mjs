@@ -43,3 +43,6 @@ for (let i = 0; i < 100_000; i++) {
 }
 await Promise.all(promises);
 console.timeEnd(type);
+
+// postgres.js keeps the process alive through its connection pool; Bun.sql does not.
+await sql.end?.();

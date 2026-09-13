@@ -21,27 +21,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-    static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
-    {
-        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTF::move(keyObject));
-        instance->finishCreation(vm, globalObject);
-        return instance;
-    }
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSKeyObject, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSKeyObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSKeyObject = std::forward<decltype(space)>(space); });
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)

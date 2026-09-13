@@ -12,7 +12,7 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Which {
-    pub state: State,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -26,7 +26,6 @@ pub enum State {
         had_not_found: bool,
         waiting_write: bool,
     },
-    Done,
 }
 
 impl Which {
@@ -47,11 +46,11 @@ impl Which {
         if Builtin::of(interp, cmd).stdout.needs_io().is_none() {
             // Synchronous path: resolve every arg, write straight to the
             // captured buffer, then finish.
-            let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
+            let search = SearchEnv::load(interp, cmd);
             let mut had_not_found = false;
             for i in 0..argc {
                 let arg = Self::arg(interp, cmd, i);
-                match Self::resolve(&path_env, &cwd, &arg) {
+                match search.resolve(&arg) {
                     Some(resolved) => {
                         let buf = Builtin::fmt_error_arena(
                             interp,
@@ -86,7 +85,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
             State::MultiArgs {
@@ -101,8 +100,7 @@ impl Which {
         }
 
         let arg = Self::arg(interp, cmd, arg_idx);
-        let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
-        let resolved = Self::resolve(&path_env, &cwd, &arg);
+        let resolved = SearchEnv::load(interp, cmd).resolve(&arg);
 
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
@@ -192,11 +190,21 @@ impl Which {
 
     // ── helpers ────────────────────────────────────────────────────────────
 
-    /// Look up `$PATH` from the export env and the cwd from the shell env.
-    fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
+    fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
+        Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
+    }
+}
+
+struct SearchEnv {
+    path_env: Vec<u8>,
+    cwd: Vec<u8>,
+}
+
+impl SearchEnv {
+    fn load(interp: &Interpreter, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
         // `EnvMap::get` refs the returned string; balance it.
-        let path = shell
+        let path_env = shell
             .export_env
             .get(EnvStr::init_slice(b"PATH"))
             .map(|s| {
@@ -205,15 +213,15 @@ impl Which {
                 v
             })
             .unwrap_or_default();
-        (path, shell.cwd().to_vec())
+        Self {
+            path_env,
+            cwd: shell.cwd().to_vec(),
+        }
     }
 
-    fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
-        Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
-    }
-
-    fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
+    fn resolve(&self, arg: &[u8]) -> Option<Vec<u8>> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
+        bun_which::which(&mut *path_buf, &self.path_env, &self.cwd, arg)
+            .map(|z| z.as_bytes().to_vec())
     }
 }

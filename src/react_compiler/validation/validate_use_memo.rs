@@ -7,15 +7,15 @@ use crate::diagnostics::{
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{each_instruction_value_operand_with_functions, each_terminal_operand};
 use crate::hir::{
-    FunctionId, HirFunction, IdentifierId, InstructionValue, ParamPattern, Place, PlaceOrSpread,
-    ReturnVariant, Terminal,
+    FunctionId, HirFunction, IdentifierId, InstructionValue, Place, PlaceOrSpread, ReturnVariant,
+    Terminal,
 };
 
 /// Validates useMemo() usage patterns.
 ///
 /// Port of ValidateUseMemo.ts.
 /// Returns VoidUseMemo errors separately (for logging via logErrors, not as compile errors).
-pub fn validate_use_memo(func: &HirFunction, env: &mut Environment) -> CompilerError {
+pub(crate) fn validate_use_memo(func: &HirFunction, env: &mut Environment) -> CompilerError {
     validate_use_memo_impl(
         func,
         &env.functions,
@@ -258,10 +258,7 @@ fn handle_possible_use_memo_call(
     // Validate no parameters
     if !body_func.params.is_empty() {
         let first_param = &body_func.params[0];
-        let loc = match first_param {
-            ParamPattern::Place(place) => place.loc,
-            ParamPattern::Spread(spread) => spread.place.loc,
-        };
+        let loc = first_param.place().loc;
         errors.push_diagnostic(diag_params_not_allowed(loc));
     }
 

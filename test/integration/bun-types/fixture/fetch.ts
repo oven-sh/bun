@@ -332,3 +332,19 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Proxy must be string or object, not array
   fetch("https://example.com", { proxy: ["http://proxy.example.com"] });
 }
+
+// Protocol option types
+{
+  // All six values the runtime accepts are valid
+  fetch("https://example.com", { protocol: "http1.1" });
+  fetch("https://example.com", { protocol: "h1" });
+  fetch("https://example.com", { protocol: "http2" });
+  fetch("https://example.com", { protocol: "h2" });
+  fetch("https://example.com", { protocol: "http3" });
+  fetch("https://example.com", { protocol: "h3" });
+}
+
+{
+  // @ts-expect-error - Not a protocol the runtime accepts
+  fetch("https://example.com", { protocol: "spdy" });
+}

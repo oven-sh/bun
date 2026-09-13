@@ -108,7 +108,7 @@ fn to_have_returned_times_fn(
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_have_returned(
+    pub(crate) fn to_have_returned(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -117,7 +117,7 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_have_returned_times(
+    pub(crate) fn to_have_returned_times(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,

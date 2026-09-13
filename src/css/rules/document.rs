@@ -7,9 +7,9 @@ use crate::{PrintErr, Printer};
 /// is allowed since Firefox was the only browser that ever implemented this rule.
 pub struct MozDocumentRule<R> {
     /// Nested rules within the `@-moz-document` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> MozDocumentRule<R> {

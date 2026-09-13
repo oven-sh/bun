@@ -130,15 +130,6 @@ pub struct ClassStaticBlock {
     pub loc: crate::Loc,
 }
 
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
-        }
-    }
-}
-
 pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///
@@ -201,7 +192,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
@@ -304,7 +295,7 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
@@ -352,7 +343,7 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {

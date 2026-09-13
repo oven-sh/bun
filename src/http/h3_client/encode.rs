@@ -18,7 +18,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 /// for this stream (not `on_stream_open`; see the comment there for why no
 /// `lsquic_stream_write` may happen before lsquic's priority iterator has
 /// served the HSK crypto stream).
-pub fn write_request(
+pub(crate) fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
     qs: &mut quic::Stream,

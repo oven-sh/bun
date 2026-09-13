@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 test("Response -> import { Response } from 'bun:app' transform in server components", async () => {
-  const dir = tempDirWithFiles("response-transform", {
+  await using dir = tempDir("response-transform", {
     "server-component.js": `
       export const mode = "ssr";
       export const streaming = false;
@@ -61,7 +61,7 @@ test("Response -> import { Response } from 'bun:app' transform in server compone
 });
 
 test("Response import is added for global Response in various contexts", async () => {
-  const dir = tempDirWithFiles("response-contexts", {
+  await using dir = tempDir("response-contexts", {
     "server.js": `
       export const mode = "ssr";
       
@@ -102,7 +102,7 @@ test("Response import is added for global Response in various contexts", async (
 });
 
 test("Response import is not added when Response is already imported or shadowed", async () => {
-  const dir = tempDirWithFiles("response-shadowing", {
+  await using dir = tempDir("response-shadowing", {
     "server.js": `
       export const mode = "ssr";
       
@@ -159,7 +159,7 @@ test("Response import is not added when Response is already imported or shadowed
 });
 
 test("Response import is NOT added in client components", async () => {
-  const dir = tempDirWithFiles("client-no-transform", {
+  await using dir = tempDir("client-no-transform", {
     "client-component.js": `
       "use client";
       
@@ -219,7 +219,7 @@ test("Response import is NOT added in client components", async () => {
 });
 
 test("Response import is added when Response is global, but not when shadowed", async () => {
-  const dir = tempDirWithFiles("response-shadowing", {
+  await using dir = tempDir("response-shadowing", {
     "server-component.js": `
       export const mode = "ssr";
 

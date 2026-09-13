@@ -564,35 +564,36 @@ impl ProxyTunnel {
         ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) {
-        let handlers = SSLWrapperHandlers {
-            on_open,
-            on_data,
-            on_handshake,
-            on_close,
-            write: write_encrypted,
-            // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
-            // opting out keeps its SSL off the parked queues entirely.
-            on_session: None,
-            on_keylog: None,
-            ctx: this.as_erased_ptr().as_ptr(),
-        };
-        let wrapper = match ssl_options {
+        let mut err = uws::create_bun_socket_error_t::none;
+        let ssl_ctx = match ssl_options {
             // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-            Some(ssl_options) => ProxyTunnelWrapper::init_from_options(
-                &ssl_options.as_usockets_for_client_verification(),
-                true,
-                handlers,
-            ),
-            // No TLS options on the request: handshake in the thread's default
-            // `SSL_CTX`, as a direct connection to the origin does, so the
-            // thread-wide CA (`bun install --ca` / `--cafile`) applies here too.
-            None => ProxyTunnelWrapper::init_with_ctx(
-                crate::http_thread().default_ssl_ctx(),
-                true,
-                handlers,
-            ),
+            Some(ssl_options) => ssl_options
+                .as_usockets_for_client_verification()
+                .create_ssl_context(&mut err),
+            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
+            None => Some(crate::http_thread().default_ssl_ctx()),
         };
-        let wrapper = match wrapper {
+        let Some(ssl_ctx) = ssl_ctx else {
+            // invalid TLS Options
+            this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+            return;
+        };
+        let wrapper = match ProxyTunnelWrapper::init_with_ctx(
+            ssl_ctx,
+            true,
+            SSLWrapperHandlers {
+                on_open,
+                on_data,
+                on_handshake,
+                on_close,
+                write: write_encrypted,
+                // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
+                // opting out keeps its SSL off the parked queues entirely.
+                on_session: None,
+                on_keylog: None,
+                ctx: this.as_erased_ptr().as_ptr(),
+            },
+        ) {
             Ok(w) => w,
             Err(e) => {
                 if e == InitError::OutOfMemory {

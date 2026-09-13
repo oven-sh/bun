@@ -436,6 +436,7 @@ extern "C" size_t Bun__process_dlopen_count;
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
+extern "C" void Bun__loadMuslCxxRuntimeIfPresent();
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -563,6 +564,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
         }
     }
+    Bun__loadMuslCxxRuntimeIfPresent();
 #endif
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);

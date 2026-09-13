@@ -1,7 +1,9 @@
 import { expect, mock, test } from "bun:test";
+import { readFileSync } from "fs";
 import { writeFile } from "fs/promises";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { devNull } from "os";
+import { join } from "path";
 import { Readable } from "stream";
 test("fs.promises.writeFile async iterator", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
@@ -52,6 +54,60 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   };
   expect(() => writeFile(String(dir), fn)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
+});
+
+// The FileSink drain summed FileSink.write()'s return values, which over-count
+// once a chunk triggers an auto-flush, and the closing ftruncate() then padded
+// the file with NUL bytes up to that inflated total (5000 bytes became 9090).
+test.concurrent.each([
+  {
+    name: "string chunks",
+    source: () =>
+      (async function* () {
+        for (let i = 0; i < 500; i++) yield "0123456789";
+      })(),
+    expected: Buffer.alloc(5000, "0123456789"),
+  },
+  {
+    name: "Buffer chunks",
+    source: () =>
+      (async function* () {
+        const chunk = Buffer.from("0123456789");
+        for (let i = 0; i < 500; i++) yield chunk;
+      })(),
+    expected: Buffer.alloc(5000, "0123456789"),
+  },
+  {
+    name: "multi-byte UTF-8 chunks",
+    source: () =>
+      (async function* () {
+        for (let i = 0; i < 1000; i++) yield "héllo";
+      })(),
+    expected: Buffer.alloc(6000, "héllo"),
+  },
+  {
+    name: "a Readable",
+    source: () => {
+      let i = 0;
+      return new Readable({
+        read() {
+          while (i < 500) {
+            i++;
+            if (!this.push("0123456789")) return;
+          }
+          this.push(null);
+        },
+      });
+    },
+    expected: Buffer.alloc(5000, "0123456789"),
+  },
+])("fs.promises.writeFile of $name writes exactly the bytes it was given", async ({ source, expected }) => {
+  using dir = tempDir("fs-promises-writeFile-exact-size", {});
+  const path = join(String(dir), "out.bin");
+  await writeFile(path, source());
+  const written = readFileSync(path);
+  expect(written.length).toBe(expected.length);
+  expect(written.equals(expected)).toBe(true);
 });
 
 // Draining a fast Readable into writeFile must not turn into a microtask-only

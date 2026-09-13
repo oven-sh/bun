@@ -7324,9 +7324,6 @@ impl NodeFS {
         }
     }
 
-    // Node's `fs.realpath` walks the path with `lstat`, and `fs.realpath.native`
-    // calls the system realpath. Bun uses the system call for both and only
-    // differs in the error's syscall tag (`realpath_non_native` reports `lstat`).
     pub(crate) fn realpath_inner(&mut self, args: &args::Realpath) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
@@ -7355,9 +7352,7 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            // libuv returns a canonical path. Only a root (`C:\`, `\\server\share\`)
-            // keeps its trailing separator, and a root must keep it: `C:` is the
-            // current directory of drive C, not the root.
+            // Only a root (`C:\`) comes back with a trailing separator. Keep it.
             let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {

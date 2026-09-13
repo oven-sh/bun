@@ -14,15 +14,16 @@
 //! 4. Mutation with reactive operands
 //! 5. Conditional assignment based on reactive control flow
 
-use crate::collections::{FxHashMap as HashMap, IdMap};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::dominator::post_dominator_frontier;
+use crate::hir::dominator::{PostDominator, post_dominator_frontier};
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Terminal, Type,
+    BasicBlock, BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Terminal,
+    Type,
 };
 
 use crate::utils::DisjointSet;
@@ -85,6 +86,17 @@ pub(crate) fn infer_reactive_places(
         control_tests.insert(block_id, tests);
     }
 
+    let has_handler = func
+        .body
+        .blocks
+        .values()
+        .any(|block| throws_to_handler(&block.terminal));
+    let mut reactive_throws = ReactiveThrows::new(if has_handler {
+        post_dominators.exit.0 as usize
+    } else {
+        0
+    });
+
     // Track phi operand reactive flags during fixpoint.
     // In TS, isReactive() sets place.reactive as a side effect. But when a phi
     // is already reactive, the TS `continue`s and skips operand processing.
@@ -95,8 +107,12 @@ pub(crate) fn infer_reactive_places(
     // Fixpoint iteration — compute reactive set
     loop {
         for block_id in &block_ids {
-            let has_reactive_control =
-                is_reactive_controlled_block(*block_id, &control_tests, &mut reactive_map);
+            let has_reactive_control = is_reactive_controlled_block(
+                *block_id,
+                &control_tests,
+                &reactive_throws,
+                &mut reactive_map,
+            );
 
             // Process phi nodes
             let block = func.body.blocks.get(block_id).unwrap();
@@ -120,7 +136,12 @@ pub(crate) fn infer_reactive_places(
                     reactive_map.mark_reactive(phi.place.identifier);
                 } else {
                     for (pred, _operand) in &phi.operands {
-                        if is_reactive_controlled_block(*pred, &control_tests, &mut reactive_map) {
+                        if is_reactive_controlled_block(
+                            *pred,
+                            &control_tests,
+                            &reactive_throws,
+                            &mut reactive_map,
+                        ) {
                             reactive_map.mark_reactive(phi.place.identifier);
                             break;
                         }
@@ -130,6 +151,7 @@ pub(crate) fn infer_reactive_places(
 
             // Process instructions
             let block = func.body.blocks.get(block_id).unwrap();
+            let mut block_has_reactive_input = false;
             for instr_id in &block.instructions {
                 let instr = &func.instructions[instr_id.0 as usize];
 
@@ -146,7 +168,8 @@ pub(crate) fn infer_reactive_places(
                         .map(|p| p.identifier)
                         .collect();
                 for &op_id in &operands {
-                    let reactive = reactive_map.is_reactive(op_id);
+                    let reactive =
+                        reactive_map.is_reactive(op_id) || reactive_throws.is_caught_value(op_id);
                     has_reactive_input = has_reactive_input || reactive;
                 }
 
@@ -172,6 +195,7 @@ pub(crate) fn infer_reactive_places(
                     }
                     _ => {}
                 }
+                block_has_reactive_input |= has_reactive_input;
 
                 if has_reactive_input {
                     // Mark lvalues reactive (unless stable)
@@ -223,9 +247,33 @@ pub(crate) fn infer_reactive_places(
             for op in visitors::each_terminal_operand(&block.terminal) {
                 reactive_map.is_reactive(op.identifier);
             }
+
+            // A block throws reactively if it reads a reactive value or only runs under a reactive test.
+            let throws_reactively = throws_to_handler(&block.terminal)
+                && (block_has_reactive_input || has_reactive_control);
+            if throws_reactively || reactive_throws.controls(*block_id) {
+                reactive_throws.mark_dependents(block, &post_dominators);
+            }
+            if let Terminal::Try {
+                handler,
+                handler_binding: Some(binding),
+                ..
+            } = &block.terminal
+            {
+                if is_reactive_controlled_block(
+                    *handler,
+                    &control_tests,
+                    &reactive_throws,
+                    &mut reactive_map,
+                ) {
+                    reactive_throws.mark_caught_value(binding.identifier);
+                }
+            }
         }
 
-        if !reactive_map.snapshot() {
+        // Each snapshot resets its own change flag, so take both.
+        let has_changes = reactive_map.snapshot();
+        if !reactive_throws.snapshot() && !has_changes {
             break;
         }
     }
@@ -240,6 +288,7 @@ pub(crate) fn infer_reactive_places(
         &mut reactive_map,
         &mut stable_sidemap,
         &phi_operand_reactive,
+        &reactive_throws,
     );
 
     Ok(())
@@ -403,6 +452,7 @@ impl StableSidemap {
 fn is_reactive_controlled_block(
     block_id: BlockId,
     control_tests: &IdMap<BlockId, Vec<IdentifierId>>,
+    reactive_throws: &ReactiveThrows,
     reactive_map: &mut ReactivityMap,
 ) -> bool {
     control_tests
@@ -410,6 +460,115 @@ fn is_reactive_controlled_block(
         .unwrap()
         .iter()
         .any(|&id| reactive_map.is_reactive(id))
+        || reactive_throws.controls(block_id)
+}
+
+// Reactive throws (not in upstream)
+
+fn throws_to_handler(terminal: &Terminal) -> bool {
+    matches!(
+        terminal,
+        Terminal::MaybeThrow {
+            handler: Some(_),
+            ..
+        }
+    )
+}
+
+/// The terminals with more than one successor.
+fn for_each_branch_target(terminal: &Terminal, mut f: impl FnMut(BlockId)) {
+    match terminal {
+        Terminal::MaybeThrow {
+            continuation,
+            handler: Some(handler),
+            ..
+        } => {
+            f(*continuation);
+            f(*handler);
+        }
+        Terminal::If {
+            consequent,
+            alternate,
+            ..
+        }
+        | Terminal::Branch {
+            consequent,
+            alternate,
+            ..
+        } => {
+            f(*consequent);
+            f(*alternate);
+        }
+        Terminal::Switch { cases, .. } => {
+            for case in cases {
+                f(case.block);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `try` / `catch` control flow: a `MaybeThrow` with a handler is a branch that has no test operand.
+struct ReactiveThrows {
+    /// By `BlockId`: a reactive throw decides whether the block runs. Empty without a handler.
+    controlled: Vec<bool>,
+    /// Reactive handler bindings. Only reads count: a binding is declared before its `try`, out of scope.
+    caught_values: HashSet<IdentifierId>,
+    has_changes: bool,
+}
+
+impl ReactiveThrows {
+    fn new(block_count: usize) -> Self {
+        ReactiveThrows {
+            controlled: vec![false; block_count],
+            caught_values: HashSet::default(),
+            has_changes: false,
+        }
+    }
+
+    /// Transitive, because in a `try` the frontier of a block is mostly just the block before it.
+    fn controls(&self, block_id: BlockId) -> bool {
+        self.controlled
+            .get(block_id.0 as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Marks the blocks control-dependent on `block`: each branch target, then up the post-dominator tree.
+    fn mark_dependents(&mut self, block: &BasicBlock, post_dominators: &PostDominator) {
+        let stop = post_dominators.get(block.id);
+        for_each_branch_target(&block.terminal, |target| {
+            let mut current = target;
+            while Some(current) != stop {
+                let Some(controlled) = self.controlled.get_mut(current.0 as usize) else {
+                    break;
+                };
+                if !*controlled {
+                    *controlled = true;
+                    self.has_changes = true;
+                }
+                let Some(next) = post_dominators.get(current) else {
+                    break;
+                };
+                current = next;
+            }
+        });
+    }
+
+    fn is_caught_value(&self, id: IdentifierId) -> bool {
+        self.caught_values.contains(&id)
+    }
+
+    fn mark_caught_value(&mut self, id: IdentifierId) {
+        if self.caught_values.insert(id) {
+            self.has_changes = true;
+        }
+    }
+
+    /// Reset change tracking, returns true if there were changes.
+    fn snapshot(&mut self) -> bool {
+        std::mem::take(&mut self.has_changes)
+    }
 }
 
 // =============================================================================
@@ -549,6 +708,7 @@ fn apply_reactive_flags_replay(
     reactive_map: &mut ReactivityMap,
     stable_sidemap: &mut StableSidemap,
     phi_operand_reactive: &HashMap<(BlockId, usize, usize), bool>,
+    reactive_throws: &ReactiveThrows,
 ) {
     let reactive_ids = build_reactive_id_set(reactive_map);
 
@@ -599,7 +759,7 @@ fn apply_reactive_flags_replay(
                     .collect();
             let mut has_reactive_input = false;
             for &op_id in &value_operand_ids {
-                if reactive_ids[op_id.0 as usize] {
+                if reactive_ids[op_id.0 as usize] || reactive_throws.is_caught_value(op_id) {
                     has_reactive_input = true;
                 }
             }

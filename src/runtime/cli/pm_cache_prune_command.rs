@@ -25,10 +25,19 @@ fn read_entries(dir: &Dir, path: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
     loop {
         match iter.next() {
-            Ok(Some(entry)) => entries.push(Entry {
-                name: ZBox::from_bytes(entry.name.slice_u8()),
-                kind: entry.kind,
-            }),
+            Ok(Some(entry)) => {
+                let name = ZBox::from_bytes(entry.name.slice_u8());
+                // DT_UNKNOWN: NFS, FUSE and bind mounts do not fill d_type.
+                let kind = if entry.kind == EntryKind::Unknown {
+                    match bun_sys::lstatat(dir.fd(), &name) {
+                        Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
+                        Err(_) => EntryKind::Unknown,
+                    }
+                } else {
+                    entry.kind
+                };
+                entries.push(Entry { name, kind });
+            }
             Ok(None) => return Some(entries),
             Err(err) => {
                 Output::err(err, "Could not read {s}", (BStr::new(path),));
@@ -63,6 +72,7 @@ fn tree_size(dir: &Dir, path: &[u8]) -> u64 {
 }
 
 struct Prune {
+    root: Vec<u8>,
     cutoff_sec: i64,
     dry_run: bool,
     checked: usize,
@@ -74,7 +84,12 @@ struct Prune {
 impl Prune {
     /// `prefix` is `dir` relative to the cache root: `` or `@scope/`.
     fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) {
-        let Some(entries) = read_entries(dir, prefix) else {
+        let read_path: &[u8] = if prefix.is_empty() {
+            &self.root
+        } else {
+            prefix
+        };
+        let Some(entries) = read_entries(dir, read_path) else {
             self.failed += 1;
             return;
         };
@@ -236,6 +251,7 @@ impl PmCachePruneCommand {
         let now = bun_core::time::timestamp();
         let max_age_sec = i64::from(max_age_days) * i64::from(bun_core::time::S_PER_DAY);
         let mut prune = Prune {
+            root: cache_path.to_vec(),
             cutoff_sec: now.saturating_sub(max_age_sec),
             dry_run,
             checked: 0,

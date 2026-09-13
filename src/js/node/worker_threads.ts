@@ -5,6 +5,7 @@ declare const self: EventTarget & {
 type WebWorker = globalThis.Worker;
 
 const EventEmitter = require("node:events");
+const AsyncContextFrame = require("internal/async_context_frame");
 const { SafeMap } = require("internal/primordials");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
@@ -848,6 +849,7 @@ class Worker extends EventEmitter {
   #stdin: ReturnType<typeof makePortWritable> | undefined;
   #stdout: ReturnType<typeof makePortReadable> | undefined;
   #stderr: ReturnType<typeof makePortReadable> | undefined;
+  #asyncContextFrame: ReturnType<typeof AsyncContextFrame.current>;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -860,6 +862,7 @@ class Worker extends EventEmitter {
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
+    this.#asyncContextFrame = AsyncContextFrame.current();
 
     // The `= {}` default only covers undefined; normalize null too so the
     // option accesses below don't throw on `new Worker(file, null)`.
@@ -995,17 +998,29 @@ class Worker extends EventEmitter {
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
     require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
-    this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
-    this.#worker.addEventListener("error", this.#onError.bind(this));
-    this.#worker.addEventListener("open", this.#onOpen.bind(this), {
+    const inWorkerAsyncContext = listener => event =>
+      AsyncContextFrame.run(this.#asyncContextFrame, listener, this, event);
+    this.#worker.addEventListener(
+      "close",
+      event => {
+        try {
+          return AsyncContextFrame.run(this.#asyncContextFrame, this.#onClose, this, event);
+        } finally {
+          this.#asyncContextFrame = undefined;
+        }
+      },
+      { once: true },
+    );
+    this.#worker.addEventListener("error", inWorkerAsyncContext(this.#onError));
+    this.#worker.addEventListener("open", inWorkerAsyncContext(this.#onOpen), {
       once: true,
     });
     // Messages from parentPort.postMessage() arrive on the public port. Listening
     // starts the port. Node's setupPortReferencing: the port counts toward the
     // parent's liveness only while this Worker has 'message' listeners (and
     // ref()/unref() also touch it, together with the handle).
-    this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
-    this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
+    this.#publicPort.addEventListener("message", inWorkerAsyncContext(this.#onMessage));
+    this.#publicPort.addEventListener("messageerror", inWorkerAsyncContext(this.#onMessageError));
     this.#publicPort.unref();
     const publicPort = this.#publicPort;
     this.on("newListener", function (this: Worker, name) {
@@ -1016,8 +1031,8 @@ class Worker extends EventEmitter {
     });
     // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
     // pair, which travels through the Worker object itself; surface those too.
-    this.#worker.addEventListener("message", this.#onMessage.bind(this));
-    this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
+    this.#worker.addEventListener("message", inWorkerAsyncContext(this.#onMessage));
+    this.#worker.addEventListener("messageerror", inWorkerAsyncContext(this.#onMessageError));
 
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {

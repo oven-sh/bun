@@ -288,3 +288,43 @@ test.skipIf(!isLinux || isASAN)("Bun.gc(true) returns what it freed to the OS be
   expect(JSON.parse(stdout).released).toBeGreaterThan(200);
   expect(exitCode).toBe(0);
 });
+
+// One thread at a time hands the allocator's free ranges back, and its own purge thread is often the one: it starts on what
+// was freed once the purge delay has passed, and a few hundred MB keep it busy for tens of milliseconds. Bun.gc(true) in the
+// middle of that found the purge taken, skipped its own, and returned with all of it still resident.
+test.skipIf(!isLinux || isASAN)(
+  "Bun.gc(true) returns what is free to the OS while the purge thread is at work",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const rss = () => process.memoryUsage.rss() / 1048576;
+          // The allocator starts its purge thread the first time a thread blocks.
+          await Bun.sleep(1);
+          const rounds = [];
+          for (let round = 0; round < 3; round++) {
+            const arrays = [];
+            for (let i = 0; i < 48; i++) arrays.push(new Uint8Array(8 * 1024 * 1024).fill(1));
+            const held = rss();
+            // transfer(0) frees the 8 MB here and now, no collection involved. They stay resident until they are purged.
+            for (const array of arrays) array.buffer.transfer(0);
+            // Wait for the purge thread to start on them. If it never does, Bun.gc(true) has all of it to return by itself.
+            const deadline = performance.now() + 1000;
+            while (rss() > held - 32 && performance.now() < deadline);
+            Bun.gc(true);
+            rounds.push({ held, released: held - rss() });
+          }
+          console.log(JSON.stringify(rounds));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    for (const { released } of JSON.parse(stdout)) expect(released, stdout).toBeGreaterThan(300);
+    expect(exitCode).toBe(0);
+  },
+);

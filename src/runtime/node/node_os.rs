@@ -239,9 +239,7 @@ mod _impl {
         global.throw_value(err.to_error_instance(global))
     }
 
-    /// `linuxCpusFromRoot(root)` in `bun:internal-for-testing`: `os.cpus()` with `/proc` and
-    /// `/sys` read from under `root`, so a test can stage a CPU layout that the host does not
-    /// have. `undefined` on other platforms.
+    /// `bun:internal-for-testing`: Linux `os.cpus()` with `/proc` and `/sys` read from under `root`.
     #[bun_jsc::host_fn]
     pub(crate) fn js_linux_cpus_from_root(
         global: &JSGlobalObject,
@@ -259,8 +257,7 @@ mod _impl {
         }
     }
 
-    /// Reads the file at `path` (absolute) under `root` into `buf`. `None` if the file cannot be
-    /// opened or read. `root` is empty for `os.cpus()`.
+    /// Reads the file at `root` + `path` into `buf`. `root` is empty for `os.cpus()`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn read_under_root<'a>(
         buf: &'a mut Vec<u8>,
@@ -286,8 +283,7 @@ mod _impl {
         // Create the return array
         let values = JSValue::create_empty_array(global_this, 0)?;
         let mut num_cpus: u32 = 0;
-        // /proc/stat, /proc/cpuinfo and sysfs name a CPU by its kernel id. The ids of the online
-        // CPUs can have gaps (`cpu0..cpu63, cpu128..cpu191`), so an id is not a slot of `values`.
+        // CPU ids can have gaps (`cpu0..cpu63, cpu128..cpu191`), so an id is not a slot of `values`.
         let mut slot_by_cpu_id: bun_collections::HashMap<u32, u32> =
             bun_collections::HashMap::new();
 
@@ -378,8 +374,7 @@ mod _impl {
             const KEY_PROCESSOR: &[u8] = b"processor\t: ";
             const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
 
-            // The slot of the processor that the current line describes. `None` for a processor
-            // that /proc/stat did not list.
+            // `None` for a processor that /proc/stat did not list.
             let mut slot: Option<u32> = None;
             while let Some(line) = line_iter.next() {
                 if line.starts_with(KEY_PROCESSOR) {

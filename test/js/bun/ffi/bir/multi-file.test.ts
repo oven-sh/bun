@@ -85,7 +85,7 @@ describe.skipIf(!supported)("multi-file: what is linked with a warning", () => {
     [
       "a declaration that disagrees with the definition",
       {
-        "main.c": "long scale(long); int main(void) { return (int)scale(1) - 3; }",
+        "main.c": "double scale(double); int main(int argc, char **argv) { return argc > 5 ? (int)scale(1) : 0; }",
         "a.c": "int scale(int x) { return x * 3; }",
         "b.c": "",
       },

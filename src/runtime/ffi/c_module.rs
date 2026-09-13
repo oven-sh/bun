@@ -316,9 +316,9 @@ fn compile_to_bir(
             BStr::new(path)
         )));
     };
-    let options = bun_cc::CompileOptions::new(bun_cc::Target::host());
     let mut log = bun_ast::Log::default();
-    let compilation = bun_cc::compile_many(&[(source, filename)], &options, &mut log);
+    let unit = bun_cc::Unit { path: filename, contents: source };
+    let compilation = bun_cc::compile(&[unit], bun_cc::Target::host(), &mut log);
     for file in &compilation.files_read {
         on_file_read(file.as_bytes());
     }

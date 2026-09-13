@@ -383,6 +383,26 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(obj2->GetInternalField(1).As<Number>()->Value());
 }
 
+// create_objects_with_internal_fields(count, fieldCount): creates `count`
+// instances of an ObjectTemplate with `fieldCount` internal fields and drops
+// them all, so the caller can check that collecting them releases their
+// internal field storage.
+void create_objects_with_internal_fields(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  uint32_t count = info[0]->Uint32Value(context).FromJust();
+  int field_count = static_cast<int>(info[1]->Uint32Value(context).FromJust());
+
+  Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
+  obj_template->SetInternalFieldCount(field_count);
+  for (uint32_t i = 0; i < count; i++) {
+    HandleScope handle_scope(isolate);
+    obj_template->NewInstance(context).ToLocalChecked();
+  }
+  return ok(info);
+}
+
 void return_data_callback(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.Data());
 }
@@ -435,6 +455,7 @@ class GlobalTestWrapper {
 public:
   static void set(const FunctionCallbackInfo<Value> &info);
   static void get(const FunctionCallbackInfo<Value> &info);
+  static void store(Isolate *isolate, Local<Value> new_value);
   static void cleanup(void *unused);
 
 private:
@@ -463,7 +484,36 @@ void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+void GlobalTestWrapper::store(Isolate *isolate, Local<Value> new_value) {
+  value.Reset(isolate, new_value);
+}
+
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+// Native data property whose getter returns the holder it was invoked on and
+// whose setter stores it where global_get() can read it, so JS can check what
+// receiver the accessor callbacks see for different ways of reaching them.
+static void holder_getter(Local<Name> property,
+                          const PropertyCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.HolderV2());
+}
+
+static void holder_setter(Local<Name> property, Local<Value> value,
+                          const PropertyCallbackInfo<void> &info) {
+  GlobalTestWrapper::store(info.GetIsolate(), info.HolderV2());
+}
+
+void create_object_with_holder_accessor(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> obj_t = ObjectTemplate::New(isolate);
+  obj_t->SetNativeDataProperty(String::NewFromUtf8Literal(isolate, "holder"),
+                               holder_getter, holder_setter);
+
+  info.GetReturnValue().Set(obj_t->NewInstance(context).ToLocalChecked());
+}
 
 void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -1408,6 +1458,63 @@ void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Returns ToInt32 of the first argument. Leaves the exception pending when the
+// conversion throws, so the JS caller sees it.
+void perform_to_int32(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  MaybeLocal<Int32> maybe = info[0]->ToInt32(context);
+  LOG_EXPR(maybe.IsEmpty());
+  if (maybe.IsEmpty()) {
+    return;
+  }
+  Local<Int32> result = maybe.ToLocalChecked();
+  LOG_EXPR(result->Value());
+  LOG_EXPR(result->IsInt32());
+  info.GetReturnValue().Set(result);
+}
+
+// Returns { file, line, column } for the function passed as the first argument,
+// as @newrelic/fn-inspect does. file is undefined when the resource name is an
+// empty handle.
+void get_function_script_origin(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (!info[0]->IsFunction()) {
+    return fail(info, "argument is not a function");
+  }
+  Local<Function> fn = info[0].As<Function>();
+
+  ScriptOrigin origin = fn->GetScriptOrigin();
+  Local<Value> resource_name = origin.ResourceName();
+  LOG_EXPR(resource_name.IsEmpty());
+  LOG_EXPR(origin.LineOffset());
+  LOG_EXPR(origin.ColumnOffset());
+  int line = fn->GetScriptLineNumber();
+  int column = fn->GetScriptColumnNumber();
+  LOG_EXPR(line);
+  LOG_EXPR(column);
+
+  Local<Object> result = Object::New(isolate);
+  Local<Value> file = resource_name.IsEmpty() ? Local<Value>(Undefined(isolate))
+                                              : resource_name;
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "file").ToLocalChecked(),
+            file)
+      .FromJust();
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "line").ToLocalChecked(),
+            Integer::New(isolate, line))
+      .FromJust();
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "column").ToLocalChecked(),
+            Integer::New(isolate, column))
+      .FromJust();
+  info.GetReturnValue().Set(result);
+}
+
 void test_v8_define_own_property(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -1860,6 +1967,172 @@ void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// @datadog/pprof's restart path (used by dd-trace on every upload cycle) starts
+// the next profile *before* stopping the current one, ignores the status, and
+// then calls Stop() with whatever id Start() handed back. Overlapping sessions
+// must therefore be accepted and each Stop() must return its own profile.
+void test_v8_cpu_profiler_overlapping_sessions(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "bun-v8-test-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "bun-v8-test-b").ToLocalChecked();
+
+  CpuProfilingResult a = profiler->Start(
+      title_a, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)a.status);
+  busy();
+
+  // Second session while the first is still running.
+  CpuProfilingResult b = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)b.status);
+  LOG_EXPR(a.id != b.id);
+
+  CpuProfile *profile_a = profiler->Stop(a.id);
+  if (profile_a == nullptr) {
+    return fail(info, "Stop(a) returned null while b was running");
+  }
+  if (profile_a->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile a has no root");
+  }
+  busy();
+
+  CpuProfile *profile_b = profiler->Stop(b.id);
+  if (profile_b == nullptr) {
+    return fail(info, "Stop(b) returned null after a was stopped");
+  }
+  if (profile_b->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile b has no root");
+  }
+
+  // b started after a, and neither profile runs backwards in time.
+  LOG_EXPR(profile_b->GetStartTime() >= profile_a->GetStartTime());
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  LOG_EXPR(profile_b->GetStartTime() <= profile_b->GetEndTime());
+  // No sample recorded for b may predate b's start.
+  bool b_samples_in_range = true;
+  for (int i = 0; i < profile_b->GetSamplesCount(); i++) {
+    if (profile_b->GetSampleTimestamp(i) < profile_b->GetStartTime()) {
+      b_samples_in_range = false;
+      break;
+    }
+  }
+  LOG_EXPR(b_samples_in_range);
+
+  // Stopping an id that was already stopped is not a session.
+  LOG_EXPR(profiler->Stop(a.id) == nullptr);
+
+  profile_a->Delete();
+  profile_b->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
+// google's pprof (and older addons such as v8-profiler-next) drive the
+// profiler through the title-keyed StartProfiling()/StopProfiling() overloads
+// and read the title back with CpuProfile::GetTitle(). Bun used to export only
+// the id-keyed Start()/Stop(), so loading pprof failed on these symbols
+// (oven-sh/bun#19678).
+void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "pprof-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "pprof-b").ToLocalChecked();
+  Local<String> empty_title = String::NewFromUtf8(isolate, "").ToLocalChecked();
+  Local<String> unknown_title =
+      String::NewFromUtf8(isolate, "never-started").ToLocalChecked();
+
+  // pprof uses the two-argument overload, or the mode overload when line
+  // numbers were requested.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  LOG_EXPR((int)profiler->StartProfiling(title_b, kCallerLineNumbers, false));
+  // A title that is already running is not started a second time.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  LOG_EXPR(profiler->StopProfiling(unknown_title) == nullptr);
+
+  CpuProfile *profile_a = profiler->StopProfiling(title_a);
+  if (profile_a == nullptr) {
+    return fail(info, "StopProfiling(a) returned null");
+  }
+  LOG_EXPR(describe(isolate, profile_a->GetTitle()));
+  LOG_EXPR(profile_a->GetTopDownRoot() != nullptr);
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  // a is no longer running, so its title can neither be stopped again nor
+  // collide with a new session.
+  LOG_EXPR(profiler->StopProfiling(title_a) == nullptr);
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  // An empty title stops the most recently started session: the restarted a,
+  // then b.
+  CpuProfile *profile_a2 = profiler->StopProfiling(empty_title);
+  if (profile_a2 == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with two sessions");
+  }
+  LOG_EXPR(describe(isolate, profile_a2->GetTitle()));
+  CpuProfile *profile_b = profiler->StopProfiling(empty_title);
+  if (profile_b == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with one session");
+  }
+  LOG_EXPR(describe(isolate, profile_b->GetTitle()));
+  LOG_EXPR(profiler->StopProfiling(empty_title) == nullptr);
+
+  // Both APIs share one set of sessions: a session started by id carries its
+  // title, blocks a title-keyed start, and can be stopped by title.
+  CpuProfilingResult by_id = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)by_id.status);
+  LOG_EXPR((int)profiler->StartProfiling(title_b, false));
+  busy();
+  CpuProfile *profile_by_id = profiler->StopProfiling(title_b);
+  if (profile_by_id == nullptr) {
+    return fail(info, "StopProfiling(b) returned null for a session started "
+                      "with Start()");
+  }
+  LOG_EXPR(describe(isolate, profile_by_id->GetTitle()));
+  LOG_EXPR(profiler->Stop(by_id.id) == nullptr);
+
+  profile_a->Delete();
+  profile_a2->Delete();
+  profile_b->Delete();
+  profile_by_id->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1887,6 +2160,10 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_function_template_set_class_name);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
+  NODE_SET_METHOD(exports, "create_object_with_holder_accessor",
+                  create_object_with_holder_accessor);
+  NODE_SET_METHOD(exports, "create_objects_with_internal_fields",
+                  create_objects_with_internal_fields);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
@@ -1930,6 +2207,9 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
+  NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
+  NODE_SET_METHOD(exports, "get_function_script_origin",
+                  get_function_script_origin);
   NODE_SET_METHOD(exports, "test_v8_define_own_property",
                   test_v8_define_own_property);
   NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);
@@ -1949,6 +2229,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_overlapping_sessions",
+                  test_v8_cpu_profiler_overlapping_sessions);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
+                  test_v8_cpu_profiler_title_api);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

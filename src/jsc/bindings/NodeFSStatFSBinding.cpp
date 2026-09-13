@@ -60,7 +60,7 @@ public:
 
     static JSStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStatFSPrototype* prototype = new (NotNull, JSC::allocateCell<JSStatFSPrototype>(vm)) JSStatFSPrototype(vm, structure);
+        JSStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatFSPrototype))) JSStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -76,7 +76,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -97,7 +97,7 @@ public:
 
     static JSBigIntStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBigIntStatFSPrototype* prototype = new (NotNull, JSC::allocateCell<JSBigIntStatFSPrototype>(vm)) JSBigIntStatFSPrototype(vm, structure);
+        JSBigIntStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatFSPrototype))) JSBigIntStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -113,7 +113,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -149,7 +149,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -187,7 +187,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -206,7 +206,7 @@ private:
 JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* prototype = JSStatFSPrototype::create(vm, globalObject, JSStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
 
     // Add property transitions for all statfs fields
     PropertyOffset offset = 0;
@@ -225,7 +225,7 @@ JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* 
 JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto prototype = JSBigIntStatFSPrototype::create(vm, globalObject, JSBigIntStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
 
     // Add property transitions for all bigint statfs fields
     PropertyOffset offset = 0;
@@ -369,7 +369,6 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
@@ -434,14 +433,14 @@ void JSStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void JSBigIntStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void initJSStatFSClassStructure(JSC::LazyClassStructure::Initializer& init)

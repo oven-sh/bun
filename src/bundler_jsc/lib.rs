@@ -13,9 +13,6 @@ pub mod source_map_mode_jsc;
 #[path = "options_jsc.rs"]
 pub mod options_jsc;
 
-#[path = "PluginRunner.rs"]
-pub mod PluginRunner;
-
 // LAYERING: `output_file_jsc`
 // constructs `webcore::Blob`/`Store`, `api::BuildArtifact`, and
 // `node::PathOrFileDescriptor`. Those types live in `bun_runtime`, which is

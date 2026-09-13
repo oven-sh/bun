@@ -15,8 +15,8 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
+use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -30,8 +30,6 @@ use bun_install::Access;
 use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
 use bun_sys::FdExt as _;
-
-use crate::api::bun_process::sync as spawn_sync;
 
 // `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
@@ -142,7 +140,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
-        let mut abs_buf = PathBuffer::uninit();
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
@@ -604,16 +602,7 @@ impl PublishCommand {
             };
 
             if let Err(err) = Self::publish::<false>(&context) {
-                match err {
-                    PublishError::OutOfMemory => bun_core::out_of_memory(),
-                    PublishError::NeedAuth => {
-                        Output::err_generic(
-                            "missing authentication (run <cyan>`bunx npm login`<r>)",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                }
+                err.report_and_crash();
             }
 
             bun_core::prettyln!(
@@ -663,16 +652,7 @@ impl PublishCommand {
         let _ = bun_sys::unlink(&context.abs_tarball_path);
 
         if let Err(err) = Self::publish::<true>(&context) {
-            match err {
-                PublishError::OutOfMemory => bun_core::out_of_memory(),
-                PublishError::NeedAuth => {
-                    Output::err_generic(
-                        "missing authentication (run <cyan>`bunx npm login`<r>)",
-                        (),
-                    );
-                    Global::crash();
-                }
-            }
+            err.report_and_crash();
         }
 
         bun_core::prettyln!(
@@ -834,7 +814,6 @@ impl PublishCommand {
             headers.content.written_slice(),
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -870,6 +849,7 @@ impl PublishCommand {
         let registry_url = registry.url.url();
 
         if registry.token.is_empty()
+            && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
         {
             return Err(PublishError::NeedAuth);
@@ -958,7 +938,6 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            None,
             None,
             http::FetchRedirect::Follow,
         );
@@ -1053,7 +1032,6 @@ impl PublishCommand {
                     otp_headers.content.written_slice(),
                     publish_req_body,
                     None,
-                    None,
                     http::FetchRedirect::Follow,
                 );
 
@@ -1116,14 +1094,7 @@ impl PublishCommand {
             }
         }
 
-        let _ = spawn_sync::spawn(&spawn_sync::Options {
-            argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
-            envp: None,
-            stdin: spawn_sync::SyncStdio::Inherit,
-            stdout: spawn_sync::SyncStdio::Inherit,
-            stderr: spawn_sync::SyncStdio::Inherit,
-            ..Default::default()
-        });
+        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
     }
 
     fn get_otp<const DIRECTORY_PUBLISH: bool>(
@@ -1289,7 +1260,6 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );
@@ -1633,7 +1603,7 @@ impl PublishCommand {
                 crate::cli::cli_dupe($v) as &'static [u8]
             };
         }
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
@@ -2111,6 +2081,18 @@ pub(crate) enum PublishError {
     NeedAuth,
 }
 bun_core::oom_from_alloc!(PublishError);
+
+impl PublishError {
+    fn report_and_crash(self) -> ! {
+        match self {
+            PublishError::OutOfMemory => bun_core::out_of_memory(),
+            PublishError::NeedAuth => {
+                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum GetOTPError {

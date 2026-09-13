@@ -21,7 +21,7 @@ pub mod w_path_buffer_pool {
         PathBufferPoolT::<WPathBuffer>::get()
     }
     #[inline]
-    pub(crate) fn put(buf: Box<WPathBuffer>) {
+    pub fn put(buf: Box<WPathBuffer>) {
         PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }

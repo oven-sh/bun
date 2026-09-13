@@ -119,3 +119,61 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
   }
   expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
 });
+
+// A name that cannot be a host name (a space, a colon, an empty label) is
+// answered ENOTFOUND in-process, without asking the system resolver. Some DNS
+// servers never answer a query for such a label, and the resolver then waits
+// out its own timeout (30s on macOS) before reporting anything.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.connect to %p, which is not a hostname, fails with ENOTFOUND without asking the resolver",
+  async hostname => {
+    const error = await Bun.connect({
+      hostname,
+      port: 80,
+      socket: { open() {}, data() {} },
+    }).then(
+      () => "resolved",
+      (e: Error) => pick(e),
+    );
+    expect(error).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// The listen side binds through a synchronous getaddrinfo, so a name the
+// resolver would sit on blocks the whole thread. The same names are rejected
+// before the call, with the same error the connect side reports.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.listen on %p, which is not a hostname, throws ENOTFOUND without asking the resolver",
+  hostname => {
+    let error: any;
+    try {
+      Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect(pick(error ?? {})).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// An answer that is already known when Bun.connect() is called (answered
+// in-process, or a cache hit) is delivered from the event loop, not inline.
+// When the connect is made from the callback that delivers the previous
+// answer, the loop has to be woken for it; otherwise each error waits for the
+// next unrelated wakeup (about a second), and 20 of them exceed the test
+// timeout.
+test("back-to-back Bun.connect calls whose names are rejected in-process do not wait for a loop wakeup", async () => {
+  const codes = [];
+  for (let i = 0; i < 20; i++) {
+    codes.push(
+      await Bun.connect({
+        hostname: `not a hostname ${i}`,
+        port: 80,
+        socket: { open() {}, data() {} },
+      }).then(
+        () => "resolved",
+        (e: Error) => e.code,
+      ),
+    );
+  }
+  expect(codes).toEqual(Array(20).fill("ENOTFOUND"));
+});

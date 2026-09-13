@@ -126,11 +126,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
+        let can_track_dynamic_import_member = identifier_opts.assign_target()
+            == js_ast::AssignTarget::None
+            && !identifier_opts.is_delete_target();
+
         // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EAwait(aw) => {
+                    // `(await import("str")).foo` — record the alias; the
+                    // expression is left as written.
+                    if let js_ast::ExprData::EImport(im) = aw.value.data {
+                        if im.namespace_ref.is_valid() && can_track_dynamic_import_member {
+                            p.import_items_for_namespace
+                                .get_mut(&im.namespace_ref)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                            p.note_tracked_namespace_use(im.namespace_ref);
+                        }
+                    }
+                }
+                js_ast::ExprData::ERequireString(req) => {
+                    // `require("str").foo` — record the alias; the expression is left as-is.
+                    if can_track_dynamic_import_member {
+                        if let Some(ns) = p.require_namespace_ref(req) {
+                            p.import_items_for_namespace
+                                .get_mut(&ns)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                        }
+                    }
+                }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // A local holding one module's namespace (`const ns = await
+                    // import(…)`) reads its exports as `import * as ns` does:
+                    // `ns.a` becomes an import item of that record, below.
+                    let mut dynamic_record = None;
+                    if p.dynamic_import_namespace_locals.contains_key(&id.ref_) {
+                        if can_track_dynamic_import_member {
+                            dynamic_record = p.dynamic_import_item_record(id.ref_, name);
+                        }
+                        // Otherwise record the alias so the importee can drop
+                        // unreferenced exports, and leave the access intact. An
+                        // assign/delete target leaves the use counted (namespace
+                        // escapes).
+                        if dynamic_record.is_none() {
+                            if can_track_dynamic_import_member {
+                                if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                                    map.put(
+                                        name,
+                                        LocRef {
+                                            loc: name_loc,
+                                            ref_: bun_ast::Ref::NONE,
+                                        },
+                                    )
+                                    .expect("oom");
+                                    p.note_tracked_namespace_use(id.ref_);
+                                }
+                            }
+                            break 'sw;
+                        }
+                    }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during
@@ -170,6 +241,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // generated.
                                     symbol.import_item_status =
                                         bun_ast::ImportItemStatus::Generated;
+                                    // Not bound to an export, it reads `ns.a`.
+                                    if let Some(import_record_index) = dynamic_record {
+                                        symbol.namespace_alias =
+                                            Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                                namespace_ref: id.ref_,
+                                                alias: js_ast::StoreStr::new(name),
+                                                import_record_index,
+                                                was_originally_property_access: true,
+                                            }));
+                                    }
 
                                     new_ref
                                 }
@@ -187,6 +268,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
+                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
+                            {
+                                p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+                            }
 
                             return Some(
                                 p.handle_identifier(
@@ -343,6 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // rewrite `module.exports` to `exports`
+                            p.module_exports_rewrite_count += 1;
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
@@ -404,6 +490,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     ref_: new_ref,
                                                 },
                                                 needs_decl: true,
+                                                assign_count: 0,
+                                                decl_value: Default::default(),
                                             },
                                         )
                                         .expect("unreachable");
@@ -413,6 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
+                                p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
@@ -534,7 +623,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );
-                            bunstr.deref();
                             return Some(p.new_expr(e_string_init(url), name_loc));
                         }
                     }
@@ -557,26 +645,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                             data: js_ast::ExprData::ERequireMain,
                         });
-                    }
-                }
-                js_ast::ExprData::EImportIdentifier(id) => {
-                    // Symbol uses due to a property access off of an imported symbol are tracked
-                    // specially. This lets us do tree shaking for cross-file TypeScript enums.
-                    if p.options.bundle && !p.is_control_flow_dead {
-                        let use_ = p.symbol_uses.get_mut(&id.ref_).unwrap();
-                        use_.count_estimate = use_.count_estimate.saturating_sub(1);
-                        // note: this use is not removed as we assume it exists later
-
-                        // Add a special symbol use instead
-                        let gop = p
-                            .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
-                            .get_or_put_value(name, Default::default())
-                            .expect("unreachable");
-                        inner_use.count_estimate += 1;
                     }
                 }
                 // EDot and EIndex are handled with structurally identical arms.
@@ -636,6 +704,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                         ref_: new_ref,
                                                     },
                                                     needs_decl: true,
+                                                    assign_count: 0,
+                                                    decl_value: Default::default(),
                                                 },
                                             )
                                             .expect("unreachable");
@@ -645,6 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
+                                    p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                     p.record_usage(ref_);
 

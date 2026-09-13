@@ -302,6 +302,71 @@ export default function GettingStarted() {
     expect(blogIndex).toContain(platformPath('/pages/blog/[...slug].tsx"'));
   });
 
+  test("params are collected from the page's parent routes too", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-nested-params", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/[category]/[id].tsx": `
+export default function Item({ params }) {
+  return <p>{params.category + "/" + params.id}</p>;
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [
+      { params: { category: "tech", id: "bun" } },
+      { params: { category: "news", id: "release" } },
+    ],
+  };
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const htmlFiles = Array.from(new Bun.Glob("dist/**/*.html").scanSync(dir))
+      .sort()
+      .map(p => normalizePath(p));
+    expect(htmlFiles).toEqual(["dist/news/release/index.html", "dist/tech/bun/index.html"]);
+    expect(await Bun.file(path.join(dir, "dist", "tech", "bun", "index.html")).text()).toContain("tech/bun");
+  });
+
+  test("optional catch-all routes are rejected", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-optional-catch-all", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/docs/[[...slug]].tsx": `
+export default function Docs() {
+  return <p>docs</p>;
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("catch-all routes are not supported in static site generation");
+    expect(exitCode).toBe(1);
+  });
+
+  test("two pages resolving to the same route are reported", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+      "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+    });
+
+    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,

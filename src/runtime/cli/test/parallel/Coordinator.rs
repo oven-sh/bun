@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 
 use bun_core::strings;
@@ -21,7 +21,6 @@ use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
-use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
@@ -42,9 +41,13 @@ pub struct Coordinator<'a> {
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],
-    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
-    pub(crate) junit_totals: super::aggregate::JunitTotals,
-    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
+    /// Per file index, when a structured reporter (JUnit) is configured: the
+    /// `TestDone` records received for it, replayed in file order at the end
+    /// so the document matches a serial run. Empty otherwise.
+    pub(crate) test_records: Vec<FileTestRecords>,
+    /// Per source path: coverage folded across every worker that loaded it.
+    pub(crate) coverage_files:
+        bun_collections::StringArrayHashMap<bun_sourcemap_jsc::code_coverage::MergedReport>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
@@ -66,6 +69,17 @@ pub struct Coordinator<'a> {
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
+
+#[derive(Default)]
+pub(crate) struct FileTestRecords {
+    /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
+    pub(crate) tests: Vec<Box<[u8]>>,
+    pub(crate) elapsed_ns: u64,
+}
+
+/// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
+/// stops respawning.
+const MAX_STARTUP_FAILURES: u8 = 2;
 
 /// Why the run stopped dispatching files. A worker panic overrides `Bail`
 /// (see `abort_on_worker_panic`); nothing clears it.
@@ -127,8 +141,9 @@ impl<'a> Coordinator<'a> {
         let _ = self.spawn_worker();
         self.run_pending_reaps();
         while !self.is_done() {
-            if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
-                self.abort_all();
+            let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
+            if signal != 0 {
+                self.abort_all(signal);
                 return;
             }
             self.vm.event_loop_ref().tick();
@@ -166,7 +181,8 @@ impl<'a> Coordinator<'a> {
     /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
-    fn abort_all(&mut self) {
+    /// Exits with 128 + `signal`, the status a shell reports for a signal death.
+    fn abort_all(&mut self, signal: i32) {
         abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
@@ -174,10 +190,10 @@ impl<'a> Coordinator<'a> {
             .iter()
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
-        for (idx, _) in &running {
+        for (idx, ms) in &running {
             self.reporter.summary().fail += 1;
             self.reporter.summary().files += 1;
-            self.crashed_files.push(*idx);
+            self.mark_crashed(*idx, *ms);
             self.files_done += 1;
         }
         if !running.is_empty() {
@@ -201,25 +217,22 @@ impl<'a> Coordinator<'a> {
             Output::flush();
         }
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = w.process {
+            if let Some(p) = &w.process {
                 #[cfg(unix)]
-                {
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
-                    // FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
                     // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(9) };
+                    let _ = p.kill(9);
                 }
             }
         }
-        self.aborted = Some(130);
+        self.aborted = Some(u32::from(
+            bun_sys::SignalCode(signal as u8)
+                .to_exit_code()
+                .unwrap_or(130),
+        ));
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -412,7 +425,11 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
-            frame::Kind::Ready => self.assign_work_or_retry(w),
+            frame::Kind::Ready => {
+                w.reached_ready = true;
+                w.startup_failures = 0;
+                self.assign_work_or_retry(w);
+            }
             frame::Kind::FileStart => {
                 let _ = rd.u32();
             }
@@ -421,6 +438,9 @@ impl<'a> Coordinator<'a> {
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
+                }
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.tests.push(Box::from(rd.p));
                 }
                 self.flush_captured(w);
                 if formatted.is_empty() {
@@ -453,6 +473,9 @@ impl<'a> Coordinator<'a> {
                     files,
                     unhandled,
                 ] = nums;
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.elapsed_ns = rd.u64();
+                }
 
                 self.flush_captured(w);
                 if self.last_header_idx == Some(idx) {
@@ -511,20 +534,14 @@ impl<'a> Coordinator<'a> {
                     .todos_to_repeat_buf
                     .extend_from_slice(rd.str());
             }
-            frame::Kind::JunitChunk => {
-                let idx = rd.u32() as usize;
-                let chunk = rd.str();
-                if !chunk.is_empty()
-                    && let Some(slot) = self.junit_chunks.get_mut(idx)
-                {
-                    super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
-                    *slot = Some(Box::<[u8]>::from(chunk));
-                }
-            }
-            frame::Kind::CoverageChunk => {
-                let chunk = rd.str();
-                if !chunk.is_empty() {
-                    self.coverage_chunks.push(Box::<[u8]>::from(chunk));
+            frame::Kind::CoverageFile => {
+                use bun_sourcemap_jsc::code_coverage::wire;
+                // fd 3 is writable from test JS, so a frame that doesn't
+                // decode is dropped rather than trusted.
+                if let Some(report) = wire::decode(rd.str()) {
+                    let merged =
+                        bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
+                    bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
@@ -575,7 +592,18 @@ impl<'a> Coordinator<'a> {
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
         self.flush_captured(w);
+        // Exited before the IPC handshake. `inflight` is None for these, so
+        // the mid-file handling below never fires; the per-slot cap is what
+        // bounds the respawn loop.
+        let startup_failure = w.inflight.is_none() && !w.reached_ready;
+        let worker_idx = w.idx;
         if let Some(idx) = w.inflight {
+            // The dead worker skipped the between-files cleanup of what its
+            // test spawned; it led its own process group, so kill(-pid) does it.
+            #[cfg(unix)]
+            if let Some(p) = &w.process {
+                terminate_process_group(p.pid);
+            }
             self.break_dots();
             self.ensure_header(idx);
             // A worker dying mid-file is never silently retried. If a test
@@ -587,13 +615,31 @@ impl<'a> Coordinator<'a> {
             // Bun or addon bug and must not be
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
-            // regular failure (commonly the OOM killer or the user).
+            // regular failure (commonly the OOM killer or the user). When the
+            // kill was ours (`Worker::on_channel_done`, corrupt IPC stream),
+            // the status says nothing the user can act on; report the cause.
             let panicked = is_panic_status(status);
             if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.record_timing(idx, w.dispatched_at);
-                self.account_crash(idx, status);
+                if w.ipc.corrupt_frame.get() && !panicked {
+                    self.account_crash(
+                        idx,
+                        w.dispatched_at,
+                        format_args!("worker killed: corrupt IPC frame, something wrote to fd 3"),
+                    );
+                } else {
+                    let mut buf = [0u8; 32];
+                    self.account_crash(
+                        idx,
+                        w.dispatched_at,
+                        format_args!(
+                            "worker crashed: {}",
+                            bstr::BStr::new(describe_status(&mut buf, status))
+                        ),
+                    );
+                }
             }
             Output::flush();
             // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
@@ -602,20 +648,55 @@ impl<'a> Coordinator<'a> {
             if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
+        } else if startup_failure {
+            w.startup_failures += 1;
+            // A crash signal during init aborts the whole run, same as a
+            // mid-file crash.
+            if is_panic_status(status) {
+                self.abort_on_worker_startup_panic(status);
+            }
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-        if let Some(p) = w.process.take() {
-            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
-            unsafe {
-                (*p).detach();
-                Process::deref(p);
+        w.process = None;
+        let startup_failures = w.startup_failures;
+
+        let can_respawn = self.stop_reason.is_none()
+            && startup_failures < MAX_STARTUP_FAILURES
+            && self.has_undispatched_files();
+
+        if startup_failure && self.stop_reason.is_none() {
+            // A false `can_respawn` is benign when no work remains; only the
+            // cap warrants the red error.
+            self.break_dots();
+            let mut buf = [0u8; 32];
+            let desc = bstr::BStr::new(describe_status(&mut buf, status));
+            if can_respawn {
+                bun_core::pretty_error!(
+                    "<r><yellow>warn<r>: test worker {} exited during startup ({}), retrying\n",
+                    worker_idx + 1,
+                    desc,
+                );
+            } else if startup_failures >= MAX_STARTUP_FAILURES {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: test worker {} exited during startup ({}) {} times\n",
+                    worker_idx + 1,
+                    desc,
+                    startup_failures,
+                );
+            } else {
+                bun_core::pretty_error!(
+                    "<r><d>test worker {} exited during startup ({})<r>\n",
+                    worker_idx + 1,
+                    desc,
+                );
             }
+            Output::flush();
         }
 
         let mut respawned = false;
-        if self.stop_reason.is_none() && self.has_undispatched_files() {
+        if can_respawn {
             // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
@@ -623,6 +704,7 @@ impl<'a> Coordinator<'a> {
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
             w.out = WorkerPipe::new(w_ptr);
             w.err = WorkerPipe::new(w_ptr);
+            w.reached_ready = false;
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -661,17 +743,28 @@ impl<'a> Coordinator<'a> {
         self.files_done += 1;
     }
 
-    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
+    fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
+        self.crashed_files.push(file_idx);
+        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
+            file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+        }
+    }
+
+    fn account_crash(
+        &mut self,
+        file_idx: u32,
+        dispatched_at: i64,
+        detail: core::fmt::Arguments<'_>,
+    ) {
         self.break_dots();
-        let mut buf = [0u8; 32];
         bun_core::pretty_error!(
-            "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
+            "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
-            bstr::BStr::new(describe_status(&mut buf, status)),
+            detail,
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
-        self.crashed_files.push(file_idx);
+        self.mark_crashed(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
         self.files_done += 1;
         if self.bail > 0 && self.reporter.summary().fail >= self.bail {
             self.bail_out();
@@ -696,6 +789,26 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
         );
         Output::flush();
+        self.terminate_workers_after_panic(b"aborted: worker panicked");
+    }
+
+    /// `abort_on_worker_panic` for the pre-`.ready` case: no file was
+    /// dispatched yet, so there is none to name.
+    fn abort_on_worker_startup_panic(&mut self, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        bun_core::pretty_error!(
+            concat!(
+                "\n<red>error<r>: a test worker process crashed with <b>{}<r> during startup.\n",
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            ),
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        );
+        Output::flush();
+        self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
+    }
+
+    fn terminate_workers_after_panic(&mut self, sweep_reason: &'static [u8]) {
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
         // Terminate the whole process group (same as the SIGINT path) so the
@@ -720,23 +833,16 @@ impl<'a> Coordinator<'a> {
             }
             // SAFETY: `other` is in-bounds (see above); reading `.process`
             // through *mut forms no `&mut Worker` aliasing the caller's `w`.
-            if let Some(p) = unsafe { (*other).process } {
+            if let Some(p) = unsafe { &(*other).process } {
                 #[cfg(unix)]
-                {
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
-                    // FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
                     // signals, so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(9) };
+                    let _ = p.kill(9);
                 }
             }
         }
@@ -748,7 +854,7 @@ impl<'a> Coordinator<'a> {
         if already_stopped {
             return;
         }
-        self.abort_queued_files(b"aborted: worker panicked");
+        self.abort_queued_files(sweep_reason);
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
@@ -815,6 +921,17 @@ impl<'a> Coordinator<'a> {
             }
             Some(job)
         }
+    }
+}
+
+/// SIGTERM to the process group a worker leads: the worker and everything it
+/// spawned. Safe after the worker exited: the pid stays reserved while any
+/// member of the group lives, and an empty group gives ESRCH.
+#[cfg(unix)]
+fn terminate_process_group(pid: libc::pid_t) {
+    // SAFETY: FFI call; -pid targets the worker's process group.
+    unsafe {
+        let _ = libc::kill(-pid, libc::SIGTERM);
     }
 }
 
@@ -916,7 +1033,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
                 &buf[..buf.len() - remaining]
             }
         }
-        SpawnStatus::Err(e) => <&'static str>::from(e.get_errno()).as_bytes(),
+        SpawnStatus::Err(e) => e.name(),
         SpawnStatus::Running => b"running",
     }
 }
@@ -929,7 +1046,8 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 pub(crate) mod abort_handler {
     use super::*;
 
-    pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+    /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
+    pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -942,8 +1060,8 @@ pub(crate) mod abort_handler {
         bun_core::RacyCell::new(MaybeUninit::uninit());
 
     #[cfg(unix)]
-    extern "C" fn posix_handler(_: i32, _: *const libc::siginfo_t, _: *const c_void) {
-        SHOULD_ABORT.store(true, Ordering::Release);
+    extern "C" fn posix_handler(sig: i32, _: *const libc::siginfo_t, _: *const c_void) {
+        ABORT_SIGNAL.store(sig, Ordering::Release);
     }
 
     #[cfg(windows)]
@@ -953,7 +1071,7 @@ pub(crate) mod abort_handler {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
-                SHOULD_ABORT.store(true, Ordering::Release);
+                ABORT_SIGNAL.store(libc::SIGINT, Ordering::Release);
                 windows::TRUE
             }
             _ => windows::FALSE,

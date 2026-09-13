@@ -20,12 +20,7 @@ const JSC::ClassInfo StrongRootBlock::s_info = {
 
 JSC::GCClient::IsoSubspace* StrongRootBlock::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<StrongRootBlock, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStrongRootBlock.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStrongRootBlock = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStrongRootBlock.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStrongRootBlock = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<StrongRootBlock, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStrongRootBlock, m_subspaceForStrongRootBlock));
 }
 
 StrongRootBlock* StrongRootBlock::create(JSC::VM& vm, JSC::Structure* structure)
@@ -68,12 +63,20 @@ StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, J
         }
     }
 
-    for (auto* b = clientData->m_strongRootBlockHead; b; b = b->next()) {
-        if (!b->isFull()) {
-            clientData->m_strongRootBlockCursor = b;
-            outFreeSlot = b->findFreeSlot();
-            return b;
-        }
+    // Blocks emptied by sweep-time deletes stay linked (see Bun__StrongRef__delete); keep one, release the rest here.
+    StrongRootBlock* found = nullptr;
+    for (auto* b = clientData->m_strongRootBlockHead; b;) {
+        auto* next = b->next();
+        if (b->isEmpty() && found)
+            release(clientData, vm, b);
+        else if (!b->isFull() && !found)
+            found = b;
+        b = next;
+    }
+    if (found) {
+        clientData->m_strongRootBlockCursor = found;
+        outFreeSlot = found->findFreeSlot();
+        return found;
     }
 
     StrongRootBlock* block = clientData->m_strongRootBlockFree;

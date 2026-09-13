@@ -2595,10 +2595,12 @@ impl<'a> LinkerContext<'a> {
     /// each other still differ).
     ///
     /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
-    /// chunks with different hashes would print the same characters; those
-    /// widen until they differ, and every chunk that reaches a widened chunk
-    /// (its output embeds that chunk's path or id) has the widths folded into
-    /// its own hash so that its name changes with its bytes.
+    /// chunks with different hashes would print the same characters or the
+    /// same output path; those widen until they differ, and every chunk that
+    /// reaches a widened chunk (its output embeds that chunk's path or id) has
+    /// the widths folded into its own hash so that its name changes with its
+    /// bytes. A widened chunk goes into that hash by its own hash, not by its
+    /// index, so a widening adds no dependence on the order of the chunks.
     pub(crate) fn final_chunk_hashes(
         &self,
         chunks: &[Chunk],
@@ -2709,27 +2711,125 @@ impl<'a> LinkerContext<'a> {
         let mut names: Vec<ContentHash> = (0..n)
             .map(|i| ContentHash::new(closure[i], min_len[i]))
             .collect();
-        for _ in 0..ContentHash::MAX_LEN {
-            if !ContentHash::widen_to_distinguish(&mut names) {
+
+        // Every round but the last widens a name and no name passes `MAX_LEN`,
+        // so this ends. A round gives the chunks it re-hashes new characters
+        // at their old widths, so under a short `[hashN]` it can take many.
+        loop {
+            // The printed hashes have to differ (they are the chunk ids), and so do the paths.
+            let mut any_widened = false;
+            loop {
+                let ids = ContentHash::widen_to_distinguish(&mut names);
+                let paths = self.widen_shared_paths(chunks, &mut names);
+                if !ids && !paths {
+                    break;
+                }
+                any_widened = true;
+            }
+            if !any_widened {
                 break;
             }
+            // A chunk digests each widened chunk it reaches by that chunk's
+            // hash, and sums them, so that the order of the chunks does not
+            // change the result.
+            let widened: Vec<(usize, u64)> = (0..n)
+                .filter(|&j| names[j].len() != min_len[j])
+                .map(|j| {
+                    let mut hash = ContentHasher::default();
+                    hash.write(&closure[j].to_ne_bytes());
+                    hash.write_ints(&[names[j].len() as u32]);
+                    (j, hash.digest())
+                })
+                .collect();
             for i in 0..n {
-                let mut hash = ContentHasher::default();
-                let mut any = false;
-                let mut iter = reach[i].iterator::<true, true>();
-                while let Some(j) = iter.next() {
-                    if j != i && names[j].len() != min_len[j] {
-                        hash.write_ints(&[j as u32, names[j].len() as u32]);
-                        any = true;
+                let mut widths: Option<u64> = None;
+                for &(j, digest) in &widened {
+                    if j != i && reach[i].is_set(j) {
+                        widths = Some(widths.unwrap_or(0).wrapping_add(digest));
                     }
                 }
-                if any {
+                if let Some(widths) = widths {
+                    let mut hash = ContentHasher::default();
+                    hash.write(&widths.to_ne_bytes());
                     hash.write(&closure[i].to_ne_bytes());
                     names[i] = ContentHash::new(hash.digest(), names[i].len());
                 }
             }
         }
         Ok(names)
+    }
+
+    /// Where `chunk` goes under the output directory when `hash` is its final hash.
+    pub(crate) fn chunk_rel_path(
+        &self,
+        chunk: &Chunk,
+        hash: bun_core::fmt::ContentHash,
+    ) -> Vec<u8> {
+        let mut rel_path: Vec<u8> = Vec::new();
+        // The byte-writer, not `Display`/`write!`: that goes via
+        // `from_utf8_lossy`, which would replace non-UTF-8 dir bytes with
+        // U+FFFD and corrupt the output path.
+        // Disk output sanitizes leading `..`; `--compile` keeps it so
+        // runtime bunfs references to out-of-root entrypoints resolve.
+        chunk
+            .template
+            .print_with_hash(
+                &mut rel_path,
+                Some(hash),
+                !self.options.compile_mode.is_executable(),
+            )
+            .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
+
+        // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
+        // which importers of the chunk would copy verbatim.
+        while let Some(i) = strings::index_of(&rel_path, b"/./") {
+            rel_path.drain(i..i + 2);
+        }
+        rel_path
+    }
+
+    /// Two chunks under different naming templates can print one output path
+    /// from different hashes: a literal next to `[hash]` reads as a character
+    /// of a wider hash. Gives each chunk of such a group one more character,
+    /// unless their full hashes print one path too. Returns whether any name
+    /// changed.
+    fn widen_shared_paths(
+        &self,
+        chunks: &[Chunk],
+        names: &mut [bun_core::fmt::ContentHash],
+    ) -> bool {
+        use bun_core::fmt::ContentHash;
+        let paths: Vec<Vec<u8>> = (chunks.iter().zip(names.iter()))
+            .map(|(chunk, &name)| self.chunk_rel_path(chunk, name))
+            .collect();
+        let mut order: Vec<usize> = (0..chunks.len()).collect();
+        order.sort_unstable_by(|&a, &b| paths[a].cmp(&paths[b]));
+        let mut widened = false;
+        for group in order.chunk_by(|&a, &b| paths[a] == paths[b]) {
+            if group.len() < 2 {
+                continue;
+            }
+            let full = |i: usize| {
+                let hash = ContentHash::new(names[i].value, ContentHash::MAX_LEN);
+                self.chunk_rel_path(&chunks[i], hash)
+            };
+            let first = full(group[0]);
+            if group[1..].iter().all(|&i| full(i) == first) {
+                continue;
+            }
+            for &i in group {
+                if names[i].len() < ContentHash::MAX_LEN
+                    && chunks[i]
+                        .template
+                        .needs(crate::options::PlaceholderField::Hash)
+                {
+                    names[i] = ContentHash::new(names[i].value, names[i].len() + 1);
+                    widened = true;
+                }
+            }
+        }
+        widened
     }
 
     // Sort cross-chunk exports by chunk name for determinism

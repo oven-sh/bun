@@ -866,6 +866,139 @@ test.concurrent("bun build widens [hash] names that would otherwise collide", as
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("bun build widens [hash] names", () => {
+  // Runs in `dir` so that the paths the output names hash are the relative ones.
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--target=bun", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test("when a literal of another naming template prints the same path", async () => {
+    // `c` plus any one hash character is the name of an entry point, so the
+    // lazy chunk cannot stay at `c[hash1]`.
+    const alphabet = [..."0123456789abcdefghjkmnpqrstvwxyz"];
+    const files: Record<string, string> = { "lazy.js": `export default "lazy";\n` };
+    for (const ch of alphabet) files[`c${ch}.js`] = `export default () => import("./lazy.js");\n`;
+    using dir = tempDir("bundle-hash-widen-literal", files);
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      ...alphabet.map(ch => `./c${ch}.js`),
+      "--outdir=dist",
+      "--entry-naming=[name].[ext]",
+      "--chunk-naming=c[hash1].[ext]",
+    );
+    expect(stderr).toBe("");
+    const names = fs.readdirSync(path.join(String(dir), "dist"));
+    const chunks = names.filter(name => !(name in files));
+    expect({ count: names.length, chunks }).toEqual({
+      count: alphabet.length + 1,
+      chunks: [expect.stringMatching(/^c[0-9a-z]{2}\.js$/)],
+    });
+    expect(fs.readFileSync(path.join(String(dir), "dist", "c0.js"), "utf8")).toContain(`import("./${chunks[0]}")`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("when two naming templates print the same path from different hashes", async () => {
+    // With these inputs, the entry `s/e4.js` widens to `c8` and the chunk of
+    // `s/l0.js` prints `8` after the literal `c`: both asked for `./c8.js`.
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 8; i++) {
+      files[`s/l${i}.js`] = `export default "L${i}-17";`;
+      files[`s/e${i}.js`] = `import("./l${i}.js").then(m=>console.log("e${i}",m.default,17));`;
+    }
+    using dir = tempDir("bundle-hash-widen-templates", files);
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      ...Array.from({ length: 8 }, (_, i) => `./s/e${i}.js`),
+      "--outdir=dist",
+      "--entry-naming=[hash1].[ext]",
+      "--chunk-naming=c[hash1].[ext]",
+    );
+    expect(stderr).toBe("");
+    expect(fs.readdirSync(path.join(String(dir), "dist")).length).toBe(16);
+    expect(exitCode).toBe(0);
+  });
+
+  test("until the chunks of a connected graph all differ", async () => {
+    // Each chunk reaches every other one, so each widening re-hashes all of
+    // them at their old widths, and under `[hash1]` some of those collide again.
+    const n = 170;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < n; i++) {
+      files[`g/m${i}.js`] = `export const id=${i};\nexport const next=()=>import("./m${(i + 1) % n}.js");\n`;
+    }
+    using dir = tempDir("bundle-hash-widen-ring", files);
+
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "./g/m0.js",
+      "--outdir=dist",
+      "--entry-naming=[name].[ext]",
+      "--chunk-naming=C[hash1].[ext]",
+    );
+    expect(stderr).toBe("");
+    const dist = path.join(String(dir), "dist");
+    const names = new Set(fs.readdirSync(dist));
+    expect(names.size).toBe(n);
+    // Follow the ring from the entry point: every import() names an output.
+    const seen = new Set<string>();
+    for (let name = "m0.js"; !seen.has(name); ) {
+      seen.add(name);
+      name = fs.readFileSync(path.join(dist, name), "utf8").match(/import\("\.\/([^"]+)"\)/)![1];
+      expect(names.has(name)).toBe(true);
+    }
+    expect(seen.size).toBe(n);
+    expect(exitCode).toBe(0);
+  });
+
+  test("by the hash of each widened chunk, not by its index", async () => {
+    // The chunk index follows the order of the entry points. In this graph no
+    // chunk reaches two chunks whose relative order follows it, so `[hash]`
+    // gives the same names for any order, and a widening has to keep that.
+    const n = 40;
+    const files: Record<string, string> = { "src/shared.js": `export function tag(x){return "<"+x+">"}\n` };
+    for (let i = 1; i <= n; i++) {
+      files[`src/lazy/l${i}.js`] = `export default ${i};\n`;
+      files[`src/e${i}.js`] =
+        `import {tag} from './shared.js'; import('./lazy/l${i}.js').then(m=>console.log(tag('e${i}'), m.default));\n`;
+    }
+    using dir = tempDir("bundle-hash-widen-order", files);
+    const entries = Array.from({ length: n }, (_, i) => `./src/e${i + 1}.js`);
+
+    const outputs = async (outdir: string, entries: string[]) => {
+      const { stderr, exitCode } = await build(
+        String(dir),
+        ...entries,
+        `--outdir=${outdir}`,
+        // 81 outputs cannot all differ in one character of a 32-character alphabet.
+        "--entry-naming=E[hash1].[ext]",
+        "--chunk-naming=C[hash1].[ext]",
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const names = fs.readdirSync(path.join(String(dir), outdir)).sort();
+      return Object.fromEntries(
+        names.map(name => [name, fs.readFileSync(path.join(String(dir), outdir, name), "utf8")]),
+      );
+    };
+    const [forward, reversed] = await Promise.all([
+      outputs("forward", entries),
+      outputs("reversed", entries.toReversed()),
+    ]);
+    expect(Object.keys(forward).length).toBe(2 * n + 1);
+    expect(reversed).toEqual(forward);
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

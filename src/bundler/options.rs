@@ -2453,13 +2453,23 @@ impl PathTemplate {
         writer: &mut W,
         sanitize_parent_dirs: bool,
     ) -> bun_io::Result<()> {
+        self.print_with_hash(writer, self.placeholder.hash, sanitize_parent_dirs)
+    }
+
+    /// [`print`](Self::print) with `hash` in place of the template's own.
+    pub(crate) fn print_with_hash<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        hash: Option<bun_core::fmt::ContentHash>,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
         path_template_print(
             writer,
             &self.data,
             &self.placeholder.dir,
             &self.placeholder.name,
             &self.placeholder.ext,
-            self.placeholder.hash,
+            hash,
             &self.placeholder.target,
             sanitize_parent_dirs,
         )

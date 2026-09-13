@@ -1,7 +1,7 @@
 import { linuxCpusFromRoot } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -212,6 +212,102 @@ describe.skipIf(!isLinux)("cpus on Linux", () => {
       { times: times(0), model: "unknown", speed: 0 },
       { times: times(1), model: "unknown", speed: 2 },
     ]);
+  });
+});
+
+// An arm64 kernel prints no "model name" line in /proc/cpuinfo. Node names the CPU from the "CPU part" line.
+// The expected names are what Node 26.3.0 (libuv 1.52.1) reports for the same file. Two cases differ from Node, and say so.
+describe.skipIf(!isLinux)("cpus model on Linux", () => {
+  // `cpus` has one { part, modelName } per CPU. An arm64 kernel prints no model name line. QEMU user mode prints one.
+  function models(cpus) {
+    using root = tempDir("os-cpus-arm64", {
+      "proc/stat":
+        "cpu  100 0 100 1000 0 0 0 0 0 0\n" +
+        cpus.map((_, id) => `cpu${id} 1 0 10 100 0 0 0 0 0 0\n`).join("") +
+        "intr 0\n",
+      "proc/cpuinfo": cpus
+        .map(
+          ({ part, modelName }, id) =>
+            `processor\t: ${id}\n` +
+            (modelName ? `model name\t: ${modelName}\n` : "") +
+            "BogoMIPS\t: 243.75\n" +
+            "Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp ssbs\n" +
+            "CPU implementer\t: 0x41\n" +
+            "CPU architecture: 8\n" +
+            "CPU variant\t: 0x3\n" +
+            `CPU part\t: ${part}\n` +
+            "CPU revision\t: 1\n\n",
+        )
+        .join(""),
+    });
+    return linuxCpusFromRoot(String(root)).map(cpu => cpu.model);
+  }
+
+  it("names each arm64 processor from its CPU part", () => {
+    // AWS Graviton2, AWS Graviton4, Raspberry Pi 4, Raspberry Pi 5, then the first and the longest name of the table.
+    const parts = ["0xd0c", "0xd4f", "0xd08", "0xd0b", "0x811", "0xb02"];
+    expect(models(parts.map(part => ({ part })))).toEqual([
+      "Neoverse-N1",
+      "Neoverse-V2",
+      "Cortex-A72",
+      "Cortex-A76",
+      "ARM810",
+      "ARM11 MPCore",
+    ]);
+  });
+
+  it("reports an unknown model for a CPU part that libuv has no name for", () => {
+    // Neoverse-V1 (AWS Graviton3), Neoverse-N2, Qualcomm Kryo 4xx Silver.
+    expect(models([{ part: "0xd40" }, { part: "0xd49" }, { part: "0x805" }])).toEqual([
+      "unknown",
+      "unknown",
+      "unknown",
+    ]);
+  });
+
+  it("keeps the model of each processor on a host with two core types", () => {
+    // Rockchip RK3399. Not as Node: libuv 1.52.1 gives all six CPUs the first model that it stored.
+    const parts = ["0xd03", "0xd03", "0xd03", "0xd03", "0xd08", "0xd08"];
+    expect(models(parts.map(part => ({ part })))).toEqual([
+      "Cortex-A53",
+      "Cortex-A53",
+      "Cortex-A53",
+      "Cortex-A53",
+      "Cortex-A72",
+      "Cortex-A72",
+    ]);
+  });
+
+  it("takes a CPU part with a name over the model name line that QEMU user mode prints", () => {
+    // `qemu-aarch64 -cpu neoverse-n1`
+    expect(models([{ part: "0xd0c", modelName: "ARMv8 Processor rev 1 (v8l)" }])).toEqual(["Neoverse-N1"]);
+  });
+
+  it("keeps the model name line when the CPU part has no name", () => {
+    // The default QEMU CPU. Not as Node, which reports "unknown".
+    expect(models([{ part: "0x051", modelName: "ARMv8 Processor rev 0 (v8l)" }])).toEqual([
+      "ARMv8 Processor rev 0 (v8l)",
+    ]);
+  });
+
+  // The table is a copy of libuv 1.52. An older Node has no name for AWS Graviton4 (Neoverse-V2).
+  const node = isLinux ? nodeExe() : null;
+  const nodeUv = node
+    ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.uv"], env: bunEnv, stderr: "ignore" }).stdout.toString()
+    : "";
+
+  // The two cases that differ from Node also differ here: a host with two core types, and QEMU user mode.
+  it.skipIf(!nodeUv.startsWith("1.52."))("reports the same models as Node on this host", async () => {
+    await using proc = Bun.spawn({
+      cmd: [node, "-p", "JSON.stringify(require('os').cpus().map(cpu => cpu.model))"],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ models: stdout.trim(), exitCode }).toEqual({
+      models: JSON.stringify(os.cpus().map(cpu => cpu.model)),
+      exitCode: 0,
+    });
   });
 });
 

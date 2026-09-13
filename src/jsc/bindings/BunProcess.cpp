@@ -3146,8 +3146,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JS
         return false;
     }
     auto& vm = JSC::getVM(globalObject);
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // `this` can be any object, so it gets to reject the property (frozen, Proxy, WebAssembly GC reference).
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)

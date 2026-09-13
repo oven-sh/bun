@@ -1188,3 +1188,152 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     expect(fired).toBe(1);
   });
 });
+
+// Node's EventEmitter methods reach their state through `this._events`. Only the addListener family
+// and setMaxListeners assign to `this`. The native prototype (process's) used to store a new
+// `_events` from every method, and directly, which skipped the receiver's own [[DefineOwnProperty]]:
+// a frozen object gained a property, a Proxy saw no trap, and a WebAssembly GC reference aborted
+// the process.
+describe("native EventEmitter with a receiver that is not an emitter", () => {
+  const nativeProto = Object.getPrototypeOf(process);
+  const listener = () => {};
+  const RECEIVER = Symbol("the receiver");
+
+  // [name, call, result for a receiver with no listeners]
+  const readers: Array<[string, (receiver: object) => unknown, unknown]> = [
+    ["emit", receiver => nativeProto.emit.call(receiver, "x"), false],
+    ["removeListener", receiver => nativeProto.removeListener.call(receiver, "x", listener), RECEIVER],
+    ["off", receiver => nativeProto.off.call(receiver, "x", listener), RECEIVER],
+    ["removeAllListeners", receiver => nativeProto.removeAllListeners.call(receiver), RECEIVER],
+    ["eventNames", receiver => nativeProto.eventNames.call(receiver), []],
+    ["listenerCount", receiver => nativeProto.listenerCount.call(receiver, "x"), 0],
+    ["listeners", receiver => nativeProto.listeners.call(receiver, "x"), []],
+    ["rawListeners", receiver => nativeProto.rawListeners.call(receiver, "x"), []],
+    ["getMaxListeners", receiver => nativeProto.getMaxListeners.call(receiver), 10],
+  ];
+  const writers: Array<[string, (receiver: object) => unknown]> = [
+    ["on", receiver => nativeProto.on.call(receiver, "x", listener)],
+    ["addListener", receiver => nativeProto.addListener.call(receiver, "x", listener)],
+    ["once", receiver => nativeProto.once.call(receiver, "x", listener)],
+    ["prependListener", receiver => nativeProto.prependListener.call(receiver, "x", listener)],
+    ["prependOnceListener", receiver => nativeProto.prependOnceListener.call(receiver, "x", listener)],
+    ["setMaxListeners", receiver => nativeProto.setMaxListeners.call(receiver, 20)],
+  ];
+
+  test.each(readers)("%s does not define _events", (_name, call, expected) => {
+    for (const receiver of [{}, Object.freeze({})]) {
+      const result = call(receiver);
+      if (expected === RECEIVER) expect(result).toBe(receiver);
+      else expect(result).toEqual(expected);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+    }
+  });
+
+  test.each(writers)("%s defines _events the way an assignment does", (_name, call) => {
+    const plain = {};
+    call(plain);
+    expect(Object.getOwnPropertyDescriptor(plain, "_events")).toEqual({
+      value: expect.any(Object),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+      const receiver = lock({});
+      expect(() => call(receiver)).toThrow(TypeError);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+    }
+  });
+
+  test("setMaxListeners on a plain receiver is read back", () => {
+    const receiver = {};
+    nativeProto.setMaxListeners.call(receiver, 20);
+    expect(nativeProto.getMaxListeners.call(receiver)).toBe(20);
+  });
+
+  test("listenerCount on a primitive receiver throws an error that names listenerCount", () => {
+    expect(() => nativeProto.listenerCount.call(5, "x")).toThrow(
+      "Can only call EventEmitter.listenerCount on instances of EventEmitter",
+    );
+  });
+
+  test("an object that inherits from process has its own listeners", () => {
+    const child = Object.create(process);
+    let fired = 0;
+    child.on("x", () => fired++);
+    expect(child.emit("x")).toBe(true);
+    expect(fired).toBe(1);
+    expect(Reflect.ownKeys(child)).toEqual(["_events"]);
+    expect(process.listenerCount("x")).toBe(0);
+  });
+
+  test("a Proxy receiver gets its defineProperty trap called and keeps its listeners", () => {
+    const calls: PropertyKey[] = [];
+    const target = {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push(key);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    let fired = 0;
+    nativeProto.on.call(proxy, "x", () => fired++);
+    expect(calls).toEqual(["_events"]);
+    expect(Reflect.ownKeys(target)).toEqual(["_events"]);
+    expect(nativeProto.emit.call(proxy, "x")).toBe(true);
+    expect(fired).toBe(1);
+    expect(nativeProto.listenerCount.call(proxy, "x")).toBe(1);
+
+    const refusing = new Proxy({}, { defineProperty: () => false });
+    expect(() => nativeProto.on.call(refusing, "x", listener)).toThrow(TypeError);
+  });
+
+  // In a subprocess because this aborted the process.
+  test("a WebAssembly GC reference as the receiver throws a TypeError from the methods that assign", async () => {
+    const src = `
+      // (module (type $s (struct (field (mut i32))))
+      //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+      const bytes = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+        0x03, 0x02, 0x01, 0x01,
+        0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+      ]);
+      const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+      const result = {};
+      const attempt = (name, ...args) => {
+        try {
+          result[name] = process[name].call(ref, ...args);
+        } catch (e) {
+          result[name] = e.constructor.name;
+        }
+      };
+      for (const name of ["on", "addListener", "once", "prependListener", "prependOnceListener"]) attempt(name, "x", () => {});
+      attempt("setMaxListeners", 20);
+      attempt("listenerCount", "x");
+      attempt("emit", "x");
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      on: "TypeError",
+      addListener: "TypeError",
+      once: "TypeError",
+      prependListener: "TypeError",
+      prependOnceListener: "TypeError",
+      setMaxListeners: "TypeError",
+      listenerCount: 0,
+      emit: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

@@ -607,9 +607,7 @@ impl IntermediateOutput {
         dst
     }
 
-    /// `path` with Windows separators turned into `/`, copied into `buf`. The
-    /// source is reachable only through `&Graph` / `&[Chunk]`, so it is never
-    /// normalized in place.
+    /// `path` copied into `buf` with Windows separators turned into `/`.
     fn to_posix_separators<'b>(buf: &'b mut [u8], path: &[u8]) -> &'b [u8] {
         let dst = &mut buf[..path.len()];
         dst.copy_from_slice(path);

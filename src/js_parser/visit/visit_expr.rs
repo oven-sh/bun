@@ -91,12 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The "Cannot use \"new.target\" here" range error is intentionally
         // not emitted: it is not necessary and it was causing breakages.
 
-        // Substitute the value where it is always undefined. Lowering can move
-        // a field initializer into the constructor, where "new.target" is the
-        // class. JavaScriptCore also throws a ReferenceError on entry to an
-        // arrow function with no function around it (the bundler's "__esm"
-        // wrapper) when a class in it has "new.target" in a field initializer
-        // or a static block: https://github.com/oven-sh/WebKit/pull/647
+        // JavaScriptCore can throw for it here: https://github.com/oven-sh/WebKit/pull/647
         if p.fn_only_data_visit.is_new_target_undefined {
             *e = p.new_expr(E::Undefined {}, e.loc);
         }

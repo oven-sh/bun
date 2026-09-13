@@ -1313,8 +1313,7 @@ pub struct FnOnlyDataVisit {
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
 
-    /// True inside a class field initializer or a class static block. Both run
-    /// as a method call, so "new.target" is always undefined there.
+    /// True in a class field initializer or a class static block, which run as a method call.
     pub(crate) is_new_target_undefined: bool,
 }
 

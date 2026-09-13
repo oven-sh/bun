@@ -144,7 +144,8 @@ struct Context {
 /// The spelling of a token as source text.
 pub(crate) fn spelling(tok: &PpToken) -> &[u8] {
     match tok.kind {
-        PpKind::Punct(p) => p.spelling().as_bytes(),
+        // (A digraph keeps the spelling it was written with.)
+        PpKind::Punct(p) if tok.text.is_empty() => p.spelling().as_bytes(),
         // Printed by `preprocess` with `#pragma ` in front, on a line of its own.
         _ => &tok.text,
     }

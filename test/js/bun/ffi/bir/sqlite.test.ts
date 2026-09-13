@@ -6,7 +6,7 @@ import { includePath, lines, run, supported, wrapperSource } from "./run-fixture
 // A miscompile check on real code: SQLite (the amalgamation in this repository, 260,000 lines of C) is compiled by
 // Bun's C compiler, linked with a small driver and asked questions with known answers.
 // `bun build --compile` takes no -D or -I: each file is compiled through a wrapper that defines the macros and
-// includes it, and the directory of "sqlite3.h" goes in C_INCLUDE_PATH.
+// includes it, and the directory of "sqlite3_local.h" (the amalgamation's header) goes in C_INCLUDE_PATH.
 const sqlite = join(import.meta.dir, "../../../../../src/jsc/bindings/sqlite");
 
 test.skipIf(!supported)(
@@ -68,7 +68,7 @@ test.skipIf(!supported)(
       "SQLITE_ENABLE_FTS5=1",
       "SQLITE_ENABLE_RTREE=1",
     ];
-    const driver = `#include "sqlite3.h"
+    const driver = `#include "sqlite3_local.h"
 #include <string.h>
 #include <stdio.h>
 static sqlite3 *db;

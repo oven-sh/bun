@@ -528,7 +528,14 @@ pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
                 } else {
                     i64::from(*b)
                 }),
-                _ => return err(loc, "multi-character character constants are not supported"),
+                // Implementation-defined; as GCC and Clang have it, an int made of the last four
+                // characters, the first of them in the most significant byte.
+                several => Tok::Char(i64::from(
+                    several
+                        .iter()
+                        .fold(0u32, |value, b| (value << 8) | u32::from(*b))
+                        as i32,
+                )),
             }
         }
         PpKind::StrLit => {

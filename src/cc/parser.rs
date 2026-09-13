@@ -4170,6 +4170,7 @@ impl<S: TokenSource> Parser<S> {
         let loc = self.bump()?.loc;
         // `__alignof__(variable)`: what its declaration asked for, if more than its type does.
         let mut declared_align = None;
+        let first_new_vla = self.sema.vlas.len();
         let ty = if self.at(Punct::LParen) && self.next_is_type_start()? {
             self.bump()?;
             let ty = self.parse_type_name()?;
@@ -4205,7 +4206,13 @@ impl<S: TokenSource> Parser<S> {
             }
             self.sema.alignof_type(&ty, loc)
         } else {
-            // `sizeof(int[n])` evaluates `n`.
+            // `sizeof(int[n])` evaluates `n`, and so does `sizeof *(int (*)[n])p`, whose operand is
+            // otherwise not evaluated: the bounds its type names are all of it that is.
+            if self.sema.tcx.is_variably_sized(&ty) {
+                let mut bounds = self.sema.vla_bounds_since(first_new_vla, loc)?;
+                self.pending_vla.clear();
+                self.pending_vla.append(&mut bounds);
+            }
             let size = self.sema.sizeof_type(&ty, loc)?;
             self.after_pending_vla(size)
         }
@@ -4317,6 +4324,7 @@ impl<S: TokenSource> Parser<S> {
                 imaginary,
             } => {
                 let (value, single, imaginary) = (*value, *single, *imaginary);
+                let has_long_suffix = long_double.is_some();
                 let extended =
                     long_double.filter(|_| self.sema.tcx.target.long_double_size().is_some());
                 self.bump()?;
@@ -4329,7 +4337,13 @@ impl<S: TokenSource> Parser<S> {
                     }
                     return self.sema.long_double_lit(extended, loc);
                 }
-                let ty = if single { Type::Float } else { Type::Double };
+                let ty = if single {
+                    Type::Float
+                } else if has_long_suffix && !imaginary {
+                    Type::LongDouble64
+                } else {
+                    Type::Double
+                };
                 if imaginary {
                     return self.sema.imaginary_lit(value, &ty, loc);
                 }
@@ -4631,7 +4645,13 @@ impl<S: TokenSource> Parser<S> {
                 } else {
                     f64::INFINITY
                 };
-                let ty = if single { Type::Float } else { Type::Double };
+                let ty = if single {
+                    Type::Float
+                } else if short.ends_with('l') {
+                    Type::LongDouble64
+                } else {
+                    Type::Double
+                };
                 Ok(Some(self.sema.float_lit(value, ty, loc)?))
             }
             "prefetch" | "__clear_cache" => {
@@ -4835,11 +4855,12 @@ impl<S: TokenSource> Parser<S> {
             }
             "fabsl" | "copysignl" if self.sema.tcx.target.long_double_size().is_none() => {
                 let args = self.parse_builtin_args()?;
-                Ok(Some(self.sema.sign_builtin(
-                    false,
-                    short == "copysignl",
-                    name,
-                    args,
+                let as_double =
+                    self.sema
+                        .sign_builtin(false, short == "copysignl", name, args, loc)?;
+                Ok(Some(self.sema.convert(
+                    as_double,
+                    &Type::LongDouble64,
                     loc,
                 )?))
             }

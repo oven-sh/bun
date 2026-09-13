@@ -285,6 +285,13 @@ impl Lexer {
         use Punct::*;
         let (b0, b1, b2) = (self.peek(), self.peek_at(1), self.peek_at(2));
         let (p, len) = match (b0, b1, b2) {
+            // The digraphs mean what they stand for; only their spelling is their own.
+            (b'%', b':', b'%') if self.peek_at(3) == b':' => (HashHash, 4),
+            (b'%', b':', _) => (Hash, 2),
+            (b'<', b':', _) => (LBracket, 2),
+            (b':', b'>', _) => (RBracket, 2),
+            (b'<', b'%', _) => (LBrace, 2),
+            (b'%', b'>', _) => (RBrace, 2),
             (b'.', b'.', b'.') => (Ellipsis, 3),
             (b'<', b'<', b'=') => (ShlAssign, 3),
             (b'>', b'>', b'=') => (ShrAssign, 3),
@@ -406,6 +413,10 @@ impl TokenSource for Lexer {
                     PpKind::Other
                 }
             } else if let Some(p) = self.punct() {
+                let written = &self.src[loc.offset as usize..self.pos];
+                if matches!(written, b"%:%:" | b"%:" | b"<:" | b":>" | b"<%" | b"%>") {
+                    text.extend_from_slice(written);
+                }
                 PpKind::Punct(p)
             } else {
                 // Any other character is a preprocessing token of its own.

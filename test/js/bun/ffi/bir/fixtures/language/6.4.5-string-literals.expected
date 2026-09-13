@@ -1,0 +1,10 @@
+4 1 4
+char char wchar_t char16_t char32_t
+3 3 3
+one two three 5 5
+5 4
+20ac d83d de00 0 | 20ac 1f600 | c3 a9
+1 1
+e o 3 0
+3 c 0 4 5
+main

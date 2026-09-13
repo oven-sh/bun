@@ -494,7 +494,7 @@ impl FnGen<'_, '_> {
         let size = self.tcx.size_of(&leaf.ty).unwrap_or(8).min(8);
         let v = match &leaf.ty {
             Type::Float => self.b.def(Inst::ConstF32(bits as u32), Ty::F32),
-            Type::Double => self.b.def(Inst::ConstF64(bits), Ty::F64),
+            Type::Double | Type::LongDouble64 => self.b.def(Inst::ConstF64(bits), Ty::F64),
             Type::Bool => self.b.const_i32(i32::from(bits & 0xff != 0)),
             ty => {
                 let shift = 64 - size as u32 * 8;

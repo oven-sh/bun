@@ -53,6 +53,26 @@ impl Sema {
         )
     }
 
+    /// `count = len` for every variable length array type made since there were `first` of them
+    /// that has a count variable: what evaluating the type names of an expression comes to.
+    pub(crate) fn vla_bounds_since(&mut self, first: usize, loc: Loc) -> Res<Vec<Expr>> {
+        let size_type = self.size_type();
+        let mut out = Vec::new();
+        for id in first..self.vlas.len() {
+            let (Some(count), Some(len)) = (self.vlas[id].count, self.vlas[id].len.clone()) else {
+                continue;
+            };
+            let value = self.convert(len, &size_type, loc)?;
+            let target = self.mk(ExprKind::Local(count), size_type.clone(), loc)?;
+            out.push(self.mk(
+                ExprKind::Assign(Box::new(target), Box::new(value)),
+                size_type.clone(),
+                loc,
+            )?);
+        }
+        Ok(out)
+    }
+
     /// At the start of a function definition: evaluates the array bounds its parameter
     /// types mention (`int m[n][n]` is `int (*m)[n]`).
     pub(crate) fn bind_param_vlas(&mut self, ty: &Type, out: &mut Vec<Stmt>, loc: Loc) -> Res<()> {

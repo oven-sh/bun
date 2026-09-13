@@ -197,7 +197,7 @@ fn flatten(tcx: &TypeCtx, ty: &Type, base: u64, out: &mut Vec<Field>) -> Result<
             });
             Ok(())
         }
-        Type::Double => {
+        Type::Double | Type::LongDouble64 => {
             out.push(Field {
                 offset: base,
                 size: 8,

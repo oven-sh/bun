@@ -84,7 +84,7 @@ impl Target {
 
     pub(crate) fn long_double_type(self) -> Type {
         match self.long_double_size() {
-            None => Type::Double,
+            None => Type::LongDouble64,
             Some(_) if self.long_double_is_x87() => Type::Wide(WideKind::LongDouble),
             Some(_) => Type::Wide(WideKind::QuadLongDouble),
         }
@@ -129,6 +129,9 @@ pub(crate) enum Type {
     ULLong,
     Float,
     Double,
+    /// `long double` where it has the format of `double` (every Windows target, Apple's arm64):
+    /// a type of its own (C11 6.2.5p10) that is stored, passed and computed with as `double` is.
+    LongDouble64,
     /// 128-bit integers: two 64-bit halves in memory, low half first.
     Int128,
     UInt128,
@@ -428,7 +431,10 @@ impl Type {
 
     /// `float` or `double`: the floating types whose values are BIR values.
     pub(crate) fn is_float(&self) -> bool {
-        matches!(self.unqualified(), Type::Float | Type::Double)
+        matches!(
+            self.unqualified(),
+            Type::Float | Type::Double | Type::LongDouble64
+        )
     }
 
     /// The x87 `long double`: an arithmetic type whose value is an object in memory, so an
@@ -565,7 +571,12 @@ impl TypeCtx {
             Type::Short | Type::UShort => 2,
             Type::Int | Type::UInt | Type::Float => 4,
             Type::Long | Type::ULong => self.target.long_size(),
-            Type::LLong | Type::ULLong | Type::Double | Type::Ptr(_) | Type::ComplexFloat => 8,
+            Type::LLong
+            | Type::ULLong
+            | Type::Double
+            | Type::LongDouble64
+            | Type::Ptr(_)
+            | Type::ComplexFloat => 8,
             Type::Int128 | Type::UInt128 | Type::ComplexDouble => 16,
             Type::Array(elem, len) => self.size_of(elem)?.checked_mul((*len)?)?,
             // Known only at run time.
@@ -725,7 +736,7 @@ impl TypeCtx {
             Type::Vector(..) if self.is_half_vector(ty) => self.half_vector_carrier(),
             Type::Vector(..) => bir::Ty::V128,
             Type::Float => bir::Ty::F32,
-            Type::Double => bir::Ty::F64,
+            Type::Double | Type::LongDouble64 => bir::Ty::F64,
             Type::Long | Type::ULong => {
                 if self.target.long_size() == 8 {
                     bir::Ty::I64
@@ -779,7 +790,7 @@ impl TypeCtx {
             }
             Type::UShort => MemKind::I16U,
             Type::Float => MemKind::F32,
-            Type::Double => MemKind::F64,
+            Type::Double | Type::LongDouble64 => MemKind::F64,
             other => {
                 if self.machine_ty(other) == bir::Ty::I64 {
                     MemKind::I64
@@ -832,6 +843,7 @@ impl TypeCtx {
             Type::ULLong => "unsigned long long".to_string(),
             Type::Float => "float".to_string(),
             Type::Double => "double".to_string(),
+            Type::LongDouble64 => "long double".to_string(),
             Type::Int128 => "__int128".to_string(),
             Type::UInt128 => "unsigned __int128".to_string(),
             Type::ComplexFloat => "float _Complex".to_string(),

@@ -446,10 +446,18 @@ pub(crate) fn predefined_macros(target: Target) -> String {
         def("__LDBL_HAS_QUIET_NAN__", "1");
         def("__DECIMAL_DIG__", "21");
     } else {
-        // Where long double is wider than double and not the x87 format, arithmetic on it is
-        // not implemented: it is described with double's characteristics so that the
+        // Where long double has double's format its constants are long doubles like any other.
+        // Where it is wider than double and not the x87 format, arithmetic on it is not
+        // implemented: it is described with double's characteristics, as doubles, so that the
         // constants are at least representable.
-        double_like("LDBL", "");
+        double_like(
+            "LDBL",
+            if target.long_double_size().is_none() {
+                "L"
+            } else {
+                ""
+            },
+        );
         def("__DECIMAL_DIG__", "17");
     }
     out

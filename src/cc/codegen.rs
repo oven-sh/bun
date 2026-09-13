@@ -1274,7 +1274,7 @@ impl<'a> FnGen<'a, '_> {
         let bits = u64::from_le_bytes(raw);
         Ok(Some(match &ty {
             Type::Float => self.b.def(Inst::ConstF32(bits as u32), Ty::F32),
-            Type::Double => self.b.def(Inst::ConstF64(bits), Ty::F64),
+            Type::Double | Type::LongDouble64 => self.b.def(Inst::ConstF64(bits), Ty::F64),
             Type::Bool => self.b.const_i32(i32::from(bits & 0xff != 0)),
             _ => {
                 let shift = 64 - size as u32 * 8;
@@ -3482,7 +3482,7 @@ fn ffi_type(ty: &Type, tcx: &TypeCtx) -> u8 {
         }
         Type::LLong => 7,
         Type::ULLong => 8,
-        Type::Double => 9,
+        Type::Double | Type::LongDouble64 => 9,
         Type::Float => 10,
         Type::Bool => 11,
         Type::Void => 13,

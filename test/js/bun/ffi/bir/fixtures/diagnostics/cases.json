@@ -288,13 +288,6 @@
  },
  {
   "about": "syntax and type errors are diagnosed",
-  "source": "int x = 'ab';",
-  "line": 1,
-  "column": 9,
-  "message": "multi-character character constants are not supported"
- },
- {
-  "about": "syntax and type errors are diagnosed",
   "source": "int x = 12abc;",
   "line": 1,
   "column": 9,
@@ -1461,5 +1454,26 @@
   "column": 36,
   "message": "inline assembly is not supported yet ('cmp')",
   "requires": "arm64"
+ },
+ {
+  "about": "6.2.5p10: long double is not double, whatever its format",
+  "source": "double f(void);\nlong double f(void);\nint main(void) { return 0; }",
+  "line": 2,
+  "column": 13,
+  "message": "conflicting types for 'f'"
+ },
+ {
+  "about": "6.2.5p10: long double is not double, whatever its format",
+  "source": "extern long double x;\ndouble x;\nint main(void) { return 0; }",
+  "line": 2,
+  "column": 8,
+  "message": "conflicting types for 'x'"
+ },
+ {
+  "about": "6.2.5p10: long double is not double, whatever its format",
+  "source": "int main(void) { return _Generic(1.0L, double: 1, float: 2); }",
+  "line": 1,
+  "column": 25,
+  "message": "_Generic selector of type 'long double' is not compatible with any association"
  }
 ]

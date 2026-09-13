@@ -1405,7 +1405,9 @@ impl Sema {
                 // Narrow -> wide: the literal is already sign/zero extended per its own type.
                 return self.int_lit(*v, to.clone(), loc);
             }
-            (ExprKind::IntLit(v), Type::Float | Type::Double) if e.ty.is_integer() => {
+            (ExprKind::IntLit(v), Type::Float | Type::Double | Type::LongDouble64)
+                if e.ty.is_integer() =>
+            {
                 let as_float = if self.tcx.is_signed(&e.ty) {
                     *v as f64
                 } else {
@@ -1432,8 +1434,8 @@ impl Sema {
             (ExprKind::LongDoubleLit(v), Type::Float) => {
                 return self.float_lit(f64::from(v.to_f32()), Type::Float, loc);
             }
-            (ExprKind::LongDoubleLit(v), Type::Double) => {
-                return self.float_lit(v.to_f64(), Type::Double, loc);
+            (ExprKind::LongDoubleLit(v), Type::Double | Type::LongDouble64) => {
+                return self.float_lit(v.to_f64(), to.clone(), loc);
             }
             (ExprKind::LongDoubleLit(v), _) if to.is_integer() => {
                 if let Some(folded) = constexpr::long_double_to_int(*v, to, &self.tcx) {
@@ -1443,7 +1445,9 @@ impl Sema {
             (ExprKind::FloatLit(v), Type::Float) => {
                 return self.float_lit(f64::from(*v as f32), Type::Float, loc);
             }
-            (ExprKind::FloatLit(v), Type::Double) => return self.float_lit(*v, Type::Double, loc),
+            (ExprKind::FloatLit(v), Type::Double | Type::LongDouble64) => {
+                return self.float_lit(*v, to.clone(), loc);
+            }
             (ExprKind::FloatLit(v), _) if to.is_integer() => {
                 if let Some(folded) = constexpr::float_to_int(*v, to, &self.tcx) {
                     return self.int_lit(folded, to.clone(), loc);
@@ -1622,6 +1626,9 @@ impl Sema {
     fn arith_common_type(&self, a: &Type, b: &Type) -> Type {
         if a.is_long_double() || b.is_long_double() {
             return Type::Wide(crate::types::WideKind::LongDouble);
+        }
+        if matches!(a, Type::LongDouble64) || matches!(b, Type::LongDouble64) {
+            return Type::LongDouble64;
         }
         if matches!(a, Type::Double) || matches!(b, Type::Double) {
             return Type::Double;

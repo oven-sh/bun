@@ -220,7 +220,7 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                         Ok(Const::LongDouble(v))
                     } else if matches!(ty, Type::Float) {
                         Ok(Const::Float(f64::from(v.to_f32())))
-                    } else if matches!(ty, Type::Double) {
+                    } else if matches!(ty, Type::Double | Type::LongDouble64) {
                         Ok(Const::Float(v.to_f64()))
                     } else if ty.is_integer() && !ty.is_int128() {
                         match long_double_to_int(v, ty, tcx) {
@@ -324,6 +324,30 @@ pub(crate) fn eval(e: &Expr, tcx: &TypeCtx) -> Res<Const> {
                         result
                     }))
                 }
+                // The address of an object or a function is not the null pointer, and two places
+                // in one object compare as their offsets do.
+                (Const::Addr { .. }, Const::Int(0)) | (Const::Int(0), Const::Addr { .. })
+                    if matches!(op, BinOp::Eq | BinOp::Ne) =>
+                {
+                    Ok(Const::Int(i64::from(*op == BinOp::Ne)))
+                }
+                (
+                    Const::Addr {
+                        base: x_base,
+                        offset: x,
+                    },
+                    Const::Addr {
+                        base: y_base,
+                        offset: y,
+                    },
+                ) if x_base == y_base && op.is_compare() => Ok(Const::Int(i64::from(match op {
+                    BinOp::Eq => x == y,
+                    BinOp::Ne => x != y,
+                    BinOp::Lt => x < y,
+                    BinOp::Le => x <= y,
+                    BinOp::Gt => x > y,
+                    _ => x >= y,
+                }))),
                 _ => not_constant(e.loc),
             }
         }

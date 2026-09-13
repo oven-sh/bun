@@ -192,6 +192,8 @@ postMessage({ hello: "world" });
 worker.postMessage({ hello: "world" });
 ```
 
+The main thread has no parent, so a global `postMessage()` there works like `window.postMessage()` in a browser: it dispatches a `message` event on `globalThis`.
+
 To receive messages, use the [`message` event handler](https://developer.mozilla.org/en-US/docs/Web/API/Worker/message_event) on the worker and main thread.
 
 ```js

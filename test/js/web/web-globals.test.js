@@ -173,6 +173,158 @@ test.concurrent("worker: global 'message' listener keeps the worker alive until 
   expect(exitCode).toBe(0);
 });
 
+// The main thread has no parent, so postMessage() queues the message for its own global, like
+// window.postMessage(): https://html.spec.whatwg.org/multipage/web-messaging.html#window-post-message-steps
+test.concurrent("main thread: postMessage() dispatches a message event to globalThis", async () => {
+  const script = `
+    const sent = { hello: 1 };
+    onmessage = e => console.log("onmessage", JSON.stringify(e.data));
+    addEventListener("message", e => {
+      const { data, origin, source, ports, isTrusted } = e;
+      console.log(JSON.stringify({ data, cloned: data !== sent, origin, source, ports: ports.length, isTrusted }));
+    });
+    postMessage(sent, "*");
+    console.log("posted");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    'posted\nonmessage {"hello":1}\n{"data":{"hello":1},"cloned":true,"origin":"null","source":null,"ports":0,"isTrusted":true}\n',
+  );
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("main thread: postMessage() delivers only to the '*' and '/' target origins", async () => {
+  const script = `
+    const got = [];
+    addEventListener("message", e => got.push(e.data));
+    postMessage("no target origin");
+    postMessage("*", "*");
+    postMessage("/", "/");
+    postMessage("options *", { targetOrigin: "*" });
+    postMessage("empty options", {});
+    postMessage("null options", null);
+    postMessage("other origin", "https://example.com");
+    postMessage("other origin in options", { targetOrigin: "https://example.com" });
+    process.on("beforeExit", () => console.log(JSON.stringify(got)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["no target origin", "*", "/", "options *", "empty options", "null options"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("main thread: postMessage() transfers and throws like window.postMessage()", async () => {
+  const script = `
+    addEventListener("message", e => console.log("received", e.data.byteLength));
+    const [a, b, c] = [new ArrayBuffer(8), new ArrayBuffer(8), new ArrayBuffer(8)];
+    postMessage(a, "*", [a]);
+    postMessage(b, { transfer: [b] });
+    postMessage(c, "https://example.com", [c]);
+    console.log("detached", a.byteLength, b.byteLength, c.byteLength);
+    for (const args of [["x", "not a url"], ["x", {}, []]]) {
+      try {
+        postMessage(...args);
+        console.log("no error");
+      } catch (e) {
+        console.log(e.constructor.name, e.message);
+      }
+    }
+    for (const args of [[() => {}], ["x", "*", [null]], ["x", { transfer: 1 }]]) {
+      try {
+        postMessage(...args);
+        console.log("no error");
+      } catch (e) {
+        console.log(e.constructor.name, e.name);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "detached 0 0 0\n" +
+      // bun throws a JS SyntaxError for ExceptionCode::SyntaxError, where the spec has a DOMException.
+      "SyntaxError Invalid target origin 'not a url' in a call to 'postMessage'\n" +
+      "SyntaxError Invalid target origin '[object Object]' in a call to 'postMessage'\n" +
+      "DOMException DataCloneError\n" +
+      "TypeError TypeError\n" +
+      "TypeError TypeError\n" +
+      "received 8\n" +
+      "received 8\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Serializes fine but fails to deserialize: the DataView's offset is only in bounds after a getter
+// resized the buffer, and the buffer was serialized before that.
+test.concurrent("main thread: a postMessage() that fails to deserialize fires messageerror on globalThis", async () => {
+  const script = `
+    addEventListener("messageerror", e => {
+      const { type, data, origin, isTrusted } = e;
+      console.log(JSON.stringify({ type, data, origin, isTrusted }));
+    });
+    addEventListener("message", e => console.log("message", e.data));
+    const ab = new ArrayBuffer(8, { maxByteLength: 65536 });
+    postMessage({ ab, get grow() { ab.resize(65536); return 1; }, get view() { return new DataView(ab, 4096, 16); } }, "*");
+    postMessage("after", "*");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('{"type":"messageerror","data":null,"origin":"null","isTrusted":true}\nmessage after\n');
+  expect(exitCode).toBe(0);
+});
+
+// @dbml/core bundles VS Code's scheduler, which uses postMessage() as setImmediate() when
+// globalThis.postMessage exists (#42512).
+test.concurrent("main thread: a postMessage-based setImmediate shim runs its callbacks and exits", async () => {
+  const script = `
+    const useMessageShim = typeof globalThis.postMessage == "function" && !globalThis.importScripts;
+    if (!useMessageShim) throw new Error("the message shim is not used");
+    const pending = [];
+    globalThis.addEventListener("message", e => {
+      if (e.data && e.data.vscodeScheduleAsyncWork) pending.shift()();
+    });
+    const schedule = cb => {
+      pending.push(cb);
+      globalThis.postMessage({ vscodeScheduleAsyncWork: pending.length }, "*");
+    };
+    schedule(() => console.log("one"));
+    schedule(() => {
+      console.log("two");
+      schedule(() => console.log("three"));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("one\ntwo\nthree\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("worker: onmessage assignment through a Proxy of self", async () => {
   using dir = tempDir("worker-proxy-onmessage", {
     "worker.js": `

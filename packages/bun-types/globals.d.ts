@@ -1412,11 +1412,15 @@ declare var module: NodeModule;
 declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeOptions): T;
 
 /**
- * Post a message to the parent thread.
+ * In a worker, post a message to the parent thread.
  *
- * Only useful in a worker thread; calling this from the main thread does nothing.
+ * The main thread has no parent. There it works like `window.postMessage()` and dispatches a
+ * `message` event on `globalThis`, when `targetOrigin` is `"*"` or `"/"` (the default). The
+ * transfer list goes in the third argument or in `options.transfer`, as for `window.postMessage()`.
  */
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
+declare function postMessage(message: any, targetOrigin: string, transfer?: Bun.Transferable[]): void;
+declare function postMessage(message: any, options?: Bun.StructuredSerializeOptions & { targetOrigin?: string }): void;
 
 interface EventSourceInit {
   withCredentials?: boolean;

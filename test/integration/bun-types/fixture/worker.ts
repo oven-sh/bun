@@ -44,6 +44,10 @@ postMessage({ hello: "world" });
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });
 
+// On the main thread, a global `postMessage` dispatches to `globalThis`, like `window.postMessage`.
+postMessage({ hello: "world" }, "*");
+postMessage({ hello: "world" }, { targetOrigin: "/" });
+
 // ...some time later
 
 await nodeWorker.terminate();

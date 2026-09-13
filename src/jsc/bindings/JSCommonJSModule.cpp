@@ -353,7 +353,10 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    return JSValue::encode(thisObject->lazyRequireCacheObject());
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSObject* cache = thisObject->lazyRequireCacheObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(cache);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,

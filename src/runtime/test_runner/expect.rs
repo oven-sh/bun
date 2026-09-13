@@ -2703,8 +2703,7 @@ impl ExpectMatcherContext {
         JSValue::FALSE
     }
 
-    /// Jest puts the plain `equals` function of `@jest/expect-utils` on the context, and matchers
-    /// call it unbound (`const { equals } = this`). A prototype method would check its receiver.
+    /// A getter, not a method: matchers call `equals` unbound (`const { equals } = this`), and a method checks its receiver.
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_equals(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         JSFunction::create(global_this, "equals", __jsc_host_matcher_context_equals, 3, Default::default())
@@ -2723,14 +2722,7 @@ fn matcher_context_equals(global_this: &JSGlobalObject, callframe: &CallFrame) -
     Ok(JSValue::from(args[0].jest_deep_equals(args[1], global_this)?))
 }
 
-/// `this.utils` of a custom matcher. Jest builds it from the plain functions that
-/// `jest-matcher-utils` exports, and matchers call them unbound
-/// (`const { matcherHint, printReceived } = this.utils`), so it is a table of host functions.
-///
-/// Vitest exposes 14 of Jest's names, and this table has 6 of them. Not implemented yet:
-/// `diff`, `printDiffOrStringify`, `printWithType`, `iterableEquality`, `subsetEquality`,
-/// `DIM_COLOR`, `INVERTED_COLOR`, `BOLD_WEIGHT`. Each one is a row in the table.
-///
+/// `this.utils` is plain host functions, not a class: matchers call them unbound (`const { matcherHint } = this.utils`).
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 mod matcher_utils {
     use super::*;
@@ -2739,6 +2731,7 @@ mod matcher_utils {
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         bun_jsc::create_host_function_object(
             global_this,
+            // Of the 14 names Vitest exposes, still missing: diff, printDiffOrStringify, printWithType, iterableEquality, subsetEquality, DIM_COLOR, INVERTED_COLOR, BOLD_WEIGHT.
             &[
                 ("stringify", __jsc_host_stringify, 1),
                 ("printExpected", __jsc_host_print_expected, 1),
@@ -2793,8 +2786,7 @@ mod matcher_utils {
     const EXPECTED_COLOR: &str = bun_core::pretty_fmt!("<green>", true);
     const RECEIVED_COLOR: &str = bun_core::pretty_fmt!("<red>", true);
 
-    /// `chalk.green(text)` and `chalk.red(text)`: `String(text)` in `color`, not quoted.
-    /// Like chalk, empty text gets no color codes.
+    /// `chalk.green(text)` / `chalk.red(text)`: `String(text)` in `color`, not quoted. Like chalk, empty text gets no codes.
     fn paint(global_this: &JSGlobalObject, text: JSValue, color: &'static str, out: &mut Vec<u8>) -> JsResult<()> {
         let text = text.to_utf8(global_this)?;
         let colors = Output::enable_ansi_colors_stderr() && !text.is_empty();
@@ -2822,8 +2814,7 @@ mod matcher_utils {
         bun_string_jsc::create_utf8_for_js(global_this, &out)
     }
 
-    /// The hint under construction. Like Jest, it joins adjacent dim text in `dim` and writes
-    /// it as one span.
+    /// Like Jest, joins adjacent dim text in `dim` and writes it as one span.
     struct Hint {
         out: Vec<u8>,
         dim: Vec<u8>,
@@ -2874,9 +2865,7 @@ mod matcher_utils {
         value.is_string_literal() && value.as_string().length() == 0
     }
 
-    /// Port of `matcherHint` in `jest-matcher-utils`. It returns the one-line call signature.
-    /// `received` and `expected` are labels, not values.
-    /// https://github.com/jestjs/jest/blob/v30.2.0/packages/jest-matcher-utils/src/index.ts#L524-L587
+    /// Port of https://github.com/jestjs/jest/blob/v30.2.0/packages/jest-matcher-utils/src/index.ts#L524-L587 (`received` and `expected` are labels, not values).
     #[bun_jsc::host_fn]
     fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [matcher_name, received, expected, options] = callframe.arguments_as_array::<4>();

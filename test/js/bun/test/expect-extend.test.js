@@ -391,6 +391,8 @@ test("expect.extend with numeric index keys does not crash", () => {
 });
 
 describe("MatcherContext", () => {
+  // Jest has no `test.skipIf`.
+  const testInBun = isBun ? test : test.skip;
   const stripAnsi = (/** @type {string} */ text) => text.replace(/\x1b\[[0-9;]*m/g, "");
   const utilNames = ["stringify", "printExpected", "printReceived", "EXPECTED_COLOR", "RECEIVED_COLOR", "matcherHint"];
 
@@ -429,7 +431,7 @@ describe("MatcherContext", () => {
     expect(results).toEqual({ same: true, different: false, asymmetric: true, stable: true });
   });
 
-  test.skipIf(!isBun)("matchers from the jest-extended package run through expect.extend", async () => {
+  testInBun("matchers from the jest-extended package run through expect.extend", async () => {
     // The package replaces the built-in matchers of the same name, so it runs in a child process.
     await using proc = Bun.spawn({
       cmd: [
@@ -611,7 +613,7 @@ describe("MatcherContext", () => {
       ).toEqual(['  a "b"\n  c', "  d", "1", ""]);
     });
 
-    test.skipIf(!isBun)("with colors on, colors labels and text and joins adjacent dim text", async () => {
+    testInBun("with colors on, colors labels and text and joins adjacent dim text", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

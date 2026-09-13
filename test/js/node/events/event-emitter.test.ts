@@ -1252,6 +1252,12 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(nativeProto.getMaxListeners.call(receiver)).toBe(20);
   });
 
+  test("listenerCount on a primitive receiver throws an error that names listenerCount", () => {
+    expect(() => nativeProto.listenerCount.call(5, "x")).toThrow(
+      "Can only call EventEmitter.listenerCount on instances of EventEmitter",
+    );
+  });
+
   test("an object that inherits from process has its own listeners", () => {
     const child = Object.create(process);
     let fired = 0;

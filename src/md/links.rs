@@ -8,9 +8,9 @@ use crate::types::{OFF, SpanDetail, SpanType, TextType};
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 
-/// Maximum parenthesis nesting depth inside a bare inline-link destination.
+/// Maximum parenthesis nesting depth inside a bare link destination.
 /// CommonMark allows implementations to impose such a limit ("at least three
-/// levels of nesting should be supported"); cmark and commonmark.js both use
+/// levels of nesting should be supported"); cmark and md4c both use
 /// 32. Without a cap, an unclosed destination is rescanned for every candidate
 /// link, which is quadratic on inputs like `"[a](b"` repeated.
 const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
@@ -54,6 +54,71 @@ pub(crate) enum LabelLeave {
 pub(crate) struct Autolink {
     pub(crate) end_pos: usize,
     pub(crate) is_email: bool,
+}
+
+/// Result of `scan_link_destination`.
+pub(crate) struct ParsedDest<'a> {
+    /// Raw destination, without the `<` `>` of the angle-bracket form.
+    pub(crate) dest: &'a [u8],
+    /// Position just past the destination (past the `>` of the angle-bracket form).
+    pub(crate) end_pos: usize,
+}
+
+/// CommonMark §6.3 link destination, shared by inline links, the link lookahead and reference definitions.
+pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
+    let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
+    let mut p = start;
+
+    if p < text.len() && text[p] == b'<' {
+        p += 1;
+        let dest_start = p;
+        while p < text.len() {
+            match text[p] {
+                b'>' => {
+                    return Some(ParsedDest {
+                        dest: &text[dest_start..p],
+                        end_pos: p + 1,
+                    });
+                }
+                b'<' | b'\n' | b'\r' => return None,
+                b'\\' if escapes_next(p) => p += 2,
+                _ => p += 1,
+            }
+        }
+        return None;
+    }
+
+    let mut paren_depth: u32 = 0;
+    while p < text.len() && !helpers::is_whitespace(text[p]) {
+        match text[p] {
+            b'\\' if escapes_next(p) => {
+                p += 2;
+                continue;
+            }
+            b'(' => {
+                paren_depth += 1;
+                if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                    return None;
+                }
+            }
+            b')' => {
+                if paren_depth == 0 {
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            c if c.is_ascii_control() => return None,
+            _ => {}
+        }
+        p += 1;
+    }
+    if paren_depth != 0 {
+        return None;
+    }
+    Some(ParsedDest {
+        dest: &text[start..p],
+        end_pos: p,
+    })
 }
 
 /// Characters that can affect bracket matching: the brackets themselves,
@@ -369,66 +434,17 @@ impl Parser<'_> {
                 pos += 1;
             }
 
-            // Parse destination
-            let mut dest_start = pos;
-            let dest_end;
-            let mut dest_valid = true;
-
-            if pos < content.len() && content[pos] == b'<' {
-                // Angle-bracket destination (no newlines or unescaped '<' allowed)
-                dest_start = pos + 1;
-                pos += 1;
-                let mut angle_valid = true;
-                while pos < content.len() && content[pos] != b'>' {
-                    if content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b'<' {
-                        angle_valid = false;
-                        break;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
+            let dest: &[u8] = match scan_link_destination(content, pos) {
+                Some(parsed) => {
+                    pos = parsed.end_pos;
+                    parsed.dest
                 }
-                if !angle_valid {
-                    return Ok(None);
+                None => {
+                    // Not an inline link: skip the title and ')' checks, keep the reference/shortcut fallback.
+                    pos = content.len();
+                    b""
                 }
-                dest_end = pos;
-                if pos < content.len() {
-                    pos += 1; // skip >
-                }
-            } else {
-                // Bare destination — balance parentheses (nesting depth is capped)
-                let mut paren_depth: u32 = 0;
-                while pos < content.len() && !helpers::is_whitespace(content[pos]) {
-                    if content[pos] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            dest_valid = false;
-                            break;
-                        }
-                    } else if content[pos] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
-                }
-                dest_end = pos;
-            }
-
-            if !dest_valid {
-                // Destination exceeded the paren-nesting cap: not an inline
-                // link (cmark rejects it too). Skip the title and ')' checks —
-                // the offending '(' must not be reparsed as a title opener —
-                // but keep the reference/shortcut fallback below reachable.
-                pos = content.len();
-            }
+            };
 
             // Skip whitespace (including newlines)
             while pos < content.len()
@@ -487,7 +503,6 @@ impl Parser<'_> {
             // Must end with ')'
             if pos < content.len() && content[pos] == b')' {
                 pos += 1;
-                let dest = &content[dest_start..dest_end];
 
                 // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                 if !is_image
@@ -637,57 +652,11 @@ impl Parser<'_> {
             {
                 p += 1;
             }
-            // Parse dest (no line endings or unescaped '<' allowed, matching
-            // process_link: the lookahead and the parser must agree on what
-            // is a link or emphasis collection desyncs from rendering)
-            if p < content.len() && content[p] == b'<' {
-                p += 1;
-                while p < content.len()
-                    && content[p] != b'>'
-                    && content[p] != b'\n'
-                    && content[p] != b'\r'
-                    && content[p] != b'<'
-                {
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-                if p < content.len() && content[p] == b'>' {
-                    p += 1;
-                } else {
-                    return BracketLinkMatch {
-                        is_link: false,
-                        label_end,
-                        link_end: label_end + 1,
-                    };
-                }
-            } else {
-                let mut paren_depth: u32 = 0;
-                while p < content.len() && !helpers::is_whitespace(content[p]) {
-                    if content[p] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            // Not an inline link; skip the title/')' checks but
-                            // keep the reference/shortcut fallback reachable
-                            // (mirrors process_link).
-                            p = content.len();
-                            break;
-                        }
-                    } else if content[p] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-            }
+            // Must agree with process_link, or emphasis collection desyncs from rendering.
+            p = match scan_link_destination(content, p) {
+                Some(parsed) => parsed.end_pos,
+                None => content.len(),
+            };
             // Skip whitespace
             while p < content.len()
                 && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')

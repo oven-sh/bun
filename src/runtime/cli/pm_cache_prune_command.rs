@@ -78,6 +78,7 @@ impl Prune {
     /// (empty for the root, `@scope/` for a scope directory).
     fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) {
         let Some(entries) = read_entries(dir, prefix) else {
+            self.failed += 1;
             return;
         };
 
@@ -86,10 +87,15 @@ impl Prune {
             match Kind::from_name(name, entry.kind, in_scope) {
                 Kind::Package => self.prune_package(dir, entry, prefix),
                 Kind::Scope => {
-                    let Ok(sub) = dir.open_at(name) else {
-                        continue;
-                    };
                     let sub_prefix = [prefix, name, b"/"].concat();
+                    let sub = match dir.open_at(name) {
+                        Ok(sub) => sub,
+                        Err(err) => {
+                            Output::err(err, "Could not open {s}", (BStr::new(&sub_prefix),));
+                            self.failed += 1;
+                            continue;
+                        }
+                    };
                     self.prune_dir(&sub, &sub_prefix, true);
                     drop(sub);
                     if !self.dry_run {
@@ -104,12 +110,46 @@ impl Prune {
             return;
         }
         for entry in &entries {
-            if Kind::from_name(entry.name.as_bytes(), entry.kind, in_scope) == Kind::Index {
-                if let Ok(index) = dir.open_at(entry.name.as_bytes()) {
-                    remove_dangling_links(&index);
+            let name = entry.name.as_bytes();
+            if Kind::from_name(name, entry.kind, in_scope) != Kind::Index {
+                continue;
+            }
+            let display = [prefix, name].concat();
+            match dir.open_at(name) {
+                Ok(index) => self.remove_dangling_links(&index, &display),
+                Err(err) => {
+                    Output::err(err, "Could not open {s}", (BStr::new(&display),));
+                    self.failed += 1;
+                    continue;
                 }
-                // Fails with ENOTEMPTY when versions remain.
-                let _ = bun_sys::rmdirat(dir.fd(), &entry.name);
+            }
+            // Fails with ENOTEMPTY when versions remain.
+            let _ = bun_sys::rmdirat(dir.fd(), &entry.name);
+        }
+    }
+
+    /// Remove every symlink (junction on Windows) in `index` whose target is
+    /// gone. The index entries point at package directories, so this runs
+    /// after the package pass of the same directory.
+    fn remove_dangling_links(&mut self, index: &Dir, prefix: &[u8]) {
+        let Some(entries) = read_entries(index, prefix) else {
+            self.failed += 1;
+            return;
+        };
+        for entry in &entries {
+            if entry.kind != EntryKind::SymLink {
+                continue;
+            }
+            match bun_sys::fstatat(index.fd(), &entry.name) {
+                Err(err) if err.get_errno() == E::ENOENT => {}
+                _ => continue,
+            }
+            if let Err(err) = bun_sys::unlinkat(index.fd(), &entry.name)
+                .or_else(|_| bun_sys::rmdirat(index.fd(), &entry.name))
+            {
+                let display = [prefix, b"/", entry.name.as_bytes()].concat();
+                Output::err(err, "Could not delete {s}", (BStr::new(&display),));
+                self.failed += 1;
             }
         }
     }
@@ -153,29 +193,6 @@ impl Prune {
     }
 }
 
-/// Remove every symlink (junction on Windows) in `index` whose target is gone.
-/// The index entries point at package directories, so this runs after the
-/// package pass of the same directory.
-fn remove_dangling_links(index: &Dir) {
-    let Some(entries) = read_entries(index, b"") else {
-        return;
-    };
-    for entry in &entries {
-        if entry.kind != EntryKind::SymLink {
-            continue;
-        }
-        match bun_sys::fstatat(index.fd(), &entry.name) {
-            Ok(_) => {}
-            Err(err) if err.get_errno() == E::ENOENT => {
-                if bun_sys::unlinkat(index.fd(), &entry.name).is_err() {
-                    let _ = bun_sys::rmdirat(index.fd(), &entry.name);
-                }
-            }
-            Err(_) => {}
-        }
-    }
-}
-
 impl PmCachePruneCommand {
     /// Returns the process exit code.
     pub(crate) fn exec(cache_path: &[u8], max_age_days: u32, dry_run: bool) -> u8 {
@@ -192,6 +209,25 @@ impl PmCachePruneCommand {
                 return 1;
             }
         };
+
+        // An empty `BUN_INSTALL_CACHE_DIR` resolves to the working directory.
+        // Compare the opened directory, not the path, so a symlink is caught too.
+        if let (Ok(cache_st), Ok(cwd_st)) = (
+            bun_sys::fstat(cache_dir.fd()),
+            bun_sys::stat(bun_core::zstr!(".")),
+        ) {
+            let (cache_st, cwd_st) = (PosixStat::init(&cache_st), PosixStat::init(&cwd_st));
+            if cache_st.dev == cwd_st.dev && cache_st.ino == cwd_st.ino {
+                Output::err_generic(
+                    "refusing to prune \"{s}\": the cache directory is the working directory",
+                    (BStr::new(cache_path),),
+                );
+                bun_core::note!(
+                    "the cache directory comes from $BUN_INSTALL_CACHE_DIR or $BUN_INSTALL. Point it at the bun install cache."
+                );
+                return 1;
+            }
+        }
 
         let now = bun_core::time::timestamp();
         let max_age_sec = i64::from(max_age_days) * i64::from(bun_core::time::S_PER_DAY);

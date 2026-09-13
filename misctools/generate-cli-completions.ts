@@ -18,7 +18,7 @@
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 interface FlagInfo {
@@ -350,6 +350,20 @@ function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
             prune: {
               name: "prune",
               description: "remove packages downloaded more than 30 days ago",
+              flags: [
+                {
+                  name: "max-age",
+                  description: "Remove packages downloaded more than this many days ago (default 30)",
+                  hasValue: true,
+                  valueType: "days",
+                  defaultValue: "30",
+                },
+                {
+                  name: "dry-run",
+                  description: "Print what would be removed without deleting anything",
+                  hasValue: false,
+                },
+              ],
             },
           };
         } else if (name === "pkg") {

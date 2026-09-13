@@ -443,17 +443,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
-                // An empty `BUN_INSTALL_CACHE_DIR` resolves to the working directory.
-                if strings::eql(&cache_dir.path, Fs::FileSystem::get().top_level_dir) {
-                    Output::err_generic(
-                        "refusing to prune \"{s}\": the cache directory resolves to the working directory",
-                        (bstr::BStr::new(&cache_dir.path),),
-                    );
-                    bun_core::note!(
-                        "the cache directory comes from $BUN_INSTALL_CACHE_DIR or $BUN_INSTALL. Point it at the bun install cache."
-                    );
-                    Global::exit(1);
-                }
                 let exit_code = PmCachePruneCommand::exec(
                     &cache_dir.path,
                     cache_max_age_days,

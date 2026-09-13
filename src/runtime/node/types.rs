@@ -1276,18 +1276,27 @@ impl Valid {
     }
 
     pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
-        if strings::index_of_char(slice, 0).is_some() {
-            return Err(global
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
-                        bun_fmt::quote(slice)
-                    ),
-                )
-                .throw());
+        Self::no_null_bytes(slice, "path", "a string, Uint8Array, or URL", global)
+    }
+
+    pub(crate) fn no_null_bytes(
+        slice: &[u8],
+        name: &str,
+        accepts: &str,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        if strings::index_of_char(slice, 0).is_none() {
+            return Ok(());
         }
-        Ok(())
+        Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The argument '{name}' must be {accepts} without null bytes. Received {}",
+                    bun_fmt::quote(slice)
+                ),
+            )
+            .throw())
     }
 }
 

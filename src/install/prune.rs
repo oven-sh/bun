@@ -1882,10 +1882,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     store_entry_of_link_target(&buf.as_slice()[..len]).map(Into::into)
 }
 
-/// The store entry a link the installer wrote points into. A link from an importer's `node_modules` goes
-/// through `.bun/<entry>`, and so does the absolute path a Windows junction holds. A link from one entry to
-/// another (`Installer::symlink_dependencies`) is relative to the store: `../../<entry>/node_modules/<name>`,
-/// one more `..` from a scope folder.
+// Through `.bun/<entry>` from an importer or in a Windows junction; `../../<entry>/node_modules/<name>` between two entries.
 fn store_entry_of_link_target(target: &[u8]) -> Option<&[u8]> {
     let mut components = strings::tokenize_any(target, b"/\\").peekable();
     let mut leads_with_parents = components.peek().is_some_and(|first| *first == b"..");
@@ -2017,9 +2014,7 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -
     unlinked
 }
 
-/// Unlinks, from every store entry that stays, the links into store entries that are gone.
-/// `--omit=optional`, `--os` and `--cpu` remove the entry of a dependency and keep the package that depends on
-/// it. An install with the same flags links nothing into that package's entry for the dependency.
+// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent, without the link to it.
 fn unlink_removed_dependencies(store: &Dir) {
     let points_at_removed_entry =
         |dir: &Dir, name: &[u8]| is_dangling(dir, name) && store_link_target(dir, name).is_some();
@@ -2036,8 +2031,7 @@ fn unlink_removed_dependencies(store: &Dir) {
             points_at_removed_entry(dir, name)
         });
 
-        // A dependency with the package's own name is linked one `node_modules` deeper, inside the package
-        // (`Installer::symlink_dependencies`).
+        // `Installer::symlink_dependencies` links a dependency with the package's own name inside the package.
         let (package, _) = split_store_key(&entry);
         let Some(package_dir) = descend(&node_modules, &package) else {
             continue;

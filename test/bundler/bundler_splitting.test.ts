@@ -761,38 +761,45 @@ describe("bundler", () => {
     ],
   });
 
-  // The export names do matter to a chunk that prints them beside bindings it
-  // exports to another chunk: one `export {}` clause holds both, so the names
-  // must differ there. b.js reads `foo` off the exports object of d.js, and
-  // d.js is in the chunk of a.js today (#18008).
+  // The export names do matter to the chunk that prints them: a binding that
+  // chunk exports to another chunk must not repeat one. b.js reads `foo` off
+  // the exports object of d.js, and d.js is in the chunk of a.js today
+  // (#18008). The names of a.js still mean nothing to the chunk of shared.js.
   for (const minifyIdentifiers of [false, true]) {
-    itBundled(`splitting/CrossChunkNameAvoidsExportNameInSameClause${minifyIdentifiers ? "Minified" : ""}`, {
+    itBundled(`splitting/CrossChunkNameAvoidsExportNameOfItsOwnChunk${minifyIdentifiers ? "Minified" : ""}`, {
       files: {
         "/a.js": /* js */ `
           import * as ns from './pkg/d.js'
           const own = ns
-          export { own as exports_d, ${oneLetterNames.map(name => `own as ${name}`).join(", ")} }
+          export { own as exports_d, own as helper, ${oneLetterNames.map(name => `own as ${name}`).join(", ")} }
         `,
         "/b.js": /* js */ `
           import { foo } from './pkg/d.js'
-          console.log(foo)
+          import { helper } from './shared.js'
+          console.log(foo, helper()${minifyIdentifiers ? "" : ", helper.name"})
         `,
+        "/c.js": /* js */ `
+          import { helper } from './shared.js'
+          console.log(helper())
+        `,
+        "/shared.js": `export function helper() { return 'shared' }`,
         "/pkg/d.js": `export * from './c.cjs'`,
         "/pkg/c.cjs": `module.exports['f' + 'oo'] = 123`,
         "/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
         "/run.js": /* js */ `
           const a = await import('./out/a.js')
-          console.log(a.exports_d.foo, a.s.foo, a.$.foo)
+          console.log(a.exports_d.foo, a.helper.foo, a.s.foo, a.$.foo)
         `,
       },
-      entryPoints: ["/a.js", "/b.js"],
+      entryPoints: ["/a.js", "/b.js", "/c.js"],
       splitting: true,
       minifyIdentifiers,
       outdir: "/out",
       format: "esm",
       run: [
-        { file: "/out/b.js", stdout: "123" },
-        { file: "/run.js", stdout: "123 123 123" },
+        { file: "/out/b.js", stdout: minifyIdentifiers ? "123 shared" : "123 shared helper" },
+        { file: "/out/c.js", stdout: "shared" },
+        { file: "/run.js", stdout: "123 123 123 123" },
       ],
     });
   }

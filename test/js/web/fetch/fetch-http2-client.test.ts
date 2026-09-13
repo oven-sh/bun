@@ -305,19 +305,23 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("concurrent requests multiplex on one h2 session", async () => {
     let sessions = 0;
-    let maxOpen = 0;
-    let open = 0;
+    const held: [http2.ServerHttp2Stream, string][] = [];
     const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
-      open++;
-      maxOpen = Math.max(maxOpen, open);
-      stream.on("close", () => open--);
-      // Hold each stream briefly so all 8 are open at once.
-      setTimeout(() => {
+      const path = String(headers[":path"]);
+      if (path === "/warmup") {
         stream.respond({ ":status": 200 });
-        stream.end(String(headers[":path"]));
-      }, 100);
+        stream.end(path);
+        return;
+      }
+      // Answer only once all 8 streams are open at once.
+      held.push([stream, path]);
+      if (held.length < 8) return;
+      for (const [heldStream, heldPath] of held) {
+        heldStream.respond({ ":status": 200 });
+        heldStream.end(heldPath);
+      }
     });
     server.listen(0);
     await once(server, "listening");
@@ -338,7 +342,6 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       expect(stdout.trim()).toBe("/0,/1,/2,/3,/4,/5,/6,/7");
       expect(exitCode).toBe(0);
       expect(sessions).toBe(1);
-      expect(maxOpen).toBe(8);
     } finally {
       server.close();
     }

@@ -211,7 +211,7 @@ describe("node:http", () => {
         });
       });
 
-      it("does not carry a canceled listen callback into a later listen", async () => {
+      it("carries a pending listen callback into a later listen", async () => {
         const server = create();
         const callbacks: string[] = [];
         server.listen(0, "127.0.0.1", () => callbacks.push("stale"));
@@ -230,7 +230,7 @@ describe("node:http", () => {
         });
         await started;
 
-        expect(callbacks).toEqual(["active"]);
+        expect(callbacks).toEqual(["stale", "active"]);
       });
     });
 

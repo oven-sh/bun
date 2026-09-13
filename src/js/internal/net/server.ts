@@ -1,8 +1,6 @@
 const { isIPv6 } = require("internal/net/isIP");
 
 let dns: typeof import("node:dns");
-const kListenCallbackGeneration = Symbol("server.listenCallbackGeneration");
-const kEmittingListenCallbackGeneration = Symbol("server.emittingListenCallbackGeneration");
 
 function isIPv6LinkLocal(address: string): boolean {
   if (!isIPv6(address)) return false;
@@ -38,48 +36,15 @@ function lookupListenAddress(
 }
 
 function registerListenCallback(server, callback) {
-  // Bind errors keep the callback for a retry, while close() starts a new callback generation.
-  // `.listener` preserves once-listener removal and introspection by the original callback.
-  const generation = server[kListenCallbackGeneration] || 0;
-  let fired = false;
-  function listener(...args) {
-    if (fired) return;
-    const emittingGeneration = server[kEmittingListenCallbackGeneration];
-    const eventGeneration =
-      emittingGeneration === undefined ? server[kListenCallbackGeneration] || 0 : emittingGeneration;
-    if (eventGeneration !== generation) {
-      if (eventGeneration > generation) {
-        fired = true;
-        server.removeListener("listening", listener);
-      }
-      return;
-    }
-    fired = true;
-    server.removeListener("listening", listener);
-    return callback.$apply(server, args);
-  }
-  listener.listener = callback;
-  server.on("listening", listener);
-}
-
-function invalidateListenCallbacks(server) {
-  server[kListenCallbackGeneration] = (server[kListenCallbackGeneration] || 0) + 1;
+  server.once("listening", callback);
 }
 
 function emitListeningEvent(server, ...args) {
-  // close() may run inside the first listen callback. Keep the dispatch generation stable so
-  // sibling callbacks from that same successful listen still run from EventEmitter's listener copy.
-  server[kEmittingListenCallbackGeneration] = server[kListenCallbackGeneration] || 0;
-  try {
-    return server.emit("listening", ...args);
-  } finally {
-    server[kEmittingListenCallbackGeneration] = undefined;
-  }
+  return server.emit("listening", ...args);
 }
 
 export default {
   emitListeningEvent,
-  invalidateListenCallbacks,
   lookupListenAddress,
   registerListenCallback,
 };

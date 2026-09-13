@@ -55,12 +55,7 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
-const {
-  emitListeningEvent,
-  invalidateListenCallbacks,
-  lookupListenAddress,
-  registerListenCallback,
-} = require("internal/net/server");
+const { emitListeningEvent, lookupListenAddress, registerListenCallback } = require("internal/net/server");
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -481,7 +476,6 @@ Server.prototype.closeIdleConnections = function () {
 
 Server.prototype.close = function (optionalCallback?) {
   this[kListeningId] = (this[kListeningId] || 0) + 1;
-  invalidateListenCallbacks(this);
   const server = this[serverSymbol];
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.

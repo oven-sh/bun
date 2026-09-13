@@ -42,12 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const {
-  emitListeningEvent,
-  invalidateListenCallbacks,
-  lookupListenAddress,
-  registerListenCallback,
-} = require("internal/net/server");
+const { emitListeningEvent, lookupListenAddress, registerListenCallback } = require("internal/net/server");
 const {
   kArmHandshakeTimeout,
   kDestroyOnRead,
@@ -3611,7 +3606,6 @@ Server.prototype.unref = function unref() {
 
 Server.prototype.close = function close(callback) {
   this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
-  invalidateListenCallbacks(this);
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {

@@ -111,6 +111,9 @@ pub struct HttpThread {
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
     pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
+    /// Custom TLS contexts with no ref left, see
+    /// `HTTPContext::destroy_between_ticks`.
+    pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
 
     pub(crate) has_awoken: AtomicBool,
     pub(crate) timer: Instant,
@@ -169,6 +172,7 @@ impl HttpThread {
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
+            dead_ssl_contexts: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
             lazy_libdeflater: None,
@@ -904,6 +908,19 @@ impl HttpThread {
         self.wakeup();
     }
 
+    /// Everything this thread runs is inside `drain_events` or `tick`, and
+    /// this runs between the two, so no socket callback is on the stack.
+    fn free_dead_ssl_contexts(&mut self) {
+        // One at a time: a context's `Drop` closes its sockets, and a close
+        // handler is free to drop the last ref of another context.
+        while let Some(ctx) = self.dead_ssl_contexts.pop() {
+            // SAFETY: `HTTPContext::destroy_between_ticks` pushed it at
+            // refcount zero, so this is the sole owner of the `RefPtr::new`
+            // allocation.
+            unsafe { bun_core::heap::destroy(ctx.as_ptr()) };
+        }
+    }
+
     /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
     /// `SHUTDOWN_REQUESTED` is observed. Reclaims every clone-owned
     /// `ThreadlocalAsyncHTTP` box by mirroring the teardown
@@ -1270,6 +1287,7 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
+                self.free_dead_ssl_contexts();
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 

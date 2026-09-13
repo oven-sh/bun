@@ -1672,6 +1672,35 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a later member of the same name replaces a decorated member", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        const dec = (v, ctx) => {};
+        const wrap = (v, ctx) => {
+          seen.push(ctx.kind + " " + v.name + " " + v.call({}));
+          return function (...args) { return "wrapped " + v.apply(this, args) };
+        };
+        class A { @dec accessor k = 1; k() { return "method" } }
+        class B { @wrap m() { return "method" } get m() { return "getter" } }
+        class C { @wrap m() { return "first" } x() {} @wrap m() { return "second" } }
+        class D { @wrap get g() { return "first" } set g(v) {} get g() { return "second" } }
+        class E { @wrap static s() { return "first" } static s() { return "second" } @wrap s() { return "instance" } }
+        class F { @dec accessor a = 1; get a() { return "getter" } }
+        class G { @dec static accessor a = 1; static set a(v) { G.set = v } }
+        class H { @wrap ["m"]() { return "computed" } accessor m = "accessor" }
+        const f = new F(); f.a = 2; G.a = 3;
+        console.log(JSON.stringify([typeof new A().k, new B().m, new C().m(), new D().g, E.s(), new E().s(), f.a, G.a, G.set, new H().m]));
+        console.log(JSON.stringify([C, D].map(K => Reflect.ownKeys(K.prototype))), seen.join(", "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '["function","getter","wrapped second","second","second","wrapped instance","getter",1,3,"accessor"]\n' +
+          '[["constructor","m","x"],["constructor","g"]] ' +
+          "method m method, method m first, method m second, getter get g first, method s first, method s instance, method m computed\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent(
       "a class with no key for its decorator lists: private names, extends and the inner name",
       async () => {

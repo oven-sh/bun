@@ -101,6 +101,45 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
+/// For each member, which parts of its property a later member of the same
+/// name defines again: `1` its value or getter, `2` its setter. The class body
+/// defines the members in order, so such a part never shows on the class.
+/// Only string keys that are known here are compared.
+fn parts_replaced_by_later_members(properties: &[Property]) -> Vec<u8> {
+    const GET: u8 = 1;
+    const SET: u8 = 2;
+    const VALUE: u8 = 4;
+    let mut replaced = vec![0u8; properties.len()];
+    let mut later: HashMap<(bool, &[u8]), u8> = HashMap::default();
+    for (index, prop) in properties.iter().enumerate().rev() {
+        let (defines, removes) = match prop.kind {
+            PropertyKind::Get => (GET, VALUE),
+            PropertyKind::Set => (SET, VALUE),
+            PropertyKind::AutoAccessor => (GET | SET, VALUE),
+            PropertyKind::Normal
+                if prop.flags.contains(Flags::Property::IsMethod) && !is_constructor(prop) =>
+            {
+                (VALUE, GET | SET)
+            }
+            _ => continue,
+        };
+        let Some(js_ast::ExprData::EString(key)) = prop.key.map(|key| key.data) else {
+            continue;
+        };
+        if !key.is_utf8() || key.next.is_some() {
+            continue;
+        }
+        let is_static = prop.flags.contains(Flags::Property::IsStatic);
+        let later = later
+            .entry((is_static, key.data.slice()))
+            .or_insert_with(|| 0);
+        let lost = defines & *later;
+        replaced[index] = u8::from(lost & (GET | VALUE) != 0) | (u8::from(lost & SET != 0) << 1);
+        *later |= defines | removes;
+    }
+    replaced
+}
+
 /// Puts `inserted` in `constructor` right after a top-level `super()`
 /// statement returns, which is after the last instance field.
 fn insert_after_super<'a>(
@@ -821,6 +860,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             Ref::NONE
         };
+        let replaced_parts = if has_member_decorators {
+            parts_replaced_by_later_members(class.properties.slice())
+        } else {
+            Vec::new()
+        };
 
         let mut members = BumpVec::<Property>::with_capacity_in(class.properties.len() + 4, bump);
         let mut key_effects = BumpVec::<Expr>::new_in(bump);
@@ -839,7 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ];
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
 
-        for slot in class.properties.slice_mut().iter_mut() {
+        for (index, slot) in class.properties.slice_mut().iter_mut().enumerate() {
             let mut prop = core::mem::take(slot);
             if prop.kind == PropertyKind::ClassStaticBlock {
                 members.push(prop);
@@ -872,6 +916,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind + if is_static { 8 } else { 0 } + if private_index.is_some() { 16 } else { 0 },
             );
             let group = usize::from(!is_static) + if kind == 5 { 2 } else { 0 };
+
+            // `__decorateElement` defines a decorated method or accessor after
+            // the class body did. It must not where a later member of the
+            // same name has taken the place of this one: flags 32 and 64.
+            let replaced = if decorators.len_u32() > 0 {
+                replaced_parts[index]
+            } else {
+                0
+            };
+            let flags = flags + f64::from(replaced) * 32.0;
 
             let dec_ref = if decorators.len_u32() > 0 {
                 let dec = p.declared_temp(b"_dec");
@@ -1090,11 +1144,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            // `__decorateElement` reads a method, getter or setter back from
+            // its key. One that a later member replaces is gone from there, so
+            // it moves to a key of its own, which `__decorateElement` deletes,
+            // and an empty one keeps its place in the order of the keys.
+            let mut detached: Option<(Property, Expr)> = None;
+            if is_method && replaced != 0 {
+                let own_key = p.declared_temp(b"_key");
+                let symbol = p.find_symbol(loc, b"Symbol").expect("unreachable").r#ref;
+                let target = p.new_expr(E::Identifier::init(symbol), loc);
+                let symbol = p.new_expr(
+                    E::Call {
+                        target,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let mut own_flags = prop.flags;
+                own_flags.insert(Flags::Property::IsComputed);
+                let placeholder = if kind == 3 {
+                    p.accessor_setter_placeholder(loc)
+                } else {
+                    p.new_expr(
+                        E::Function {
+                            func: G::Fn::default(),
+                        },
+                        loc,
+                    )
+                };
+                let member = Property {
+                    key: Some(p.assign_to(own_key, symbol, loc)),
+                    value: prop.value.replace(placeholder),
+                    kind: prop.kind,
+                    flags: own_flags,
+                    ..Default::default()
+                };
+                detached = Some((member, p.use_ref(own_key, loc)));
+            }
+
             let mut extra_initializer: Option<Expr> = None;
             if let Some(dec) = dec_ref {
                 let this = p.new_expr(E::This {}, loc);
+                let own_key = detached.as_ref().map(|(_, own_key)| *own_key);
                 decorate[group]
-                    .push(p.decorate_element(init_ref, flags, name_expr, dec, this, None, loc));
+                    .push(p.decorate_element(init_ref, flags, name_expr, dec, this, own_key, loc));
                 if !is_method {
                     let DecoratedInitializer { value, extra } = p.decorated_initializer(
                         init_ref,
@@ -1118,6 +1211,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 first_instance_host.get_or_insert((members.len(), field_name));
             }
             members.push(prop);
+            if let Some((member, _)) = detached {
+                members.push(member);
+            }
             if let Some(extra) = extra_initializer {
                 if is_static {
                     members.push(p.make_static_block(&[extra], loc));
@@ -1554,6 +1650,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts: bun_ast::StoreSlice::from_bump(body),
                 loc,
             },
+            ..Default::default()
+        };
+        self.new_expr(E::Function { func }, loc)
+    }
+
+    /// `function(v) {}`
+    fn accessor_setter_placeholder(&mut self, loc: bun_ast::Loc) -> Expr {
+        let param = self.new_sym(js_ast::symbol::Kind::Other, b"v");
+        let arg = self.arena.alloc(G::Arg {
+            binding: self.b(B::Identifier { r#ref: param }, loc),
+            ..Default::default()
+        });
+        let func = G::Fn {
+            args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(arg)),
             ..Default::default()
         };
         self.new_expr(E::Function { func }, loc)

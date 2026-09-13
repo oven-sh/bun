@@ -268,7 +268,10 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
     access,
     k = flags & 7,
     s = !!(flags & 8),
-    p = !!(flags & 16);
+    p = !!(flags & 16),
+    // A later member of the same name replaced parts of this one, which are
+    // not defined again: 1 its value or getter, 2 its setter.
+    r = flags >> 5;
   var j = k > 3 ? array.length + 1 : k ? (s ? 1 : 2) : 0,
     key = __decoratorStrings[k + 5];
   var initializers = k > 3 && (array[j - 1] = []),
@@ -289,11 +292,14 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
                 __privateSet(this, extra, x);
               },
             },
-        name,
+        r && k < 4 ? extra : name,
       ));
+  // A replaced method, getter or setter waits at the key `extra`, which only this function knows.
   // A static member called `name` has already replaced the string every class starts with.
   k
-    ? p && k < 4 && __name(extra, (k > 2 ? "set " : k > 1 ? "get " : "") + name)
+    ? k < 4 &&
+      (p || r) &&
+      __name(p ? extra : (delete target[extra], desc[key]), (k > 2 ? "set " : k > 1 ? "get " : "") + name)
     : typeof __getOwnPropDesc(target, "name")?.value == "string" && __name(target, name);
 
   for (var i = decorators.length - 1; i >= 0; i--) {
@@ -328,7 +334,7 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
 
   return (
     k || __decoratorMetadata(array, target),
-    desc && __defProp(target, name, desc),
+    desc && (k > 3 ? (r & 1 && delete desc.get, r & 2 && delete desc.set, r < 3) : !r) && __defProp(target, name, desc),
     p ? (k ^ 4 ? extra : desc) : target
   );
 };

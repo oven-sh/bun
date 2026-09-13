@@ -442,6 +442,40 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
     });
   });
 
+  it("a bare specifier looked up in a package.json browser map", async () => {
+    // With a browser map in scope, each specifier gets "./" and "/index"
+    // variants built in path buffers before the map is read. Six bytes under
+    // the limit is the first length at which "<specifier>/index" does not
+    // fit; one byte less still goes through the map.
+    const lengths = [MAX_PATH_BYTES - 7, MAX_PATH_BYTES - 6, MAX_PATH_BYTES + 300];
+    expect(
+      await run({
+        "package.json": JSON.stringify({ name: "test", version: "0.0.0", browser: { "./a.js": "./b.js" } }),
+        "main.cjs": `
+          const fs = require("fs");
+          (async () => {
+            const out = {};
+            for (const length of ${JSON.stringify(lengths)}) {
+              const specifier = Buffer.alloc(length, "x").toString();
+              fs.writeFileSync("entry.js", "import " + JSON.stringify(specifier) + ";");
+              const build = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+              out[length] = [build.success, build.logs.map(log => log.message.replace(specifier, "<specifier>"))];
+            }
+            console.log(JSON.stringify(out));
+          })();`,
+      }),
+    ).toEqual({
+      result: Object.fromEntries(
+        lengths.map(length => [
+          length,
+          [false, ['Could not resolve: "<specifier>". Maybe you need to "bun install"?']],
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("tsconfig.json extends, baseUrl and paths", async () => {
     // Each use.cjs is governed by the tsconfig.json next to it. The one with
     // the unusable "extends" still loads; the other two resolve a bare

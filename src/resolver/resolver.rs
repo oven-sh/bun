@@ -5076,6 +5076,11 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
+        // Every candidate below is built in a path buffer; `<input_path>/index` is the longest.
+        if input_path.len() + BROWSER_MAP_INDEX_SUFFIX.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+
         // Normalize the path so we can compare against it without getting confused by "./"
         let cleaned = self
             .fs_ref()
@@ -6655,6 +6660,9 @@ pub enum BrowserMapPathKind {
     AbsolutePath,
 }
 
+/// The longest thing the browser-map lookup appends to a candidate; sizes the guard in `check_browser_map`.
+const BROWSER_MAP_INDEX_SUFFIX: &str = const_format::concatcp!(SEP_STR, "index");
+
 pub(crate) struct BrowserMapPath<'b> {
     pub(crate) remapped: &'static [u8],
     pub(crate) cleaned: &'b [u8],
@@ -6709,10 +6717,7 @@ impl<'b> BrowserMapPath<'b> {
 
         let index_path: &[u8] = {
             let trimmed = strings::trim_right(path_to_check, &[SEP]);
-            let parts = [
-                trimmed,
-                const_format::concatcp!(SEP_STR, "index").as_bytes(),
-            ];
+            let parts = [trimmed, BROWSER_MAP_INDEX_SUFFIX.as_bytes()];
             ResolvePath::join_string_buf(
                 bufs!(tsconfig_base_url),
                 &parts,

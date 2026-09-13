@@ -46,6 +46,7 @@
 #include "CloseEvent.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 #include "JSMessagePort.h"
 #include "JSMessageChannel.h"
 #include "JSWorker.h"
@@ -411,6 +412,104 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetParentPort, (JSGlobalObject * lexicalGloba
     return JSValue::encode(jsUndefined());
 }
 
+// Serializes a postMessage() payload with its transfer list and disentangles the transferred ports.
+static std::optional<MessageWithMessagePorts> serializeMessage(Zig::GlobalObject& globalObject, JSC::JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, SerializationContext serializationContext)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject.vm());
+
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(globalObject, value, WTF::move(transferList), ports, SerializationForStorage::No, serializationContext);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (serialized.hasException()) {
+        WebCore::propagateException(globalObject, scope, serialized.releaseException());
+        RELEASE_AND_RETURN(scope, std::nullopt);
+    }
+
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangledPorts.hasException()) {
+        WebCore::propagateException(globalObject, scope, disentangledPorts.releaseException());
+        RELEASE_AND_RETURN(scope, std::nullopt);
+    }
+
+    return MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
+}
+
+// The main thread has no parent, so postMessage() acts like window.postMessage() and queues the
+// message for this global's own listeners: https://html.spec.whatwg.org/multipage/web-messaging.html#window-post-message-steps
+static JSC::EncodedJSValue postMessageToSelf(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // postMessage(message, targetOrigin, transfer) and postMessage(message, { transfer, targetOrigin }), per WebIDL overload resolution.
+    JSC::JSValue targetOriginOrOptions = callFrame->argument(1);
+    String targetOrigin = "/"_s;
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+    if (callFrame->argumentCount() < 3 && (targetOriginOrOptions.isUndefinedOrNull() || targetOriginOrOptions.isObject())) {
+        auto options = convertDictionary<StructuredSerializeOptions>(*globalObject, targetOriginOrOptions);
+        RETURN_IF_EXCEPTION(scope, {});
+        transferList = WTF::move(options.transfer);
+        if (targetOriginOrOptions.isObject()) {
+            JSC::JSValue targetOriginValue = asObject(targetOriginOrOptions)->get(globalObject, JSC::Identifier::fromString(vm, "targetOrigin"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!targetOriginValue.isUndefined()) {
+                targetOrigin = convert<IDLUSVString>(*globalObject, targetOriginValue);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+    } else {
+        targetOrigin = convert<IDLUSVString>(*globalObject, targetOriginOrOptions);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::JSValue transfer = callFrame->argument(2);
+        if (!transfer.isUndefined()) {
+            transferList = convert<IDLSequence<IDLObject>>(*globalObject, transfer);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    // The main thread's origin is opaque, so only "*" and "/" match it. A message to any other origin is serialized, then dropped.
+    bool targetsSelf = targetOrigin == "*"_s || targetOrigin == "/"_s;
+    if (!targetsSelf && !URL { targetOrigin }.isValid()) {
+        propagateException(*globalObject, scope, Exception { SyntaxError, makeString("Invalid target origin '"_s, targetOrigin, "' in a call to 'postMessage'"_s) });
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    auto message = serializeMessage(*globalObject, callFrame->argument(0), WTF::move(transferList), SerializationContext::WindowPostMessage);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!targetsSelf)
+        return JSValue::encode(jsUndefined());
+
+    globalObject->scriptExecutionContext()->postTask([message = WTF::move(*message)](ScriptExecutionContext& context) mutable {
+        if (!context.globalObject())
+            return;
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+            return;
+
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+        if (scope.exception()) [[unlikely]] {
+            RELEASE_ASSERT(vm.hasPendingTerminationException());
+            return;
+        }
+
+        // Per the window post message steps, a message that fails to deserialize fires messageerror.
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), "null"_s, {}, nullptr, WTF::move(ports));
+        if (scope.exception()) [[unlikely]] {
+            if (vm.hasPendingTerminationException())
+                return;
+            scope.clearException();
+            globalObject->globalEventScope->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull(), "null"_s }, MessageEvent::IsTrusted::Yes));
+            return;
+        }
+        globalObject->globalEventScope->dispatchEvent(event->event);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -423,7 +522,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
     if (!proxy)
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(scope, postMessageToSelf(globalObject, callFrame));
 
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
@@ -446,23 +545,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
         }
     }
 
-    Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
-        RELEASE_AND_RETURN(scope, {});
-    }
+    auto message = serializeMessage(*globalObject, value, WTF::move(transferList), SerializationContext::WorkerPostMessage);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
-    if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
-        RELEASE_AND_RETURN(scope, {});
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    proxy->postMessageToWorkerObject(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
+    proxy->postMessageToWorkerObject(WTF::move(*message));
 
     return JSValue::encode(jsUndefined());
 }

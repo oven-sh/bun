@@ -141,10 +141,12 @@ describe("heapStats() mimalloc integration", () => {
           let deadline = performance.now() + 1000;
           while (rss() > held - 64 && performance.now() < deadline);
           for (const array of second) array.buffer.transfer(0);
-          // The next pass comes 100 ms later.
+          // The next pass comes 100 ms later. What RSS fell by is taken before heapStats() runs again: that call polls the
+          // allocator, and a poll runs a pass that is due by itself.
           deadline = performance.now() + 2000;
-          while (rss() > held - 352 && performance.now() < deadline);
-          console.log(JSON.stringify({ released: held - rss(), purged: purged() - purgedBefore }));
+          let released;
+          while ((released = held - rss()) < 336 && performance.now() < deadline);
+          console.log(JSON.stringify({ released, purged: purged() - purgedBefore }));
         `,
         ],
         env: { ...bunEnv, Malloc: "1" },
@@ -153,7 +155,9 @@ describe("heapStats() mimalloc integration", () => {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       // 384 MB were freed. The first pass alone takes the first 256 MB, and up to 32 MB of the rest.
-      expect(JSON.parse(stdout).purged, stdout).toBeGreaterThanOrEqual(352);
+      const { released, purged } = JSON.parse(stdout);
+      expect(released, stdout).toBeGreaterThanOrEqual(336);
+      expect(purged, stdout).toBeGreaterThanOrEqual(336);
       expect(exitCode).toBe(0);
     },
   );

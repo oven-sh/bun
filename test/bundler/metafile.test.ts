@@ -1490,6 +1490,49 @@ describe("metafile determinism", () => {
     expect(keys).toEqual([...keys].sort());
   });
 
+  // The three entry points parse in parallel. Each finished parse hands out the
+  // source indices of that file's imports, so index order follows scheduling.
+  test.concurrent("repeated identical builds in one directory produce the same metafile", async () => {
+    const N = 14;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < N; i++) {
+      // Uneven file sizes spread out the parse times.
+      let source = `export const v${i} = ${i};\n` + Buffer.alloc(((i * 37) % 11) * 300 * 7, "// pad\n").toString();
+      for (const j of new Set([i + 1, (i * 5 + 3) % N, (i * 3 + 7) % N])) {
+        if (j >= N || j <= i) continue;
+        source +=
+          j % 2
+            ? `export const l${j} = () => import("./m${j}.js");\n`
+            : `import * as s${j} from "./m${j}.js"; globalThis.k = s${j};\n`;
+      }
+      files[`m${i}.js`] = source;
+    }
+    for (const e of [0, 1, 2]) {
+      files[`e${e}.js`] = [0, 3, 5, 8, 11].map(i => `import("./m${(i + e) % N}.js");`).join("\n");
+    }
+    using dir = tempDir("metafile-repeat", files);
+
+    const inputOrders = new Set<string>();
+    const metafiles = new Set<string>();
+    for (let run = 0; run < 10; run++) {
+      const result = await Bun.build({
+        entrypoints: [0, 1, 2].map(e => `${dir}/e${e}.js`),
+        splitting: true,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+      const metafile = result.metafile as Metafile;
+      inputOrders.add(
+        Object.keys(metafile.inputs)
+          .map(key => key.slice(key.lastIndexOf("/") + 1))
+          .join(" "),
+      );
+      metafiles.add(JSON.stringify(metafile));
+    }
+    expect([...inputOrders]).toHaveLength(1);
+    expect(metafiles.size).toBe(1);
+  });
+
   async function buildEntries(dir: string, entries: string[], metaName: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", ...entries, "--outdir=dist", `--metafile=${metaName}`],

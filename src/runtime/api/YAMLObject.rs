@@ -95,8 +95,7 @@ impl Space {
         }
 
         if space.is_string() {
-            // Only U+0020 can indent YAML, so a string gives the width (its length, as in
-            // the `yaml` package) and none of its characters are written.
+            // Only spaces can indent YAML, so a string counts as its length (like npm `yaml`).
             return Ok(match space.as_string().length().min(10) {
                 0 => Space::Minified,
                 width => Space::Number(width as u32),

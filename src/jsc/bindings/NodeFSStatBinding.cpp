@@ -20,6 +20,8 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
+#include <JavaScriptCore/JSBigIntInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -230,8 +232,12 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    double internalNumber = isBigInt ? value.toBigInt64(globalObject) : value.toNumber(globalObject);
+    // Node.js: `new Date(MathRound(Number(ms)))`. Either class accepts a Number or a BigInt.
+    JSValue numeric = value.toNumeric(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (numeric.isBigInt())
+        numeric = JSC::JSBigInt::toNumber(numeric);
+    double internalNumber = JSC::jsRound(numeric.asNumber());
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
     if (!thisObject->structure()->mayBePrototype()) {

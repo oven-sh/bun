@@ -1,6 +1,6 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    JSGlobalObject, JSStringView, JSValue, JsError, JsResult, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
@@ -2372,7 +2372,13 @@ fn relative_posix_t<'a, T: PathCharCwd>(
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_posix_t(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        posix_cwd_t::<T>,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2381,7 +2387,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
+            let r = resolve_posix_t(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, posix_cwd_t::<T>)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2517,7 +2523,13 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_windows_t(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        get_cwd_t::<T>,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2526,7 +2538,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
+            let r = resolve_windows_t(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, get_cwd_t::<T>)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2784,11 +2796,17 @@ fn relative(
 
 /// Based on Node v21.6.1 path.posix.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-fn resolve_posix_t<'a, T: PathCharCwd>(
+fn resolve_posix_t<'a, T: PathCharCwd, E, F>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
@@ -2807,12 +2825,17 @@ fn resolve_posix_t<'a, T: PathCharCwd>(
         // in this scope; copy into buf2 before reusing.
         // Sized to the larger of the two T variants.
         let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
+        let mut tmp_spill: Vec<T>;
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
         } else {
-            // cwd is limited to MAX_PATH_BYTES.
-            tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)?
+            if cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+                tmp_spill = vec![T::default(); cwd_buffer_capacity];
+                &*get_cwd(&mut tmp_spill)?
+            } else {
+                tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
+                &*get_cwd(&mut tmp_buf)?
+            }
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2885,14 +2908,27 @@ fn resolve_posix_t<'a, T: PathCharCwd>(
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-fn resolve_windows_t<'a, T: PathCharCwd>(
+fn resolve_windows_t<'a, T: PathCharCwd, E, F>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    let mut tmp_stack = [T::default(); MAX_PATH_SIZE_UPPER + 3];
+    let mut tmp_spill;
+    let tmp_buf: &mut [T] = if cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+        tmp_spill = vec![T::default(); cwd_buffer_capacity + 3];
+        &mut tmp_spill
+    } else {
+        &mut tmp_stack
+    };
 
     // Backed by tmpBuf.
     // Borrowck: track resolved_device length into tmp_buf.
@@ -2942,7 +2978,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
+            cwd_len = get_cwd(&mut tmp_buf[..])?.len();
             path_ptr = tmp_buf.as_ptr();
             path_len = cwd_len;
         } else {
@@ -3032,7 +3068,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             } else {
                 // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
                 // tmp_buf[0..resolved_device_len] backs resolvedDevice.
-                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                cwd_len = get_cwd(&mut tmp_buf[resolved_device_len..])?.len();
                 path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
@@ -3141,7 +3177,8 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                                 return Err(bun_sys::Error::from_code(
                                     bun_sys::E::ENAMETOOLONG,
                                     bun_sys::Tag::TODO,
-                                ));
+                                )
+                                .into());
                             }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
@@ -3161,7 +3198,8 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                                 return Err(bun_sys::Error::from_code(
                                     bun_sys::E::ENAMETOOLONG,
                                     bun_sys::Tag::TODO,
-                                ));
+                                )
+                                .into());
                             }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
@@ -3307,62 +3345,94 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
     Ok(l::<T>(CHAR_STR_DOT))
 }
 
-#[cfg(unix)]
 unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
+    safe fn Process__getPathCwd(global: &JSGlobalObject, posix: bool) -> JSValue;
 }
 
-fn resolve_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_posix_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+enum ResolveJsError {
+    System(bun_sys::Error),
+    JavaScript(JsError),
+    CwdBufferTooSmall(usize),
+}
+
+impl From<bun_sys::Error> for ResolveJsError {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::System(error)
     }
 }
 
-fn resolve_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_windows_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+impl From<JsError> for ResolveJsError {
+    fn from(error: JsError) -> Self {
+        Self::JavaScript(error)
     }
 }
 
-fn resolve_js_t<T: PathCharCwd>(
+fn copy_process_cwd<'a>(
+    global_object: &JSGlobalObject,
+    cached: &mut Option<Utf8Bytes<'static>>,
+    buf: &'a mut [u8],
+    posix: bool,
+    cwd_capacity: usize,
+) -> Result<&'a mut [u8], ResolveJsError> {
+    if cached.is_none() {
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getPathCwd(global_object, posix)
+        })?;
+        *cached = Some(value.to_utf8(global_object)?);
+    }
+    let bytes = cached.as_ref().expect("cwd was initialized");
+    if bytes.len() > cwd_capacity {
+        return Err(ResolveJsError::CwdBufferTooSmall(bytes.len()));
+    }
+    if bytes.len() > buf.len() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::TODO).into());
+    }
+    buf[..bytes.len()].copy_from_slice(bytes.slice());
+    let cwd = &mut buf[..bytes.len()];
+
+    Ok(cwd)
+}
+
+fn resolve_js(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
-    paths: &[&[T]],
+    paths: &[&[u8]],
+    cached_cwd: Option<Utf8Bytes<'static>>,
 ) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
-    for path in paths {
-        buf_len += if buf_len > 0 && !path.is_empty() {
-            path.len() + 1
+    let mut cwd_capacity = max_path_size::<u8>();
+    let mut cached_cwd = cached_cwd;
+    loop {
+        // Adding 8 bytes when Windows for the possible UNC root.
+        let mut buf_len: usize = if is_windows { 8 } else { 0 };
+        for path in paths {
+            buf_len += if buf_len > 0 && !path.is_empty() {
+                path.len() + 1
+            } else {
+                path.len()
+            };
+        }
+        buf_len += cwd_capacity + 1;
+        buf_len = buf_len.max(path_size::<u8>());
+        // +2 to account for separator and null terminator during path resolution.
+        // Carve buf/buf2 from one pooled slab.
+        let mut scratch = PathScratch::<u8>::new(pool, (buf_len + 2) * 2);
+        let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
+        let resolved = if is_windows {
+            resolve_windows_t(paths, buf, buf2, cwd_capacity, |cwd| {
+                copy_process_cwd(global_object, &mut cached_cwd, cwd, false, cwd_capacity)
+            })
         } else {
-            path.len()
+            resolve_posix_t(paths, buf, buf2, cwd_capacity, |cwd| {
+                copy_process_cwd(global_object, &mut cached_cwd, cwd, true, cwd_capacity)
+            })
         };
-    }
-    // When no path is absolute, the CWD (up to MAX_PATH_SIZE bytes) is prepended
-    // with a separator. Account for this to prevent buffer overflow.
-    buf_len += max_path_size::<T>() + 1;
-    buf_len = buf_len.max(path_size::<T>());
-    // +2 to account for separator and null terminator during path resolution.
-    // Carve buf/buf2 from one pooled slab.
-    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
-    if is_windows {
-        resolve_windows_js_t(global_object, paths, buf, buf2)
-    } else {
-        resolve_posix_js_t(global_object, paths, buf, buf2)
+        match resolved {
+            Ok(path) => return create_js_string_t::<u8>(global_object, path),
+            Err(ResolveJsError::CwdBufferTooSmall(required)) => cwd_capacity = required,
+            Err(ResolveJsError::System(e)) => return Ok(e.to_js(global_object)),
+            Err(ResolveJsError::JavaScript(e)) => return Err(e),
+        }
     }
 }
 
@@ -3406,22 +3476,44 @@ fn resolve(
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
-    #[cfg(unix)]
-    {
-        if !is_windows {
-            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                // Throws when `getcwd` fails (for example, a deleted cwd).
-                return crate::jsc::call_zero_is_throw(global_object, || {
-                    Process__getCachedCwd(global_object)
-                });
+    let current_directory_arg =
+        args_len == 0 || (args_len == 1 && (paths.is_empty() || paths[0] == b"."));
+    let mut cached_cwd = None;
+    if current_directory_arg {
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getPathCwd(global_object, !is_windows)
+        })?;
+        let view = value.to_js_string_view(global_object)?;
+        let bytes = view.to_utf8();
+        if is_windows {
+            let starts_with_separator = bytes
+                .slice()
+                .first()
+                .is_some_and(|byte| *byte == CHAR_FORWARD_SLASH || *byte == CHAR_BACKWARD_SLASH);
+            if args_len == 0 || starts_with_separator {
+                #[cfg(windows)]
+                return Ok(value);
+                #[cfg(not(windows))]
+                {
+                    let mut cwd = bytes.slice().to_vec();
+                    for byte in &mut cwd {
+                        if *byte == CHAR_FORWARD_SLASH {
+                            *byte = CHAR_BACKWARD_SLASH;
+                        }
+                    }
+                    return create_js_string_t::<u8>(global_object, &cwd);
+                }
+            }
+            cached_cwd = Some(value.to_utf8(global_object)?);
+        } else {
+            if bytes.slice().first() == Some(&CHAR_FORWARD_SLASH) {
+                return Ok(value);
             }
         }
     }
 
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
+    resolve_js(global_object, pool, is_windows, &paths, cached_cwd)
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
@@ -3434,7 +3526,8 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // Borrowck: capture length, then re-borrow buf.
-    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
+    let resolved_len =
+        resolve_windows_t(&[path], buf, buf2, MAX_PATH_SIZE_UPPER, get_cwd_t::<T>)?.len();
 
     let len = resolved_len;
     if len <= 2 {

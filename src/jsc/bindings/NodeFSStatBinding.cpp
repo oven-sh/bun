@@ -221,6 +221,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     if (!thisObject)
         return JSC::jsUndefined();
 
+    // An object with the class structure is ordinary, extensible and has no own date property.
     const JSC::StructureID classStructureID = getStructure<isBigInt>(defaultGlobalObject(globalObject))->id();
 
     JSValue value;
@@ -236,9 +237,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
-    // The number conversion above can run user code, so the structure is checked again. An object
-    // with the class structure is ordinary, extensible and has no own `propertyName`: putDirect
-    // does what [[DefineOwnProperty]] would. Any other receiver gets to accept or reject the property.
+    // The number conversion above can run user code, so this compares the structure again.
     if (thisObject->structureID() == classStructureID) {
         thisObject->putDirect(vm, propertyName, result, 0);
     } else if (!thisObject->structure()->mayBePrototype()) {
@@ -292,9 +291,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * 
     if (!thisObject)
         return false;
 
-    // Node: setOwnProperty(this, name, value), which is Object.defineProperty() and throws when
-    // `this` rejects the property (a frozen object, a Proxy trap, a WebAssembly GC reference).
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L472-L517
+    // Node: setOwnProperty(this, name, value), https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L472-L517
     RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
 }
 

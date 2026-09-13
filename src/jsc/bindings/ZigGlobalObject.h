@@ -908,9 +908,7 @@ inline Zig::GlobalObject* defaultGlobalObject()
     return ___private___::getDefaultGlobalObject();
 }
 
-// The instance Structure for a native constructor whose class is a LazyClassStructure member of
-// Zig::GlobalObject: the base Structure when `newTarget` is the constructor itself, otherwise a
-// subclass Structure (`class X extends C`, `Reflect.construct`). Returns nullptr with an exception pending.
+// The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)

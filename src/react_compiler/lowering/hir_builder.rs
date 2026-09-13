@@ -310,7 +310,6 @@ pub(crate) struct HirBuilder<'h> {
     /// False for the component or hook itself, true for every function inside it.
     is_nested_function: bool,
     /// Temporaries that `build` declares with `let` at the top of the function.
-    /// See `declare_temporary`.
     entry_declarations: Vec<Place>,
 }
 
@@ -759,11 +758,10 @@ impl<'h> HirBuilder<'h> {
         self.is_nested_function
     }
 
-    /// A promoted temporary declared with `let`, for an expression to assign.
-    /// The declaration goes ahead of the current statement. A value block
-    /// cannot hold a declaration, so from there it goes to the top of the
-    /// function (see `build`).
-    pub(crate) fn declare_temporary(&mut self, loc: Option<SourceLocation>) -> Place {
+    /// A promoted temporary that `build` declares with `let` at the top of the
+    /// function. A value block cannot hold a declaration, but it can assign
+    /// this.
+    pub(crate) fn declare_temporary_at_entry(&mut self, loc: Option<SourceLocation>) -> Place {
         let identifier = self.make_temporary(loc);
         self.env.promote_temporary(identifier);
         let place = Place {
@@ -772,49 +770,40 @@ impl<'h> HirBuilder<'h> {
             reactive: false,
             loc,
         };
-        if matches!(self.current.kind, BlockKind::Block | BlockKind::Catch) {
-            let declaration = self.temporary_declaration(place.clone());
-            self.push(declaration);
-        } else {
-            self.entry_declarations.push(place.clone());
-        }
+        self.entry_declarations.push(place.clone());
         place
     }
 
-    fn temporary_declaration(&mut self, place: Place) -> Instruction {
-        let loc = place.loc;
-        Instruction {
-            id: EvaluationOrder(0),
-            lvalue: Place {
-                identifier: self.make_temporary(loc),
-                effect: Effect::Unknown,
-                reactive: false,
-                loc,
-            },
-            value: InstructionValue::DeclareLocal {
-                lvalue: LValue {
-                    kind: InstructionKind::Let,
-                    place,
-                },
-                type_annotation: None,
-                loc,
-            },
-            loc,
-            effects: None,
-        }
-    }
-
-    /// Puts the declarations that `declare_temporary` deferred at the start of
-    /// the entry block.
+    /// Puts `let <temporary>` for each `declare_temporary_at_entry` at the
+    /// start of the entry block. `inline_iifes` looks for it there.
     fn push_entry_declarations(&mut self) -> Result<(), CompilerError> {
         if self.entry_declarations.is_empty() {
             return Ok(());
         }
         let mut instructions: HirVec<InstructionId> = AstAlloc::vec();
         for place in std::mem::take(&mut self.entry_declarations) {
-            let declaration = self.temporary_declaration(place);
+            let loc = place.loc;
+            let lvalue = Place {
+                identifier: self.make_temporary(loc),
+                effect: Effect::Unknown,
+                reactive: false,
+                loc,
+            };
             instructions.push(InstructionId(self.instruction_table.len() as u32));
-            self.instruction_table.push(declaration);
+            self.instruction_table.push(Instruction {
+                id: EvaluationOrder(0),
+                lvalue,
+                value: InstructionValue::DeclareLocal {
+                    lvalue: LValue {
+                        kind: InstructionKind::Let,
+                        place,
+                    },
+                    type_annotation: None,
+                    loc,
+                },
+                loc,
+                effects: None,
+            });
         }
         let Some(entry) = self.completed.get_mut(&self.entry) else {
             return Err(CompilerError::from(CompilerDiagnostic::new(

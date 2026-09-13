@@ -1096,7 +1096,7 @@ fn lower_update(
             // PromoteUsedTemporaries on outlined functions only. Remove this
             // when upstream fixes every nested function.
             if !prefix && value_is_used && builder.is_nested_function() {
-                let old_value = builder.declare_temporary(member_loc);
+                let old_value = builder.declare_temporary_at_entry(member_loc);
                 return lower_in_sequence_block(builder, loc, |builder| {
                     lower_member_update(
                         builder,

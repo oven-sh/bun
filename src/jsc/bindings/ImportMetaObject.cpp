@@ -94,7 +94,12 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     if (index != notFound) {
         StringView view = specifier;
         url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
+        // A fragment with no query rides behind the '?' in a module key: "/x.mjs?#a" is "file:///x.mjs#a".
+        auto suffix = view.substring(index + 1);
+        if (suffix.startsWith('#'))
+            url.setFragmentIdentifier(suffix.substring(1));
+        else
+            url.setQuery(suffix);
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }

@@ -4585,13 +4585,15 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
+                // `source` is the referrer's module key, which may be `<path>?query`.
+                let source_path = crate::resolver_jsc::module_key_without_query(source);
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
                     bun_ptr::detach_lifetime(
-                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                        bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash(),
                     )
                 }
             } else {
@@ -4903,7 +4905,17 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = bun_core::String::clone_utf8(result.query_string);
+            // `bun build --compile` finds an embedded module by its exact key, so that key gets no suffix.
+            let is_embedded = result.result.as_ref().is_some_and(|resolved| {
+                resolved
+                    .flags
+                    .contains(bun_resolver::ResultFlags::IS_STANDALONE_MODULE)
+            });
+            *query = if is_embedded {
+                bun_core::String::EMPTY
+            } else {
+                bun_core::String::clone_utf8(result.query_string)
+            };
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))

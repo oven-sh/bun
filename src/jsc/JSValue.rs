@@ -2426,8 +2426,7 @@ impl JSValue {
         }
         JSC__JSValue__isClass(self, global)
     }
-    /// `Object.prototype.toString.call(value) === "[object Object]"`. Reads
-    /// `Symbol.toStringTag`, so it can run user code.
+    /// `Object.prototype.toString.call(self) === "[object Object]"`. It reads `Symbol.toStringTag`, so it can run user code.
     pub fn to_string_tag_is_object(self, global: &JSGlobalObject) -> JsResult<bool> {
         crate::cpp::JSC__JSValue__toStringTagIsObject(self, global)
     }

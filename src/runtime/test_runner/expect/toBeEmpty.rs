@@ -46,8 +46,7 @@ pub(crate) fn to_be_empty(
                 )?;
                 pass = !any_properties_in_iterator;
             } else if !value.to_string_tag_is_object(global)? {
-                // jest-extended compares against `{}`, and no Date, RegExp, Error
-                // or other object of another class equals `{}`.
+                // jest-extended: `equals({}, value)` is false for an object of another class, like a Date.
                 pass = false;
             } else {
                 let Some(_cell) = value.to_cell() else {

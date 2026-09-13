@@ -2478,7 +2478,7 @@ async function runMode(mode: Mode) {
   let entry = mode.file;
   if (mode.bundle) {
     const build = await runIn(String(dir), ["build", mode.file, "--target=bun", "--outfile=bundled.js"]);
-    if (build.exitCode !== 0) return { out: {}, stderr: build.stderr, exitCode: build.exitCode };
+    if (build.exitCode !== 0) return { out: {}, stderr: filterStderr(build.stderr), exitCode: build.exitCode };
     entry = "bundled.js";
   }
   const { stdout, stderr, exitCode } = await runIn(String(dir), [entry]);

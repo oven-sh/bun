@@ -10019,8 +10019,7 @@ impl LowerUsingDeclarationsContext {
                     continue;
                 }
                 js_ast::StmtData::SClass(mut c) => {
-                    // An export can't go in try/catch. A class with static blocks or computed
-                    // keys (every class with lowered decorators) reads what is declared there.
+                    // An exported class leaves the try block unless it has static blocks or computed keys.
                     let runs_code = c.is_export
                         && c.class.properties.slice().iter().any(|property| {
                             property.kind == js_ast::g::PropertyKind::ClassStaticBlock

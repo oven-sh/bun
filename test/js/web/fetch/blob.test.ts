@@ -391,7 +391,7 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
     "data.txt": "hello",
   });
   const script = `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
     const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
     const file = Bun.file(p, { type });

@@ -579,7 +579,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",

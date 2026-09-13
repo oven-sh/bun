@@ -206,7 +206,7 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   // base64 output buffer on decode error). Each fetch of a percent-encoded
   // data: URL leaked ~len(url.data) bytes from bun.default_allocator.
   const script = `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     // ~240KB of percent-encoded payload; the intermediate percent-decoded
     // buffer is allocated at url.data.len bytes and was previously leaked.
     const plain = "data:text/plain," + Buffer.alloc(240000, "%41").toString();
@@ -277,7 +277,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     // > 512 KiB shared buffer → slow path; large enough that the compressed
     // output also spans multiple socket writes.
     const big = Buffer.alloc(700 * 1024, "abcdefghij");
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const opts = [
       { compress: "gzip" },
       { compress: "deflate" },
@@ -337,7 +337,7 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
   const script = /* js */ `
     import { createServer } from "node:net";
     import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
 
     const plain = Buffer.alloc(64 * 1024, "abcdefghij");
     const bodies = {
@@ -455,7 +455,7 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         // JS string would make href_from_js return the same StringImpl every
         // call (only the refcount grows, RSS stays flat) and hide the leak.
         const pad = Buffer.alloc(256 * 1024, "a").toString();
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
 
         async function hit(i) {
           const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
@@ -534,7 +534,7 @@ test.concurrent(
     // Windows strips the leading "/" then asserts is_absolute_windows() in
     // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
     const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     async function hit(i) {
       // Fresh path per iteration so each leaked ref pins a distinct impl.
       // The file does not exist; the Response is created (with url_string set)
@@ -676,7 +676,7 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
         const str = payload.toString("latin1");
         const sharedBlob = new Blob([payload]);
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
 
         function makeBody() {
           ${

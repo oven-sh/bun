@@ -562,7 +562,7 @@ fn run_hir_passes(
     timed!(
         "AlignObjectMethodScopes",
         crate::inference::align_object_method_scopes(hir, env)
-    );
+    )?;
 
     timed!(
         "PruneUnusedLabelsHIR",

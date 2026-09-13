@@ -1392,13 +1392,54 @@ pub mod parse_worker {
                     .expect("unreachable");
                     buf.into_bump_str().as_bytes()
                 };
-                let root = Expr::init(
-                    E::String {
-                        data: unique_key.into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
+                let root = if topts.target.is_bun() {
+                    let import_meta_dir = Expr::init(
+                        E::Dot {
+                            target: Expr::init(E::ImportMeta {}, Loc { start: 0 }),
+                            name_loc: Loc::EMPTY,
+                            name: b"dir".into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    let separator = Expr::init(
+                        E::String {
+                            data: b"/".into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    let asset_path = Expr::init(
+                        E::String {
+                            data: unique_key.into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    Expr::init(
+                        E::Binary {
+                            op: bun_ast::OpCode::BinAdd,
+                            left: Expr::init(
+                                E::Binary {
+                                    op: bun_ast::OpCode::BinAdd,
+                                    left: import_meta_dir,
+                                    right: separator,
+                                },
+                                Loc { start: 0 },
+                            ),
+                            right: asset_path,
+                        },
+                        Loc { start: 0 },
+                    )
+                } else {
+                    Expr::init(
+                        E::String {
+                            data: unique_key.into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    )
+                };
                 *unique_key_for_additional_file = FileLoaderHash {
                     key: ast::StoreStr::new(unique_key),
                     content_hash,

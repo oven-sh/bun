@@ -1156,7 +1156,7 @@ test.concurrent.each([
   ],
   [
     "Bun.gc(true) in a node:vm Error.prepareStackTrace getter",
-    `const vm = require("node:vm");
+    `import vm from "node:vm";
      const context = vm.createContext({ collect: () => Bun.gc(true) });
      const e = vm.runInContext(${JSON.stringify(errorWithDeadFrames)}, context);
      vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); } })', context);

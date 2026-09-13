@@ -1083,8 +1083,12 @@ impl VirtualMachine {
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
     }
 
-    fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
-        if self.graph_contexts.count() == 0 {
+    /// The `Bun.unsafe.ModuleGraph` context `id` names, until it is freed.
+    pub fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
+        if self.graph_contexts.count() == 0
+            || id == self.root_context.id()
+            || id == self.vm_context.id()
+        {
             return None;
         }
         // SAFETY: registered ⇒ not freed.
@@ -1209,13 +1213,10 @@ impl VirtualMachine {
     ) -> SweepResult {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
-        let first = !context.is_stopped();
         let result = context.stop(reason);
-        if first {
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: live per-thread VM on the JS thread.
-                unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), Some(context.id())) };
-            }
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread.
+            unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), Some(context.id())) };
         }
         result
     }

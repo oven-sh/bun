@@ -13,6 +13,7 @@
 #include "ZigGlobalObject.h"
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
+#include <JavaScriptCore/WeakInlines.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -66,12 +67,12 @@ extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM);
 extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
 extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
 
-Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent, JSC::JSCell* moduleGraph)
+Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent, JSC::JSObject* moduleGraph)
 {
     ASSERT(parent.isContextThread());
     ASSERT(!parent.m_bunContext);
     auto context = adoptRef(*new ScriptExecutionContext(parent.m_vm, parent.m_globalObject, std::numeric_limits<int32_t>::max()));
-    context->m_moduleGraph = moduleGraph;
+    context->m_moduleGraph = JSC::Weak<JSC::JSObject>(moduleGraph);
     context->m_isInMainThreadRealm = parent.isMainThread();
     context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM);
     parent.m_moduleGraphContexts.add(context.get());
@@ -88,7 +89,7 @@ void ScriptExecutionContext::stop()
 
 void ScriptExecutionContext::moduleGraphDestroyed()
 {
-    m_moduleGraph = nullptr;
+    m_moduleGraph.clear();
     // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
     // context until they are stopped. At VM teardown they already were (prepareForDestruction).
     if (!activeDOMObjectsAreStopped())
@@ -289,6 +290,7 @@ void ScriptExecutionContext::globalObjectDestroyed()
     for (auto& moduleGraphContext : m_moduleGraphContexts) {
         moduleGraphContext.m_globalObject = nullptr;
         moduleGraphContext.m_vm = nullptr;
+        moduleGraphContext.m_moduleGraph.clear();
     }
 }
 

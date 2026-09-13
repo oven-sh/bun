@@ -15,6 +15,7 @@ struct BunVmHandleRef;
 #include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
+#include <JavaScriptCore/Weak.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -57,7 +58,7 @@ public:
     // A further context in `parent`'s global, for a Bun.unsafe.ModuleGraph: what the graph's
     // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
     // belongs to it and goes when it stops.
-    static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent, JSC::JSCell* moduleGraph);
+    static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent, JSC::JSObject* moduleGraph);
 
     ~ScriptExecutionContext();
 
@@ -80,7 +81,7 @@ public:
     // whose Rust half is the VM's root context).
     void* bunContext() const { return m_bunContext; }
     // The JSModuleGraph a graph's context was made for, until it is collected.
-    JSC::JSCell* moduleGraph() const { return m_moduleGraph; }
+    JSC::JSObject* moduleGraph() const { return m_moduleGraph.get(); }
     // A graph's context stops everything it owns, for good. The global keeps running.
     void stop();
     // The graph was collected (a GC finalizer: nothing can be stopped here): stop() from the
@@ -184,7 +185,7 @@ private:
     // A graph's context in the main thread's realm.
     bool m_isInMainThreadRealm { false };
     void* m_bunContext { nullptr };
-    JSC::JSCell* m_moduleGraph { nullptr };
+    JSC::Weak<JSC::JSObject> m_moduleGraph;
     // A global's own context: the contexts of the graphs made in it.
     WeakHashSet<ScriptExecutionContext> m_moduleGraphContexts;
 

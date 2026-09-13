@@ -1584,10 +1584,33 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
             crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
         }
     }
+    if let Some(context) = only {
+        // A graph's context keeps the set of its own live timers.
+        // SAFETY: `vm` per fn contract.
+        let Some(timers) = (unsafe { (*vm).graph_context(context) }).map(|c| c.take_timers())
+        else {
+            return;
+        };
+        for (&timer, &kind) in timers.iter() {
+            // SAFETY: tracked ⇒ live (each untracks itself in its deinit); a
+            // cancel may free the one it cancels, never another tracked one.
+            unsafe {
+                match kind {
+                    bun_jsc::ContextTimer::Object => {
+                        (*timer.cast::<crate::timer::TimerObjectInternals>()).cancel(vm)
+                    }
+                    bun_jsc::ContextTimer::AbortSignal => {
+                        bun_jsc::abort_signal::Timeout::discard(timer.cast())
+                    }
+                }
+            }
+        }
+        return;
+    }
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
-        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm, only);
+        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
     }
 }
 

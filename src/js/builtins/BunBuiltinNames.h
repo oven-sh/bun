@@ -92,6 +92,7 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
+    macro(graph) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \

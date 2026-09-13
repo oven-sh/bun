@@ -2,7 +2,9 @@
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
+import net from "node:net";
+import nodeTls from "node:tls";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -329,6 +331,140 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     } finally {
       ws.close();
     }
+  });
+
+  test("background work under way when the graph is disposed still settles", async () => {
+    const dir = fixture({
+      "data.txt": "0123456789",
+      "jobs.mjs": `
+        import fs from "node:fs";
+        import zlib from "node:zlib";
+        import { promisify } from "node:util";
+        export const work = () => Promise.all([
+          fs.promises.readFile(import.meta.dir + "/data.txt", "utf8"),
+          promisify(zlib.gzip)("hello").then(bytes => zlib.gunzipSync(bytes).toString()),
+        ]);
+      `,
+    });
+    const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+    const app = await graph.import(join(dir, "jobs.mjs"));
+    const work = graph.run(() => app.work());
+    graph.dispose();
+    expect(await work).toEqual(["0123456789", "hello"]);
+  });
+
+  test("a socket of the graph upgraded to TLS by the host stays the graph's", async () => {
+    const dir = fixture({
+      "sockets.mjs": `
+        import net from "node:net";
+        export const connect = port => new Promise((resolve, reject) => {
+          const socket = net.connect(port, "127.0.0.1", () => resolve(socket));
+          socket.on("error", reject);
+        });
+        export const accept = () => {
+          const accepted = Promise.withResolvers();
+          const server = net.createServer(socket => accepted.resolve(socket));
+          server.on("error", accepted.reject);
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve({ port: server.address().port, accepted: accepted.promise })));
+        };
+      `,
+    });
+    const secured = (socket: nodeTls.TLSSocket, event: string) =>
+      new Promise<void>((resolve, reject) => {
+        socket.once(event, () => resolve());
+        socket.once("error", reject);
+        socket.once("close", () => reject(new Error("closed before " + event)));
+      });
+    const closed = (socket: net.Socket) => new Promise<void>(resolve => socket.once("close", () => resolve()));
+
+    // A client socket the graph connected, upgraded from the host's context.
+    {
+      const serverSide = Promise.withResolvers<nodeTls.TLSSocket>();
+      const server = nodeTls.createServer({ key: tls.key, cert: tls.cert }, socket => {
+        socket.on("error", () => {});
+        serverSide.resolve(socket);
+      });
+      await new Promise<void>((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
+      const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+      try {
+        const app = await graph.import(join(dir, "sockets.mjs"));
+        const raw = await graph.run(() => app.connect((server.address() as net.AddressInfo).port));
+        const secure = nodeTls.connect({ socket: raw, rejectUnauthorized: false });
+        await secured(secure, "secureConnect");
+        const serverSocketClosed = closed(await serverSide.promise);
+        secure.on("error", () => {});
+
+        graph.dispose();
+
+        await serverSocketClosed;
+      } finally {
+        graph.dispose();
+        server.close();
+      }
+    }
+
+    // A socket the graph's server accepted, upgraded (as the TLS server) from the host's context.
+    {
+      const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+      try {
+        const app = await graph.import(join(dir, "sockets.mjs"));
+        const { port, accepted } = await graph.run(() => app.accept());
+        const client = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        const clientSecured = secured(client, "secureConnect");
+        const secure = new nodeTls.TLSSocket(await accepted, { isServer: true, key: tls.key, cert: tls.cert });
+        secure.on("error", () => {});
+        await clientSecured;
+        const clientClosed = closed(client);
+        client.on("error", () => {});
+
+        graph.dispose();
+
+        await clientClosed;
+      } finally {
+        graph.dispose();
+      }
+    }
+  });
+
+  test("a Bun.SQL pool made by the graph redials in the graph's context", async () => {
+    const dir = fixture({
+      "sql.mjs": `
+        export function query(port) {
+          const sql = new Bun.SQL({ url: "postgres://user:pass@127.0.0.1:" + port + "/db", max: 1, connectionTimeout: 30 });
+          sql\`select 1\`.catch(() => {});
+        }
+      `,
+    });
+    // Not a database: drops the first connection before the handshake, which the pool answers
+    // with a redial (from the close event), and leaves the second one waiting.
+    let connections = 0;
+    const redialed = Promise.withResolvers<void>();
+    const redialClosed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = ++connections;
+        },
+        data(socket) {
+          if (socket.data === 1) socket.end();
+          else redialed.resolve();
+        },
+        close(socket) {
+          if (socket.data === 2) redialClosed.resolve();
+        },
+      },
+    });
+    using graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+    const app = await graph.import(join(dir, "sql.mjs"));
+    graph.run(() => app.query(server.port));
+    await redialed.promise;
+
+    graph.dispose();
+
+    await redialClosed.promise;
+    expect(connections).toBe(2);
   });
 
   test("what a disposed graph's code opens is closed at once", async () => {

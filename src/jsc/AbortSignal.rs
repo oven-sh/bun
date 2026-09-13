@@ -289,15 +289,12 @@ pub struct Timeout {
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
-    #[inline]
-    pub fn context(&self) -> crate::ContextId {
-        self.context
-    }
-
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
+        let jsc_vm = VirtualMachine::get();
+        let graph_context = jsc_vm.current_graph_context();
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
@@ -311,8 +308,11 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
-            context: VirtualMachine::get().current_context().id(),
+            context: graph_context.map_or(jsc_vm.root_context().id(), |context| context.id()),
         }));
+        if let Some(context) = graph_context {
+            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+        }
 
         #[cfg(debug_assertions)]
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -424,6 +424,9 @@ impl Timeout {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
             Self::cancel(&mut *this, vm);
+            if let Some(context) = (*vm).graph_context((*this).context) {
+                context.untrack_timer(this.cast());
+            }
             drop(bun_core::heap::take(this));
         }
     }

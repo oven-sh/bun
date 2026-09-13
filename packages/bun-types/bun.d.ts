@@ -5480,8 +5480,9 @@ declare module "bun" {
        * calls directly runs in the host's context; use
        * {@link ModuleGraph.run} to call it in the graph's.
        *
-       * Work of the graph that is in flight when it is disposed is dropped:
-       * promises for its timers and background jobs never settle.
+       * Disposing the graph cancels what can be cancelled: a promise waiting
+       * on one of its timers (`Bun.sleep`) never settles. Background work that
+       * cannot be (a file read under way) still settles its promise.
        *
        * @default false
        */

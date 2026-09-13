@@ -287,6 +287,10 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
+        // SAFETY: `vm` is the live per-thread VM.
+        let (graph_context, root_context) =
+            unsafe { ((*vm).current_graph_context(), (*vm).root_context().id()) };
+
         *self = Self {
             id,
             flags: {
@@ -297,10 +301,16 @@ impl TimerObjectInternals {
                 Cell::new(f)
             },
             interval: Cell::new(interval),
-            // SAFETY: `vm` is the live per-thread VM; field read only.
-            context: unsafe { (*vm).current_context().id() },
+            context: graph_context.map_or(root_context, bun_jsc::ScriptExecutionContext::id),
             this_value: JsCell::new(JsRef::empty()),
         };
+        // `self` is at its final address (embedded in its heap-allocated parent).
+        if let Some(context) = graph_context {
+            context.track_timer(
+                core::ptr::from_mut(self).cast(),
+                bun_jsc::ContextTimer::Object,
+            );
+        }
 
         if kind == Kind::SetImmediate {
             JSImmediate::arguments_set_cached(timer, global, arguments);
@@ -861,6 +871,11 @@ impl TimerObjectInternals {
                 // SAFETY: as above.
                 unsafe { (*state).timer.maps.set_timeout.swap_remove(&self.id) };
             }
+        }
+
+        // SAFETY: `vm` is the live per-thread VM.
+        if let Some(context) = unsafe { (*vm).graph_context(self.context) } {
+            context.untrack_timer(core::ptr::from_mut(self).cast());
         }
 
         // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a

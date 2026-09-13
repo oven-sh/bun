@@ -6,7 +6,6 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
-#include <JavaScriptCore/JSDestructibleObject.h>
 #include "ScriptExecutionContext.h"
 
 namespace Zig {
@@ -64,11 +63,9 @@ private:
     JSC::JSValue m_previous;
 };
 
-class JSModuleGraph final : public JSC::JSDestructibleObject {
+class JSModuleGraph final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
-    static void destroy(JSC::JSCell*);
+    using Base = JSC::JSNonFinalObject;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static JSModuleGraph* create(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSLexicalEnvironment* overlay, JSC::JSObject* onError);
@@ -83,9 +80,10 @@ public:
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); } // key of the first module import()ed (import.meta.main)
     JSC::JSSet* pendingImports() const { return m_pendingImports.get(); } // promises import() returned that have not settled; dispose() rejects them
     JSC::JSFunction* importSettledHandler(bool rejected) const { return rejected ? m_importRejected.get() : m_importFulfilled.get(); }
-    // The context that owns what the graph's script opens; null unless `isolateIO`.
-    WebCore::ScriptExecutionContext* context() const { return m_context.get(); }
-    void setContext(Ref<WebCore::ScriptExecutionContext>&& context) { m_context = WTF::move(context); }
+    // The context that owns what the graph's script opens; null unless `isolateIO`. A heap
+    // finalizer on this cell holds the reference (createContext), so it lives as long as this does.
+    WebCore::ScriptExecutionContext* context() const { return m_context; }
+    void createContext(Zig::GlobalObject*);
 
     void setMainPath(JSC::VM& vm, JSC::JSString* path) { m_mainPath.set(vm, this, path); }
     void clearMainPath() { m_mainPath.clear(); }
@@ -105,7 +103,7 @@ private:
     JSC::WriteBarrier<JSC::JSSet> m_pendingImports;
     JSC::WriteBarrier<JSC::JSFunction> m_importFulfilled;
     JSC::WriteBarrier<JSC::JSFunction> m_importRejected;
-    RefPtr<WebCore::ScriptExecutionContext> m_context;
+    WebCore::ScriptExecutionContext* m_context { nullptr };
 };
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).

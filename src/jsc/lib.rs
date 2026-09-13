@@ -769,7 +769,8 @@ pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 pub use script_execution_context::{
-    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ScriptExecutionContext, StopReason,
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    StopReason,
 };
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined

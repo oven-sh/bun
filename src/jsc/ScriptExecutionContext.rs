@@ -59,6 +59,19 @@ pub struct ScriptExecutionContext {
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
     stop_again_queued: JsCell<bool>,
+    /// The timers script of a graph's context set that have not been freed
+    /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
+    /// cancels exactly those. A VM's own contexts walk the timer heap.
+    timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
+}
+
+/// What a pointer in a graph context's timer set points at.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum ContextTimer {
+    /// `bun_runtime::timer::TimerObjectInternals` (setTimeout / setInterval / setImmediate).
+    Object,
+    /// [`crate::abort_signal::Timeout`] (`AbortSignal.timeout`).
+    AbortSignal,
 }
 
 impl Default for ScriptExecutionContext {
@@ -70,6 +83,7 @@ impl Default for ScriptExecutionContext {
             stopped: JsCell::new(None),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
+            timers: JsCell::new(Default::default()),
         }
     }
 }
@@ -101,7 +115,8 @@ impl ScriptExecutionContext {
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
     pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
-        if !self.is_stopped() {
+        // Its realm or VM going outranks its graph having been disposed.
+        if !self.is_stopped() || reason != StopReason::Disposed {
             self.stopped.set(Some(reason));
         }
         self.stop_again_queued.set(false);
@@ -129,6 +144,31 @@ impl ScriptExecutionContext {
 
     pub(crate) fn stopped_for(&self) -> Option<StopReason> {
         *self.stopped.get()
+    }
+
+    /// A timer script of this (graph's) context set exists from here.
+    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+        self.timers
+            .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
+        if self.is_stopped() {
+            crate::VirtualMachineRef::get()
+                .as_mut()
+                .stop_graph_context_again(self.id());
+        }
+    }
+
+    /// It is being freed.
+    pub fn untrack_timer(&self, timer: *mut core::ffi::c_void) {
+        self.timers.with_mut(|timers| {
+            timers.swap_remove(&timer);
+        });
+    }
+
+    /// The context stopped: its live timers, for the caller to cancel.
+    pub fn take_timers(
+        &self,
+    ) -> bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer> {
+        self.timers.take()
     }
 
     /// Nothing is armed and no client socket is open: freeing it strands nothing.

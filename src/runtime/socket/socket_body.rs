@@ -3560,10 +3560,30 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
         let loop_ = vm.uws_loop();
-        let group = VirtualMachine::get()
-            .as_mut()
-            .client_socket_groups()
-            .bun_connect_group::<true>(loop_);
+        // The TLS socket stays with the context the TCP socket belongs to, whoever upgrades it.
+        let accepted = this
+            .handlers
+            .get()
+            .as_ref()
+            .is_some_and(|handlers| handlers.mode == SocketMode::Server);
+        let groups: *mut bun_jsc::rare_data::SocketGroups = if accepted {
+            // In its listener's own group: the listener's context.
+            let listener_context = this
+                .handlers
+                .get()
+                .as_ref()
+                .and_then(|handlers| handlers.listener().map(|listener| listener.context));
+            let vm = VirtualMachine::get().as_mut();
+            listener_context
+                .and_then(|id| vm.client_socket_groups_of(id).map(core::ptr::from_mut))
+                .unwrap_or_else(|| core::ptr::from_mut(vm.client_socket_groups()))
+        } else {
+            // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
+            unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
+        };
+        // SAFETY: a boxed set that outlives this call; JS thread.
+        let groups = unsafe { &mut *groups };
+        let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.

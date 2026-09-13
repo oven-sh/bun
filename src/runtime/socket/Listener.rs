@@ -98,6 +98,8 @@ pub struct Listener {
     pub this_value: JsCell<JsRef>,
     /// Armed while listening: the listener stops with the context that opened it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// That context: where an accepted socket that leaves the listener's group (a TLS upgrade) goes.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
@@ -257,6 +259,7 @@ impl Listener {
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                     abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
+                    context: vm.current_context().id(),
                 }));
                 // SAFETY: just allocated, non-null; every field touched below
                 // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
@@ -383,6 +386,7 @@ impl Listener {
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
+            context: vm.current_context().id(),
         }));
         // SAFETY: just allocated, non-null; every field touched through this
         // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write

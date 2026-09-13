@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -110,4 +110,51 @@ describe("heapStats() mimalloc integration", () => {
     expect(appTag).toBeGreaterThan(64);
     expect(exitCode).toBe(0);
   });
+
+  // The allocator's purge thread takes back what was freed 100 ms after the free. What a thread freed while the purge thread
+  // was in the middle of a pass was left out for good: it stayed resident until the event loop went idle or something forced
+  // a collection. A script that keeps its thread busy does neither. It took a pass in which each of the allocator's arenas
+  // had something to hand back. JSC's structure heap is an arena of its own that rarely has, so Malloc=1 here: JSC then
+  // allocates through malloc (mimalloc as well) and there is one arena. Linux only: the wait reads RSS. Not ASAN: malloc is
+  // not mimalloc there.
+  test.skipIf(!isLinux || isASAN)(
+    "memory freed while the purge thread is at work is purged without an idle event loop",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { heapStats } from "bun:jsc";
+          const rss = () => process.memoryUsage.rss() / 1048576;
+          // the bytes the allocator handed back to the OS so far
+          const purged = () => heapStats().mimalloc.purged / 1048576;
+          // The allocator starts its purge thread the first time a thread blocks.
+          await Bun.sleep(1);
+          const first = [], second = [];
+          for (let i = 0; i < 32; i++) first.push(new Uint8Array(8 * 1024 * 1024).fill(1));
+          for (let i = 0; i < 16; i++) second.push(new Uint8Array(8 * 1024 * 1024).fill(1));
+          const held = rss(), purgedBefore = purged();
+          // transfer(0) frees the 8 MB here and now, no collection involved. No await from here on.
+          for (const array of first) array.buffer.transfer(0);
+          // Spin until the purge thread is in the middle of its pass over them (heapStats() would run that pass itself).
+          let deadline = performance.now() + 1000;
+          while (rss() > held - 64 && performance.now() < deadline);
+          for (const array of second) array.buffer.transfer(0);
+          // The next pass comes 100 ms later.
+          deadline = performance.now() + 2000;
+          while (rss() > held - 352 && performance.now() < deadline);
+          console.log(JSON.stringify({ released: held - rss(), purged: purged() - purgedBefore }));
+        `,
+        ],
+        env: { ...bunEnv, Malloc: "1" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // 384 MB were freed. The first pass alone takes the first 256 MB, and up to 32 MB of the rest.
+      expect(JSON.parse(stdout).purged, stdout).toBeGreaterThanOrEqual(352);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

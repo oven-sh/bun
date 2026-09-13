@@ -1970,6 +1970,75 @@ it("server.publish() keeps the topic alive while converting the message", async 
   expect(exitCode).toBe(0);
 });
 
+// Same contract as the test above, for a topic that is a substring rope.
+// `"x".slice(a, b)` of a flat string does not copy: the rope points at the base
+// string's StringImpl and references the base cell. The topic guard pinned the
+// rope, so when the message conversion used the rope as a property key the rope
+// atomized (it copies the characters and drops the base), the next GC freed the
+// base, and publish() read the freed characters.
+it("server.publish() keeps a substring rope topic's base alive while converting the message", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const LEN = 1000;
+        const TOPIC = Buffer.alloc(LEN, "t_").toString();
+        // A fresh flat base string that only the rope references, built so that
+        // the rope's characters start one byte into the base's StringImpl.
+        const base = Buffer.alloc(LEN + 1, "_t").toString();
+        const topic = base.slice(1, 1 + LEN);
+        // Wipe stack slots that still hold the base string from the lines above.
+        const clobber = n => (n === 0 ? 0 : clobber(n - 1) + n);
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, s) { return s.upgrade(req) ? undefined : new Response("x"); },
+          websocket: { open(ws) { ws.subscribe(TOPIC); }, message() {} },
+        });
+        const client = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        const got = Promise.withResolvers();
+        client.onmessage = e => got.resolve(e.data);
+        client.onclose = () => got.resolve("closed");
+        await new Promise((resolve, reject) => { client.onopen = resolve; client.onerror = reject; });
+        const data = Object.assign(new String("z"), {
+          [Symbol.toPrimitive]() {
+            ({})[topic]; // atomize the rope: it copies the characters and drops the base
+            clobber(300);
+            Bun.gc(true);
+            const k = [];
+            for (let i = 0; i < 400; i++) k.push(Buffer.alloc(LEN + 1 - (i % 8), "Q").toString());
+            globalThis.keep = k;
+            Bun.gc(true);
+            return "payload";
+          },
+        });
+        clobber(300);
+        const rc = server.publish(topic, data);
+        // If the first publish went to a garbage topic, this one arrives first.
+        server.publish(TOPIC, "sentinel");
+        const result = await got.promise;
+        console.log(JSON.stringify({ rc, result }));
+        client.close();
+        server.stop(true);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Route bmalloc through the system heap so ASAN builds observe the freed
+      // StringImpl (see the Sec-WebSocket-Protocol test above).
+      ...(isWindows ? {} : { Malloc: "1" }),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: JSON.stringify({ rc: 7, result: "payload" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
 describe.concurrent("publish() return value reflects subscriber backpressure", () => {

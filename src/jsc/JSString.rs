@@ -10,9 +10,12 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
+    /// `owner` receives the cell that owns the characters: the base string for
+    /// a substring rope, `this` otherwise. It is always written.
     pub(crate) safe fn JSC__JSString__view<'a>(
         this: &'a JSString,
         global: &JSGlobalObject,
+        owner: &mut *const JSString,
     ) -> StringView<'a>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
@@ -33,8 +36,9 @@ impl JSString {
     /// Throws when resolving a rope runs out of memory.
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
-        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
-        Ok(JSStringView { cell: self, view })
+        let mut owner: *const JSString = core::ptr::null();
+        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
+        Ok(JSStringView::new(self, owner, view))
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -59,10 +63,32 @@ impl JSString {
 /// collected while its characters are in use.
 pub struct JSStringView<'a> {
     pub(crate) cell: &'a JSString,
+    /// The cell that owns the characters. It is `cell` for a flat string, and
+    /// the base string for a substring rope, whose characters live in the
+    /// base's `StringImpl`. A rope drops its base when it resolves or
+    /// atomizes, so pinning `cell` alone does not keep the characters alive.
+    pub(crate) owner: &'a JSString,
     pub(crate) view: StringView<'a>,
 }
 
-impl JSStringView<'_> {
+impl<'a> JSStringView<'a> {
+    /// `owner` is the cell that owns the characters, written by the C++ side
+    /// from its `GCOwnedDataScope`. Both entry points always write it, and a
+    /// null pointer would mean there is nothing to borrow, so `cell` stands in.
+    #[inline]
+    pub(crate) fn new(
+        cell: &'a JSString,
+        owner: *const JSString,
+        view: StringView<'a>,
+    ) -> JSStringView<'a> {
+        let owner = if owner.is_null() {
+            cell
+        } else {
+            JSString::opaque_ref(owner.cast_mut())
+        };
+        JSStringView { cell, owner, view }
+    }
+
     /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
     #[inline]
     pub fn to_utf8(&self) -> Utf8Bytes<'_> {
@@ -89,6 +115,7 @@ impl Drop for JSStringView<'_> {
     #[inline]
     fn drop(&mut self) {
         self.cell.ensure_still_alive();
+        self.owner.ensure_still_alive();
     }
 }
 

@@ -3357,15 +3357,27 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 
 #pragma mark - JSC::JSString
 
+// The cell that owns a viewed string's characters, which is the scope's owner.
+// `JSRopeString::view` hands back `substringBase()` for a substring rope, so the
+// characters belong to the base string and not to the rope. A guard that borrows
+// the characters has to keep this cell alive.
+static JSC::JSString* viewOwner(const JSC::JSCell* owner, JSC::JSString* str)
+{
+    return owner ? uncheckedDowncast<JSC::JSString>(const_cast<JSC::JSCell*>(owner)) : str;
+}
+
 // Throws (and returns empty) when resolving a rope runs out of memory.
 // `JSString::view`: a substring rope is viewed in place; other ropes resolve
-// (and can throw on OOM). The characters belong to `str` (or its base), which
-// the caller keeps alive.
-BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
+// (and can throw on OOM). `owner` receives the cell that owns the characters.
+// The caller's guard has to keep that cell alive, not `str`: a substring rope
+// stops referencing its base as soon as it resolves or atomizes.
+BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
+    *owner = str;
     auto view = str->view(global);
     RETURN_IF_EXCEPTION(scope, BunStringEmpty);
+    *owner = viewOwner(view.owner, str);
     return Bun::toStringView(view.data);
 }
 
@@ -4768,8 +4780,10 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
-/// `toStringOrNull` + `JSString::view` in one call.
-JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+/// `toStringOrNull` + `JSString::view` in one call. `owner` receives the cell
+/// that owns the characters (see `viewOwner`), which the caller's guard keeps
+/// alive. It is only written when this returns a string.
+JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view, JSC::JSString** owner)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
@@ -4777,6 +4791,7 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
     auto data = str->view(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
     *view = Bun::toStringView(data.data);
+    *owner = viewOwner(data.owner, str);
     return str;
 }
 

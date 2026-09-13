@@ -212,11 +212,21 @@ static void *nq_hsi_create_header_set(void *ctx, lsquic_stream_t *s,
     }
     return h;
 }
+/* The largest decode window one header may ask for. lsqpack reserves 1.5x a
+ * Huffman string's declared length (up to 2^24) before its bytes arrive, so
+ * the peer chooses `space`; tie it to the configured maxHeaderLength, with a
+ * 64 KB floor for when none is set. */
+static size_t nq_hset_max_window(const struct nq_hset *h) {
+    size_t cap = (size_t) h->max_bytes * 2;
+    if (cap < UINT16_MAX) cap = UINT16_MAX;
+    if (cap > LSXPACK_MAX_STRLEN) cap = LSXPACK_MAX_STRLEN;
+    return cap;
+}
 static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    if (space > LSXPACK_MAX_STRLEN)
+    if (space > nq_hset_max_window(h))
         return NULL;
     if (space > h->decode_cap) {
         size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;

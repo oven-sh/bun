@@ -234,14 +234,17 @@ export const globalFlags: Flag[] = [
   // ─── lsxpack struct ABI (all platforms) ───
   {
     // lsxpack_header.h (shared by lshpack/lsqpack/lsquic and bun's own
-    // quic.c/node_quic_shim.c/c-bindings.cpp) sizes lsxpack_strlen_t from
-    // this macro; the upstream default (UINT16_MAX) caps any single decoded
-    // HTTP/2/3 header at 64 KB and makes a ~44 KB H3 field section abort the
-    // whole connection with H3_QPACK_DECOMPRESSION_FAILED. The value is
-    // struct-layout ABI, so every TU that includes the header must agree
+    // quic.c, node_quic_shim.c, Http2Context.h, c-bindings.cpp) sizes
+    // lsxpack_strlen_t from this macro. With the upstream default
+    // (UINT16_MAX) lsqpack cannot hold a decode window past 64 KB, and it
+    // reserves 1.5x a Huffman value's encoded length, so a ~44 KB encoded H3
+    // header aborts the whole connection with H3_QPACK_DECOMPRESSION_FAILED
+    // whatever limit the application configured. lshpack (HPACK) keeps its
+    // own UINT16_MAX per-string cap either way. The value is struct-layout
+    // ABI, so every TU that includes the header must agree
     // (packages/h3blast/Makefile sets it too for the same reason).
     flag: "-DLSXPACK_MAX_STRLEN=UINT32_MAX",
-    desc: "lshpack/lsqpack: 32-bit header lengths (struct ABI; must match across all consumers)",
+    desc: "lsqpack/lshpack: 32-bit header lengths (struct ABI; must match across all consumers)",
   },
 
   // ─── Optimization ───

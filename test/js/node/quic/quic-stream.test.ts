@@ -223,38 +223,40 @@ describe("HTTP/3 header encoding", () => {
     client.closed.catch(() => {});
     await client.opened;
 
-    // ~60 KB: Huffman-encodes to ~45 KB, and the decoder reserves 1.5x that,
-    // which previously overflowed the 16-bit lsxpack length and aborted the
-    // connection with H3_QPACK_DECOMPRESSION_FAILED.
-    const BIG = Buffer.alloc(60000, "A").toString();
-    const first = Promise.withResolvers<string>();
     const sessionDied = client.closed.then(
-      () => Promise.reject(new Error("session closed before the large-header request was answered")),
+      () => Promise.reject(new Error("session closed before the request was answered")),
       e => Promise.reject(e),
     );
     sessionDied.catch(() => {});
-    const st1 = await client.createBidirectionalStream({
-      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost", "x-big": BIG },
-      onheaders(headers: Record<string, string>) {
-        first.resolve(headers[":status"]);
-      },
-    });
-    st1.closed.catch(() => {});
 
-    expect(await Promise.race([first.promise, sessionDied])).toBe("200");
-    expect(received).toBe(BIG.length);
-    expect(client.destroyed).toBe(false);
+    // "A" Huffman-codes to 6 bits, and the QPACK decoder reserves 1.5x the
+    // encoded length before it decodes. 60000 bytes is ~45 KB encoded, ~67 KB
+    // reserved: past a 16-bit lsxpack length, which aborted the connection with
+    // H3_QPACK_DECOMPRESSION_FAILED. 70000 bytes is past 16 bits decoded too,
+    // and ~52 KB encoded still fits the 64 KB block lsquic's sender builds.
+    // The last request has no large header: the session must still carry it.
+    for (const size of [60000, 70000, 0]) {
+      received = undefined;
+      const headers: Record<string, string> = {
+        ":method": "GET",
+        ":path": "/" + size,
+        ":scheme": "https",
+        ":authority": "localhost",
+      };
+      if (size) headers["x-big"] = Buffer.alloc(size, "A").toString();
+      const status = Promise.withResolvers<string>();
+      const stream = await client.createBidirectionalStream({
+        headers,
+        onheaders(responseHeaders: Record<string, string>) {
+          status.resolve(responseHeaders[":status"]);
+        },
+      });
+      stream.closed.catch(() => {});
 
-    // The session must still carry a second request.
-    const second = Promise.withResolvers<string>();
-    const st2 = await client.createBidirectionalStream({
-      headers: { ":method": "GET", ":path": "/2", ":scheme": "https", ":authority": "localhost" },
-      onheaders(headers: Record<string, string>) {
-        second.resolve(headers[":status"]);
-      },
-    });
-    st2.closed.catch(() => {});
-    expect(await Promise.race([second.promise, sessionDied])).toBe("200");
+      expect(await Promise.race([status.promise, sessionDied])).toBe("200");
+      expect(received).toBe(size || undefined);
+      expect(client.destroyed).toBe(false);
+    }
 
     client.close();
     await client.closed.catch(() => {});

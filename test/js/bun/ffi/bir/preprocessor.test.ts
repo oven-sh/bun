@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 import { join } from "node:path";
-import { run, runFixtures, supported } from "./run-fixtures";
+import { includePath, lines, run, runFixtures, supported } from "./run-fixtures";
 
 // Macros, conditionals, includes, the predefined macros and the corners of the source text.
 runFixtures("preprocessor");
@@ -21,7 +21,7 @@ describe.skipIf(!supported)("preprocessor: where #include looks", () => {
   // (The compiler's own headers come first, then the system's, then C_INCLUDE_PATH in order.)
   const env = (dir: string) => ({
     ...bunEnv,
-    C_INCLUDE_PATH: ["inc", "sys", "sys2"].map(d => join(dir, d)).join(":"),
+    C_INCLUDE_PATH: includePath(...["inc", "sys", "sys2"].map(d => join(dir, d))),
   });
 
   test.concurrent("quoted and angled forms, #include_next, macros that name a header, __has_include", async () => {
@@ -52,7 +52,7 @@ int main(void) {
 `,
     });
     const { stdout, stderr, exitCode } = await run(join(String(dir), "src"), ["main.c"], env(String(dir)));
-    expect(stdout, stderr).toBe("53\nwhere.h 1\n");
+    expect(lines(stdout), stderr).toBe("53\nwhere.h 1\n");
     expect(exitCode).toBe(0);
   });
 

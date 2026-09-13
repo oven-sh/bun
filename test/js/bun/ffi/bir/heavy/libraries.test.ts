@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { meets, run, supported } from "../run-fixtures";
+import { includePath, meets, run, supported } from "../run-fixtures";
 
 // Miscompile checks on real code: parts of the vendored libraries are compiled from their sources by Bun's
 // C compiler, linked with a small driver and run against known answers. They read the vendored sources, so
@@ -51,7 +51,7 @@ async function runProgram(name: string, sources: string[], defines: string[], in
   const files: Record<string, string> = { "main.c": macros + driver };
   sources.forEach((source, index) => (files[`unit${index}.c`] = `${macros}#include "${source}"\n`));
   using dir = tempDir(`bir-${name}`, files);
-  const env = { ...bunEnv, C_INCLUDE_PATH: includeDirs.join(":") };
+  const env = { ...bunEnv, C_INCLUDE_PATH: includePath(...includeDirs) };
   const exe = join(String(dir), "program");
   const units = sources.map((_, index) => `unit${index}.c`);
   const build = await run(String(dir), ["build", "--compile", "main.c", ...units, "--outfile", exe], env);

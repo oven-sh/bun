@@ -3,7 +3,7 @@ import { bunEnv, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { run, supported } from "../run-fixtures";
+import { includePath, run, supported } from "../run-fixtures";
 
 // compiler-rt's own unit tests for its builtins: each `NAME_test.c` has a `main` that returns 0 when
 // `lib/builtins/NAME.c` behaves. The test, the builtin and whatever other builtins they turn out to call
@@ -37,7 +37,7 @@ async function passes(name: string) {
   if (existsSync(builtin)) files.push(builtin);
   using out = tempDir(`bir-compiler-rt-${name}`, {});
   const exe = join(String(out), "test");
-  const env = { ...bunEnv, C_INCLUDE_PATH: lib };
+  const env = { ...bunEnv, C_INCLUDE_PATH: includePath(lib) };
   for (let attempt = 0; attempt < 8; attempt++) {
     const build = await run(String(out), ["build", "--compile", ...files, "--outfile", exe], env);
     if (build.exitCode !== 0) return { ok: false, why: `compile: ${build.stderr.slice(0, 600)}` };

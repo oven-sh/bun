@@ -518,7 +518,7 @@
   "line": 1,
   "column": 57,
   "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
-  "requires": "x64"
+  "requires": "sysv"
  },
  {
   "about": "vector diagnostics",
@@ -526,7 +526,7 @@
   "line": 1,
   "column": 79,
   "message": "passing or returning a one-element vector of 'double' is not supported for this target: GCC and Clang disagree on how",
-  "requires": "x64"
+  "requires": "sysv"
  },
  {
   "about": "vector diagnostics",
@@ -934,7 +934,8 @@
   "source": "void f(void) __attribute__((ms_abi));",
   "line": 1,
   "column": 35,
-  "message": "__attribute__((ms_abi)) is not supported on this target: it changes the calling convention"
+  "message": "__attribute__((ms_abi)) is not supported on this target: it changes the calling convention",
+  "requires": "sysv"
  },
  {
   "about": "attributes that change meaning are implemented or refused",

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { meets, run, supported } from "../run-fixtures";
+import { includePath, meets, run, supported } from "../run-fixtures";
 
 // tinycc's own test programs, compiled by Bun's C compiler and run for real. They read the vendored
 // tinycc sources, so they only run when asked to (BUN_C_COMPILER_HEAVY_TESTS=1) and the sources exist.
@@ -117,7 +117,7 @@ describe.skipIf(!enabled || !Bun.which("gcc") || !meets("glibc") || !meets("x87"
     const reference = Bun.spawnSync({ cmd: [join(String(dir), "reference")], cwd: String(dir), stdout: "pipe" });
     const expected = reference.stdout.toString().split("\n");
 
-    const { stdout, stderr } = await run(String(dir), ["tcctest.c"], { ...bunEnv, C_INCLUDE_PATH: includes.join(":") });
+    const { stdout, stderr } = await run(String(dir), ["tcctest.c"], { ...bunEnv, C_INCLUDE_PATH: includePath(...includes) });
     const printed = stdout.split("\n");
     const differing = printed
       .map((line, index) => [index + 1, line, expected[index]] as const)
@@ -138,7 +138,7 @@ describe.skipIf(!enabled || !meets("glibc") || !meets("x87"))("tinycc itself", (
 #define TCC_GITHASH "test"
 #define TCC_LIBTCC1 ""
 `;
-  const env = { ...bunEnv, C_INCLUDE_PATH: [tinycc, join(tinycc, "include"), config].join(":") };
+  const env = { ...bunEnv, C_INCLUDE_PATH: includePath(tinycc, join(tinycc, "include"), config) };
 
   test.skipIf(!existsSync(join(config, "tccdefs_.h")) || !Bun.which("gcc"))(
     "tcc.c compiles as one source, and the compiler it makes compiles a program that uses long double",

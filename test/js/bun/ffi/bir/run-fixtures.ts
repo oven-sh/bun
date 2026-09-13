@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 // Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
 export const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
@@ -36,6 +36,17 @@ export function meets(requirement: string | undefined) {
   }
 }
 
+/**
+ * A C_INCLUDE_PATH of `directories`, then whatever the variable already names: where there are no system headers
+ * of the machine's own to find (Windows), that is how the tests are told where a C library's are.
+ */
+export function includePath(...directories: string[]) {
+  return [...directories, process.env.C_INCLUDE_PATH ?? ""].filter(Boolean).join(delimiter);
+}
+
+// A C runtime that opens stdout in text mode (msvcrt) writes "\r\n", and git may check text files out that way.
+export const lines = (text: string) => text.replaceAll("\r\n", "\n");
+
 function requirementIn(path: string) {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
@@ -67,7 +78,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
         const statusPath = join(dir, `${name}.status`);
         const status = existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0;
         const { stdout, stderr, exitCode } = await run(dir, [entry]);
-        expect(stdout, stderr).toBe(readFileSync(expectedPath, "utf8"));
+        expect(lines(stdout), stderr).toBe(lines(readFileSync(expectedPath, "utf8")));
         expect(exitCode, stderr).toBe(status);
       });
     }
@@ -100,7 +111,7 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
         await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         const statusPath = join(dir, "status");
-        expect(stdout, stderr).toBe(readFileSync(join(dir, "expected"), "utf8"));
+        expect(lines(stdout), stderr).toBe(lines(readFileSync(join(dir, "expected"), "utf8")));
         expect(exitCode, stderr).toBe(existsSync(statusPath) ? Number(readFileSync(statusPath, "utf8")) : 0);
       });
     }

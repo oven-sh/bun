@@ -1,14 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // `import … from "./x.c"` compiles the file with Bun's own C compiler (bun_cc + JavaScriptCore's B3).
 // These have run on Linux x64 and macOS arm64.
 const supported = (isLinux && !isArm64) || (isMacOS && isArm64);
 
+// C's stdout is in text mode on Windows: "\r\n" there.
+const text = async (stream: ReadableStream<Uint8Array>) => (await stream.text()).replaceAll("\r\n", "\n");
+// What `bun build --compile --outfile name` makes.
+const executable = (name: string) => (isWindows ? name + ".exe" : name);
+
 async function run(dir: string, args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -116,7 +121,7 @@ describe.skipIf(!supported)("importing a .c file", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("7\n");
     expect(exitCode).toBe(0);
@@ -291,12 +296,12 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     const build = await run(String(dir), ["build", "--compile", "hello.c", "--outfile", "hello"]);
     expect(build.exitCode).toBe(0);
     await using proc = Bun.spawn({
-      cmd: [join(String(dir), "hello"), "one", "two words"],
+      cmd: [join(String(dir), executable("hello")), "one", "two words"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("2: [one] [two words]\n");
     expect(exitCode).toBe(7);
@@ -320,8 +325,8 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     const build = await run(String(dir), ["build", "--compile", "main.c", "util.c", "count.c", "--outfile", "prog"]);
     expect(build.stderr).not.toContain("error");
     expect(build.exitCode).toBe(0);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "prog")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({ cmd: [join(String(dir), executable("prog"))], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("42 1 2 1\n");
     expect(exitCode).toBe(0);
@@ -333,13 +338,13 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(build.exitCode).toBe(0);
 
     using elsewhere = tempDir("c-compile-run", {});
-    const exe = join(String(elsewhere), "app");
-    await Bun.write(exe, Bun.file(join(String(dir), "app")));
+    const exe = join(String(elsewhere), executable("app"));
+    await Bun.write(exe, Bun.file(join(String(dir), executable("app"))));
     const { chmodSync } = await import("fs");
     chmodSync(exe, 0o755);
 
     await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, cwd: String(elsewhere), stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([text(proc.stdout), proc.exited]);
     expect(stdout.trim()).toBe("42 2435775735");
     expect(exitCode).toBe(0);
   });

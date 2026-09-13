@@ -42,7 +42,7 @@ impl Expect {
             )));
         }
 
-        let count_as_num = count.to_u32();
+        let count_as_num = count.to_int64();
 
         let Some(expect_string) = super::js::captured_value_get_cached(this_value) else {
             return Err(global.throw(format_args!(
@@ -72,7 +72,7 @@ impl Expect {
 
         // Non-overlapping occurrence count.
         let actual_count = bun_core::strings::count(expect_string_as_str, sub_string_as_str);
-        let mut pass = actual_count == count_as_num as usize;
+        let mut pass = usize::try_from(count_as_num) == Ok(actual_count);
 
         if not {
             pass = !pass;

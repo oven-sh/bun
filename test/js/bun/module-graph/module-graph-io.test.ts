@@ -1,11 +1,13 @@
 // Bun.unsafe.ModuleGraph({ isolateIO: true }) — the graph gets a context of its own
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "fs";
+import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
-import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import nodeTls from "node:tls";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
 const fixtureDirs: string[] = [];
@@ -333,24 +335,30 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     }
   });
 
-  test("background work under way when the graph is disposed still settles", async () => {
+  test("dispose() drops the background work the graph had under way", async () => {
     const dir = fixture({
       "data.txt": "0123456789",
       "jobs.mjs": `
         import fs from "node:fs";
         import zlib from "node:zlib";
         import { promisify } from "node:util";
-        export const work = () => Promise.all([
+        export const work = () => Promise.race([
           fs.promises.readFile(import.meta.dir + "/data.txt", "utf8"),
-          promisify(zlib.gzip)("hello").then(bytes => zlib.gunzipSync(bytes).toString()),
+          promisify(zlib.gzip)("hello"),
+          Bun.sleep(1),
         ]);
       `,
     });
+    // The same work outside a graph, started afterwards: it has finished once this has.
+    const hostWork = () =>
+      Promise.all([fs.promises.readFile(join(dir, "data.txt"), "utf8"), promisify(zlib.gzip)("hello"), Bun.sleep(1)]);
     const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "jobs.mjs"));
     const work = graph.run(() => app.work());
     graph.dispose();
-    expect(await work).toEqual(["0123456789", "hello"]);
+    await hostWork();
+    await hostTimerTurns();
+    expect(Bun.peek.status(work)).toBe("pending");
   });
 
   test("a socket of the graph upgraded to TLS by the host stays the graph's", async () => {

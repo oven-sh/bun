@@ -1214,6 +1214,7 @@ impl VirtualMachine {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
         let result = context.stop(reason);
+        self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread.
             unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), Some(context.id())) };

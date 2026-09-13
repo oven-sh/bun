@@ -103,16 +103,20 @@ JSModuleLoader* moduleLoaderForRequire(JSGlobalObject* globalObject, ThrowScope&
 // other storage's frame and never drop it — and whose `graph`, which every frame pushed on
 // top inherits, is what names the current context.
 
-JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
+// The graph an async context (a frame or undefined) is inside of: async_hooks.ts Frame.graph.
+static JSModuleGraph* moduleGraphOfFrame(VM& vm, JSValue asyncContext)
 {
-    VM& vm = globalObject->vm();
-    // Every frame says which graph it is inside of (async_hooks.ts Frame.graph).
-    JSObject* frame = globalObject->m_asyncContextData.get()->getInternalField(0).getObject();
+    JSObject* frame = asyncContext.getObject();
     if (!frame)
         return nullptr;
     auto* graph = dynamicDowncast<JSModuleGraph>(frame->getDirect(vm, WebCore::builtinNames(vm).graphPublicName()));
     ASSERT(!graph || graph->context()); // only such a graph gets frames
     return graph;
+}
+
+JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
+{
+    return moduleGraphOfFrame(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
 // VirtualMachine::current_graph_context (only asked while some graph has a context).
@@ -145,6 +149,12 @@ ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject
     m_globalObject = globalObject;
     m_previous = asyncContextData->getInternalField(0);
     asyncContextData->putInternalField(globalObject->vm(), 0, createModuleGraphFrame(globalObject, graph, m_previous));
+}
+
+bool isStoppedModuleGraphContext(VM& vm, JSValue asyncContext)
+{
+    JSModuleGraph* graph = moduleGraphOfFrame(vm, asyncContext);
+    return graph && graph->context()->activeDOMObjectsAreStopped();
 }
 
 ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)
@@ -349,12 +359,15 @@ void JSModuleGraph::finishCreation(VM& vm)
 
 void JSModuleGraph::createContext(Zig::GlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
-    Ref context = WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext(), this);
-    m_context = context.ptr();
-    vm.heap.addFinalizer(this, [context = WTF::move(context)](JSCell*) {
-        context->moduleGraphDestroyed();
-    });
+    m_context = WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext(), this);
+}
+
+void JSModuleGraph::destroy(JSCell* cell)
+{
+    auto* graph = static_cast<JSModuleGraph*>(cell);
+    if (graph->m_context)
+        graph->m_context->moduleGraphDestroyed();
+    graph->JSModuleGraph::~JSModuleGraph();
 }
 
 void JSModuleGraph::setImportSettledHandlers(VM& vm, JSFunction* fulfilled, JSFunction* rejected)

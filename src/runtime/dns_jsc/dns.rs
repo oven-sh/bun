@@ -968,6 +968,8 @@ pub mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
+        /// Lookups of the same name from any context wait on the one in flight.
+        const SHARED_BY_REALM: bool = true;
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
@@ -1165,6 +1167,7 @@ impl GetAddrInfoRequest {
                 poll_ref,
                 allocated: false,
                 next: None,
+                context: global_this.bun_vm().current_context().id(),
             },
             tail: ptr::null_mut(),
         }));
@@ -1698,6 +1701,9 @@ pub(crate) struct DNSLookup {
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
+    /// The context whose script asked (several contexts' lookups of one name
+    /// share a request): an answer for a stopped one settles nothing.
+    pub context: bun_jsc::ContextId,
 }
 
 impl DNSLookup {
@@ -1728,6 +1734,7 @@ impl DNSLookup {
             promise: JSPromiseStrong::init(global_this),
             allocated: true,
             next: None,
+            context: global_this.bun_vm().current_context().id(),
         }))
     }
 
@@ -1824,7 +1831,9 @@ impl DNSLookup {
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this);
+            if global_this.bun_vm().is_context_live((*this).context) {
+                result.settle(&mut promise, global_this);
+            }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();

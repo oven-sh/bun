@@ -185,6 +185,11 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// Whether the job serves the whole realm rather than the context that
+    /// happened to schedule it (work other contexts' requests join): it is
+    /// dropped only with the realm, not with a `Bun.unsafe.ModuleGraph`.
+    const SHARED_BY_REALM: bool = false;
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -223,8 +228,9 @@ pub struct JobHeader {
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
-    /// The realm (its root context's id) whose script scheduled the job.
-    realm: crate::ContextId,
+    /// The context whose script scheduled the job: once it stops, the
+    /// completion is released without running.
+    context: crate::ContextId,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -260,6 +266,20 @@ impl JobList {
             }
         }
     }
+    /// A `Bun.unsafe.ModuleGraph`'s context stopped (JS thread): ask its live jobs to finish soon.
+    pub fn cancel_of_context(&self, context: crate::ContextId) {
+        let mut job = self.head;
+        while !job.is_null() {
+            // SAFETY: as `cancel_all`.
+            unsafe {
+                if (*job).context == context {
+                    ((*job).cancel)(job);
+                }
+                job = (*job).next;
+            }
+        }
+    }
+
     /// The VM's stop phase (JS thread): ask every live job to finish soon.
     pub fn cancel_all(&self) {
         let mut job = self.head;
@@ -318,7 +338,11 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
-                realm: cx.vm().root_context().id(),
+                context: if C::SHARED_BY_REALM {
+                    cx.vm().root_context().id()
+                } else {
+                    cx.vm().current_context().id()
+                },
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -441,7 +465,7 @@ pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     // the swap was that file's exit, and a `then` that calls back directly
     // (node:crypto's callback forms) would run its script under the next file.
     // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
-    let stale = unsafe { (*header).realm } != cx.vm().root_context().id();
+    let stale = !cx.vm().is_context_live(unsafe { (*header).context });
     if !cx.vm().script_allowed() || stale {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };

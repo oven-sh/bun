@@ -66,7 +66,15 @@ test.skipIf(!isASAN)("string matchers own the received string before they coerce
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe(
-    ["toStartWith", "toEndWith", "toInclude", "toIncludeRepeated", "toEqualIgnoringWhitespace", "toContainEqual", "toThrow"]
+    [
+      "toStartWith",
+      "toEndWith",
+      "toInclude",
+      "toIncludeRepeated",
+      "toEqualIgnoringWhitespace",
+      "toContainEqual",
+      "toThrow",
+    ]
       .map(name => name + " ok\n")
       .join(""),
   );

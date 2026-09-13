@@ -1007,32 +1007,20 @@ static WTF::String emitSliceStreaming(
     };
     const size_t specEnd = (ellipsisEndBudget > 0) ? end + ellipsisEndBudget : end;
 
-    // With an ellipsis in the output the content has to END by `contentEnd`,
-    // or the result is wider than the requested range. A cluster's width is
-    // known only once it is complete (joiners, VS16, conjuncts), so the fit
-    // is checked after that width lands in `position`: a cluster that started
-    // before `end` but extends past `contentEnd` opens the zone at its own
-    // start, on every path. It is discarded with a cut and kept when the
-    // whole string fits. The check can only fire once `position >= end`, so
-    // the walk up to there pays one store per cluster (clusterMark).
-    const bool clusterMustFit = needStartEllipsis || needEndEllipsis;
-    // `end`, plus the columns a wide cluster straddling `start` left unused.
-    size_t contentEnd = end;
+    // With an ellipsis, a kept cluster that ends past `contentEnd` makes the result too wide: it opens the zone at its own start.
+    const bool clusterMustFit = (needStartEllipsis || needEndEllipsis) && !endUnbounded;
+    size_t contentEnd = SIZE_MAX; // set with the first kept cluster: `end`, plus the columns a cluster straddling `start` left unused
     unsigned clusterMark = 0; // result.length() before the open cluster's first codepoint
-    // clusterMark of the cluster whose snapshot (taken before ANSI inside it was applied) is in spec*.
-    unsigned stylesSavedForCluster = std::numeric_limits<unsigned>::max();
-    // Call while `gs` still holds the cluster whose width was just added.
-    auto checkClusterFit = [&]() {
-        if (!clusterMustFit || !include || inSpecZone) return;
-        if (position > contentEnd && position - gs.width() < end) {
-            inSpecZone = true;
-            specZoneMark = clusterMark;
-            if (stylesSavedForCluster != clusterMark) snapshotStyles();
-        }
+    unsigned stylesSavedForCluster = std::numeric_limits<unsigned>::max(); // clusterMark whose pre-ANSI snapshot is in spec*
+    auto checkClusterFit = [&]() { // `position` just passed `contentEnd`; `gs` still holds the cluster that did it
+        if (inSpecZone || position - gs.width() >= end) return;
+        inSpecZone = true;
+        specZoneMark = clusterMark;
+        if (stylesSavedForCluster != clusterMark) snapshotStyles();
     };
     auto beginInclude = [&]() {
         include = true;
-        if (!endUnbounded) contentEnd = end + (position - start);
+        if (clusterMustFit) contentEnd = end + (position - start);
         activeStyles.emitOpenCodes(result);
         if (needStartEllipsis) result.append(ellipsis);
         if (activeHyperlink) result.append(activeHyperlinkCode);
@@ -1076,29 +1064,29 @@ static WTF::String emitSliceStreaming(
             shouldBreak = Bun__graphemeBreak(prevVisCp, cp, &breakState);
 
         if (shouldBreak) {
-            if (hasPrev) position += gs.width();
+            if (hasPrev) {
+                position += gs.width();
+                if (position > contentEnd) checkClusterFit();
+            }
 
-            if (!endUnbounded && position >= end) {
-                if (hasPrev) checkClusterFit();
-                if (position >= specEnd) {
-                    // A visible cut needs width past specEnd: the prior cluster
-                    // overflowed, or this cp is visible. A zero-width cp exactly at
-                    // specEnd (LF/CR/ZWSP) is not a cut; keep scanning, don't emit.
-                    // Without an ellipsis the distinction is unobservable, so break
-                    // immediately and keep the O(slice-length) scan bound.
-                    if (ellipsisWidth == 0 || position > specEnd
-                        || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
-                        sawCutEnd = true;
-                        flushPending(/*filterCloseOnly=*/true);
-                        return false; // signal break
-                    }
-                    pastSpecEnd = true;
-                    gs.reset(cp, ambiguousIsWide);
-                    prevVisCp = cp;
-                    hasPrev = true;
-                    p += charLen;
-                    return true;
+            if (!endUnbounded && position >= specEnd) {
+                // A visible cut needs width past specEnd: the prior cluster
+                // overflowed, or this cp is visible. A zero-width cp exactly at
+                // specEnd (LF/CR/ZWSP) is not a cut; keep scanning, don't emit.
+                // Without an ellipsis the distinction is unobservable, so break
+                // immediately and keep the O(slice-length) scan bound.
+                if (ellipsisWidth == 0 || position > specEnd
+                    || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
+                    sawCutEnd = true;
+                    flushPending(/*filterCloseOnly=*/true);
+                    return false; // signal break
                 }
+                pastSpecEnd = true;
+                gs.reset(cp, ambiguousIsWide);
+                prevVisCp = cp;
+                hasPrev = true;
+                p += charLen;
+                return true;
             }
 
             if (!include && position >= start)
@@ -1197,14 +1185,12 @@ static WTF::String emitSliceStreaming(
                 // Finalize any pending cluster first (first ASCII is a break).
                 if (hasPrev) {
                     position += gs.width();
+                    if (position > contentEnd) checkClusterFit();
                     hasPrev = false;
-                    if (!endUnbounded && position >= end) {
-                        checkClusterFit();
-                        if (position >= specEnd) {
-                            sawCutEnd = true;
-                            flushPending(/*filterCloseOnly=*/true);
-                            goto walkDone;
-                        }
+                    if (!endUnbounded && position >= specEnd) {
+                        sawCutEnd = true;
+                        flushPending(/*filterCloseOnly=*/true);
+                        goto walkDone;
                     }
                 }
                 // position now = column of the first ASCII char.
@@ -1326,7 +1312,7 @@ walkDone:;
     if (reachedEOF) {
         if (hasPrev) {
             position += gs.width();
-            if (!endUnbounded && position >= end) checkClusterFit();
+            if (position > contentEnd) checkClusterFit();
         }
         // The last cluster may have overflowed specEnd (wide char straddling
         // the boundary, or a Prepend-led cluster that started zero-width).
@@ -1347,21 +1333,24 @@ walkDone:;
     // Resolve the lazy cutEnd BEFORE trailing pending ANSI so close codes
     // land after the last spec-zone column, not before it.
     bool discardedZone = false;
-    if (sawCutEnd) {
-        // Cut confirmed: discard spec-zone content and restore the style
-        // state from the zone boundary, so the ellipsis and close codes
-        // below reflect only what remains in result.
-        if (inSpecZone) {
-            result.shrink(specZoneMark);
-            activeStyles = std::move(specStyles);
-            activeHyperlink = specHyperlink;
-            activeHyperlinkClosePrefix = std::move(specHyperlinkClosePrefix);
-            activeHyperlinkTerminator = std::move(specHyperlinkTerminator);
-            discardedZone = true;
+    if (ellipsisEndBudget > 0 || inSpecZone) {
+        if (sawCutEnd) {
+            // Cut confirmed: discard spec-zone content and restore the style
+            // state from the zone boundary, so the ellipsis and close codes
+            // below reflect only what remains in result.
+            if (inSpecZone) {
+                result.shrink(specZoneMark);
+                activeStyles = std::move(specStyles);
+                activeHyperlink = specHyperlink;
+                activeHyperlinkClosePrefix = std::move(specHyperlinkClosePrefix);
+                activeHyperlinkTerminator = std::move(specHyperlinkTerminator);
+                discardedZone = true;
+            }
+        } else {
+            // No cut: spec-zone content is already in result. Cancel ellipsis.
+            ASSERT(ellipsisEndBudget > 0); // without a budget the zone only opens past specEnd, which is a cut
+            needEndEllipsis = false;
         }
-    } else if (ellipsisEndBudget > 0) {
-        // No cut: spec-zone content is already in result. Cancel ellipsis.
-        needEndEllipsis = false;
     }
 
     // Trailing ANSI: close-only when the last column reached the user's

@@ -108,7 +108,7 @@ private:
 class RunningScriptOptions {
 public:
     bool displayErrors = true;
-    std::optional<int64_t> timeout = std::nullopt;
+    std::optional<uint32_t> timeout = std::nullopt;
     bool breakOnSigint = false;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);

@@ -16,7 +16,6 @@
 #include "../vm/NodeVMRunTermination.h"
 
 #include <bit>
-#include <limits>
 
 namespace Bun {
 using namespace NodeVM;
@@ -635,15 +634,9 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
         auto timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, false);
         if (timeoutOpt && !timeoutOpt.isUndefined()) {
-            if (!timeoutOpt.isNumber()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "number"_s, timeoutOpt);
-                return false;
-            }
-
-            ssize_t timeoutValue;
-            V::validateInteger(scope, globalObject, timeoutOpt, "options.timeout"_s, jsNumber(1), jsNumber(std::numeric_limits<int64_t>().max()), &timeoutValue);
+            uint32_t timeoutValue = 0;
+            V::validateUint32(scope, globalObject, timeoutOpt, "options.timeout"_s, jsBoolean(true), &timeoutValue);
             RETURN_IF_EXCEPTION(scope, false);
-
             this->timeout = timeoutValue;
             any = true;
         }

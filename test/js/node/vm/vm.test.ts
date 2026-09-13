@@ -366,7 +366,7 @@ describe("Script", () => {
       filename: [1, null, true, {}, Symbol("filename")],
       lineOffset: ["x", null, {}, 1.5, NaN, 2 ** 32],
       columnOffset: ["x", null, {}, 1.5, NaN, 2 ** 32],
-      timeout: ["x", null, {}, 0, -1, NaN],
+      timeout: ["x", null, {}, 0, -1, NaN, 2 ** 32],
       displayErrors: [1, null, "x", {}],
       breakOnSigint: [1, null, "x", {}],
     };
@@ -503,6 +503,13 @@ describe("Script", () => {
         }
       },
     );
+
+    test.each(Object.entries({ ...runMethods, ...vmFunctions }))("%s accepts a timeout up to 2 ** 32 - 1", (_, run) => {
+      expect([
+        outcome(() => run("1", { timeout: 2 ** 32 - 1 })),
+        outcome(() => run("1", { timeout: 2 ** 32 })),
+      ]).toEqual(["returned 1", "ERR_OUT_OF_RANGE options.timeout"]);
+    });
 
     test.each(Object.entries({ ...runMethods, ...vmFunctions }))(
       "%s checks timeout, then displayErrors, then breakOnSigint",

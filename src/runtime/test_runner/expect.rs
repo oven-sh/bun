@@ -2739,8 +2739,8 @@ mod matcher_utils {
                 ("stringify", __jsc_host_stringify, 1),
                 ("printExpected", __jsc_host_print_expected, 1),
                 ("printReceived", __jsc_host_print_received, 1),
-                ("EXPECTED_COLOR", __jsc_host_print_expected, 1),
-                ("RECEIVED_COLOR", __jsc_host_print_received, 1),
+                ("EXPECTED_COLOR", __jsc_host_color_expected, 1),
+                ("RECEIVED_COLOR", __jsc_host_color_received, 1),
                 ("matcherHint", __jsc_host_matcher_hint, 1),
             ],
         )
@@ -2786,6 +2786,38 @@ mod matcher_utils {
         print_value(global_this, callframe.argument(0), Some("<red>"))
     }
 
+    const EXPECTED_COLOR: &str = bun_core::pretty_fmt!("<green>", true);
+    const RECEIVED_COLOR: &str = bun_core::pretty_fmt!("<red>", true);
+
+    /// `chalk.green(text)` and `chalk.red(text)`: `String(text)` in `color`, not quoted.
+    /// Like chalk, empty text gets no color codes.
+    fn paint(global_this: &JSGlobalObject, text: JSValue, color: &'static str, out: &mut Vec<u8>) -> JsResult<()> {
+        let text = text.to_utf8(global_this)?;
+        let colors = Output::enable_ansi_colors_stderr() && !text.is_empty();
+        if colors {
+            out.extend_from_slice(color.as_bytes());
+        }
+        out.extend_from_slice(&text);
+        if colors {
+            out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
+        }
+        Ok(())
+    }
+
+    #[bun_jsc::host_fn]
+    fn color_expected(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut out = Vec::new();
+        paint(global_this, callframe.argument(0), EXPECTED_COLOR, &mut out)?;
+        bun_string_jsc::create_utf8_for_js(global_this, &out)
+    }
+
+    #[bun_jsc::host_fn]
+    fn color_received(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let mut out = Vec::new();
+        paint(global_this, callframe.argument(0), RECEIVED_COLOR, &mut out)?;
+        bun_string_jsc::create_utf8_for_js(global_this, &out)
+    }
+
     /// The hint under construction. Like Jest, it joins adjacent dim text in `dim` and writes
     /// it as one span.
     struct Hint {
@@ -2829,15 +2861,7 @@ mod matcher_utils {
                 self.out.extend_from_slice(&painted.to_utf8(global_this)?);
                 return Ok(());
             }
-            let text = label.to_utf8(global_this)?;
-            if self.colors {
-                self.out.extend_from_slice(default_color.as_bytes());
-            }
-            self.out.extend_from_slice(&text);
-            if self.colors {
-                self.out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
-            }
-            Ok(())
+            paint(global_this, label, default_color, &mut self.out)
         }
     }
 
@@ -2891,7 +2915,7 @@ mod matcher_utils {
 
         if !is_direct_expect_call && !is_empty_string(received) {
             hint.flush_dim(b"(");
-            hint.push_label(global_this, received, received_color, "receivedColor", bun_core::pretty_fmt!("<red>", true))?;
+            hint.push_label(global_this, received, received_color, "receivedColor", RECEIVED_COLOR)?;
             hint.dim.push(b')');
         }
 
@@ -2917,10 +2941,10 @@ mod matcher_utils {
             hint.dim.extend_from_slice(b"()");
         } else {
             hint.flush_dim(b"(");
-            hint.push_label(global_this, expected, expected_color, "expectedColor", bun_core::pretty_fmt!("<green>", true))?;
+            hint.push_label(global_this, expected, expected_color, "expectedColor", EXPECTED_COLOR)?;
             if second_argument.to_boolean() {
                 hint.flush_dim(b", ");
-                hint.push_label(global_this, second_argument, second_argument_color, "secondArgumentColor", bun_core::pretty_fmt!("<green>", true))?;
+                hint.push_label(global_this, second_argument, second_argument_color, "secondArgumentColor", EXPECTED_COLOR)?;
             }
             hint.dim.push(b')');
         }

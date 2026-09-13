@@ -458,13 +458,11 @@ describe("MatcherContext", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ message: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
-      message:
-        "expect(received).toBeHexadecimal()\n\n" +
-        'expect(received).toBeHexadecimal()\n\nExpected value to be a hexadecimal, received:\n  "zz"',
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // bun:test puts its own signature line above the message of a custom matcher. The rest is Jest's text.
+    expect(JSON.parse(stdout)).toEndWith(
+      'expect(received).toBeHexadecimal()\n\nExpected value to be a hexadecimal, received:\n  "zz"',
+    );
   });
 
   describe("utils", () => {
@@ -498,10 +496,9 @@ describe("MatcherContext", () => {
       } catch (e) {
         message = stripAnsi(e.message);
       }
-      // bun:test puts its own signature line above the matcher's message. Jest does not.
-      expect(message).toBe(
-        (isBun ? "expect(received)._toFailWithDestructuredUtils(expected)\n\n" : "") +
-          'expect(received)._toFailWithDestructuredUtils(expected)\n\nExpected: "b"\nReceived: "a" ("a")',
+      // bun:test puts its own signature line above the message of a custom matcher. Jest does not.
+      expect(message).toEndWith(
+        'expect(received)._toFailWithDestructuredUtils(expected)\n\nExpected: "b"\nReceived: "a" ("a")',
       );
     });
 
@@ -604,46 +601,60 @@ describe("MatcherContext", () => {
           isBun ? "matcherHint: options.expectedColor must be a function" : "expectedColor is not a function",
         );
       });
+    });
 
-      test.skipIf(!isBun)("colors the labels and joins adjacent dim text", async () => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `
-              import { expect } from "bun:test";
-              expect.extend({
-                _toPrintHints() {
-                  const { matcherHint } = this.utils;
-                  console.log(
-                    JSON.stringify([
+    test("EXPECTED_COLOR and RECEIVED_COLOR color text and do not quote it", () => {
+      // jest-dom passes text that it formatted and indented itself.
+      const { EXPECTED_COLOR, RECEIVED_COLOR } = getUtils();
+      expect(
+        [EXPECTED_COLOR('  a "b"\n  c'), RECEIVED_COLOR("  d"), EXPECTED_COLOR(1), RECEIVED_COLOR("")].map(stripAnsi),
+      ).toEqual(['  a "b"\n  c', "  d", "1", ""]);
+    });
+
+    test.skipIf(!isBun)("with colors on, colors labels and text and joins adjacent dim text", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { expect } from "bun:test";
+            expect.extend({
+              _toPrintColored() {
+                const { matcherHint, EXPECTED_COLOR, RECEIVED_COLOR } = this.utils;
+                console.log(
+                  JSON.stringify({
+                    hints: [
                       matcherHint(".not.toFoo", "received", ""),
                       matcherHint("toFoo", "a", "b", { isNot: true, secondArgument: "c", comment: "why" }),
                       matcherHint("toFoo", "a", "b", { receivedColor: text => "<" + text + ">" }),
-                    ]),
-                  );
-                  return { pass: true };
-                },
-              });
-              expect(0)._toPrintHints();
-            `,
-          ],
-          env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+                    ],
+                    text: [EXPECTED_COLOR("a"), RECEIVED_COLOR("b"), EXPECTED_COLOR("")],
+                  }),
+                );
+                return { pass: true };
+              },
+            });
+            expect(0)._toPrintColored();
+          `,
+        ],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
-        expect({ hints: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: {
           hints: [
             `${dim}expect(${reset}${red}received${reset}${dim}).not.toFoo()${reset}`,
             `${dim}expect(${reset}${red}a${reset}${dim}).${reset}not${dim}.${reset}toFoo${dim}(${reset}${green}b${reset}${dim}, ${reset}${green}c${reset}${dim}) // why${reset}`,
             `${dim}expect(${reset}<a>${dim}).${reset}toFoo${dim}(${reset}${green}b${reset}${dim})${reset}`,
           ],
-          stderr: "",
-          exitCode: 0,
-        });
+          text: [`${green}a${reset}`, `${red}b${reset}`, ""],
+        },
+        stderr: "",
+        exitCode: 0,
       });
     });
   });

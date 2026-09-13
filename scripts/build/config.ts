@@ -794,26 +794,34 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
-  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
-  const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
+  // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
+  // build without assertions or ASAN, locally as in CI, so a local release
+  // binary has the codegen CI ships. `--lto=off` for faster relinks. JSC
+  // takes part through the prebuilt: `lto` selects the `-lto` WebKit tarball
+  // (deps/webkit.ts prebuiltSuffix), whose archives hold the LLVM bitcode
+  // oven-sh/WebKit's CI emitted. The linker here has to read it, which rests
+  // on both repos pinning the same LLVM: tools.ts enforces LLVM_VERSION on
+  // clang and ld.lld (a native macOS link runs that clang's libLTO; lld-link
+  // and ld64.lld are looked up beside it but not version-checked).
+  const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
-  if ((asan && lto) || abi === "android" || (windows && arm64)) {
+  // Android, FreeBSD: not enabled (bun was never built that way; untested).
+  // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
+  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
+  // goes through LTO), so forcing it off also keeps the fetch from 404ing.
+  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
-  // Cross-language LTO normally tracks `lto`. Gated off only for native
-  // Windows hosts — there `ld` is the host LLVM's lld-link and no rust-lld
-  // swap is wired up, so rustc's newer-LLVM bitcode would be unreadable at
-  // link time. Both halves still LTO independently when this is false — only
-  // the Rust↔C++ inlining is lost.
+  // Cross-language LTO normally tracks `lto`. Gated off where the link
+  // could not read rustc's bitcode: on a native Windows host `ld` is the
+  // host LLVM's lld-link with no rust-lld swap wired up, and on a native
+  // macOS host Apple's ld runs LTO through clang's libLTO (no linker to swap),
+  // which cannot read bitcode from an LLVM newer than itself — so there only
+  // while rustc's LLVM is ahead of clang's. Both halves still LTO
+  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // CI cross-compiles both from Linux, where the swap below applies.
   // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
   // per-crate `bun_runtime` bitcode module during the merged link, CI build
   // #53109. That bitcode shape no longer exists — the Rust side is one fat,
@@ -826,7 +834,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time. Windows cross does the same with the `gcc-ld/lld-link`
   // sibling (COFF flavor) — see the wantRustLld swap below.
-  const crossLangLto = lto && !(windows && host.os === "windows");
+  const clangMajor = majorOf(toolchain.clangVersion);
+  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
+  const rustLlvmNewer = clangMajor !== undefined && rustLlvmMajor !== undefined && rustLlvmMajor > clangMajor;
+  const crossLangLto = lto && !(windows && host.os === "windows") && !(darwin && !darwinCross && rustLlvmNewer);
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
@@ -841,17 +852,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
   // branch self-obsoletes once clang's LLVM catches up to rustc's.
   let ld = toolchain.ld;
-  const clangMajor = majorOf(toolchain.clangVersion);
-  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
-  const wantRustLld =
-    crossLangLto &&
-    toolchain.rustLld !== undefined &&
-    clangMajor !== undefined &&
-    rustLlvmMajor !== undefined &&
-    rustLlvmMajor > clangMajor;
+  const wantRustLld = crossLangLto && toolchain.rustLld !== undefined && rustLlvmNewer;
   if (wantRustLld) {
     if (windows) {
       // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is

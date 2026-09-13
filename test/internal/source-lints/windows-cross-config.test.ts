@@ -57,7 +57,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
 
 /**
  * Shorthand: resolve a config for a Windows target the way the CI cross lane
- * does (`--profile=ci-release --os=windows --arch=<arch>`): Release + ci so
+ * does (`--profile=ci-build --os=windows --arch=<arch>`): Release + ci so
  * the LTO default applies, with an explicit fake sysroot so the local-build
  * "create one with xwin" error never triggers.
  */
@@ -98,12 +98,11 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
   });
 
-  test("local (non-ci) release builds stay non-LTO unless asked", () => {
-    const local = resolveWindowsCross({ ci: false });
-    expect(local.lto).toBe(false);
-    const explicit = resolveWindowsCross({ ci: false, lto: true, baseline: false });
-    expect(explicit.lto).toBe(true);
-    expect(explicit.crossLangLto).toBe(true);
+  test("local (non-ci) release builds are LTO too, unless turned off", () => {
+    const local = resolveWindowsCross({ ci: false, baseline: false });
+    expect(local.lto).toBe(true);
+    expect(local.crossLangLto).toBe(true);
+    expect(resolveWindowsCross({ ci: false, lto: false }).lto).toBe(false);
   });
 
   test("compile flags use clang-cl ThinLTO without whole-program vtables", () => {

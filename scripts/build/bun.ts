@@ -1286,6 +1286,8 @@ export function validateBunConfig(cfg: Config): void {
   // without it), the build would proceed with the stale lld and fail at link
   // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
   // configure time instead with a hint that points at the real problem.
+  // (A skewed native macOS host never gets here: Apple's ld has no lld to
+  // swap, so config.ts turns cross-language LTO off there instead.)
   if (
     cfg.crossLangLto &&
     cfg.rustToolchain !== undefined &&

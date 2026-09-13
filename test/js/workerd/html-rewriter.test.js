@@ -13,7 +13,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
-import { createServer as createTcpServer } from "net";
+import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -598,6 +598,113 @@ describe("HTMLRewriter", () => {
       await expect(res.text()).rejects.toThrow("handler rejected");
       await setImmediatePromise();
       expect(afterFlush).toBe(1);
+    });
+
+    // The rewrite's consumer going away while a `type: 'direct'` input is
+    // still open is a cancel of that input: its `cancel(reason)` runs once,
+    // and a later write() reports 0 bytes instead of throwing. A detach alone
+    // (what the source's own close() does) no longer calls cancel(), so the
+    // failed or cancelled pipe has to close the controller itself.
+    describe("a still-open direct ReadableStream input is cancelled when", () => {
+      function directInput(events) {
+        const hold = Promise.withResolvers();
+        const settled = Promise.withResolvers();
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            try {
+              controller.write("<p>one</p>");
+              controller.flush();
+              await hold.promise;
+              events.push("write after: " + controller.write("<p>two</p>"));
+            } catch (e) {
+              events.push("pull threw: " + e.message);
+            } finally {
+              settled.resolve();
+            }
+          },
+          cancel(reason) {
+            events.push("cancel: " + (reason instanceof Error ? `${reason.name}: ${reason.message}` : reason));
+          },
+        });
+        return { response: new Response(stream), hold, settled: settled.promise };
+      }
+
+      it("the output reader cancels", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(response);
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel(new Error("reader went away"));
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      it("a handler throws", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(response);
+        await expect(res.text()).rejects.toThrow("handler threw");
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: Error: handler threw", "write after: 0"]);
+      });
+
+      it("the HTTP client disconnects from a Bun.serve response", async () => {
+        const events = [];
+        const flushed = Promise.withResolvers();
+        let settled;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            const input = directInput(events);
+            settled = input.settled;
+            flushed.resolve(input.hold);
+            return new HTMLRewriter().on("p", { element() {} }).transform(input.response);
+          },
+        });
+        const socket = createConnection(server.port, "127.0.0.1");
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(socket, "data");
+        const hold = await flushed.promise;
+        socket.destroy();
+        while (server.pendingRequests > 0) await setImmediatePromise();
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      // A default ReadableStream input was already cancelled here (the pump
+      // cancels its stream on any close), but with `undefined`; it gets the
+      // same reason now.
+      it("the output reader cancels (default ReadableStream input gets the reason too)", async () => {
+        const cancelled = [];
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue("<p>one</p>");
+          },
+          cancel(reason) {
+            cancelled.push(reason instanceof Error ? `${reason.name}: ${reason.message}` : reason);
+          },
+        });
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel();
+        expect(cancelled).toEqual(["AbortError: The operation was aborted."]);
+      });
     });
 
     // Two rewriters chained, both suspending: `init()`'s own comment names

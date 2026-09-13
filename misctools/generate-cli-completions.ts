@@ -347,6 +347,10 @@ function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
               name: "rm",
               description: "clear the cache",
             },
+            prune: {
+              name: "prune",
+              description: "remove packages downloaded more than 30 days ago",
+            },
           };
         } else if (name === "pkg") {
           subcommands[name].subcommands = {

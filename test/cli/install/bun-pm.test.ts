@@ -1,8 +1,8 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { cpSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -1083,4 +1083,240 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
+});
+
+function seedPruneCache(cache: string) {
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  const isWindows = process.platform === "win32";
+  const link = (target: string, path: string) => symlinkSync(target, path, isWindows ? "junction" : "dir");
+
+  mkdirSync(join(cache, "old-pkg@1.0.0@@@1"), { recursive: true });
+  writeFileSync(join(cache, "old-pkg@1.0.0@@@1", "index.js"), "old");
+  mkdirSync(join(cache, "old-pkg"));
+  link(join(cache, "old-pkg@1.0.0@@@1"), join(cache, "old-pkg", "1.0.0@@@1"));
+
+  mkdirSync(join(cache, "new-pkg@2.0.0@@@1"));
+  writeFileSync(join(cache, "new-pkg@2.0.0@@@1", "index.js"), "new");
+  mkdirSync(join(cache, "new-pkg"));
+  link(join(cache, "new-pkg@2.0.0@@@1"), join(cache, "new-pkg", "2.0.0@@@1"));
+
+  mkdirSync(join(cache, "@scope", "old-scoped@1.0.0@@@1"), { recursive: true });
+  writeFileSync(join(cache, "@scope", "old-scoped@1.0.0@@@1", "index.js"), "scoped");
+  mkdirSync(join(cache, "@scope", "old-scoped"));
+  link(join(cache, "@scope", "old-scoped@1.0.0@@@1"), join(cache, "@scope", "old-scoped", "1.0.0@@@1"));
+
+  mkdirSync(join(cache, "@GH@owner-repo-abc123@@@1"));
+  writeFileSync(join(cache, "@GH@owner-repo-abc123@@@1", "index.js"), "github");
+
+  // Never pruned: the global store, bare git clones, manifests and extraction staging dirs.
+  mkdirSync(join(cache, "links", "store-pkg@1.0.0-abcdef"), { recursive: true });
+  writeFileSync(join(cache, "links", "store-pkg@1.0.0-abcdef", "index.js"), "store");
+  mkdirSync(join(cache, "0123456789abcdef.git"));
+  writeFileSync(join(cache, "0123456789abcdef.git", "HEAD"), "ref");
+  writeFileSync(join(cache, "0123456789abcdef.npm"), "manifest");
+  mkdirSync(join(cache, ".deadbeef-1.old-pkg"));
+  writeFileSync(join(cache, ".deadbeef-1.old-pkg", "index.js"), "staging");
+  mkdirSync(join(cache, "@t@"));
+  writeFileSync(join(cache, "@t@", "0123456789abcdef.pile"), "transpiled");
+
+  for (const stale of [
+    "old-pkg@1.0.0@@@1",
+    "@scope/old-scoped@1.0.0@@@1",
+    "@GH@owner-repo-abc123@@@1",
+    "links/store-pkg@1.0.0-abcdef",
+    "0123456789abcdef.git",
+    "0123456789abcdef.npm",
+    ".deadbeef-1.old-pkg",
+    "@t@",
+  ]) {
+    utimesSync(join(cache, stale), old, old);
+  }
+}
+
+async function runCachePrune(cwd: string, cache: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "prune", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe("bun pm cache prune", () => {
+  test("removes packages older than --max-age and their index links", async () => {
+    using dir = tempDir("pm-cache-prune", {
+      "package.json": JSON.stringify({ name: "cache-prune", version: "1.0.0" }),
+    });
+    const cache = join(String(dir), "cache");
+    seedPruneCache(cache);
+
+    const { stdout, stderr, exitCode } = await runCachePrune(String(dir), cache);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Removed 3 packages older than 30 days (15 bytes)\n");
+    expect(exitCode).toBe(0);
+
+    expect(await readdirSorted(cache)).toEqual([
+      ".deadbeef-1.old-pkg",
+      "0123456789abcdef.git",
+      "0123456789abcdef.npm",
+      "@t@",
+      "links",
+      "new-pkg",
+      "new-pkg@2.0.0@@@1",
+    ]);
+    expect(await readdirSorted(join(cache, "new-pkg"))).toEqual(["2.0.0@@@1"]);
+    expect(await readdirSorted(join(cache, "links"))).toEqual(["store-pkg@1.0.0-abcdef"]);
+
+    const again = await runCachePrune(String(dir), cache);
+    expect(again.stderr).toBe("");
+    expect(again.stdout).toBe("Done! Checked 1 package, none older than 30 days (nothing to prune)\n");
+    expect(again.exitCode).toBe(0);
+  });
+
+  test("--dry-run lists the stale packages and removes nothing", async () => {
+    using dir = tempDir("pm-cache-prune-dry", {
+      "package.json": JSON.stringify({ name: "cache-prune-dry", version: "1.0.0" }),
+    });
+    const cache = join(String(dir), "cache");
+    seedPruneCache(cache);
+    const before = await readdirSorted(cache);
+
+    const { stdout, stderr, exitCode } = await runCachePrune(String(dir), cache, "--dry-run");
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").slice(0, 3).sort()).toEqual([
+      "- @GH@owner-repo-abc123@@@1 (6 bytes)",
+      "- @scope/old-scoped@1.0.0@@@1 (6 bytes)",
+      "- old-pkg@1.0.0@@@1 (3 bytes)",
+    ]);
+    expect(stdout).toEndWith(
+      "3 packages older than 30 days can be removed (15 bytes, checked 4)\nRun without --dry-run to remove them.\n",
+    );
+    expect(exitCode).toBe(0);
+
+    expect(await readdirSorted(cache)).toEqual(before);
+    expect(await readdirSorted(join(cache, "old-pkg"))).toEqual(["1.0.0@@@1"]);
+    expect(await readdirSorted(join(cache, "@scope"))).toEqual(["old-scoped", "old-scoped@1.0.0@@@1"]);
+  });
+
+  test("--max-age selects the age threshold", async () => {
+    using dir = tempDir("pm-cache-prune-age", {
+      "package.json": JSON.stringify({ name: "cache-prune-age", version: "1.0.0" }),
+    });
+    const cache = join(String(dir), "cache");
+    seedPruneCache(cache);
+
+    const keep = await runCachePrune(String(dir), cache, "--max-age", "60");
+    expect(keep.stderr).toBe("");
+    expect(keep.stdout).toBe("Done! Checked 4 packages, none older than 60 days (nothing to prune)\n");
+    expect(keep.exitCode).toBe(0);
+
+    const all = await runCachePrune(String(dir), cache, "--max-age", "0");
+    expect(all.stderr).toBe("");
+    expect(all.stdout).toBe("Removed 4 packages older than 0 days (18 bytes)\n");
+    expect(all.exitCode).toBe(0);
+    expect(await readdirSorted(cache)).toEqual([
+      ".deadbeef-1.old-pkg",
+      "0123456789abcdef.git",
+      "0123456789abcdef.npm",
+      "@t@",
+      "links",
+    ]);
+
+    const bad = await runCachePrune(String(dir), cache, "--max-age", "soon");
+    expect(bad.stderr).toContain("invalid --max-age value: soon");
+    expect(bad.exitCode).toBe(1);
+  });
+
+  test("runs outside a project and with no cache directory", async () => {
+    using dir = tempDir("pm-cache-prune-no-project", {});
+    const cache = join(String(dir), "cache");
+    seedPruneCache(cache);
+
+    const { stdout, stderr, exitCode } = await runCachePrune(String(dir), cache);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Removed 3 packages older than 30 days (15 bytes)\n");
+    expect(exitCode).toBe(0);
+
+    const missing = await runCachePrune(String(dir), join(String(dir), "missing"));
+    expect(missing.stderr).toBe("");
+    expect(missing.stdout).toBe("Done! No cache directory (nothing to prune)\n");
+    expect(missing.exitCode).toBe(0);
+    expect(await exists(join(String(dir), "missing"))).toBeFalse();
+
+    // An empty BUN_INSTALL_CACHE_DIR resolves to the working directory.
+    const empty = await runCachePrune(String(dir), "");
+    expect(empty.stderr).toContain("refusing to prune");
+    expect(empty.exitCode).toBe(1);
+  });
+});
+
+it("bun pm cache prune removes packages that bun install cached and leaves the rest of the cache alone", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { "bar": "0.0.2", "@scope/bar": "0.0.2" },
+    }),
+  );
+  // dummyBeforeEach writes `cache = false`, which sends packages to node_modules/.cache.
+  const cache = join(package_dir, "bun-cache");
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { registry: `${root_url}/`, saveTextLockfile: false } }),
+  );
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache };
+
+  async function install() {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "install"], cwd: package_dir, stdout: "pipe", stderr: "pipe", env });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
+  }
+
+  await install();
+  const tarballs = () => urls.filter(url => url.endsWith(".tgz")).length;
+  expect(tarballs()).toBe(2);
+
+  // Things that live next to the packages in the cache root and must survive a prune.
+  mkdirSync(join(cache, "@t@"));
+  writeFileSync(join(cache, "@t@", "0123456789abcdef.pile"), "transpiled");
+  mkdirSync(join(cache, "links", "store-pkg@1.0.0-abcdef"), { recursive: true });
+  writeFileSync(join(cache, "links", "store-pkg@1.0.0-abcdef", "index.js"), "store");
+
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  for (const entry of readdirSync(cache, { recursive: true, withFileTypes: true })) {
+    const path = join(entry.parentPath, entry.name);
+    if (!entry.isSymbolicLink()) utimesSync(path, old, old);
+  }
+
+  const before = await readdirSorted(cache);
+  expect(before).toContain("bar");
+  expect(before).toContain("@scope");
+  expect(before.some(name => name.startsWith("bar@0.0.2"))).toBeTrue();
+  const scopedBefore = await readdirSorted(join(cache, "@scope"));
+  expect(scopedBefore).toContain("bar");
+  expect(scopedBefore.some(name => name.startsWith("bar@0.0.2"))).toBeTrue();
+
+  const { stdout, stderr, exitCode } = await runCachePrune(package_dir, cache);
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith("Removed 2 packages older than 30 days (");
+  expect(exitCode).toBe(0);
+
+  const after = await readdirSorted(cache);
+  expect(after.filter(name => !name.endsWith(".npm"))).toEqual(["@t@", "links"]);
+  expect(after.filter(name => name.endsWith(".npm"))).toHaveLength(2);
+  expect(await readdirSorted(join(cache, "@t@"))).toEqual(["0123456789abcdef.pile"]);
+  expect(await readdirSorted(join(cache, "links"))).toEqual(["store-pkg@1.0.0-abcdef"]);
+
+  // A fresh install downloads the pruned packages again.
+  rmSync(join(package_dir, "node_modules"), { recursive: true });
+  await install();
+  expect(tarballs()).toBe(4);
 });

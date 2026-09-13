@@ -277,7 +277,7 @@ _bun_pm_completion() {
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                ':::(rm)' &&
+                ':::(rm prune)' &&
                 ret=0
 
             ;;

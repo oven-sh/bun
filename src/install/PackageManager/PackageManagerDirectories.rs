@@ -420,6 +420,59 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
+// The printers below, `ExtractTarball` (index symlinks), `GitRunner` (bare
+// clones), `PackageManifestMap` (`.npm` manifests), the isolated installer
+// (`links/`), `StandaloneModuleGraph` (`bun-<os>-<arch>-v*` binaries) and
+// `RuntimeTranspilerCache` (`@t@`) all write into the cache root.
+// `CacheEntryKind::from_name` is the one reader of that layout.
+
+/// What a top-level cache directory entry (or an entry of a `@scope`
+/// directory) is, judged by its name. `bun pm cache prune` removes `Package`
+/// entries and cleans `Index` entries; everything else is left alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheEntryKind {
+    /// An extracted package: `<name>@<version>[@@<host>][@@@<N>][_patch_hash=<x>]`
+    /// (`cached_npm_package_folder_name_print`), `@G@<sha>` (`cached_git_folder_name_print`),
+    /// `@GH@<resolved>@@@<N>` (`cached_github_folder_name_print`) or
+    /// `@T@<hash>@@@<N>` (`cached_tarball_folder_name_print`).
+    Package,
+    /// `@<scope>`: holds the `Package` and `Index` entries of scoped packages.
+    Scope,
+    /// `<name>`: holds one symlink (junction on Windows) per cached version,
+    /// `<version>[@@@<N>]` -> the `Package` directory (`ExtractTarball::extract`).
+    Index,
+    /// Not a package: `links/` (the global store), `<hex>.git` (bare clones),
+    /// `@t@` (the runtime transpiler cache), `.<hex>-<n>.<name>` (extraction
+    /// staging) and any non-directory (`<hex>.npm` manifests, `bun-<os>-<arch>-v*`
+    /// binaries for `bun build --compile --target`).
+    Other,
+}
+
+impl CacheEntryKind {
+    pub fn from_name(name: &[u8], kind: bun_sys::EntryKind, in_scope: bool) -> CacheEntryKind {
+        if kind != bun_sys::EntryKind::Directory || name.is_empty() || name[0] == b'.' {
+            return CacheEntryKind::Other;
+        }
+        if name[0] == b'@' {
+            if in_scope || name.starts_with(b"@t@") {
+                return CacheEntryKind::Other;
+            }
+            return if bun_core::strings::contains_char(&name[1..], b'@') {
+                CacheEntryKind::Package
+            } else {
+                CacheEntryKind::Scope
+            };
+        }
+        if bun_core::strings::contains_char(name, b'@') {
+            return CacheEntryKind::Package;
+        }
+        if name == b"links" || name.ends_with(b".git") {
+            return CacheEntryKind::Other;
+        }
+        CacheEntryKind::Index
+    }
+}
+
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every

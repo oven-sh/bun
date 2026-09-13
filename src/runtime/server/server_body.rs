@@ -1527,14 +1527,26 @@ where
             return Err(global
                 .throw_invalid_arguments(format_args!("setSecureContext requires TLS options",)));
         };
+        let additional_ca_config = match callframe.arguments().get(1).copied() {
+            Some(value) if !value.is_empty_or_undefined_or_null() => {
+                SSLConfig::from_js(global.bun_vm_ref(), global, value)?
+            }
+            _ => None,
+        };
         let native_options = config.as_usockets();
+        let additional_ca_options = additional_ca_config
+            .as_ref()
+            .map(SSLConfig::as_usockets)
+            .unwrap_or_default();
         let Some(app) = self.app else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot set a TLS context after the server has stopped",
             )));
         };
         // SAFETY: app is the live SSL NewApp owned by this running server.
-        if !bun_opaque::opaque_deref_mut(app).set_secure_context(&native_options) {
+        if !bun_opaque::opaque_deref_mut(app)
+            .set_secure_context(&native_options, &additional_ca_options)
+        {
             return Err(
                 global.throw_invalid_arguments(format_args!("Failed to set the TLS context",))
             );

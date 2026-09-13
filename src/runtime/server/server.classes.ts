@@ -30,7 +30,7 @@ function generate(name) {
       },
       _setNodeHTTPSSecureContext: {
         fn: "doSetNodeHTTPSSecureContext",
-        length: 1,
+        length: 2,
       },
       "@@dispose": {
         fn: "dispose",

@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, nodeExe, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { X509Certificate } from "node:crypto";
 import { EventEmitter, once } from "node:events";
@@ -1506,6 +1506,40 @@ describe("node https server", async () => {
       server.close();
     }
   });
+
+  const systemNode = nodeExe();
+  const pfxDefaultCARuntimes: Array<[string, string]> = [["Bun", bunExe()]];
+  if (systemNode) pfxDefaultCARuntimes.push(["Node", systemNode]);
+  it.each(pfxDefaultCARuntimes)(
+    "PFX CAs remain additive to default CAs across HTTPS server lifecycles in %s",
+    async (runtime, executable) => {
+      const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+      await using proc = Bun.spawn({
+        cmd: [executable, path.join(import.meta.dir, "node-http-set-secure-context-pfx.node.mjs")],
+        env: {
+          ...bunEnv,
+          NODE_EXTRA_CA_CERTS: path.join(fixtures, "ca2-cert.pem"),
+          TLS_FIXTURES_DIR: fixtures,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ runtime, result: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+        runtime,
+        result: JSON.stringify({
+          liveTrust: { pfxCA: true, defaultCA: true },
+          relistenTrust: { pfxCA: true, defaultCA: true },
+          beforeListenTrust: { pfxCA: true, defaultCA: true },
+          initialTrust: { pfxCA: true, defaultCA: true },
+          explicitTrust: { pfxCA: true, defaultCA: false },
+        }),
+        exitCode: 0,
+        failureDetail: "",
+      });
+    },
+  );
   it("is marked encrypted (#5867)", async () => {
     const { server, url, done } = await createServer(async (req, res) => {
       expect(req.connection.encrypted).toBe(true);

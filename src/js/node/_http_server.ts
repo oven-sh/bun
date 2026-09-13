@@ -249,6 +249,12 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
+function getAdditionalCAOptions(tls) {
+  const pfxExtraCAs = tls?._pfxExtraCACerts;
+  if (!pfxExtraCAs?.length || tls.ca != null) return undefined;
+  return { __proto__: null, ca: pfxExtraCAs };
+}
+
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
@@ -313,12 +319,9 @@ function Server(options, callback): void {
     }
 
     let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
     const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+    if (pfxExtraCAs?.length && ca != null) {
+      ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
@@ -367,6 +370,7 @@ function Server(options, callback): void {
         ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        _pfxExtraCACerts: pfxExtraCAs,
       });
     } else {
       this[tlsSymbol] = null;
@@ -552,8 +556,8 @@ Server.prototype[setSecureContextSymbol] = function (options) {
   const tlsOptions = processPfxOptions(options);
   let ca = tlsOptions.ca;
   const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-  if (pfxExtraCAs?.length) {
-    ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  if (pfxExtraCAs?.length && ca != null) {
+    ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
   }
   validateSecureProtocol(tlsOptions.secureProtocol);
   const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
@@ -566,7 +570,7 @@ Server.prototype[setSecureContextSymbol] = function (options) {
     requestCert: current.requestCert,
     rejectUnauthorized: current.rejectUnauthorized,
   };
-  this[serverSymbol]?._setNodeHTTPSSecureContext(next);
+  this[serverSymbol]?._setNodeHTTPSSecureContext(next, getAdditionalCAOptions(next));
   this[tlsSymbol] = normalizeServerTls(next);
 };
 
@@ -668,7 +672,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[serverSymbol] = Bun.serve<any>({
+    const bunServer = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
@@ -1085,6 +1089,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         return pendingPromise;
       },
     });
+    const additionalCAOptions = getAdditionalCAOptions(tls);
+    if (additionalCAOptions) {
+      try {
+        bunServer._setNodeHTTPSSecureContext(tls, additionalCAOptions);
+      } catch (error) {
+        bunServer.stop(true);
+        throw error;
+      }
+    }
+    this[serverSymbol] = bunServer;
 
     // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
     this.listening = true;

@@ -62,12 +62,12 @@ extern "C"
     }
   }
 
-  int uws_app_set_secure_context(int ssl, uws_app_t *app, struct us_bun_socket_context_options_t options)
+  int uws_app_set_secure_context(int ssl, uws_app_t *app, struct us_bun_socket_context_options_t options, const char *const *additional_ca, unsigned int additional_ca_count)
   {
     if (!ssl) return 0;
     uWS::SocketContextOptions socket_context_options;
     memcpy(&socket_context_options, &options, sizeof(uWS::SocketContextOptions));
-    return ((uWS::SSLApp *)app)->setSecureContext(socket_context_options);
+    return ((uWS::SSLApp *)app)->setSecureContext(socket_context_options, additional_ca, additional_ca_count);
   }
 
   void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)

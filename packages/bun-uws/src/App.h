@@ -216,7 +216,7 @@ public:
         return sslCtx;
     }
 
-    bool setSecureContext(SocketContextOptions options) {
+    bool setSecureContext(SocketContextOptions options, const char *const *additionalCa, unsigned int additionalCaCount) {
         if constexpr (!SSL) {
             return false;
         } else {
@@ -224,6 +224,12 @@ public:
             struct ssl_ctx_st *next = us_ssl_ctx_from_options(options, &err);
             if (!next) return false;
 
+            for (unsigned int i = 0; i < additionalCaCount; i++) {
+                if (!us_ssl_ctx_add_ca_cert(next, additionalCa[i])) {
+                    us_internal_ssl_ctx_unref(next);
+                    return false;
+                }
+            }
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(next, httpContext->getSocketContextData()->allowHttp1);
             }

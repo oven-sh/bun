@@ -157,7 +157,10 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
+// On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// On that TLS socket, once the fd has closed: the wrapped socket waits for this socket to close it.
+const kOwesRawClose = Symbol("kOwesRawClose");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -275,6 +278,24 @@ function onUpgradedClose(self, connection) {
 }
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+}
+// The close of an adopted fd calls the wrapped socket's close handler, then the TLS socket's. TLS took over the reads, so the
+// EOF or the read error is the TLS socket's to report: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
+// The wrapped socket only closes, with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
+function closeWithTLSSocket(self, raw) {
+  const tlsSocket = raw[kAdoptedTLSRaw];
+  if (!tlsSocket || tlsSocket[kupgraded] !== self) return false;
+  if (self.destroyed) return true;
+  // Its 'end' closes the wrapped socket. Its _destroy does when it is destroyed before that.
+  if (tlsSocket.destroyed) tlsSocket[kCloseRawConnection]();
+  else tlsSocket[kOwesRawClose] = true;
+  return true;
+}
+// Between the TLS socket's 'error' and its 'close'.
+function closeOwedRaw(self, upgraded) {
+  if (!self[kOwesRawClose]) return;
+  self[kOwesRawClose] = false;
+  if (!upgraded.destroyed) self[kCloseRawConnection]();
 }
 let addAbortListener;
 function destroyWhenAborted(err) {
@@ -473,7 +494,7 @@ const SocketHandlers: SocketHandler = {
     self[kclosed] = true;
     //socket cannot be used after close
     detachSocket(self);
-    SocketEmitEndNT(self, err);
+    if (!closeWithTLSSocket(self, socket)) SocketEmitEndNT(self, err);
     self.data = null;
   },
   data(socket, buffer) {
@@ -905,7 +926,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data[kclosed] = true;
         //socket cannot be used after close
         detachSocket(data);
-        SocketEmitEndNT(data, err);
+        if (!closeWithTLSSocket(data, socket)) SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
       }
@@ -1369,6 +1390,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    const leftToTLSSocket = closeWithTLSSocket(self, socket);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -1376,7 +1398,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
@@ -1397,7 +1419,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       }
       return;
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+    if (!leftToTLSSocket && !deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
@@ -2062,7 +2084,7 @@ Socket.prototype.connect = function connect(...args) {
               const [raw, tls] = result;
               // replace socket
               connection._handle = raw;
-              raw[kAdoptedTLSRaw] = true;
+              raw[kAdoptedTLSRaw] = this;
               destroyWhenUpgradedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
@@ -2111,7 +2133,7 @@ Socket.prototype.connect = function connect(...args) {
                   const [raw, tls] = result;
                   // replace socket
                   connection._handle = raw;
-                  raw[kAdoptedTLSRaw] = true;
+                  raw[kAdoptedTLSRaw] = this;
                   destroyWhenUpgradedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
@@ -2262,8 +2284,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    closeOwedRaw(this, upgraded);
   } else {
     callback(err);
+    closeOwedRaw(this, upgraded);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2457,7 +2481,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     }
     const [raw, tlsHandle] = result;
     connection._handle = raw;
-    raw[kAdoptedTLSRaw] = true;
+    raw[kAdoptedTLSRaw] = this;
     destroyWhenUpgradedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;

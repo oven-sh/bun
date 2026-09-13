@@ -6,6 +6,7 @@ namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsSetAsyncHooksEnabled);
 JSC_DECLARE_HOST_FUNCTION(jsSetAsyncHooksTimerDispatch);
+JSC_DECLARE_HOST_FUNCTION(jsQueueAsyncHooksMicrotask);
 
 enum class AsyncHooksTimerLifecycleEvent : uint8_t {
     TimeoutInit = 0,

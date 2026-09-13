@@ -1,6 +1,8 @@
 #include "config.h"
 
 #include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSMicrotask.h"
+#include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/ArgList.h"
@@ -11,6 +13,15 @@
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(jsQueueAsyncHooksMicrotask, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto callback = callFrame->argument(0);
+    ASSERT(callback.isCallable());
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, callback, JSC::jsUndefined() };
+    globalObject->vm().queueMicrotask(WTF::move(task));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksTimerDispatch, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

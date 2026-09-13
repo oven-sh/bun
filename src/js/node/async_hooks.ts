@@ -28,6 +28,7 @@
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const setAsyncHooksTimerDispatch = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksTimerDispatch", 1);
+const queueAsyncHooksMicrotask = $newCppFunction("NodeAsyncHooks.cpp", "jsQueueAsyncHooksMicrotask", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
@@ -488,8 +489,6 @@ const kHookEnabled = Symbol("kHookEnabled");
 type TimerHook = { init?: Function; destroy?: Function; hook: object };
 let timerHooks: TimerHook[] = [];
 const asyncHooksTick = require("internal/async_hooks_tick");
-const PromisePrototypeThen = $Promise.prototype.$then;
-const resolvedPromise = Promise.$resolve();
 let timerDispatchInstalled = false;
 let pendingTimerDestroys: number[] | undefined;
 let pendingTimerHooks: typeof timerHooks | undefined;
@@ -576,13 +575,7 @@ function flushTimerDestroys() {
 function queueTimerDestroy(asyncId: number) {
   if (pendingTimerDestroys === undefined) {
     pendingTimerDestroys = [asyncId];
-    const frame = get();
-    set(undefined);
-    try {
-      PromisePrototypeThen.$call(resolvedPromise, flushTimerDestroys);
-    } finally {
-      set(frame);
-    }
+    queueAsyncHooksMicrotask(flushTimerDestroys);
   } else {
     $arrayPush(pendingTimerDestroys, asyncId);
   }

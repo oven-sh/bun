@@ -467,3 +467,40 @@ test("refreshing a completed timeout starts a new async lifecycle", async () => 
   }).toEqual({ ids: 2, uniqueIds: 2, destroyed: result.ids, fires: 2 });
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
+
+test("timer hooks survive a replaced global Promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("node:fs");
+      const IntrinsicPromise = Promise;
+      Object.defineProperty(IntrinsicPromise, Symbol.species, {
+        configurable: true,
+        get() { throw new Error("Promise species must not be consulted"); },
+      });
+      globalThis.Promise = undefined;
+      const { createHook } = require("node:async_hooks");
+      let timerId;
+      let destroys = 0;
+      createHook({
+        init(id, type) {
+          if (type === "Timeout" && timerId === undefined) timerId = id;
+        },
+        destroy(id) {
+          if (id === timerId) destroys++;
+        },
+      }).enable();
+      const timer = setTimeout(() => {}, 1);
+      clearTimeout(timer);
+      setImmediate(() => fs.writeSync(1, String(destroys)));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1", stderr: "", exitCode: 0 });
+});

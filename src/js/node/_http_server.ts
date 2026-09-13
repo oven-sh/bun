@@ -72,6 +72,7 @@ let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
+const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -105,16 +106,17 @@ const DateNow = Date.now;
 let cluster;
 
 function emitCloseServer(self: Server) {
-  // Node's net.Server waits for every accepted connection to drain before
-  // emitting close. Bun's native promise only tracks in-flight requests.
+  // Native close promises belong to one listener, while Node's Server close
+  // spans overlapping listeners and handed-off sockets on the shared object.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2439-L2454
   if (!self[kPendingDrainClose]) return;
   if (self[serverSymbol] || self[kTrackedConnections].size > 0) return;
-  const generation = self[kListenerGeneration];
-  // A stopped listener can settle after its replacement has also stopped.
-  // Only the replacement's native completion can drain their shared close.
-  if (generation && !generation.nativeClosed) return;
+  const pendingGenerations = self[kPendingCloseGenerations];
+  for (const generation of pendingGenerations) {
+    if (!generation.nativeClosed) return;
+  }
   self[kPendingDrainClose] = false;
+  pendingGenerations.clear();
   self[kListenerGeneration] = undefined;
   self.emit("close");
 }
@@ -296,6 +298,7 @@ function Server(options, callback): void {
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[kPendingDrainClose] = false;
+  this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
@@ -467,6 +470,8 @@ Server.prototype.closeAllConnections = function () {
   if (!server) {
     return;
   }
+  const generation = this[kListenerGeneration];
+  if (generation) this[kPendingCloseGenerations].add(generation);
   this[serverSymbol] = undefined;
   this[kPendingDrainClose] = true;
   clearInterval(this[kConnectionsCheckingInterval]);
@@ -503,6 +508,8 @@ Server.prototype.close = function (optionalCallback?) {
     return this;
   }
   if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+  const generation = this[kListenerGeneration];
+  if (generation) this[kPendingCloseGenerations].add(generation);
   this[serverSymbol] = undefined;
   this.listening = false;
   this[kPendingDrainClose] = true;

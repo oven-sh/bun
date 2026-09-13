@@ -4525,86 +4525,99 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
-  it("does not let an old listener complete a replacement with a pending TLS handshake", async () => {
-    const firstClose = Promise.withResolvers<Error | undefined>();
-    const finalClose = Promise.withResolvers<Error | undefined>();
-    const firstClientError = Promise.withResolvers<void>();
-    const events: string[] = [];
-    const server = createHttpsServer(tlsCert);
-    server.on("close", () => events.push("server close"));
-    server.on("clientError", (_error, socket) => {
-      socket.destroy();
-      firstClientError.resolve();
-    });
-
-    const startHeldHandshake = async (port: number) => {
-      const raw = connect(port, "127.0.0.1");
-      raw.on("error", () => {});
-      await once(raw, "connect");
-      let hold = true;
-      const held: Buffer[] = [];
-      const wire = new Duplex({
-        read() {},
-        write(chunk, _encoding, callback) {
-          raw.write(chunk, callback);
-        },
+  it.each(["first", "replacement"] as const)(
+    "waits for both overlapping listener generations when the %s listener drains first",
+    async firstToDrain => {
+      const firstClose = Promise.withResolvers<Error | undefined>();
+      const finalClose = Promise.withResolvers<Error | undefined>();
+      const firstClientError = Promise.withResolvers<void>();
+      const events: string[] = [];
+      const server = createHttpsServer(tlsCert);
+      server.on("close", () => events.push("server close"));
+      server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+        socket.destroy();
+        if (error.code?.startsWith("HPE_")) firstClientError.resolve();
       });
-      raw.on("data", chunk => (hold ? held.push(chunk) : wire.push(chunk)));
-      raw.on("close", () => wire.push(null));
-      const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
-      client.on("error", () => {});
-      for (const start = Date.now(); held.length === 0 && Date.now() - start < 10_000; ) {
-        await new Promise<void>(resolve => setTimeout(resolve, 5));
-      }
-      expect(held.length).toBeGreaterThan(0);
-      return {
-        client,
-        raw,
-        release() {
-          hold = false;
-          for (const chunk of held) wire.push(chunk);
-        },
+
+      const startHeldHandshake = async (port: number) => {
+        const raw = connect(port, "127.0.0.1");
+        raw.on("error", () => {});
+        await once(raw, "connect");
+        let hold = true;
+        const held: Buffer[] = [];
+        const wire = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => (hold ? held.push(chunk) : wire.push(chunk)));
+        raw.on("close", () => wire.push(null));
+        const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
+        client.on("error", () => {});
+        for (const start = Date.now(); held.length === 0 && Date.now() - start < 10_000; ) {
+          await new Promise<void>(resolve => setTimeout(resolve, 5));
+        }
+        expect(held.length).toBeGreaterThan(0);
+        return {
+          client,
+          raw,
+          release() {
+            hold = false;
+            for (const chunk of held) wire.push(chunk);
+          },
+        };
       };
-    };
 
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const first = await startHeldHandshake((server.address() as AddressInfo).port);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const first = await startHeldHandshake((server.address() as AddressInfo).port);
 
-    server.close(error => {
-      events.push("first close callback");
-      firstClose.resolve(error);
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const final = await startHeldHandshake((server.address() as AddressInfo).port);
-
-    try {
       server.close(error => {
-        events.push("final close callback");
-        finalClose.resolve(error);
+        events.push("first close callback");
+        firstClose.resolve(error);
       });
-      first.release();
-      first.client.write("NOT A VALID REQUEST LINE\r\n\r\n");
-      await firstClientError.promise;
-      await new Promise<void>(resolve => setImmediate(resolve));
-      expect(events).toEqual([]);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const final = await startHeldHandshake((server.address() as AddressInfo).port);
 
-      final.client.destroy();
-      final.raw.destroy();
-      expect(await Promise.all([firstClose.promise, finalClose.promise])).toEqual([undefined, undefined]);
-      expect(events).toEqual(["server close", "first close callback", "final close callback"]);
-    } finally {
-      first.client.destroy();
-      first.raw.destroy();
-      final.client.destroy();
-      final.raw.destroy();
-      server.closeAllConnections();
-      if (server.listening) {
-        await new Promise<void>(resolve => server.close(() => resolve()));
+      try {
+        server.close(error => {
+          events.push("final close callback");
+          finalClose.resolve(error);
+        });
+        if (firstToDrain === "first") {
+          first.release();
+          first.client.write("NOT A VALID REQUEST LINE\r\n\r\n");
+          await firstClientError.promise;
+          await new Promise<void>(resolve => setImmediate(resolve));
+          expect(events).toEqual([]);
+          final.client.destroy();
+          final.raw.destroy();
+        } else {
+          final.client.destroy();
+          final.raw.destroy();
+          await new Promise<void>(resolve => setTimeout(resolve, 25));
+          expect(events).toEqual([]);
+          first.release();
+          first.client.write("NOT A VALID REQUEST LINE\r\n\r\n");
+          await firstClientError.promise;
+        }
+        expect(await Promise.all([firstClose.promise, finalClose.promise])).toEqual([undefined, undefined]);
+        expect(events).toEqual(["server close", "first close callback", "final close callback"]);
+      } finally {
+        first.client.destroy();
+        first.raw.destroy();
+        final.client.destroy();
+        final.raw.destroy();
+        server.closeAllConnections();
+        if (server.listening) {
+          await new Promise<void>(resolve => server.close(() => resolve()));
+        }
       }
-    }
-  }, 15_000);
+    },
+    15_000,
+  );
 
   it("waits for a socket first wrapped by the parser-error path", async () => {
     const clientError = Promise.withResolvers<import("node:net").Socket>();

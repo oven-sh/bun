@@ -5,6 +5,8 @@
 
 use std::rc::Rc;
 
+use bun_core::strings;
+
 use crate::token::{Error, Loc, PpKind, PpToken, Punct, Res, TokenSource};
 
 pub(crate) struct Lexer {
@@ -143,29 +145,19 @@ impl Lexer {
                     skipped = true;
                 }
                 b'/' if self.peek_at(1) == b'/' => {
-                    while !self.at_end() && self.peek() != b'\n' {
-                        self.bump();
-                    }
+                    self.skip_line_comment();
                     skipped = true;
                 }
                 b'/' if self.peek_at(1) == b'*' => {
                     let start = self.loc();
                     self.bump();
                     self.bump();
-                    loop {
-                        if self.at_end() {
-                            return Err(Error {
-                                loc: start,
-                                msg: "unterminated /* comment".to_string(),
-                                note: None,
-                            });
-                        }
-                        if self.peek() == b'*' && self.peek_at(1) == b'/' {
-                            self.bump();
-                            self.bump();
-                            break;
-                        }
-                        self.bump();
+                    if !self.skip_block_comment() {
+                        return Err(Error {
+                            loc: start,
+                            msg: "unterminated /* comment".to_string(),
+                            note: None,
+                        });
                     }
                     skipped = true;
                 }
@@ -180,8 +172,17 @@ impl Lexer {
     fn lex_quoted(&mut self, quote: u8, text: &mut Vec<u8>) -> bool {
         text.push(self.bump());
         loop {
+            // Up to whatever is not just more of the literal.
+            let rest = &self.src[self.pos..];
+            let plain = strings::index_of_any(rest, &[quote, b'\\', b'\n']).unwrap_or(rest.len());
+            text.extend_from_slice(&rest[..plain]);
+            self.pos += plain;
             if self.at_end() || self.peek() == b'\n' {
                 return false;
+            }
+            if self.splice_len(self.pos) != 0 {
+                self.skip_splices();
+                continue;
             }
             let b = self.bump();
             text.push(b);
@@ -190,9 +191,68 @@ impl Lexer {
                     return false;
                 }
                 text.push(self.bump());
-            } else if b == quote {
+            } else {
                 return true;
             }
+        }
+    }
+
+    /// From the `//` to the end of the line, which a backslash-newline does not end.
+    fn skip_line_comment(&mut self) {
+        loop {
+            let rest = &self.src[self.pos..];
+            let Some(newline) = strings::index_of_char_usize(rest, b'\n') else {
+                self.pos = self.src.len();
+                return;
+            };
+            let spliced = match newline {
+                0 => false,
+                1 => rest[0] == b'\\',
+                _ => {
+                    rest[newline - 1] == b'\\'
+                        || (rest[newline - 1] == b'\r' && rest[newline - 2] == b'\\')
+                }
+            };
+            if !spliced {
+                self.pos += newline;
+                return;
+            }
+            self.pos += newline + 1;
+            self.line += 1;
+        }
+    }
+
+    /// From after the `/*` to after the `*/`. False when there is none.
+    fn skip_block_comment(&mut self) -> bool {
+        loop {
+            let rest = &self.src[self.pos..];
+            let Some(star) = strings::index_of_char_usize(rest, b'*') else {
+                self.line += strings::count_char(rest, b'\n') as u32;
+                self.pos = self.src.len();
+                return false;
+            };
+            self.line += strings::count_char(&rest[..star], b'\n') as u32;
+            self.pos += star + 1;
+            // The `/` may be a line further on: `*\` at the end of one, `/` starting the next.
+            self.skip_splices();
+            if self.peek() == b'/' && !self.at_end() {
+                self.bump();
+                return true;
+            }
+        }
+    }
+
+    /// Appends to `text` the bytes from here on that `more` holds for.
+    fn take_while(&mut self, text: &mut Vec<u8>, more: impl Fn(u8) -> bool) {
+        loop {
+            let rest = &self.src[self.pos..];
+            let run = rest.iter().take_while(|&&b| more(b)).count();
+            text.extend_from_slice(&rest[..run]);
+            self.pos += run;
+            if self.splice_len(self.pos) == 0 {
+                return;
+            }
+            self.skip_splices();
         }
     }
 
@@ -303,9 +363,7 @@ impl TokenSource for Lexer {
         } else {
             let b = self.peek();
             if is_ident_start(b) {
-                while is_ident_continue(self.peek()) && !self.at_end() {
-                    text.push(self.bump());
-                }
+                self.take_while(&mut text, is_ident_continue);
                 // An encoding prefix glued to a quote is part of the literal.
                 let quote = self.peek();
                 if (quote == b'"' || quote == b'\'')
@@ -324,16 +382,12 @@ impl TokenSource for Lexer {
             } else if b.is_ascii_digit() || (b == b'.' && self.peek_at(1).is_ascii_digit()) {
                 // pp-number: digits, letters, '.', and a sign right after an exponent letter.
                 loop {
-                    let c = self.peek();
-                    if self.at_end() {
-                        break;
-                    }
-                    if c.is_ascii_alphanumeric() || c == b'.' || c == b'_' {
+                    self.take_while(&mut text, |c| {
+                        c.is_ascii_alphanumeric() || c == b'.' || c == b'_'
+                    });
+                    let exponent = text.last().is_some_and(|c| matches!(c | 0x20, b'e' | b'p'));
+                    if exponent && matches!(self.peek(), b'+' | b'-') && !self.at_end() {
                         text.push(self.bump());
-                        let next = self.peek();
-                        if matches!(c | 0x20, b'e' | b'p') && (next == b'+' || next == b'-') {
-                            text.push(self.bump());
-                        }
                     } else {
                         break;
                     }

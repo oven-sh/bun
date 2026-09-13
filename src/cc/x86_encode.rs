@@ -68,35 +68,7 @@ enum Operand {
 
 type Res<T> = Result<T, String>;
 
-// This crate is std-only (no bun_core::strings), so byte searches are plain loops.
-fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {
-    for (at, &byte) in haystack.iter().enumerate() {
-        if byte == needle {
-            return Some(at);
-        }
-    }
-    None
-}
-
-fn rfind_byte(haystack: &[u8], needle: u8) -> Option<usize> {
-    for (at, &byte) in haystack.iter().enumerate().rev() {
-        if byte == needle {
-            return Some(at);
-        }
-    }
-    None
-}
-
-fn split_on(text: &[u8], separator: u8) -> Vec<&[u8]> {
-    let mut parts = Vec::new();
-    let mut rest = text;
-    while let Some(at) = find_byte(rest, separator) {
-        parts.push(&rest[..at]);
-        rest = &rest[at + 1..];
-    }
-    parts.push(rest);
-    parts
-}
+use bun_core::strings;
 
 fn gpr_by_name(name: &[u8]) -> Option<Gpr> {
     const Q: [&[u8]; 8] = [
@@ -209,7 +181,9 @@ fn parse_operand(text: &[u8]) -> Res<Operand> {
     }
     // A register on its own.
     if let Some(name) = text.strip_prefix(b"%") {
-        if find_byte(name, b':').is_none() && find_byte(name, b'(').is_none() {
+        if strings::index_of_char_usize(name, b':').is_none()
+            && strings::index_of_char_usize(name, b'(').is_none()
+        {
             if let Some(register) = gpr_by_name(name) {
                 return Ok(Operand::Gpr(register));
             }
@@ -249,9 +223,10 @@ fn parse_operand(text: &[u8]) -> Res<Operand> {
         memory.segment = Some(0x65);
         rest = after;
     }
-    let (displacement, registers) = match find_byte(rest, b'(') {
+    let (displacement, registers) = match strings::index_of_char_usize(rest, b'(') {
         Some(open) => {
-            let close = rfind_byte(rest, b')').ok_or_else(|| format!("'{}' has no ')'", show()))?;
+            let close = strings::last_index_of_char(rest, b')')
+                .ok_or_else(|| format!("'{}' has no ')'", show()))?;
             if !trim(&rest[close + 1..]).is_empty() {
                 return Err(format!("'{}' has something after ')'", show()));
             }
@@ -265,7 +240,7 @@ fn parse_operand(text: &[u8]) -> Res<Operand> {
         return Err(format!("'{}' is not an operand", show()));
     }
     if let Some(registers) = registers {
-        let mut parts = split_on(registers, b',').into_iter().map(trim);
+        let mut parts = strings::split(registers, b",").map(trim);
         let mut address_register = |part: &[u8]| -> Res<Option<u8>> {
             if part.is_empty() {
                 return Ok(None);
@@ -1898,12 +1873,12 @@ pub(crate) const MAXIMUM_CODE_SIZE: usize = 4096;
 pub(crate) fn assemble(text: &[u8]) -> Res<Vec<u8>> {
     let mut items: Vec<Item> = Vec::new();
     let lowered: Vec<u8> = text.to_ascii_lowercase();
-    for line in split_on(&lowered, b'\n') {
-        let line = match find_byte(line, b'#') {
+    for line in strings::split(&lowered, b"\n") {
+        let line = match strings::index_of_char_usize(line, b'#') {
             Some(at) => &line[..at],
             None => line,
         };
-        for statement in split_on(line, b';') {
+        for statement in strings::split(line, b";") {
             let mut rest = trim(statement);
             // Labels, then prefixes, then at most one instruction.
             loop {

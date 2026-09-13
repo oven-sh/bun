@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use bun_core::strings;
 use bun_paths::resolve_path::{self, platform};
 
 use crate::pp::{
@@ -84,25 +85,18 @@ fn builtin_header(name: &str, target: crate::types::Target) -> Option<&'static s
 /// of one file compare equal. Symbolic links are not followed.
 fn same_file_key(path: &str) -> String {
     let absolute = path.starts_with('/');
-    let mut parts: Vec<&str> = Vec::new();
-    let mut start = 0;
-    let bytes = path.as_bytes();
-    for end in 0..=bytes.len() {
-        if end < bytes.len() && bytes[end] != b'/' && bytes[end] != b'\\' {
-            continue;
-        }
-        let part = &path[start..end];
-        start = end + 1;
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for part in strings::split_any(path.as_bytes(), b"/\\") {
         match part {
-            "" | "." => {}
-            ".." if parts.last().is_some_and(|p| *p != "..") => {
+            b"" | b"." => {}
+            b".." if parts.last().is_some_and(|p| *p != b"..") => {
                 parts.pop();
             }
-            ".." if absolute => {}
+            b".." if absolute => {}
             other => parts.push(other),
         }
     }
-    let joined = parts.join("/");
+    let joined = display_bytes(&parts.join(&b'/'));
     if absolute {
         format!("/{joined}")
     } else {

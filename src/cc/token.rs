@@ -14,6 +14,8 @@
 
 use std::rc::Rc;
 
+use bun_core::strings;
+
 use crate::extended::{self, Extended};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -473,9 +475,7 @@ pub(crate) fn classify(pp: &PpToken, dialect: Dialect) -> Res<Token> {
             } else if let Some(n) = text.strip_prefix(b"pack push ") {
                 Tok::PragmaPack(PackOp::Push(value(n)))
             } else if let Some(names) = text.strip_prefix(b"redefine_extname ") {
-                let space = (0..names.len())
-                    .find(|&i| names[i] == b' ')
-                    .unwrap_or(names.len());
+                let space = strings::index_of_char_usize(names, b' ').unwrap_or(names.len());
                 let (old, new) = (&names[..space], &names[(space + 1).min(names.len())..]);
                 match (std::str::from_utf8(old), std::str::from_utf8(new)) {
                     (Ok(old), Ok(new)) => Tok::PragmaRedefine(Rc::from(old), Rc::from(new)),
@@ -550,7 +550,7 @@ fn wide_kind(text: &[u8]) -> Option<WideKind> {
 
 /// Strips the encoding prefix and the quotes from a literal's spelling.
 fn literal_body(text: &[u8], quote: u8, loc: Loc) -> Res<&[u8]> {
-    let start = find_byte(text, quote).unwrap_or(0);
+    let start = strings::index_of_char_usize(text, quote).unwrap_or(0);
     if text.len() < start + 2 || text[text.len() - 1] != quote {
         return err(loc, "malformed literal");
     }
@@ -635,25 +635,6 @@ fn decode_wide(body: &[u8], loc: Loc) -> Res<Vec<u32>> {
         }
     }
     Ok(out)
-}
-
-// This crate is std-only (no bun_core::strings), so byte searches are plain loops.
-fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {
-    for (i, &b) in haystack.iter().enumerate() {
-        if b == needle {
-            return Some(i);
-        }
-    }
-    None
-}
-
-fn contains_any(haystack: &[u8], set: &[u8]) -> bool {
-    for &b in haystack {
-        if find_byte(set, b).is_some() {
-            return true;
-        }
-    }
-    false
 }
 
 /// Bytes as text for diagnostics; invalid UTF-8 sequences become U+FFFD.
@@ -793,7 +774,7 @@ fn parse_number(text: &[u8], loc: Loc) -> Res<Tok> {
         });
     }
     let is_hex = text.len() > 2 && text[0] == b'0' && (text[1] | 0x20) == b'x';
-    let is_float = contains_any(text, if is_hex { b".pP" } else { b".eE" });
+    let is_float = strings::index_of_any(text, if is_hex { b".pP" } else { b".eE" }).is_some();
     if is_float {
         parse_float(text, is_hex, loc)
     } else {
@@ -889,7 +870,7 @@ fn parse_int(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
     };
     // `1lL` is not a valid suffix even though it lowercases to `ll`.
     let raw_suffix = &text[i..];
-    if contains_any(raw_suffix, b"l") && contains_any(raw_suffix, b"L") {
+    if strings::contains_char(raw_suffix, b'l') && strings::contains_char(raw_suffix, b'L') {
         return err(loc, "invalid integer suffix");
     }
     Ok(Tok::Int {
@@ -907,7 +888,7 @@ fn parse_float(text: &[u8], is_hex: bool, loc: Loc) -> Res<Tok> {
         )
     };
     let (body, single, long_double) = match text.last().map(|b| b | 0x20) {
-        Some(b'f') if !is_hex || contains_any(text, b"pP") => {
+        Some(b'f') if !is_hex || strings::index_of_any(text, b"pP").is_some() => {
             (&text[..text.len() - 1], true, false)
         }
         Some(b'l') => (&text[..text.len() - 1], false, true),

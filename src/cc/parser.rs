@@ -3845,7 +3845,7 @@ impl<S: TokenSource> Parser<S> {
             })
         };
         for (mnemonic, arguments) in after {
-            let comma = (0..arguments.len()).find(|&i| arguments[i] == b',');
+            let comma = bun_core::strings::index_of_char_usize(arguments, b',');
             let pair =
                 comma.and_then(|at| Some((named(&arguments[..at])?, named(&arguments[at + 1..])?)));
             let value_of = |holds: &[(u8, usize)], r: u8| {

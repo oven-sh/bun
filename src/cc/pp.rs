@@ -523,7 +523,7 @@ impl Preprocessor {
         }
         // Drop an encoding prefix and the quotes; `\"` and `\\` lose their backslash.
         let text = &literal.text;
-        let Some(start) = (0..text.len()).find(|&i| text[i] == b'"') else {
+        let Some(start) = bun_core::strings::index_of_char_usize(text, b'"') else {
             return Ok(true);
         };
         let inner = &text[start + 1..text.len().saturating_sub(1).max(start + 1)];

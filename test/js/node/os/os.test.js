@@ -157,13 +157,15 @@ it.skipIf(process.platform !== "freebsd")("cpus times are in milliseconds on Fre
 
   // One block of 5 counters per CPU id: user, nice, sys, intr, idle.
   expect(before.length).toBeGreaterThanOrEqual(cpus.length * 5);
+  // A counter read from another CPU can lag by a few ticks in either direction. The bounds allow
+  // for that. An unscaled value is below the lower bound by a factor of mult, not by a few ticks.
+  const lagTicks = 8;
   // The idle counter of CPU 0 has advanced since boot, so a scale of 1 fails the lower bound below.
-  expect(before[4]).toBeGreaterThan(0);
+  expect(before[4]).toBeGreaterThan(lagTicks * 2);
   const fields = ["user", "nice", "sys", "irq", "idle"];
   for (let i = 0; i < cpus.length; i++) {
     for (let j = 0; j < fields.length; j++) {
-      const lo = before[i * 5 + j] * mult;
-      // A counter read from another CPU can lag by a few ticks, so allow one second above the after read.
+      const lo = Math.max(0, before[i * 5 + j] - lagTicks) * mult;
       const hi = (after[i * 5 + j] + clkTck) * mult;
       expect(cpus[i].times[fields[j]]).toBeWithin(lo, hi + 1);
     }

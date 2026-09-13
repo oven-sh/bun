@@ -16,6 +16,6 @@
     "types": ["../../packages/bun-types"],
     "verbatimModuleSyntax": true
   },
-  "include": ["./**/*.ts", "../build.ts", "../glob-sources.ts", "../prefetch-deps.ts"],
+  "include": ["./**/*.ts", "../build.ts", "../glob-sources.ts"],
   "exclude": ["node_modules"]
 }

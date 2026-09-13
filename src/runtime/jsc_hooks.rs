@@ -2161,7 +2161,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         crate::Error::ModuleNotFound => bun_jsc::CrateError::ModuleNotFound,
         crate::Error::WriteFailed => bun_jsc::CrateError::WriteFailed,
         crate::Error::JSError | crate::Error::Js(_) => bun_jsc::CrateError::JSError,
-        crate::Error::JSErrorObject => bun_jsc::CrateError::JSErrorObject,
         _ => bun_jsc::CrateError::ParseError,
     }
 }
@@ -3813,6 +3812,7 @@ export default db;
                 None
             },
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+            is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
         });
     }

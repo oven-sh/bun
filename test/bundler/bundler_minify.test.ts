@@ -1197,6 +1197,8 @@ describe("bundler", () => {
         capture(new Array());
         capture(new Array(3));
         capture(new Array(1, 2, 3));
+        capture(new Array(...unknownValue));
+        capture(new Array(5, ...unknownValue));
         
         // Test Array with non-numeric single arguments (should convert to literal)
         capture(new Array("string"));
@@ -1237,6 +1239,8 @@ describe("bundler", () => {
   2,
   3
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      "Array(...unknownValue)", // a spread may leave a single number behind, which is a length
+      "Array(5, ...unknownValue)",
       `[
   "string"
 ]`, // new Array("string") -> ["string"]
@@ -1329,6 +1333,12 @@ describe("bundler", () => {
         const a3 = new Array(n);
         const a4 = Array(n);
         capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+
+        // A spread can leave a single number behind at runtime, and then it is a length
+        const none = [];
+        const a5 = new Array(5, ...none);
+        capture(a5.length === 5);
+        capture(0 in a5 === false);
         
         // Test Object semantics
         const o1 = new Object();
@@ -1357,6 +1367,8 @@ describe("bundler", () => {
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "a5.length === 5",
+      "0 in a5 === !1",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -1367,7 +1379,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

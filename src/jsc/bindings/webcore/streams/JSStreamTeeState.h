@@ -8,23 +8,44 @@
 #include "root.h"
 #include "StreamsForward.h"
 
-#include <JavaScriptCore/JSObject.h>
+#include "JSReadableStream.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 #include <JavaScriptCore/JSPromise.h>
 
 namespace WebCore {
 
-class JSStreamTeeState final : public JSC::JSNonFinalObject {
+class JSStreamTeeState final : public JSC::JSInternalFieldObjectImpl<7> {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSInternalFieldObjectImpl<7>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+
+    enum class Field : uint32_t {
+        // The ORIGINAL stream — every cancel needs it.
+        Stream = 0,
+        // MUTABLE: the byte tee releases and re-acquires readers of EITHER kind repeatedly.
+        // Erased to JSCell on purpose.
+        Reader,
+        // `branch1` / `branch2`
+        Branch1,
+        Branch2,
+        // `cancelPromise`
+        CancelPromise,
+        // `reason1` / `reason2` — only meaningful once canceled1/canceled2 is set.
+        Reason1,
+        Reason2,
+    };
 
     static JSStreamTeeState* create(JSC::VM&, JSC::Structure*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
+    static size_t allocationSize(Checked<size_t> inlineCapacity)
+    {
+        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
+        return sizeof(JSStreamTeeState);
+    }
+
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_stream, m_reader, m_branch1, m_branch2,
-    // m_cancelPromise, m_reason1, m_reason2.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -37,19 +58,25 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // The ORIGINAL stream — every cancel needs it.
-    JSC::WriteBarrier<JSReadableStream> m_stream;
-    // MUTABLE: the byte tee releases and re-acquires readers of EITHER kind repeatedly.
-    // Erased to JSCell on purpose.
-    JSC::WriteBarrier<JSC::JSCell> m_reader;
-    // `branch1` / `branch2`
-    JSC::WriteBarrier<JSReadableStream> m_branch1;
-    JSC::WriteBarrier<JSReadableStream> m_branch2;
-    // `cancelPromise`
-    JSC::WriteBarrier<JSC::JSPromise> m_cancelPromise;
-    // `reason1` / `reason2` — only meaningful once canceled1/canceled2 is set.
-    JSC::WriteBarrier<JSC::Unknown> m_reason1;
-    JSC::WriteBarrier<JSC::Unknown> m_reason2;
+    const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
+    JSReadableStream* stream() const { return uncheckedDowncast<JSReadableStream>(fieldCell(Field::Stream)); }
+    JSC::JSCell* reader() const { return fieldCell(Field::Reader); }
+    JSReadableStream* branch1() const { return uncheckedDowncast<JSReadableStream>(fieldCell(Field::Branch1)); }
+    JSReadableStream* branch2() const { return uncheckedDowncast<JSReadableStream>(fieldCell(Field::Branch2)); }
+    JSC::JSPromise* cancelPromise() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::CancelPromise)); }
+    JSC::JSValue reason1() const { return internalField(Field::Reason1).get(); }
+    JSC::JSValue reason2() const { return internalField(Field::Reason2).get(); }
+
+    void setStream(JSC::VM& vm, JSReadableStream* stream) { internalField(Field::Stream).set(vm, this, stream); }
+    void setReader(JSC::VM& vm, JSC::JSCell* reader) { internalField(Field::Reader).set(vm, this, reader); }
+    void setBranch1(JSC::VM& vm, JSReadableStream* branch) { internalField(Field::Branch1).set(vm, this, branch); }
+    void setBranch2(JSC::VM& vm, JSReadableStream* branch) { internalField(Field::Branch2).set(vm, this, branch); }
+    void setCancelPromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::CancelPromise).set(vm, this, promise); }
+    void setReason1(JSC::VM& vm, JSC::JSValue reason) { internalField(Field::Reason1).set(vm, this, reason); }
+    void setReason2(JSC::VM& vm, JSC::JSValue reason) { internalField(Field::Reason2).set(vm, this, reason); }
+
     // `reading`
     bool m_reading : 1 { false };
     // default tee: `readAgain`; byte tee: `readAgainForBranch1`. (One flag, two spec names.)
@@ -63,6 +90,12 @@ public:
 private:
     JSStreamTeeState(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
+
+    JSC::JSCell* fieldCell(Field field) const
+    {
+        JSC::JSValue value = internalField(field).get();
+        return value.isCell() ? value.asCell() : nullptr;
+    }
 };
 
 } // namespace WebCore

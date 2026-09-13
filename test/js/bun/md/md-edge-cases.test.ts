@@ -1255,7 +1255,7 @@ describe("pathological code span inputs", () => {
         const r2 = runs(4000, 2);
         // Nested image labels with a wiki link in each. Neither "\`a" in the wiki link label nor
         // "\`b" in the image label around it has a closer inside its label.
-        const nested = fill(16000, "![") + "z" + fill(16000, " [[u|\`a]] \`b ]]](u)");
+        const nested = fill(40000, "![") + "z" + fill(40000, " [[u|\`a]] \`b ]]](u)");
         const cases = [
           ["paragraph", r, {}, "<p>" + r + "</p>\\n"],
           ["paragraph with a bracket pair", "[x] " + r, {}, "<p>[x] " + r + "</p>\\n"],
@@ -1270,13 +1270,13 @@ describe("pathological code span inputs", () => {
           ["brackets inside a code span of the bracket map", "[x](\`y) [" + r2 + "] \`", {}, '<p><a href="%60y">x</a> [' + r2 + "] \`</p>\\n"],
           // md4c's pathological input: the escaped backtick makes every opener one shorter than every run.
           ["escaped backtick before each backtick", fill(40000, "\\\\\`\`"), {}, "<p>" + fill(40000, "\`\`") + "</p>\\n"],
-          ["nested image labels around wiki links", nested, { wikiLinks: true }, '<p><img src="u" alt="z' + fill(16000, " \`a \`b ]]") + '" /></p>\\n'],
+          ["nested image labels around wiki links", nested, { wikiLinks: true }, '<p><img src="u" alt="z' + fill(40000, " \`a \`b ]]") + '" /></p>\\n'],
         ];
         for (const [name, input, options, expected] of cases) {
           if (Bun.markdown.html(input, options) !== expected) throw new Error("unexpected html for " + name);
           console.log("OK " + name);
         }
-        if (Bun.markdown.ansi(nested, { colors: false, columns: 0 }) !== "[img] z" + fill(16000, " [[\`a]] \`b ]]") + "\\n") throw new Error("unexpected ansi() output");
+        if (Bun.markdown.ansi(nested, { colors: false, columns: 0 }) !== "[img] z" + fill(40000, " [[\`a]] \`b ]]") + "\\n") throw new Error("unexpected ansi() output");
         console.log("OK ansi");
         if (Bun.markdown.render(r, {}) !== r) throw new Error("unexpected render() output");
         console.log("OK render");

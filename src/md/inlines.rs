@@ -696,6 +696,7 @@ impl Parser<'_> {
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
     /// `start` is the end of the opening run. `content` is `block[base..]`, cut at the end of a link label.
+    #[inline(never)] // Inlined into the five scanners, it made their loops measurably slower.
     pub(crate) fn find_code_span_end(
         &self,
         content: &[u8],

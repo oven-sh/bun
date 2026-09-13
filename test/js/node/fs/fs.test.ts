@@ -3372,6 +3372,40 @@ it("realpath async", async () => {
   expect(await promise).toBe(realpathSync(import.meta.path));
 }, 30_000);
 
+it("promises.realpath keeps the separator on a filesystem root", async () => {
+  // https://github.com/oven-sh/bun/issues/42581
+  // "C:\\" on Windows, "/" on POSIX. Without the separator, "C:" is the
+  // current directory of drive C, not the root.
+  const root = path.parse(process.cwd()).root;
+  const resolved = await promises.realpath(root);
+  expect(resolved).toBe(root);
+  expect(resolved).toBe(realpathSync.native(root));
+  expect(resolved).toBe(realpathSync(root));
+  expect(Array.isArray(await promises.readdir(resolved))).toBe(true);
+});
+
+it("promises.realpath rejects with the native realpath syscall tag", async () => {
+  // https://github.com/oven-sh/bun/issues/32963
+  // Node routes fsPromises.realpath to native realpath(3), so a missing path
+  // rejects with syscall "realpath", not the JS walk's "lstat".
+  using dir = tempDir("realpath-native", { f: "x" });
+  const missing = join(String(dir), "nope");
+  const enoent = await promises.realpath(missing).then(
+    () => null,
+    e => ({ code: e.code, syscall: e.syscall, path: e.path }),
+  );
+  expect(enoent).toEqual({ code: "ENOENT", syscall: "realpath", path: missing });
+
+  if (isPosix) {
+    // A trailing separator on a regular file is ENOTDIR under native realpath.
+    const notdir = await promises.realpath(join(String(dir), "f") + "/").then(
+      () => null,
+      e => ({ code: e.code, syscall: e.syscall }),
+    );
+    expect(notdir).toEqual({ code: "ENOTDIR", syscall: "realpath" });
+  }
+});
+
 describe("stat", () => {
   it("async calls do not keep a Buffer path alive after they complete", async () => {
     using dir = tempDir("fs-async-buffer-path", { x: "hello" });

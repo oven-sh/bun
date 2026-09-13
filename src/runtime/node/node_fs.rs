@@ -7301,7 +7301,7 @@ impl NodeFS {
         args: &args::Realpath,
         _: Flavor,
     ) -> Maybe<ret::Realpath> {
-        match self.realpath_inner(args, RealpathVariant::Emulated) {
+        match self.realpath_inner(args) {
             Ok(res) => Ok(res),
             Err(err) => Err(sys::Error {
                 errno: err.errno,
@@ -7313,7 +7313,7 @@ impl NodeFS {
     }
 
     pub(crate) fn realpath(&mut self, args: &args::Realpath, _: Flavor) -> Maybe<ret::Realpath> {
-        match self.realpath_inner(args, RealpathVariant::Native) {
+        match self.realpath_inner(args) {
             Ok(res) => Ok(res),
             Err(err) => Err(sys::Error {
                 errno: err.errno,
@@ -7324,15 +7324,7 @@ impl NodeFS {
         }
     }
 
-    // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
-    // `fs.realpath.native`. In Bun, the system call is the default, but the error
-    // code must be changed to make it seem like it is using lstat (tests expect this),
-    // in addition, some more subtle things depend on the variant.
-    pub(crate) fn realpath_inner(
-        &mut self,
-        args: &args::Realpath,
-        variant: RealpathVariant,
-    ) -> Maybe<ret::Realpath> {
+    pub(crate) fn realpath_inner(&mut self, args: &args::Realpath) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -7360,17 +7352,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
-            if variant == RealpathVariant::Emulated {
-                // remove the trailing slash
-                //
-                // `buf` is an immutable view and every consumer below copies by
-                // length, so just shrink the slice — writing a NUL back through
-                // `ptr.cast_mut()` while `buf` is live would be Stacked-Borrows UB.
-                if buf.last() == Some(&b'\\') {
-                    buf = &buf[..buf.len() - 1];
-                }
-            }
+            // Only a root (`C:\`) comes back with a trailing separator. Keep it.
+            let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
@@ -7423,7 +7406,6 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
-            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
@@ -8985,12 +8967,6 @@ node_fs_ops! {
     Write => write, args::Write<'static>, ret::Write, uv = uv_write;
     WriteFile => write_file, args::WriteFile<'static>, ret::WriteFile;
     Writev => writev, args::Writev, ret::Writev, uv = uv_writev;
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum RealpathVariant {
-    Native,
-    Emulated,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

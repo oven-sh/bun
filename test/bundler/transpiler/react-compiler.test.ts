@@ -1038,6 +1038,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: constant propagation marked the result temporary of a store
+  // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
+  // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
+  // printed it as a statement ahead of an earlier store that was still inlined
+  // at its use (`x = 10; return [x = 5, -10, x++]`). See #42628.
+  itBundled("react-compiler/StoreOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback() {
+          const f = () => {
+            let x;
+            return [(x = 5), -(x = 10), x++];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(x = 10)];
+          return <Stub v={v} x={x++} />;
+        }
+        function UpdateInCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(x++)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        console.log(
+          JSON.stringify([
+            InCallback().p.run(),
+            InBody().p,
+            UpdateInCallback({ cond: false }).p.run(),
+          ]),
+        );
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

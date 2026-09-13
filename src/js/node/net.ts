@@ -1788,8 +1788,7 @@ function Socket(options?) {
           } finally {
             onreadCheckpoints--;
           }
-          // The rest of the chunk belongs to the connection that read it.
-          if (self.destroyed || self.connecting || self._handle !== handle) return;
+          if (onreadConnectionGone(self, handle)) return;
           stop = !self[kOnreadReading];
         }
         if (stop) {
@@ -2356,6 +2355,11 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
+// The rest of a chunk, and a FIN that waits behind it, belong to the connection that read them.
+function onreadConnectionGone(self, handle) {
+  return self.destroyed || self.connecting || self._handle !== handle;
+}
+
 // The tail is delivered on the next tick. A pause() before then clears kOnreadReading and the tick delivers nothing.
 function drainOnreadTail(self) {
   if (self[kOnreadTail] === undefined) return false;
@@ -2378,8 +2382,13 @@ function drainOnreadTailNT(socket) {
   if (tail === undefined || socket.destroyed) return;
   if (!socket[kOnreadReading]) return;
   socket[kOnreadTail] = undefined;
+  const handle = socket._handle;
   socket[kOnreadDeliver](tail);
-  if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
+  if (onreadConnectionGone(socket, handle)) {
+    socket[kOnreadPendingEnd] = false;
+    return;
+  }
+  if (socket[kOnreadTail] !== undefined) return;
   if (socket[kOnreadPendingEnd]) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);

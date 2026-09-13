@@ -3130,6 +3130,82 @@ describe("net.Socket onread: the callbacks of one native read are separate callb
     }
   });
 
+  // The peer resets the first connection while the declined tail waits. With no 'error' listener bun keeps that close
+  // behind the tail, like a FIN (kOnreadPendingEnd). A connection that replaces the first one must not inherit it.
+  it.each([
+    ["destroy() then connect() in one tick", true],
+    ["destroy(), then connect() after 'close'", false],
+  ])("inside a redelivered tail, a deferred %s does not end the next connection", async (_name, sameTick) => {
+    let peer: Socket | undefined;
+    const first = createServer(c => {
+      peer = c;
+      c.on("error", () => {});
+      c.write(payload);
+    });
+    const second = createServer(c => {
+      c.on("error", () => {});
+      c.write("mnopqrst");
+    });
+    const listening = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    [first, second].forEach((server, i) => {
+      server.once("error", listening[i].reject);
+      server.listen(0, "127.0.0.1", () => listening[i].resolve());
+    });
+    await Promise.all(listening.map(l => l.promise));
+    const port = (server: Server) => (server.address() as import("node:net").AddressInfo).port;
+    const events: string[] = [];
+    const declined = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const delivered = Promise.withResolvers<void>();
+    let generation = 1;
+    let endedAtConnect: boolean | undefined;
+    const reconnect = () => {
+      generation = 2;
+      socket.on("error", delivered.reject);
+      socket.connect(port(second), "127.0.0.1", () => {
+        endedAtConnect = (socket as any)._readableState.ended;
+      });
+    };
+    const socket = new Socket({
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          const slice = buf.toString("latin1", 0, n);
+          events.push(`${generation} ${slice}`);
+          if (slice === "abcd" || slice === "mnop") {
+            declined[generation - 1].resolve();
+            return false;
+          }
+          if (generation === 2) return void delivered.resolve();
+          process.nextTick(() => {
+            socket.destroy();
+            if (sameTick) reconnect();
+            else socket.once("close", reconnect);
+          });
+        },
+      },
+    });
+    try {
+      socket.on("end", () => generation === 2 && events.push("end 2"));
+      socket.connect(port(first), "127.0.0.1");
+      await declined[0].promise;
+      peer!.resetAndDestroy();
+      while ((socket as any)._handle?.readyState === 1) await immediate();
+      socket.resume();
+      await declined[1].promise;
+      socket.resume();
+      await delivered.promise;
+      for (let i = 0; i < 4; i++) await immediate();
+      expect({ events, endedAtConnect }).toEqual({
+        events: ["1 abcd", "1 efgh", "2 mnop", "2 qrst"],
+        endedAtConnect: false,
+      });
+    } finally {
+      socket.destroy();
+      first.close();
+      second.close();
+    }
+  });
+
   it("the tail that resume() redelivers gets the same checkpoints", async () => {
     const server = await startServer("tcp");
     const log: string[] = [];

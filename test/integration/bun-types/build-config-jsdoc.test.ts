@@ -49,6 +49,8 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
       [...sentence.matchAll(/`"(none|linked|inline|external)"`/g)].map(match => match[1]),
     );
     expect(documented).toEqual(expect.arrayContaining(observed));
+    // The two builds differ only in `outdir`, so the JSDoc has to say that it decides.
+    expect(sentences.join(" ")).toContain("`outdir`");
   });
 
   test('sourcemap: "linked" and "external" without outdir', async () => {
@@ -74,12 +76,13 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
 
   test("banner and footer: JavaScript outputs only", async () => {
     using dir = tempDir("jsdoc-banner-footer", {
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./index.js"></script></head><body></body></html>`,
       "index.js": `import("./lazy.js").then(m => console.log(m.default));`,
       "lazy.js": `export default "lazy";`,
       "style.css": `a { color: red; }`,
     });
     const build = await Bun.build({
-      entrypoints: [join(String(dir), "index.js"), join(String(dir), "style.css")],
+      entrypoints: [join(String(dir), "index.html")],
       splitting: true,
       banner: "/* BANNER */",
       footer: "/* FOOTER */",
@@ -100,12 +103,17 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
     observed.sort((a, b) => (a.ext + a.kind).localeCompare(b.ext + b.kind));
     expect(observed).toEqual([
       { ext: ".css", kind: "asset", banner: false, footer: false },
+      { ext: ".html", kind: "entry-point", banner: false, footer: false },
       { ext: ".js", kind: "chunk", banner: true, footer: true },
       { ext: ".js", kind: "entry-point", banner: true, footer: true },
     ]);
 
+    // The build made three types of output file and treated them differently,
+    // so the JSDoc has to name all three.
+    const outputTypes = ["CSS", "HTML", "JavaScript"];
     for (const member of ["banner", "footer"]) {
-      expect({ member, doc: jsdocOf(member) }).toEqual({ member, doc: expect.stringContaining("CSS") });
+      const doc = jsdocOf(member);
+      expect({ member, named: outputTypes.filter(type => doc.includes(type)) }).toEqual({ member, named: outputTypes });
     }
   });
 });

@@ -103,7 +103,8 @@ int main(int argc, char **argv) {
     return bin;
   };
 
-  const helperBin = tryBuild();
+  // describe.skipIf still runs this callback on the other platforms.
+  const helperBin = isLinux ? tryBuild() : null;
 
   // Runs `bun ...args` in `cwd` with getrandom(2) blocked. Returns null if the
   // environment refuses the seccomp filter (skip).
@@ -117,18 +118,24 @@ int main(int argc, char **argv) {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode === 77) return null;
+    // 78: the filter does not block getrandom. 127: execvp failed.
+    if (exitCode === 78 || exitCode === 127) {
+      throw new Error(`seccomp helper exited with code ${exitCode}:\n${stderr}`);
+    }
     return { stdout, stderr, exitCode };
   }
 
   const cases: Array<{
     name: string;
     args: string[];
-    check: (out: { stdout: string; stderr: string }, dir: string) => Promise<void> | void;
+    check: (out: { stdout: string; stderr: string; exitCode: number }, dir: string) => Promise<void> | void;
   }> = [
     {
       name: "bun build",
       args: ["build", "./index.ts", "--outdir", "./out"],
-      check: async (_out, dir) => {
+      check: async (out, dir) => {
+        // The exit code goes first here: a build that failed wrote no file to read.
+        expect(out.exitCode, out.stderr).toBe(0);
         expect(await Bun.file(join(dir, "out", "index.js")).text()).toContain("from-index");
       },
     },
@@ -140,7 +147,8 @@ int main(int argc, char **argv) {
          console.log(result.success, (await result.outputs[0].text()).includes("from-index"));`,
       ],
       check: out => {
-        expect(out.stdout.trim()).toBe("true true");
+        expect(out.stdout.trim(), out.stderr).toBe("true true");
+        expect(out.exitCode).toBe(0);
       },
     },
     {
@@ -149,6 +157,7 @@ int main(int argc, char **argv) {
       check: out => {
         expect(out.stderr).toContain("--seed=");
         expect(out.stderr).toContain("1 pass");
+        expect(out.exitCode).toBe(0);
       },
     },
   ];
@@ -172,7 +181,6 @@ int main(int argc, char **argv) {
       }
 
       await c.check(out, String(dir));
-      expect(out.exitCode).toBe(0);
     });
   }
 });

@@ -162,12 +162,12 @@ test.concurrent("concurrent installs sharing a cache do not leak temp directorie
   expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
 });
 
-// A filesystem whose rename handler takes no flags (NFS, 9p, FUSE without
-// FUSE_RENAME2) fails renameat2() with EINVAL whenever a flag is set. This
-// helper installs a seccomp filter that does the same on a local filesystem,
-// then execs its arguments. renameat2(flags=0), renameat() and rename() are
-// not filtered. Exit code 77: the filter could not be installed.
-const rejectRenameFlagsSrc = /* c */ `
+// usage: fail-renameat2 <errno> <flags|always> <cmd> [args...]
+// Installs a seccomp filter that fails renameat2() with <errno>, then execs
+// <cmd>. "flags": only calls with a flag set fail. "always": every call fails.
+// renameat() and rename() are not filtered. Exit code 77: the filter could not
+// be installed.
+const failRenameat2Src = /* c */ `
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -176,6 +176,8 @@ const rejectRenameFlagsSrc = /* c */ `
 #include <linux/seccomp.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -189,8 +191,11 @@ const rejectRenameFlagsSrc = /* c */ `
 #endif
 
 int main(int argc, char **argv) {
-  if (argc < 2) return 2;
+  if (argc < 4) return 2;
   if (MY_AUDIT_ARCH == 0) return 77;
+  unsigned int err = (unsigned int)atoi(argv[1]);
+  /* 1: a call with flags == 0 fails too */
+  unsigned char always = strcmp(argv[2], "always") == 0;
 
   struct sock_filter filter[] = {
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
@@ -201,9 +206,9 @@ int main(int argc, char **argv) {
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     /* flags: fifth argument, low word (both arches are little-endian) */
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[4])),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 1),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, always, 1),
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (EINVAL & SECCOMP_RET_DATA)),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
   };
   struct sock_fprog prog = {
     .len = (unsigned short)(sizeof(filter) / sizeof(filter[0])),
@@ -213,9 +218,9 @@ int main(int argc, char **argv) {
   if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return 77;
   if (syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog) != 0) return 77;
   /* Without the filter this fails with ENOENT (empty paths). */
-  if (syscall(__NR_renameat2, AT_FDCWD, "", AT_FDCWD, "", 1) != -1 || errno != EINVAL) return 77;
+  if (syscall(__NR_renameat2, AT_FDCWD, "", AT_FDCWD, "", 1) != -1 || errno != (int)err) return 77;
 
-  execvp(argv[1], &argv[1]);
+  execvp(argv[3], &argv[3]);
   perror("execvp");
   return 127;
 }
@@ -223,75 +228,85 @@ int main(int argc, char **argv) {
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-test
-  .skipIf(!isLinux || !cc)
-  .concurrent(
-    "concurrent installs sharing a cache all succeed when the filesystem rejects renameat2 flags",
-    async () => {
-      const fileCount = 20;
-      const packages: Record<string, { tgz: Buffer; integrity: string }> = {};
-      for (let i = 0; i < 4; i++) {
-        packages[`noflags-pkg-${i}`] = makePackageTarball(`noflags-pkg-${i}`, fileCount);
-      }
-      using server = makeRegistry(packages);
+// Linux errno values, the same on x86_64 and aarch64.
+const renameat2Failures = [
+  // A filesystem whose rename handler takes no flags: NFS, 9p, FUSE without FUSE_RENAME2.
+  ["EINVAL", 22, "flags"],
+  // A kernel older than 3.15 has no renameat2.
+  ["ENOSYS", 38, "always"],
+  // A seccomp profile older than the call.
+  ["EPERM", 1, "always"],
+] as const;
 
-      const projects = ["proj1", "proj2", "proj3", "proj4"];
-      const dependencies = Object.fromEntries(Object.keys(packages).map(name => [name, "1.0.0"]));
-      const files: Record<string, string> = {
-        "tmp/.keep": "",
-        "cache/.keep": "",
-        "reject-rename-flags.c": rejectRenameFlagsSrc,
-      };
+test.skipIf(!isLinux || !cc).concurrent.each(renameat2Failures)(
+  "concurrent installs sharing a cache all succeed when renameat2 fails with %s",
+  async (_name, errno, scope) => {
+    const fileCount = 20;
+    const packages: Record<string, { tgz: Buffer; integrity: string }> = {};
+    for (let i = 0; i < 4; i++) {
+      packages[`noflags-pkg-${i}`] = makePackageTarball(`noflags-pkg-${i}`, fileCount);
+    }
+    using server = makeRegistry(packages);
+
+    const projects = ["proj1", "proj2", "proj3", "proj4"];
+    const dependencies = Object.fromEntries(Object.keys(packages).map(name => [name, "1.0.0"]));
+    const files: Record<string, string> = {
+      "tmp/.keep": "",
+      "cache/.keep": "",
+      "fail-renameat2.c": failRenameat2Src,
+    };
+    for (const proj of projects) {
+      files[`${proj}/package.json`] = JSON.stringify({ name: proj, version: "1.0.0", dependencies });
+      files[`${proj}/bunfig.toml`] = `[install]\nregistry = "${server.url}"\n`;
+    }
+    using dir = tempDir("tempdir-renameat2", files);
+    const tmpDir = join(String(dir), "tmp");
+    const cacheDir = join(String(dir), "cache");
+    const helper = join(String(dir), "fail-renameat2");
+
+    {
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-O0", "-o", helper, join(String(dir), "fail-renameat2.c")],
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+      // No kernel headers on this host: nothing to run.
+      if (exitCode !== 0 && /linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(stderr)) return;
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    }
+
+    for (let iteration = 0; iteration < 2; iteration++) {
+      await Promise.all([
+        rm(cacheDir, { recursive: true, force: true }),
+        ...projects.map(proj => rm(join(String(dir), proj, "node_modules"), { recursive: true, force: true })),
+      ]);
+
+      const results = await Promise.all(
+        projects.map(proj =>
+          runInstall(join(String(dir), proj), cacheDir, tmpDir, ["--no-save"], [helper, String(errno), scope]),
+        ),
+      );
+      // The sandbox does not allow a seccomp filter: nothing to run.
+      if (results.some(r => r.exitCode === 77)) return;
+
+      for (const { stderr, exitCode } of results) {
+        expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      }
+      // An install that read a cache entry while another install deleted it
+      // can exit 0 with files missing.
       for (const proj of projects) {
-        files[`${proj}/package.json`] = JSON.stringify({ name: proj, version: "1.0.0", dependencies });
-        files[`${proj}/bunfig.toml`] = `[install]\nregistry = "${server.url}"\n`;
-      }
-      using dir = tempDir("tempdir-noflags", files);
-      const tmpDir = join(String(dir), "tmp");
-      const cacheDir = join(String(dir), "cache");
-      const helper = join(String(dir), "reject-rename-flags");
-
-      {
-        await using compile = Bun.spawn({
-          cmd: [cc!, "-O0", "-o", helper, join(String(dir), "reject-rename-flags.c")],
-          stdout: "ignore",
-          stderr: "pipe",
-        });
-        const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
-        // No kernel headers on this host: nothing to run.
-        if (exitCode !== 0 && /linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(stderr)) return;
-        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      }
-
-      for (let iteration = 0; iteration < 3; iteration++) {
-        await Promise.all([
-          rm(cacheDir, { recursive: true, force: true }),
-          ...projects.map(proj => rm(join(String(dir), proj, "node_modules"), { recursive: true, force: true })),
-        ]);
-
-        const results = await Promise.all(
-          projects.map(proj => runInstall(join(String(dir), proj), cacheDir, tmpDir, ["--no-save"], [helper])),
-        );
-        // The sandbox does not allow a seccomp filter: nothing to run.
-        if (results.some(r => r.exitCode === 77)) return;
-
-        for (const { stderr, exitCode } of results) {
-          expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
-        }
-        // An install that read a cache entry while another install deleted it
-        // can exit 0 with files missing.
-        for (const proj of projects) {
-          for (const name of Object.keys(packages)) {
-            const installed = join(String(dir), proj, "node_modules", name);
-            expect(await readdirSorted(installed)).toEqual(["files", "package.json"]);
-            expect(await readdirSorted(join(installed, "files"))).toHaveLength(fileCount);
-          }
+        for (const name of Object.keys(packages)) {
+          const installed = join(String(dir), proj, "node_modules", name);
+          expect(await readdirSorted(installed)).toEqual(["files", "package.json"]);
+          expect(await readdirSorted(join(installed, "files"))).toHaveLength(fileCount);
         }
       }
+    }
 
-      expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
-    },
-  );
+    expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
+  },
+);
 
 test.concurrent("a tarball that fails to extract does not leak its temp directory", async () => {
   // Valid integrity (computed over the bytes) but not a gzip stream, so the

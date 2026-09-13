@@ -63,10 +63,7 @@ struct Stringifier<'a> {
     builder: wtf::StringBuilder,
     indent: usize,
 
-    /// Keyed by cell address, so every key is also appended to
-    /// `known_collection_roots`. A getter or Proxy trap can return a collection
-    /// that nothing else references; once collected, its address can be reused
-    /// by an unrelated collection, which would then look already seen.
+    /// Keyed by cell address. `known_collection_roots` keeps the keys alive so none gets reused.
     known_collections: HashMap<JSValue, AnchorAlias>,
     known_collection_roots: &'a mut MarkedArgumentBuffer,
     array_item_counter: usize,

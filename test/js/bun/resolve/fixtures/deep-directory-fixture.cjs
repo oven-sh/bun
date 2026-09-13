@@ -31,16 +31,19 @@ function inDirectory(dir, fn) {
  * enough to remove quickly.
  */
 function makeDirectoryOfLength(parent, length) {
-  if (length < parent.length + 2) throw new Error(`${length} bytes is too short for a directory below ${parent}`);
+  // `parent` (a temp directory) need not be ASCII; the components added here are.
+  let bytes = Buffer.byteLength(parent);
+  if (length < bytes + 2) throw new Error(`${length} bytes is too short for a directory below ${parent}`);
   let dir = parent;
-  while (dir.length < length) {
+  while (bytes < length) {
     // Bytes left after the separator. When this is not the last component,
     // keep two of them for the separator and first byte of the next one.
-    const remaining = length - dir.length - 1;
+    const remaining = length - bytes - 1;
     const size = remaining <= 255 ? remaining : Math.min(255, remaining - 2);
     const name = Buffer.alloc(size, "d").toString();
     inDirectory(dir, () => fs.mkdirSync(name));
     dir = `${dir}/${name}`;
+    bytes += 1 + size;
   }
   return dir;
 }

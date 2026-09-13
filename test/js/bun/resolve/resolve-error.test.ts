@@ -302,14 +302,14 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
    * Runs main.cjs, which prints one JSON value, in a project. package.json and
    * node_modules/ keep the resolver from auto-installing the bare specifiers.
    */
-  async function run(files: Record<string, string>) {
+  async function run(files: Record<string, string>, args: string[] = []) {
     using dir = tempDir("resolve-too-long", {
       "package.json": `{"name": "test", "version": "0.0.0"}`,
       "node_modules/.keep": "",
       ...files,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.cjs"],
+      cmd: [bunExe(), ...args, "main.cjs"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -361,6 +361,62 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
       result: { required: "resolved: pkg", imported: "resolved: pkg" },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // Every probe appends an extension to a name in a path buffer. The extension
+  // lists are user input too.
+  describe("an extension that does not fit", () => {
+    const extension = `.${longName}`;
+
+    it("in require.extensions", async () => {
+      expect(
+        await run({
+          "dir/.keep": "",
+          "main.cjs": `${helpers}
+            require.extensions[${JSON.stringify(extension)}] = () => {};
+            console.log(JSON.stringify({
+              file: outcome(() => require("./missing")),
+              directory: outcome(() => require("./dir")),
+            }));`,
+        }),
+      ).toEqual({
+        result: { file: "MODULE_NOT_FOUND", directory: "MODULE_NOT_FOUND" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A Windows command line cannot carry a value this long.
+    it.skipIf(isWindows)("in --extension-order", async () => {
+      // --extension-order applies to the project's own files, so the wildcard
+      // probes are reached through "imports" rather than a package's "exports".
+      expect(
+        await run(
+          {
+            "package.json": JSON.stringify({ name: "test", version: "0.0.0", imports: { "#src/*": "./src/*" } }),
+            "dir/.keep": "",
+            "src/sub/index.js": "",
+            "main.cjs": `${helpers}
+              console.log(JSON.stringify({
+                file: outcome(() => require("./missing")),
+                directory: outcome(() => require("./dir")),
+                wildcardFile: outcome(() => require("#src/missing")),
+                wildcardDirectory: outcome(() => require("#src/sub")),
+              }));`,
+          },
+          ["--extension-order", extension, "--extension-order", ".js"],
+        ),
+      ).toEqual({
+        result: {
+          file: "MODULE_NOT_FOUND",
+          directory: "MODULE_NOT_FOUND",
+          wildcardFile: "MODULE_NOT_FOUND",
+          wildcardDirectory: "MODULE_NOT_FOUND",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 
@@ -434,7 +490,7 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
           "main.cjs": `${deepHelpers}
             const out = {};
             for (const length of ${JSON.stringify(lengths)}) {
-              const file = cwd + "/" + name(length - cwd.length - 1, "f");
+              const file = cwd + "/" + name(length - Buffer.byteLength(cwd) - 1, "f");
               out[length] = [outcome(() => require(file)), outcome(() => require.resolve(file))];
             }
             console.log(JSON.stringify(out));`,
@@ -456,7 +512,7 @@ describe.concurrent("candidate paths that do not fit a path buffer", () => {
             (async () => {
               const out = {};
               for (const length of ${JSON.stringify(lengths)}) {
-                const dir = mkdirIn(parent, name(length - parent.length - 1, "e"));
+                const dir = mkdirIn(parent, name(length - Buffer.byteLength(parent) - 1, "e"));
                 out[length] = [
                   outcome(() => require(dir)),
                   outcome(() => require.resolve(dir)),

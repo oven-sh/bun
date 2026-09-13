@@ -136,8 +136,8 @@ pub mod array_hash_map;
 pub use array_hash_map::{
     ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiStringArrayHashMap,
     CaseInsensitiveAsciiStringContext, Entry, GetOrPutResult, MapEntry, OccupiedEntry,
-    StringArrayHashMap, StringHashMap, StringHashMapContext, StringHashMapKey,
-    StringHashMapUnownedKey, StringSet, VacantEntry, string_hash_map,
+    StringArrayHashMap, StringHashMap, StringHashMapKey, StringHashMapUnownedKey, StringSet,
+    VacantEntry, string_hash_map,
 };
 /// Downstream crates name hashbrown's iterator/entry types in struct fields
 /// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a

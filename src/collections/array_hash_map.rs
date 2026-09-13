@@ -1867,35 +1867,12 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMapContext + PrehashedCaseInsensitive
+// string_hash_map
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.StringHashMapContext` — spelled as a module rather than a unit
-/// struct so callers can path-access the nested `PrehashedCaseInsensitive`
-/// type (`StringHashMapContext::PrehashedCaseInsensitive`) on stable Rust,
-/// which forbids inherent associated types.
-#[allow(non_snake_case)]
-pub mod StringHashMapContext {
-    pub use super::string_hash_map::PrehashedCaseInsensitive;
-}
-
 /// String-hash helpers, namespaced so call sites can write
-/// `bun_collections::string_hash_map::{PrehashedCaseInsensitive, GetOrPutResult}`.
+/// `bun_collections::string_hash_map::GetOrPutResult`.
 pub mod string_hash_map {
-    /// `bun.StringHashMapContext.PrehashedCaseInsensitive` — owns a lowercased
-    /// copy of the input. Dropped via `Box`.
-    pub struct PrehashedCaseInsensitive {
-        pub input: Box<[u8]>,
-    }
-
-    impl PrehashedCaseInsensitive {
-        pub fn init(input: &[u8]) -> Self {
-            let mut out = vec![0u8; input.len()].into_boxed_slice();
-            bun_core::strings::copy_lowercase(input, &mut out);
-            Self { input: out }
-        }
-    }
-
     /// Result type alias for `StringHashMap::get_or_put*` so callers can name
     /// it as `string_hash_map::GetOrPutResult<'_, V>`.
     pub type GetOrPutResult<'a, V> = super::StringHashMapGetOrPut<'a, V>;

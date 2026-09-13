@@ -1572,7 +1572,6 @@ impl<'a> Resolver<'a> {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                let mut buf = bun_paths::path_buffer_pool::get();
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1588,9 +1587,10 @@ impl<'a> Resolver<'a> {
                     }
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
+                    && let mut buf = bun_paths::path_buffer_pool::get()
                     && let Some(out_len) = self
                         .fs_ref()
-                        .abs_buf_checked(&[dir.abs_real_path, query.entry().base()], &mut buf)
+                        .abs_buf_checked(&[dir.abs_real_path, query.entry().base()], &mut buf[..])
                         .map(<[u8]>::len)
                 {
                     let store_fd = self.store_fd;
@@ -3698,6 +3698,9 @@ impl<'a> Resolver<'a> {
                             buf[..index.len()].copy_from_slice(index);
                             for ext in self.opts.ext_order_slice(extension_order).iter() {
                                 let ext: &[u8] = ext;
+                                if index.len() + ext.len() > buf.len() {
+                                    continue;
+                                }
                                 let file_name = &mut buf[0..index.len() + ext.len()];
                                 file_name[index.len()..].copy_from_slice(ext);
                                 let index_query =
@@ -3818,6 +3821,9 @@ impl<'a> Resolver<'a> {
             buf[..base.len()].copy_from_slice(base);
             for ext in self.opts.ext_order_slice(extension_order).iter() {
                 let ext: &[u8] = ext;
+                if base.len() + ext.len() > buf.len() {
+                    continue;
+                }
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
                 if let Some(ext_query) =
@@ -5318,6 +5324,9 @@ impl<'a> Resolver<'a> {
 
         let ext_buf = bufs!(extension_path);
 
+        if b"index".len() + ext.len() > ext_buf.len() {
+            return MatchStatus::NotFound;
+        }
         let base = &mut ext_buf[0..b"index".len() + ext.len()];
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);

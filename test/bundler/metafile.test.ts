@@ -403,14 +403,11 @@ describe("bundler metafile", () => {
     });
     expect(result.success).toBe(true);
 
-    const inputs = (result.metafile as Metafile).inputs;
+    const { inputs, outputs } = result.metafile as Metafile;
     const name = (key: string) => key.split(/[\\/]/).pop()!;
-    expect(Object.keys(inputs).map(name).sort()).toEqual([
-      "README.md",
-      "data.json",
-      "data.json with { type: 'text' }",
-      "entry.js",
-    ]);
+    const names = ["README.md", "data.json", "data.json with { type: 'text' }", "entry.js"];
+    expect(Object.keys(inputs).map(name).sort()).toEqual(names);
+    expect(Object.keys(Object.values(outputs)[0].inputs).map(name).sort()).toEqual(names);
 
     const entry = Object.entries(inputs).find(([key]) => name(key) === "entry.js")![1];
     expect(entry.imports.map(imp => [name(imp.path), imp.with?.type, imp.path in inputs])).toEqual([

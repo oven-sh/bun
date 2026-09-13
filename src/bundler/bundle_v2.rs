@@ -149,14 +149,24 @@ bun_core::declare_scope!(scan_counter, visible);
 /// dedups by module key during a single `on_parse_task_complete` pass.
 pub(crate) type ResolveQueue = ModuleMap<*mut ParseTask>;
 
-/// The key loader of a record's module (see `ModuleMap`). `bare_path_only` keeps the bare path key.
+/// The key loader of a record's module (see `ModuleMap`).
 fn import_record_key_loader(
     import_record: &mut bun_ast::ImportRecord,
     path_loader: bun_ast::Loader,
-    bare_path_only: bool,
+    target: Target,
+    for_dev_server: bool,
 ) -> Option<bun_ast::Loader> {
+    use bun_ast::Loader;
     let loader = import_record.loader.unwrap_or(path_loader);
-    if bare_path_only || loader == path_loader {
+    // `with { type: "json" }` on package.json or tsconfig.json, which are jsonc by default, is not a second module.
+    let is_path_loader = loader == path_loader
+        || (matches!(loader, Loader::Json | Loader::Jsonc)
+            && matches!(path_loader, Loader::Json | Loader::Jsonc));
+    // The dev server's incremental graph is keyed by path alone.
+    let bare_path_only = for_dev_server
+        // The linker finds a server-side HTML import's manifest and browser entry point by bare path.
+        || (loader == Loader::Html && target.is_server_side());
+    if bare_path_only || is_path_loader {
         return None;
     }
     import_record
@@ -2350,7 +2360,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Like esbuild: when modules share a pretty path, the ones with a key loader become `d.json with { type: 'text' }`.
+        /// Like esbuild: when one pretty path is in the build under two key loaders, the modules with a key loader become `d.json with { type: 'text' }`.
         pub(crate) fn disambiguate_pretty_paths(&mut self) {
             if !self.graph.has_any_key_loaders {
                 return;
@@ -2359,22 +2369,37 @@ pub mod bv2_impl {
             let columns = input_files.split_mut();
             let (sources, key_loaders) = (columns.source, &*columns.key_loader);
 
-            let mut uses: bun_collections::StringHashMap<u32> = Default::default();
+            // Pretty path of a module with a key loader → (the first such loader, another key loader has this path too).
+            let mut names: bun_collections::StringHashMap<(Loader, bool)> = Default::default();
             for (source, key_loader) in sources.iter().zip(key_loaders) {
-                if key_loader.is_some() {
-                    uses.put(source.path.pretty, 0).expect("oom");
+                let Some(loader) = *key_loader else { continue };
+                let name = names.get_or_put(source.path.pretty).expect("oom");
+                if !name.found_existing {
+                    *name.value_ptr = (loader, false);
+                } else if name.value_ptr.0 != loader {
+                    name.value_ptr.1 = true;
                 }
             }
-            for source in sources.iter() {
-                if let Some(count) = uses.get_mut(source.path.pretty) {
-                    *count += 1;
+            for (source, key_loader) in sources.iter().zip(key_loaders) {
+                if key_loader.is_none() {
+                    if let Some(name) = names.get_mut(source.path.pretty) {
+                        name.1 = true;
+                    }
                 }
             }
 
-            for (source, key_loader) in sources.iter_mut().zip(key_loaders) {
+            let targets = self.graph.ast.items_target();
+            for (i, (source, key_loader)) in sources.iter_mut().zip(key_loaders).enumerate() {
                 let Some(loader) = *key_loader else { continue };
-                if uses.get(source.path.pretty).is_none_or(|count| *count < 2) {
+                if !names.get(source.path.pretty).is_some_and(|name| name.1) {
                     continue;
+                }
+                if source.path.is_file() && source.path.pretty.as_ptr() == source.path.text.as_ptr()
+                {
+                    // The linker would give this path its pretty form later, as it does for the other module.
+                    source.path = self
+                        .path_with_pretty_initialized(&source.path, targets[i])
+                        .expect("oom");
                 }
                 let loader_name: &'static str = loader.into();
                 let mut pretty: Vec<u8> = source.path.pretty.to_vec();
@@ -2424,8 +2449,12 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        let key_loader =
-                            super::import_record_key_loader(record, path_loader, for_dev_server);
+                        let key_loader = super::import_record_key_loader(
+                            record,
+                            path_loader,
+                            target,
+                            for_dev_server,
+                        );
                         (record.loader.unwrap_or(path_loader), key_loader)
                     };
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2673,7 +2702,7 @@ pub mod bv2_impl {
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
                 let key_loader =
-                    super::import_record_key_loader(record, path_loader, for_dev_server);
+                    super::import_record_key_loader(record, path_loader, target, for_dev_server);
                 (record.loader.unwrap_or(path_loader), key_loader)
             };
 
@@ -5050,6 +5079,11 @@ pub mod bv2_impl {
                                     .loader
                                     .filter(|_| path.text == &*resolve.import_record.specifier),
                             );
+                            // An import under another loader needs `get_or_put_keyed` above: the bare key is the default-loader module.
+                            debug_assert!(
+                                resolve.import_record.kind == ImportKind::EntryPointBuild
+                                    || loader == this.requested_file_loader(&path, None)
+                            );
 
                             this.graph
                                 .input_files
@@ -6300,7 +6334,6 @@ pub mod bv2_impl {
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
-            // The dev server's incremental graph is keyed by path alone.
             let for_dev_server = self.dev_server.is_some();
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
@@ -6493,6 +6526,7 @@ pub mod bv2_impl {
                         let key_loader = super::import_record_key_loader(
                             import_record,
                             path_loader,
+                            target,
                             for_dev_server,
                         );
 
@@ -6866,11 +6900,11 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                // A server-side HTML import's manifest and browser entry point are found by bare path.
                 let key_loader = super::import_record_key_loader(
                     import_record,
                     path_loader,
-                    for_dev_server || is_html_entrypoint,
+                    target,
+                    for_dev_server,
                 );
 
                 if let Some(id) = self

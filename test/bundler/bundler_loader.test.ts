@@ -153,40 +153,76 @@ describe("bundler", async () => {
       // first loader won for every import of the file.
       // The plugin variant resolves every import through the onResolve
       // fallback path (a plugin that matches but defers to the default resolver).
+      // Its first import takes the other path: onResolve returns aliased.json.
+      // That module stays keyed by path and takes the loader of its extension,
+      // so the import attribute has no effect there yet. The plain import that
+      // follows must be the parsed object, whatever the aliased import gets.
       for (const withPlugin of [false, true]) {
+        const deferred: string[] = [];
         itBundled(`bun/loader-same-file-under-two-import-attributes${withPlugin ? "-plugin" : ""}`, {
           target,
           outdir: "/out",
           files: {
             "/entry.ts": /* js */ `
+          ${
+            withPlugin
+              ? `import aliased from 'alias:aliased' with { type: 'text' };
+          import aliasedObj from './aliased.json';`
+              : `const aliased = '', aliasedObj = { k: 2 };`
+          }
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
           import obj from './data.json';
-          import { text } from './as-text';
+          import { text, cfg as cfgFromAsText } from './as-text';
           import * as shadow from './as-text';
           const dynamicText = (await import('./data.json', { with: { type: 'text' } })).default;
           const dynamicObj = (await import('./data.json')).default;
+          // At runtime these two still share one module (#32999).
           import pageText from './page.html' with { type: 'text' };
           import pageFile from './page.html' with { type: 'file' };
+          // Two importers of one (path, loader) pair share one module: the same object.
+          import cfg from './cfg.txt' with { type: 'json' };
           console.write(JSON.stringify([
             typeof obj, obj.j,
             typeof text, text,
             dynamicText === text, dynamicObj === obj, shadow.text === text,
             pageText,
-            typeof pageFile, pageFile !== pageText && !pageFile.includes('<p>'),
+            pageFile !== pageText, readFileSync(join(import.meta.dirname, pageFile), 'utf8') === pageText,
+            cfg.c, cfg === cfgFromAsText,
+            aliased != null, typeof aliasedObj, aliasedObj.k,
           ]));
         `,
             "/as-text.ts": /* js */ `
           import text from './data.json' with { type: 'text' };
-          export { text };
+          import cfg from './cfg.txt' with { type: 'json' };
+          export { text, cfg };
         `,
             "/data.json": `{"j":1}`,
+            "/aliased.json": `{"k":2}`,
+            "/cfg.txt": `{"c":3}`,
             "/page.html": `<p>hi</p>`,
           },
           plugins: withPlugin
             ? builder => {
-                builder.onResolve({ filter: /.*/ }, () => undefined);
+                builder.onResolve({ filter: /^alias:aliased$/ }, args => ({
+                  path: join(args.importer, "../aliased.json"),
+                }));
+                builder.onResolve({ filter: /.*/ }, args => {
+                  deferred.push(args.path);
+                  return undefined;
+                });
               }
             : undefined,
-          run: { stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>","string",true]' },
+          onAfterBundle() {
+            if (withPlugin) {
+              expect(deferred).toEqual(
+                expect.arrayContaining(["./data.json", "./as-text", "./page.html", "./cfg.txt", "./aliased.json"]),
+              );
+            }
+          },
+          run: {
+            stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>",true,true,3,true,true,"object",2]',
+          },
         });
       }
     });
@@ -220,6 +256,11 @@ describe("bundler", async () => {
         console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
       `,
       "/data.json": `{"a":1}`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("// data.json with { type: 'text' }\n");
+      expect(out).toContain("// data.json\n");
     },
     run: [
       { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
@@ -259,6 +300,28 @@ describe("bundler", async () => {
       expect(api.readFile("/out/entry.css")).toContain("data:image/svg+xml;base64,");
     },
     run: { stdout: "string true" },
+  });
+
+  // package.json and tsconfig.json are jsonc by default. `with { type: "json" }`
+  // on one of them is not a second loader: as before, there is one module.
+  itBundled("bun/loader-package-json-with-type-json", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import pkg from "./package.json" with { type: "json" };
+        import { name } from "./other";
+        console.log(pkg.name, name);
+      `,
+      "/other.ts": /* js */ `
+        import pkg from "./package.json";
+        export const name = pkg.name;
+      `,
+      "/package.json": `{"name":"only-once"}`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").split("only-once").length - 1).toBe(1);
+    },
+    run: { stdout: "only-once only-once" },
   });
 
   // shim.txt loaded as js is a `module.exports = require()` redirect to

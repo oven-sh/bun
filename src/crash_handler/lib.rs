@@ -587,11 +587,11 @@ mod draft {
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
-    const C_PROGRAM_CRASHED: &str = "The process crashed while a C program's main() was running. That is machine code compiled from\nthe program's own C, where a fault (a null pointer, a write past an array, abort()) is most\nlikely a bug in the program, as it would be in an executable a C compiler made.\n\n";
-    const C_PROGRAM_CRASHED_REPORT: &str = "If you think Bun compiled correct C wrongly, please file a GitHub issue using the link below:\n\n";
-
     // PORTING.md §Concurrency: `bun_threading::Guarded<()>` for a bare critical section.
     static PANIC_MUTEX: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+
+    const C_PROGRAM_CRASHED: &str = "The process crashed while a C program's main() was running. That is machine code compiled from\nthe program's own C, where a fault (a null pointer, a write past an array, abort()) is most\nlikely a bug in the program, as it would be in an executable a C compiler made.\n\n";
+    const C_PROGRAM_CRASHED_REPORT: &str = "If you think Bun compiled correct C wrongly, please file a GitHub issue using the link below:\n\n";
 
     /// How many C programs' `main` are running (`bun program.c`, or an executable built from one):
     /// machine code compiled from the program's own C, where a fault is the program's as it would be
@@ -1146,10 +1146,10 @@ mod draft {
                                     abort();
                                 }
                             } else if C_PROGRAMS_RUNNING.load(Ordering::Relaxed) > 0 {
-                                if writer.write_all(C_PROGRAM_CRASHED.as_bytes()).is_err()
-                                    || writer
-                                        .write_all(C_PROGRAM_CRASHED_REPORT.as_bytes())
-                                        .is_err()
+                                // The report's header has said whose crash this most likely is.
+                                if writer
+                                    .write_all(C_PROGRAM_CRASHED_REPORT.as_bytes())
+                                    .is_err()
                                 {
                                     abort();
                                 }

@@ -257,13 +257,74 @@ extern "C" int Bun__CModule__sscanf(const char* buffer, const char* format, ...)
 
 #undef BUN_C_VARIADIC
 
-// `at_quick_exit` is in the program's own startup code with Microsoft's toolchain; what it calls is exported.
-// (`atexit` is Bun's own list on every platform: c_module.rs.)
-extern "C" int Bun__CModule__at_quick_exit(void (*function)())
+// What a program's startup code, which compiled C has none of, does with that runtime, and what c_module.rs asks
+// of it. (`atexit`, `at_quick_exit` and `quick_exit` are Bun's own lists on every platform: c_module.rs.)
+
+// `setvbuf(stdout, NULL, mode, size)`: a null buffer has the runtime allocate one.
+extern "C" void Bun__CModule__bufferStdout(int mode, size_t size)
+{
+    using SetVBuf = int(__cdecl*)(Stream, char*, int, size_t);
+    static SetVBuf setBuffer = ucrtFunction<SetVBuf>("setvbuf");
+    if (Stream stream = standardStream(1); setBuffer && stream)
+        setBuffer(stream, nullptr, mode, size);
+}
+
+// Puts `handler` on the list that runtime's `exit` runs.
+extern "C" void Bun__CModule__atExitOfTheRuntime(void (*handler)())
 {
     using Register = int(__cdecl*)(void (*)());
-    static Register registerFunction = ucrtFunction<Register>("_crt_at_quick_exit");
-    return registerFunction ? registerFunction(function) : -1;
+    static Register registerFunction = ucrtFunction<Register>("_crt_atexit");
+    if (registerFunction)
+        registerFunction(handler);
+}
+
+// `_set_app_type(_crt_console_app)`.
+extern "C" void Bun__CModule__thisIsAConsoleProgram()
+{
+    using SetAppType = void(__cdecl*)(int);
+    static SetAppType setAppType = ucrtFunction<SetAppType>("_set_app_type");
+    constexpr int consoleApp = 1;
+    if (setAppType)
+        setAppType(consoleApp);
+}
+
+// Whether descriptor 1 of that runtime is a console.
+extern "C" bool Bun__CModule__stdoutIsAConsole()
+{
+    using IsATTY = int(__cdecl*)(int);
+    static IsATTY isATTY = ucrtFunction<IsATTY>("_isatty");
+    return isATTY && isATTY(1);
+}
+
+static void flushStream(Stream stream)
+{
+    using FFlush = int(__cdecl*)(Stream);
+    static FFlush flush = ucrtFunction<FFlush>("fflush");
+    if (flush)
+        flush(stream);
+}
+
+// `fflush(NULL)`: every open output stream.
+extern "C" void Bun__CModule__flushStreams() { flushStream(nullptr); }
+
+// `fflush(stdout)`.
+extern "C" void Bun__CModule__flushStdout()
+{
+    if (Stream stream = standardStream(1))
+        flushStream(stream);
+}
+
+// That runtime's `_environ`. It makes the table when a program's startup code asks it to
+// (`_initialize_narrow_environment`, which does nothing when there is one already), not when it is loaded.
+extern "C" char** Bun__CModule__environment()
+{
+    using Initialize = int(__cdecl*)();
+    using Table = char***(__cdecl*)();
+    static Initialize initialize = ucrtFunction<Initialize>("_initialize_narrow_environment");
+    static Table table = ucrtFunction<Table>("__p__environ");
+    if (initialize)
+        initialize();
+    return table ? *table() : nullptr;
 }
 
 // Flushes and closes the C code's streams: what returning from `main` does in a program of its own, after the

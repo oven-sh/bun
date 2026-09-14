@@ -1096,9 +1096,6 @@ static JSValue fetchESMSourceCode(
         // A C file embedded by `bun build --compile`: each function is a named export.
         case SyntheticModuleType::ExportsObject: {
             JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-            if (!value) {
-                RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
-            }
             RELEASE_AND_RETURN(scope, rejectOrResolve(sourceCodeOfExportsObject(globalObject, value, WTF::move(moduleKey))));
         }
 

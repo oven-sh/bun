@@ -34,21 +34,28 @@ unsafe extern "C" {
 unsafe extern "C" fn resolve_extern(name: *const c_char, name_len: usize) -> *mut c_void {
     // SAFETY: `name` is NUL-terminated with `name_len` bytes before the NUL.
     let name = unsafe { ZStr::from_raw(name.cast::<u8>(), name_len) };
-    // Bun keeps the list itself (`at_exit`), on every platform.
-    if name.as_bytes() == b"atexit" {
-        return at_exit::atexit as *mut c_void;
+    // Bun keeps both lists itself (`at_exit`), on every platform.
+    match name.as_bytes() {
+        b"atexit" => return at_exit::atexit as *mut c_void,
+        b"at_quick_exit" => return at_exit::at_quick_exit as *mut c_void,
+        b"quick_exit" => return at_exit::quick_exit as *mut c_void,
+        _ => {}
     }
     #[cfg(not(windows))]
     if let Some(address) = compiler_runtime::find(name.as_bytes()) {
+        return address;
+    }
+    // What a toolchain links statically into a program is in no library: asked for first, so that
+    // looking for it loads nothing.
+    #[cfg(windows)]
+    if let Some(address) = windows_runtime::find(name.as_bytes()) {
         return address;
     }
     if let Some(address) = bun_sys::dlsym_impl(None, name) {
         return address;
     }
     #[cfg(windows)]
-    if let Some(address) =
-        windows_libraries(name).or_else(|| windows_runtime::find(name.as_bytes()))
-    {
+    if let Some(address) = windows_libraries(name) {
         return address;
     }
     glibc_static_stub(name.as_bytes()).unwrap_or(core::ptr::null_mut())
@@ -114,8 +121,8 @@ mod compiler_runtime {
 /// What a C toolchain on Windows links statically into every program, so no library exports it: the
 /// 128-bit integer routines of the compiler's runtime (taking and returning `__int128` the way this
 /// compiler passes any 16-byte object there: by address, the result through a hidden first pointer),
-/// and the `printf` and `scanf` families and `at_quick_exit`, which with the Universal C Runtime are
-/// inline functions of its headers or part of a program's startup code (JSCFFIBridge.cpp has those).
+/// and the `printf` and `scanf` families, which with the Universal C Runtime are inline functions of
+/// its headers (JSCFFIBridge.cpp has those).
 #[cfg(windows)]
 mod windows_runtime {
     use core::ffi::c_void;
@@ -181,73 +188,29 @@ mod windows_runtime {
         Bun__CModule__vprintf Bun__CModule__vfprintf Bun__CModule__vsprintf Bun__CModule__vsnprintf
         Bun__CModule__scanf Bun__CModule__fscanf Bun__CModule__sscanf
         Bun__CModule__vscanf Bun__CModule__vfscanf Bun__CModule__vsscanf
-        Bun__CModule__at_quick_exit
     );
 
     pub(super) const IOFBF: core::ffi::c_int = 0x0000;
     pub(super) const IONBF: core::ffi::c_int = 0x0004;
 
-    /// `setvbuf(stdout, NULL, mode, size)` in the C runtime compiled C uses.
-    pub(super) fn buffer_stdout(mode: core::ffi::c_int, size: usize) {
-        let (Some(stream_of), Some(setvbuf)) = (
-            super::windows_libraries(bun_core::zstr!("__acrt_iob_func")),
-            super::windows_libraries(bun_core::zstr!("setvbuf")),
-        ) else {
-            return;
-        };
-        // SAFETY: `FILE *__acrt_iob_func(unsigned)` and `int setvbuf(FILE *, char *, int, size_t)`
-        // of ucrtbase.dll; stream 1 is `stdout`, and a null buffer has the runtime allocate one.
-        unsafe {
-            let stream_of: unsafe extern "C" fn(core::ffi::c_uint) -> *mut c_void =
-                core::mem::transmute(stream_of);
-            let setvbuf: unsafe extern "C" fn(
-                *mut c_void,
-                *mut core::ffi::c_char,
-                core::ffi::c_int,
-                usize,
-            ) -> core::ffi::c_int = core::mem::transmute(setvbuf);
-            setvbuf(stream_of(1), core::ptr::null_mut(), mode, size);
-        }
-    }
-
-    /// Puts `handler` on the list that runtime's `exit` runs.
-    pub(super) fn at_exit_of_the_runtime(handler: extern "C" fn()) {
-        let Some(register) = super::windows_libraries(bun_core::zstr!("_crt_atexit")) else {
-            return;
-        };
-        // SAFETY: `int _crt_atexit(void (*)(void))` of ucrtbase.dll.
-        unsafe {
-            let register: unsafe extern "C" fn(extern "C" fn()) -> core::ffi::c_int =
-                core::mem::transmute(register);
-            register(handler);
-        }
-    }
-
-    /// `_set_app_type(_crt_console_app)`.
-    pub(super) fn this_is_a_console_program() {
-        let Some(set_app_type) = super::windows_libraries(bun_core::zstr!("_set_app_type")) else {
-            return;
-        };
-        const CONSOLE_APP: core::ffi::c_int = 1;
-        // SAFETY: `void _set_app_type(_crt_app_type)` of ucrtbase.dll.
-        unsafe {
-            let set_app_type: unsafe extern "C" fn(core::ffi::c_int) =
-                core::mem::transmute(set_app_type);
-            set_app_type(CONSOLE_APP);
-        }
-    }
-
-    /// Whether descriptor 1 of that runtime is a console.
-    pub(super) fn stdout_is_a_console() -> bool {
-        let Some(isatty) = super::windows_libraries(bun_core::zstr!("_isatty")) else {
-            return false;
-        };
-        // SAFETY: `int _isatty(int)` of ucrtbase.dll.
-        unsafe {
-            let isatty: unsafe extern "C" fn(core::ffi::c_int) -> core::ffi::c_int =
-                core::mem::transmute(isatty);
-            isatty(1) != 0
-        }
+    // Calls into the C runtime compiled C uses, ucrtbase.dll (JSCFFIBridge.cpp).
+    unsafe extern "C" {
+        /// `setvbuf(stdout, NULL, mode, size)`.
+        pub(super) safe fn Bun__CModule__bufferStdout(mode: core::ffi::c_int, size: usize);
+        /// Puts `handler` on the list that runtime's `exit` runs.
+        pub(super) safe fn Bun__CModule__atExitOfTheRuntime(handler: extern "C" fn());
+        /// `_set_app_type(_crt_console_app)`.
+        pub(super) safe fn Bun__CModule__thisIsAConsoleProgram();
+        /// Whether descriptor 1 of that runtime is a console.
+        pub(super) safe fn Bun__CModule__stdoutIsAConsole() -> bool;
+        /// `fflush(NULL)`.
+        pub(super) safe fn Bun__CModule__flushStreams();
+        /// `fflush(stdout)`.
+        pub(super) safe fn Bun__CModule__flushStdout();
+        /// That runtime's `_environ`, made first if nothing has had it made yet.
+        pub(super) safe fn Bun__CModule__environment() -> *const *const core::ffi::c_char;
+        /// `_cexit()`: flushes and closes that runtime's streams.
+        pub(super) safe fn Bun__CModule__runExitHandlers();
     }
 
     pub(super) fn find(name: &[u8]) -> Option<*mut c_void> {
@@ -290,60 +253,78 @@ mod windows_runtime {
             b"_setjmpex" => {
                 return super::windows_libraries(bun_core::zstr!("__intrinsic_setjmpex"));
             }
-            b"at_quick_exit" => Bun__CModule__at_quick_exit as *mut c_void,
             _ => return None,
         })
     }
 }
 
 /// Windows has no process-wide symbol lookup: every library is asked by name. These are the ones
-/// Microsoft's toolchain links by default: the Universal C Runtime, the compiler's runtime (memcpy,
-/// setjmp, ...), then the core system libraries.
+/// every program made with Microsoft's toolchain has: the Universal C Runtime, the compiler's
+/// runtime (memcpy, setjmp, ...) and kernel32. Anything else (user32, advapi32, ws2_32, ...) is a
+/// library the source names with `#pragma comment(lib, ...)`, as it is one the program names to
+/// Microsoft's linker.
 #[cfg(windows)]
 fn windows_libraries(name: &ZStr) -> Option<*mut c_void> {
-    const LIBRARIES: [&core::ffi::CStr; 6] = [
-        c"ucrtbase.dll",
-        c"vcruntime140.dll",
-        c"kernel32.dll",
-        c"user32.dll",
-        c"advapi32.dll",
-        c"ws2_32.dll",
-    ];
-    LIBRARIES.iter().find_map(|library| {
-        // SAFETY: a NUL-terminated name; loading (or re-finding) a system library has no preconditions.
-        let handle = unsafe { bun_sys::windows::LoadLibraryA(library.as_ptr()) };
-        if handle.is_null() {
-            return None;
+    use bun_sys::windows::kernel32::{GetModuleHandleW, LoadLibraryExW};
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+    // Handles are addresses that stay good for the life of the process.
+    static LIBRARIES: std::sync::OnceLock<[usize; 3]> = std::sync::OnceLock::new();
+    let libraries = LIBRARIES.get_or_init(|| {
+        // SAFETY: NUL-terminated names. ucrtbase.dll and kernel32.dll are in every process;
+        // vcruntime140.dll is looked for in the system directory only, never next to the
+        // program or along `PATH`.
+        unsafe {
+            [
+                LoadLibraryExW(
+                    bun_core::wstr!("ucrtbase.dll").as_ptr(),
+                    core::ptr::null_mut(),
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                ) as usize,
+                LoadLibraryExW(
+                    bun_core::wstr!("vcruntime140.dll").as_ptr(),
+                    core::ptr::null_mut(),
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                ) as usize,
+                GetModuleHandleW(bun_core::wstr!("kernel32.dll").as_ptr()) as usize,
+            ]
         }
-        bun_sys::dlsym_impl(Some(handle), name)
-    })
+    });
+    libraries
+        .iter()
+        .filter(|&&library| library != 0)
+        .find_map(|&library| bun_sys::dlsym_impl(Some(library as *mut c_void), name))
 }
 
-/// What compiled C registers with `atexit`, and its destructors: Bun keeps the list, on every
-/// platform, and runs it, then writes out what C's stdio has buffered, when the process ends (once,
-/// whichever way it ends) and when a C program that `--watch` or `--hot` will run again returns.
-/// The first C module to load registers the hook with the way Bun leaves the process there:
-/// `quick_exit` on Linux, which runs neither `atexit` handlers nor flushes anything itself, `exit`
-/// on macOS, Bun's own exit callbacks on Windows (where the C code has a C runtime of its own,
-/// ucrtbase.dll: Bun's is linked statically).
+/// What compiled C registers with `atexit` and `at_quick_exit`, and its destructors: Bun keeps the
+/// lists, on every platform. The first runs, and what C's stdio has buffered is then written out,
+/// when the process ends (once, whichever way it ends) and when a C program that `--watch` or
+/// `--hot` will run again returns; the second only when C calls `quick_exit`. The first C module
+/// to load puts the hook among Bun's own exit callbacks, which run however Bun leaves the process,
+/// and where C's `exit` does not run those, on the list it does run.
 mod at_exit {
     use core::ffi::c_int;
     use core::sync::atomic::{AtomicBool, Ordering};
 
-    static HANDLERS: bun_threading::Guarded<Vec<unsafe extern "C" fn()>> =
-        bun_threading::Guarded::new(Vec::new());
+    type Handlers = bun_threading::Guarded<Vec<unsafe extern "C" fn()>>;
+    static HANDLERS: Handlers = bun_threading::Guarded::new(Vec::new());
+    static QUICK_HANDLERS: Handlers = bun_threading::Guarded::new(Vec::new());
     static RAN: AtomicBool = AtomicBool::new(false);
 
-    /// Calls what compiled C has registered with `atexit` so far, last registered first (a handler
-    /// may register another), then writes out what C's stdio has buffered.
-    pub(super) fn run_handlers() {
+    /// Calls what is on `handlers`, last registered first (a handler may register another).
+    fn run(handlers: &Handlers) {
         loop {
-            let Some(handler) = HANDLERS.lock().pop() else {
+            let Some(handler) = handlers.lock().pop() else {
                 break;
             };
-            // SAFETY: a `void f(void)` the C program passed to `atexit`.
+            // SAFETY: a `void f(void)` the C program registered.
             unsafe { handler() };
         }
+    }
+
+    /// Calls what compiled C has registered with `atexit` so far, then writes out what C's stdio
+    /// has buffered.
+    pub(super) fn run_handlers() {
+        run(&HANDLERS);
         super::flush_c_streams();
     }
 
@@ -356,6 +337,10 @@ mod at_exit {
     pub(super) fn install() {
         static INSTALLED: std::sync::Once = std::sync::Once::new();
         INSTALLED.call_once(|| {
+            #[cfg(not(windows))]
+            bun_core::Global::add_exit_callback(at_process_exit);
+            // C that calls `exit` itself: glibc's runs what `__cxa_atexit` registered, which
+            // Bun's exit callbacks are not among. (On macOS they are.)
             #[cfg(all(target_os = "linux", target_env = "gnu"))]
             {
                 use core::ffi::c_void;
@@ -365,60 +350,36 @@ mod at_exit {
                         argument: *mut c_void,
                         dso_handle: *mut c_void,
                     ) -> c_int;
-                    fn __cxa_at_quick_exit(
-                        function: unsafe extern "C" fn(*mut c_void),
-                        dso_handle: *mut c_void,
-                    ) -> c_int;
                 }
                 unsafe extern "C" fn at_exit(_: *mut c_void) {
                     at_process_exit();
                 }
-                unsafe extern "C" fn at_quick_exit(_: *mut c_void) {
-                    // `quick_exit` is how Bun itself leaves. A C program that calls it gets what C
-                    // says it does: its `at_quick_exit` handlers, not its `atexit` ones, and no flush.
-                    if bun_core::Global::is_exiting() {
-                        at_process_exit();
-                    }
-                }
-                // SAFETY: registers the two hooks with libc; a null dso handle means "not part of
-                // a shared object".
+                // SAFETY: registers the hook with libc; a null dso handle means "not part of a
+                // shared object".
                 unsafe {
                     __cxa_atexit(at_exit, core::ptr::null_mut(), core::ptr::null_mut());
-                    __cxa_at_quick_exit(at_quick_exit, core::ptr::null_mut());
-                }
-            }
-            #[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
-            {
-                unsafe extern "C" {
-                    fn atexit(handler: extern "C" fn()) -> c_int;
-                }
-                // SAFETY: registers the hook with libc.
-                unsafe {
-                    atexit(at_process_exit);
                 }
             }
             #[cfg(windows)]
             {
-                unsafe extern "C" {
-                    safe fn Bun__CModule__runExitHandlers();
-                }
-                // Then what the C code's own C runtime does when a program ends: its
-                // `at_quick_exit`-free half of `exit` (`_cexit`).
-                extern "C" fn run() {
+                use super::windows_runtime;
+                // Then what the C code's own C runtime (ucrtbase.dll: Bun's is linked
+                // statically) does when a program ends: `_cexit`.
+                extern "C" fn at_exit_of_bun() {
                     at_process_exit();
-                    Bun__CModule__runExitHandlers();
+                    windows_runtime::Bun__CModule__runExitHandlers();
                 }
-                bun_core::Global::add_exit_callback(run);
+                bun_core::Global::add_exit_callback(at_exit_of_bun);
                 // C that calls `exit` itself calls that runtime's, which ends the process without
                 // Bun's exit callbacks: the hook is on its list as well.
-                super::windows_runtime::at_exit_of_the_runtime(at_process_exit);
+                windows_runtime::Bun__CModule__atExitOfTheRuntime(at_process_exit);
                 // That runtime's `stdout` is its own too, and gets what Bun gives its own when it
                 // starts: no buffer, so that what C prints and what JavaScript prints come out
                 // in the order they were printed.
-                super::windows_runtime::buffer_stdout(super::windows_runtime::IONBF, 0);
+                windows_runtime::Bun__CModule__bufferStdout(windows_runtime::IONBF, 0);
                 // And it is told what a program's startup code tells it: this is a console
                 // program, whose failed `assert` writes its message to `stderr`.
-                super::windows_runtime::this_is_a_console_program();
+                windows_runtime::Bun__CModule__thisIsAConsoleProgram();
             }
         });
     }
@@ -428,41 +389,55 @@ mod at_exit {
         HANDLERS.lock().push(handler);
         0
     }
+
+    /// What compiled C gets for `at_quick_exit`.
+    pub(super) unsafe extern "C" fn at_quick_exit(handler: unsafe extern "C" fn()) -> c_int {
+        QUICK_HANDLERS.lock().push(handler);
+        0
+    }
+
+    /// What compiled C gets for `quick_exit`: its `at_quick_exit` handlers, then the process ends
+    /// as `_Exit` ends it, without `atexit` handlers and without writing out any stream.
+    pub(super) unsafe extern "C" fn quick_exit(status: c_int) -> ! {
+        run(&QUICK_HANDLERS);
+        #[cfg(unix)]
+        // SAFETY: ends the process.
+        unsafe {
+            libc::_exit(status)
+        }
+        #[cfg(windows)]
+        {
+            unsafe extern "C" {
+                safe fn Bun__lockThreadSuspensionForExit();
+            }
+            // No thread may hold this one suspended when `ExitProcess` ends it (`Global::exit`).
+            Bun__lockThreadSuspensionForExit();
+            bun_sys::windows::kernel32::ExitProcess(status as u32)
+        }
+    }
 }
 
 /// Writes out what the C library's stdio has buffered, in every open output stream.
 fn flush_c_streams() {
-    type Fflush = unsafe extern "C" fn(*mut c_void) -> core::ffi::c_int;
     #[cfg(unix)]
-    let fflush: Fflush = {
+    {
         unsafe extern "C" {
             fn fflush(stream: *mut c_void) -> core::ffi::c_int;
         }
-        fflush
-    };
+        // SAFETY: a null stream means every open output stream.
+        unsafe { fflush(core::ptr::null_mut()) };
+    }
     // The C runtime the compiled code's own calls go to, not the one linked into Bun.
     #[cfg(windows)]
-    let fflush: Fflush = {
-        let Some(address) = windows_libraries(bun_core::zstr!("fflush")) else {
-            return;
-        };
-        // SAFETY: `int fflush(FILE *)` of ucrtbase.dll.
-        unsafe { core::mem::transmute::<*mut c_void, Fflush>(address) }
-    };
-    // SAFETY: a null stream means every open output stream.
-    unsafe { fflush(core::ptr::null_mut()) };
+    windows_runtime::Bun__CModule__flushStreams();
 }
 
-/// glibc does not export these from libc.so: a C compiler links them from libc_nonshared.a, where
-/// each is a few instructions that pass the program's `__dso_handle` to the function that is
-/// exported. Code compiled here has no such object of its own, so it registers without one.
+/// glibc does not export this from libc.so: a C compiler links it from libc_nonshared.a, where it
+/// is a few instructions that pass the program's `__dso_handle` to the function that is exported.
+/// Code compiled here has no such object of its own, so it registers without one.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn glibc_static_stub(name: &[u8]) -> Option<*mut c_void> {
     unsafe extern "C" {
-        fn __cxa_at_quick_exit(
-            function: unsafe extern "C" fn(*mut c_void),
-            dso_handle: *mut c_void,
-        ) -> core::ffi::c_int;
         fn __register_atfork(
             prepare: Option<unsafe extern "C" fn()>,
             parent: Option<unsafe extern "C" fn()>,
@@ -470,23 +445,16 @@ fn glibc_static_stub(name: &[u8]) -> Option<*mut c_void> {
             dso_handle: *mut c_void,
         ) -> core::ffi::c_int;
     }
-    // The handler takes no argument; being handed one it ignores is how glibc's own stub works.
-    unsafe extern "C" fn at_quick_exit(
-        function: unsafe extern "C" fn(*mut c_void),
-    ) -> core::ffi::c_int {
-        // SAFETY: registers `function` with libc; a null dso handle means "not part of a shared object".
-        unsafe { __cxa_at_quick_exit(function, core::ptr::null_mut()) }
-    }
     unsafe extern "C" fn pthread_atfork(
         prepare: Option<unsafe extern "C" fn()>,
         parent: Option<unsafe extern "C" fn()>,
         child: Option<unsafe extern "C" fn()>,
     ) -> core::ffi::c_int {
-        // SAFETY: as above.
+        // SAFETY: registers the handlers with libc; a null dso handle means "not part of a shared
+        // object".
         unsafe { __register_atfork(prepare, parent, child, core::ptr::null_mut()) }
     }
     match name {
-        b"at_quick_exit" => Some(at_quick_exit as *mut c_void),
         b"pthread_atfork" => Some(pthread_atfork as *mut c_void),
         _ => None,
     }
@@ -502,6 +470,30 @@ fn is_bir(bytes: &[u8]) -> bool {
     bytes.starts_with(&bun_cc::BIR_MAGIC)
 }
 
+/// The C file at `path`, unless it is larger than the compiler takes: that is said without
+/// reading it.
+fn read_source(path: &[u8], log: &mut bun_ast::Log) -> Result<Vec<u8>, CCompileError> {
+    let read = || -> bun_sys::Maybe<Option<Vec<u8>>> {
+        let file = bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0)?;
+        if file.stat()?.st_size as u64 > bun_bundler::options::C_MAX_SOURCE_BYTES {
+            return Ok(None);
+        }
+        file.read_to_end().map(Some)
+    };
+    match read() {
+        Ok(Some(bytes)) => Ok(bytes),
+        Ok(None) => {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("{}", bun_bundler::options::c_source_too_large(path)),
+            );
+            Err(CCompileError::Invalid)
+        }
+        Err(error) => Err(CCompileError::Read(error.with_path(path))),
+    }
+}
+
 /// The half of importing the C file at `path` that touches no JavaScript state, so that it can be
 /// done on any thread: reads the file (`contents` is the file when the module loader already has it
 /// in memory: a standalone executable's embedded files, a plugin's answer) and compiles it.
@@ -514,12 +506,18 @@ pub fn compile<'a>(path: &[u8], contents: Option<&'a [u8]>) -> CompiledC<'a> {
         files_read: Vec::new(),
         log: bun_ast::Log::default(),
     };
+    // Where compiled C runs, which is as true of the form `bun build` made of it (a module for
+    // Linux x64 is a module for glibc) as of what is compiled here.
+    let Some(target) = bun_cc::Target::host() else {
+        compiled.bir = Err(CCompileError::UnsupportedPlatform);
+        return compiled;
+    };
     let source: Cow<'a, [u8]> = match contents {
         Some(contents) => Cow::Borrowed(contents),
-        None => match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+        None => match read_source(path, &mut compiled.log) {
             Ok(bytes) => Cow::Owned(bytes),
-            Err(err) => {
-                compiled.bir = Err(CCompileError::Read(err.with_path(path)));
+            Err(error) => {
+                compiled.bir = Err(error);
                 return compiled;
             }
         },
@@ -532,10 +530,6 @@ pub fn compile<'a>(path: &[u8], contents: Option<&'a [u8]>) -> CompiledC<'a> {
     // The compiler names files with `str`s (they end up in `#include` lookups and diagnostics).
     let Ok(filename) = core::str::from_utf8(path) else {
         compiled.bir = Err(CCompileError::PathNotUtf8);
-        return compiled;
-    };
-    let Some(target) = bun_cc::Target::host() else {
-        compiled.bir = Err(CCompileError::UnsupportedPlatform);
         return compiled;
     };
     let unit = bun_cc::Unit {
@@ -693,14 +687,18 @@ fn run_main_of_bundled_module(
     frame: &bun_jsc::CallFrame,
 ) -> JsResult<JSValue> {
     let vm = global_this.bun_vm();
-    run_main_if_any(global_this, frame.this(), vm.main(), &vm.argv)?;
+    // A Worker whose entry point is a C file has its exports, bundled or not.
+    if vm.worker_ref().is_none() {
+        run_main_if_any(global_this, frame.this(), vm.main(), &vm.argv)?;
+    }
     Ok(JSValue::UNDEFINED)
 }
 
 /// `bun program.c`: a C file that is the entry point and defines `main` is a program. Runs it with
 /// the arguments after the file's name and ends the process with what it returns, the way
-/// `process.exit(status)` does. With `--watch` or `--hot` a program that has run to its end is a
-/// script that has: the process stays to run it again when a file changes.
+/// `process.exit(status)` does (the status is that one's too: the low eight bits, on every
+/// platform). With `--watch` or `--hot` a program that has run to its end is a script that has:
+/// the process stays to run it again when a file changes.
 pub fn run_main_if_any(
     global_this: &JSGlobalObject,
     exports: JSValue,
@@ -789,61 +787,82 @@ fn environment() -> *const *const c_char {
     #[cfg(windows)]
     {
         // The environment of the C runtime the program's own calls (`getenv`) go to.
-        let Some(address) = windows_libraries(bun_core::zstr!("__p__environ")) else {
-            return core::ptr::null();
-        };
-        // SAFETY: `char ***__p__environ(void)` of ucrtbase.dll.
-        unsafe {
-            let get: unsafe extern "C" fn() -> *mut *const *const c_char =
-                core::mem::transmute(address);
-            *get()
-        }
+        windows_runtime::Bun__CModule__environment()
     }
 }
+
+/// libc's `stdout`, where C programs run (`bun_cc::Target::host`).
+#[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
+fn c_stdout() -> *mut c_void {
+    unsafe extern "C" {
+        #[cfg_attr(target_os = "macos", link_name = "__stdoutp")]
+        static stdout: *mut c_void;
+    }
+    // SAFETY: set by libc before anything of the program's runs.
+    unsafe { stdout }
+}
+
+/// Whether [`give_stdout_a_buffer`] has: what C printed may then be waiting in it.
+static STDOUT_HAS_A_BUFFER: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// Bun turns buffering off for C's `stdout` when it starts, because it writes to the descriptor
 /// itself. A C program that is the entry point has `stdout` to itself and gets what it would have
 /// in an executable of its own: a line at a time to a terminal (as it is printed, on Windows), a block
-/// at a time otherwise. What is buffered when the program ends is written by the exit hook.
+/// at a time otherwise. What is buffered is written out before JavaScript's `exit` listeners run
+/// ([`Bun__CModule__flushStdoutOfAProgram`]) and by the exit hook.
 fn give_stdout_a_buffer() {
-    // The console is written as it is printed to; anything else a block at a time.
-    #[cfg(windows)]
-    {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            if !windows_runtime::stdout_is_a_console() {
-                windows_runtime::buffer_stdout(windows_runtime::IOFBF, 8192);
-            }
-        });
-    }
-    // The other places C programs run (`bun_cc::Target::host`).
-    #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
-    {
-        unsafe extern "C" {
-            #[cfg_attr(target_os = "macos", link_name = "__stdoutp")]
-            static stdout: *mut c_void;
-            fn setvbuf(
-                stream: *mut c_void,
-                buffer: *mut c_char,
-                mode: core::ffi::c_int,
-                size: usize,
-            ) -> core::ffi::c_int;
-            fn isatty(fd: core::ffi::c_int) -> core::ffi::c_int;
+    // Once: `--hot` runs the program again, and a stream's buffer is set before it is used.
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        STDOUT_HAS_A_BUFFER.store(true, core::sync::atomic::Ordering::Release);
+        // The console is written as it is printed to; anything else a block at a time.
+        #[cfg(windows)]
+        if !windows_runtime::Bun__CModule__stdoutIsAConsole() {
+            windows_runtime::Bun__CModule__bufferStdout(windows_runtime::IOFBF, 8192);
         }
-        const IOFBF: core::ffi::c_int = 0;
-        const IOLBF: core::ffi::c_int = 1;
-        const SIZE: usize = 8192;
-        // Once: `--hot` runs the program again, and a stream's buffer is set before it is used.
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
+        #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
+        {
+            unsafe extern "C" {
+                fn setvbuf(
+                    stream: *mut c_void,
+                    buffer: *mut c_char,
+                    mode: core::ffi::c_int,
+                    size: usize,
+                ) -> core::ffi::c_int;
+                fn isatty(fd: core::ffi::c_int) -> core::ffi::c_int;
+            }
+            const IOFBF: core::ffi::c_int = 0;
+            const IOLBF: core::ffi::c_int = 1;
+            const SIZE: usize = 8192;
             // The stream's for as long as the process runs, so never freed. (Without a buffer of
             // the caller's, glibc keeps the one-byte buffer an unbuffered stream has.)
             let buffer: &'static mut [c_char; SIZE] = Box::leak(Box::new([0; SIZE]));
             // SAFETY: libc's `stdout`, and a buffer that outlives it.
             unsafe {
                 let mode = if isatty(1) != 0 { IOLBF } else { IOFBF };
-                setvbuf(stdout, buffer.as_mut_ptr(), mode, SIZE);
+                setvbuf(c_stdout(), buffer.as_mut_ptr(), mode, SIZE);
             }
-        });
+        }
+    });
+}
+
+/// Writes out what a C program that is the entry point has printed so far. `process` calls this
+/// before it runs JavaScript's `exit` listeners (BunProcess.cpp): what those print comes after
+/// what the program printed before it ended, as it does when `stdout` is a terminal.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__CModule__flushStdoutOfAProgram() {
+    if !STDOUT_HAS_A_BUFFER.load(core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    #[cfg(windows)]
+    windows_runtime::Bun__CModule__flushStdout();
+    #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
+    {
+        unsafe extern "C" {
+            fn fflush(stream: *mut c_void) -> core::ffi::c_int;
+        }
+        // SAFETY: libc's `stdout`.
+        unsafe { fflush(c_stdout()) };
     }
 }

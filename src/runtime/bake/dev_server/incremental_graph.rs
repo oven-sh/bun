@@ -790,6 +790,39 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
+    /// A CSS root inlines the stylesheets it imports, so they never reach
+    /// `receive_chunk`. `key` is one that the bundler parsed for a root of this
+    /// bundle: unless it failed in this bundle, the root's chunk holds it.
+    fn receive_inlined_css(&mut self, key: &[u8]) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let Some(index) = self.bundled_files.get_index(key) else {
+            return;
+        };
+        if self.bundled_files.values()[index].failed {
+            let failed_in_this_bundle = self.dev_incremental_result().failures_added.iter().any(
+                |failure| {
+                    matches!(
+                        failure.get_owner(),
+                        serialized_failure::Owner::Client(owner) if owner.get() as usize == index
+                    )
+                },
+            );
+            if failed_in_this_bundle {
+                return;
+            }
+            self.bundled_files.values_mut()[index].failed = false;
+            let owner = serialized_failure::OwnerPacked::new(Side::Client, index as u32);
+            if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
+                self.dev_incremental_result().failures_removed.push(kv.1);
+            }
+        }
+        let file = &mut self.bundled_files.values_mut()[index];
+        if matches!(file.content, Content::Unknown) {
+            file.content = Content::CssChild;
+            file.kind = FileKind::Css;
+        }
+    }
+
     // ────────────────────────────────────────────────────────────────────────
     // processChunkDependencies
     // ────────────────────────────────────────────────────────────────────────
@@ -959,6 +992,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     key,
                     EdgeAttachmentMode::Css,
                 )?;
+                if src.is_valid() && ctx.loaders[src.get() as usize].is_css() {
+                    self.receive_inlined_css(key);
+                }
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
                     queue.push(src);
                 }
@@ -1671,8 +1707,35 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                         self.append_client_entry_point(entry_points, index)?;
                     }
+                    // A file that failed to bundle keeps no content, so only
+                    // its edges say that a CSS root inlines it.
+                    Content::Unknown => {
+                        let mut it = self.edge_lists[index].first_dep;
+                        let mut only_css_roots_import_it = it.is_some();
+                        while let Some(edge_index) = it {
+                            let entry = self.edges[edge_index.get() as usize];
+                            let dep = entry.dependency.get() as usize;
+                            if matches!(
+                                self.bundled_files.values()[dep].content,
+                                Content::CssRoot(_),
+                            ) {
+                                self.stale_files.set(dep);
+                                let k = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[dep]);
+                                entry_points.append_css(k.slice())?;
+                            } else {
+                                only_css_roots_import_it = false;
+                            }
+                            it = entry.next_dependency;
+                        }
+                        // The roots parse the stylesheets that only they import.
+                        if !only_css_roots_import_it
+                            && !self.bundled_files.values()[index].is_hmr_root
+                        {
+                            self.append_client_entry_point(entry_points, index)?;
+                        }
+                    }
                     // When re-bundling SCBs, only bundle the server.
-                    Content::Js(_) | Content::Unknown => {
+                    Content::Js(_) => {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             self.append_client_entry_point(entry_points, index)?;
                         }

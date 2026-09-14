@@ -53,6 +53,13 @@ const mathC = /* c */ `
   int uses_hidden(void) { return hidden() + 41; }
 `;
 
+// What `bun build --target=bun` makes of `int add(int a, int b) { return a + b; }` on Linux x64 (glibc): the
+// asset a bundle built there loads in the file's place.
+const addCompiledForLinuxX64 = Buffer.from(
+  "424952300000080001010100020001000100000100000000000100000103616464000102010100010647000047010146004601100203630401036164640005020505000000",
+  "hex",
+);
+
 // Where compiled C does not run yet, saying so is all that importing a `.c` file does; asking for the file
 // itself is what it always was.
 describe.skipIf(supported)("where C is not supported", () => {
@@ -60,6 +67,32 @@ describe.skipIf(supported)("where C is not supported", () => {
     "add.c": "int add(int a, int b) { return a + b; }\n",
     "compiles.ts": `import { add } from "./add.c"; console.log(add(1, 2));`,
   };
+
+  // A bundle built where C is supported and run here: also on a machine whose processor and system the asset
+  // is for but whose C library is another (Alpine).
+  test.each([
+    ["required.cjs", `console.log(require("./add-wxjnj05q.c").add(1, 2));`],
+    ["attribute.cjs", `console.log(require("./add-wxjnj05q.c", { type: "c" }).add(1, 2));`],
+    ["imported.mjs", `import { add } from "./add-wxjnj05q.c"; console.log(add(1, 2));`],
+    ["dynamic.mjs", `const { add } = await import("./add-wxjnj05q.c"); console.log(add(1, 2));`],
+  ])("%s: loading what bun build made of C elsewhere is the same error", async (entry, source) => {
+    using dir = tempDir("c-import-unsupported", { "add-wxjnj05q.c": addCompiledForLinuxX64, [entry]: source });
+    const { stdout, stderr, exitCode } = await run(String(dir), [entry]);
+    expect(stderr).toContain("compiling C is not supported on this platform yet");
+    expect(stderr).toContain("Linux x64 (glibc), macOS arm64 and Windows x64");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("the compiled form asked for as a file is the file", async () => {
+    using dir = tempDir("c-import-unsupported", {
+      "add-wxjnj05q.c": addCompiledForLinuxX64,
+      "file.ts": `import path from "./add-wxjnj05q.c" with { type: "file" }; console.log((await Bun.file(path).bytes()).length);`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["file.ts"]);
+    expect(stdout).toBe(`${addCompiledForLinuxX64.length}\n`);
+    expect(exitCode).toBe(0);
+  });
 
   test("importing it is an error that names the platforms", async () => {
     using dir = tempDir("c-import-unsupported", files);
@@ -517,32 +550,52 @@ describe.skipIf(!supported)("a .c file is compiled where JavaScript would be tra
     }
   });
 
-  test.concurrent(
-    "the JavaScript thread goes on while the pool compiles; top-level await waits for the module",
-    async () => {
-      using dir = tempDir("c-import-await", {
-        "math.c": mathC,
-        "awaited.mjs": `export const { add } = await import("./math.c"); export const order = ["awaited"];`,
-        "index.mjs": `
+  test.concurrent("top-level await waits for the module, and the modules evaluate in order", async () => {
+    using dir = tempDir("c-import-await", {
+      "math.c": mathC,
+      "awaited.mjs": `export const { add } = await import("./math.c"); export const order = ["awaited"];`,
+      "index.mjs": `
         import { add as early, order } from "./awaited.mjs";
         import { add } from "./math.c";
-        let resolved = false;
-        const pending = import("./other.c").then(module => { resolved = true; return module; });
-        // Nothing has been awaited since import() was called: the file cannot have been compiled on this thread.
-        const before = resolved;
-        const other = await pending;
-        console.log(early === add, add(1, 2), other.triple(3), before, resolved, order.join());
+        const other = await import("./other.c");
+        console.log(early === add, add(1, 2), other.triple(3), order.join());
       `,
-        "other.c": "int triple(int x) { return x * 3; }\n",
-      });
-      const { stdout, stderr, exitCode } = await run(String(dir), ["index.mjs"]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("true 3 9 false true awaited\n");
-      expect(exitCode).toBe(0);
-    },
-  );
+      "other.c": "int triple(int x) { return x * 3; }\n",
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["index.mjs"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true 3 9 awaited\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // On every platform: were the file compiled on the JavaScript thread, nothing else could run there meanwhile.
+  test.concurrent("the JavaScript thread goes on while an import()'s C is compiled", async () => {
+    using dir = tempDir("c-import-meanwhile", {
+      // Long enough to compile that the event loop turns thousands of times meanwhile.
+      "slow.c":
+        Array.from({ length: 1500 }, (_, i) => `static int f${i}(int x) { return x * ${i} + 1; }`).join("\n") +
+        "\nint sum(int x) { int total = 0;\n" +
+        Array.from({ length: 1500 }, (_, i) => `total += f${i}(x);`).join("\n") +
+        "\nreturn total; }\n",
+      "index.mjs": `
+        let turns = 0, imported = false;
+        const turn = () => { if (!imported) { turns++; setImmediate(turn); } };
+        setImmediate(turn);
+        const { sum } = await import("./slow.c").finally(() => { imported = true; });
+        console.log(JSON.stringify({ sum: sum(1), turns }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["index.mjs"]);
+    expect(stderr).toBe("");
+    const { sum, turns } = JSON.parse(stdout);
+    expect(sum).toBe((1499 * 1500) / 2 + 1500);
+    // On the JavaScript thread it would be none, or the one turn before the file is looked at.
+    expect(turns).toBeGreaterThan(5);
+    expect(exitCode).toBe(0);
+  });
 
   // On Linux a file can include the name of the thread that reads it: what is there is not C, so the error quotes it.
+  // Where the C of an import is compiled has this one witness, and it is Linux's.
   test.concurrent.skipIf(!isLinux)(
     "import and import() compile on the pool's threads, several at once; require() compiles on its own",
     async () => {
@@ -619,6 +672,34 @@ describe.skipIf(!supported)("a .c file is compiled where JavaScript would be tra
     expect(stdout).toBe(Array(8).fill(1000).join() + "\n");
     expect(exitCode).toBe(0);
   });
+
+  // The bytes the "where C is not supported" tests load are what this build makes; where they are for, they load.
+  test.concurrent(
+    "what bun build made of a C file for Linux x64 loads there, and is for a different target anywhere else",
+    async () => {
+      using dir = tempDir("c-import-precompiled-linux", {
+        "add.c": "int add(int a, int b) { return a + b; }\n",
+        "entry.ts": `import { add } from "./add.c"; console.log(add(1, 2));`,
+        "add-wxjnj05q.c": addCompiledForLinuxX64,
+        "load.cjs": `console.log(require("./add-wxjnj05q.c").add(1, 2));`,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["load.cjs"]);
+      if (isLinux && process.arch === "x64") {
+        expect(stderr).toBe("");
+        expect(stdout).toBe("3\n");
+        expect(exitCode).toBe(0);
+        const build = await run(String(dir), ["build", "entry.ts", "--target=bun", "--outdir", "out"]);
+        expect(build.exitCode).toBe(0);
+        expect(await Bun.file(join(String(dir), "out", "add-wxjnj05q.c")).bytes()).toEqual(
+          new Uint8Array(addCompiledForLinuxX64),
+        );
+      } else {
+        expect(stderr).toContain("compiled for a different target");
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
 
   test.concurrent("what bun build made of a C file is loaded, not compiled, by import() too", async () => {
     using dir = tempDir("c-import-precompiled", {
@@ -945,19 +1026,129 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a main that reads standard input reads the process's", async () => {
+    using dir = tempDir("c-main-stdin", {
+      "program.c": /* c */ `
+        #include <stdio.h>
+        int main(void) {
+          int c, count = 0;
+          while ((c = getchar()) != EOF) { putchar(c >= 'a' && c <= 'z' ? c - 32 : c); count++; }
+          printf("%d\\n", count);
+          return 0;
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "program.c"],
+      env,
+      cwd: String(dir),
+      stdin: Buffer.from("hello, c\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([text(proc.stdout), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("HELLO, C\n9\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // As `bun module.ts` of a file that only exports is: the module is evaluated, and that is the program.
   test.concurrent(
-    "the process ends the way process.exit(status) ends it: 'exit' listeners run and see the status",
+    "a file without a main is a module that gets loaded: its constructors run, and the process ends",
     async () => {
+      using dir = tempDir("c-main-none", {
+        "library.c": `#include <stdio.h>\n__attribute__((constructor)) static void loaded(void) { puts("loaded"); }\nint f(void) { return 1; }\n`,
+        "empty.c": "\n",
+      });
+      const library = await run(String(dir), ["library.c", "argument"]);
+      expect(library.stderr).toBe("");
+      expect(library.stdout).toBe("loaded\n");
+      expect(library.exitCode).toBe(0);
+      const empty = await run(String(dir), ["empty.c"]);
+      expect(empty.stderr).toBe("");
+      expect(empty.stdout).toBe("");
+      expect(empty.exitCode).toBe(0);
+    },
+  );
+
+  // To a pipe the program's stdout has a buffer; what is in it when main returns comes before what the listeners print.
+  const listen = `process.on("exit", code => console.log("exit event", code, process.exitCode));`;
+  test.concurrent.each([
+    ["returns 3", `int main(void) { puts("in main"); return 3; }`, "in main\nexit event 3 3\n", 3],
+    [
+      "has registered an atexit handler: that runs when the process is nearly gone",
+      `static void handler(void) { puts("atexit handler"); }\nint main(void) { atexit(handler); puts("in main"); return 3; }`,
+      "in main\nexit event 3 3\natexit handler\n",
+      3,
+    ],
+    [
+      "has printed more than its buffer holds",
+      `int main(void) { for (int i = 0; i < 3000; i++) puts("line"); return 0; }`,
+      "line\n".repeat(3000) + "exit event 0 undefined\n",
+      0,
+    ],
+    // C's exit() is the C library's: it ends the process without JavaScript's listeners.
+    ["calls exit(3) itself", `int main(void) { puts("in main"); exit(3); }`, "in main\n", 3],
+  ] as [string, string, string, number][])(
+    "the process ends the way process.exit(status) ends it: 'exit' listeners run and see the status; main %s",
+    async (_, body, printed, status) => {
       using dir = tempDir("c-main-exit-event", {
-        "listen.ts": `process.on("exit", code => console.log("exit event", code, process.exitCode));`,
-        "program.c": `#include <stdio.h>\nint main(void) { puts("in main"); fflush(stdout); return 3; }\n`,
+        "listen.ts": listen,
+        "program.c": `#include <stdio.h>\n#include <stdlib.h>\n${body}\n`,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["--preload", "./listen.ts", "program.c"]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("in main\nexit event 3 3\n");
-      expect(exitCode).toBe(3);
+      expect(stdout).toBe(printed);
+      expect(exitCode).toBe(status);
     },
   );
+
+  test.concurrent("what main printed reaches a file before what 'exit' listeners print", async () => {
+    using dir = tempDir("c-main-exit-event-file", {
+      "listen.ts": listen,
+      "program.c": `#include <stdio.h>\nint main(void) { puts("in main"); return 3; }\n`,
+    });
+    const out = join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./listen.ts", "program.c"],
+      env,
+      cwd: String(dir),
+      stdout: Bun.file(out),
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect((await Bun.file(out).text()).replaceAll("\r\n", "\n")).toBe("in main\nexit event 3 3\n");
+    expect(exitCode).toBe(3);
+  });
+
+  test.concurrent("process.exit() in JavaScript that main called: what main had printed comes first", async () => {
+    using dir = tempDir("c-main-exit-callback", {
+      "callback.ts": `
+        import { JSCallback } from "bun:ffi";
+        const callback = new JSCallback(() => process.exit(7), { args: [], returns: "void" });
+        await Bun.write("callback.txt", String(callback.ptr));
+        process.on("exit", code => console.log("exit event", code));
+      `,
+      "program.c": /* c */ `
+        #include <stdio.h>
+        int main(void) {
+          unsigned long long address = 0;
+          FILE *file = fopen("callback.txt", "r");
+          if (!file || fscanf(file, "%llu", &address) != 1) return 1;
+          puts("before the callback");
+          ((void (*)(void))address)();
+          puts("after the callback");
+          return 2;
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--preload", "./callback.ts", "program.c"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("before the callback\nexit event 7\n");
+    expect(exitCode).toBe(7);
+  });
 
   test.concurrent("--cpu-prof writes its profile", async () => {
     using dir = tempDir("c-main-cpu-prof", {
@@ -970,50 +1161,88 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
   });
 
   // Bun makes C's stdout unbuffered for itself; a C program that is the entry point has it to itself.
-  test.concurrent.skipIf(!isPosix)(
-    "stdout is buffered as it is for a program of its own: a block at a time to a pipe",
-    async () => {
-      using dir = tempDir("c-main-buffering", {
-        "program.c": /* c */ `
+  test.concurrent("stdout is buffered as it is for a program of its own: a block at a time to a pipe", async () => {
+    using dir = tempDir("c-main-buffering", {
+      "program.c": /* c */ `
           #include <stdio.h>
+          #ifdef _WIN32
+          #include <io.h>
+          #define write _write
+          #else
           #include <unistd.h>
+          #endif
           int main(void) { printf("a"); write(1, "b", 1); printf("c\\n"); fprintf(stderr, "e"); write(2, "f", 1); return 0; }
         `,
-        "imported.ts": `import { main } from "./program.c"; main();`,
-      });
-      const program = await run(String(dir), ["program.c"]);
-      expect(program.stdout).toBe("bac\n");
-      expect(program.stderr).toBe("ef");
-      expect(program.exitCode).toBe(0);
-      // Imported C shares stdout with console.log: there it stays unbuffered, so the two interleave in order.
-      const imported = await run(String(dir), ["imported.ts"]);
-      expect(imported.stdout).toBe("abc\n");
-      expect(imported.stderr).toBe("ef");
-    },
-  );
+      "imported.ts": `import { main } from "./program.c"; main();`,
+    });
+    const program = await run(String(dir), ["program.c"]);
+    expect(program.stdout).toBe("bac\n");
+    expect(program.stderr).toBe("ef");
+    expect(program.exitCode).toBe(0);
+    // Imported C shares stdout with console.log: there it stays unbuffered, so the two interleave in order.
+    const imported = await run(String(dir), ["imported.ts"]);
+    expect(imported.stdout).toBe("abc\n");
+    expect(imported.stderr).toBe("ef");
+  });
 
-  test.concurrent.skipIf(!isPosix)("quick_exit runs at_quick_exit handlers and not atexit ones", async () => {
-    using dir = tempDir("c-main-quick-exit", {
-      "program.c": /* c */ `
+  // Bun keeps both lists for compiled C, on every platform.
+  test.concurrent(
+    "quick_exit runs at_quick_exit handlers and not atexit ones; any other end the other way round",
+    async () => {
+      using dir = tempDir("c-main-quick-exit", {
+        "program.c": /* c */ `
         #include <stdio.h>
         #include <stdlib.h>
+        #include <string.h>
         static void at_exit_handler(void) { puts("atexit handler"); fflush(stdout); }
-        static void at_quick_exit_handler(void) { puts("at_quick_exit handler"); fflush(stdout); }
-        int main(int argc, char **argv) {
+        static void first_quick(void) { puts("at_quick_exit handler, registered first"); fflush(stdout); }
+        static void second_quick(void) { puts("at_quick_exit handler, registered second"); fflush(stdout); }
+        void setup(void) {
           atexit(at_exit_handler);
-          at_quick_exit(at_quick_exit_handler);
-          if (argc > 1) exit(2);
+          at_quick_exit(first_quick);
+          at_quick_exit(second_quick);
+        }
+        int main(int argc, char **argv) {
+          setup();
+          if (argc > 1 && !strcmp(argv[1], "exit")) exit(2);
+          if (argc > 1 && !strcmp(argv[1], "return")) return 2;
+          if (argc > 1 && !strcmp(argv[1], "_Exit")) _Exit(2);
           quick_exit(2);
         }
       `,
-    });
-    const quick = await run(String(dir), ["program.c"]);
-    expect(quick.stdout).toBe("at_quick_exit handler\n");
-    expect(quick.exitCode).toBe(2);
-    const normal = await run(String(dir), ["program.c", "exit"]);
-    expect(normal.stdout).toBe("atexit handler\n");
-    expect(normal.exitCode).toBe(2);
-  });
+        "imported.ts": `
+        import { setup } from "./program.c";
+        setup();
+        const how = process.argv[2];
+        if (how === "exit") process.exit(2);
+        if (how === "exitCode") process.exitCode = 2;
+        if (how === "throw") throw new Error("thrown");
+      `,
+      });
+      const quick = await run(String(dir), ["program.c"]);
+      expect(quick.stdout).toBe("at_quick_exit handler, registered second\nat_quick_exit handler, registered first\n");
+      expect(quick.exitCode).toBe(2);
+      for (const how of ["exit", "return"]) {
+        const normal = await run(String(dir), ["program.c", how]);
+        expect(normal.stdout).toBe("atexit handler\n");
+        expect(normal.exitCode).toBe(2);
+      }
+      const immediate = await run(String(dir), ["program.c", "_Exit"]);
+      expect(immediate.stdout).toBe("");
+      expect(immediate.exitCode).toBe(2);
+      // However a JavaScript program that imported the C ends, that is not quick_exit.
+      for (const [how, status] of [
+        ["normally", 0],
+        ["exit", 2],
+        ["exitCode", 2],
+        ["throw", 1],
+      ] as [string, number][]) {
+        const imported = await run(String(dir), ["imported.ts", how]);
+        expect(imported.stdout).toBe("atexit handler\n");
+        expect(imported.exitCode).toBe(status);
+      }
+    },
+  );
 
   // A fault in the program's own C is reported as that, not as a bug in Bun.
   const faults: [string, string][] = [
@@ -1041,7 +1270,8 @@ describe.skipIf(!supported)("a C file as the entry point", () => {
       expect(exitCode).not.toBe(0);
       return;
     }
-    expect(stderr).toContain("a C program's main() was running");
+    // Said once.
+    expect(stderr.split("a C program's main() was running").length).toBe(2);
     expect(stderr).toContain("c_module");
     // A signal where there are signals; on Windows the status the system gives a faulting process.
     if (isPosix) expect(signalCode).not.toBeNull();
@@ -1261,21 +1491,82 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(build.exitCode).not.toBe(0);
   });
 
+  // The compiler is told the files' names relative to where the build runs (that is what __FILE__ is); what a
+  // message says is the absolute path, as for JavaScript, wherever the build runs.
+  test.concurrent(
+    "a message about C names its file by the absolute path, as a message about JavaScript does",
+    async () => {
+      using dir = tempDir("c-bundle-error-path", {
+        "sub/g.c": `#include "h/bad.h"\nint g(void) { return BAD; }\n`,
+        "sub/h/bad.h": "#define BAD (\n#error broken here\n",
+        "warn.c": "#warning careful\nint w(void) { return 1; }\n",
+        "main.c": "int helper(int);\nint main(void) { return helper(1); }\n",
+        "helper.c": "int helper(int x) { return undeclared_thing; }\n",
+        "header.ts": `import { g } from "./sub/g.c"; console.log(g());`,
+        "warning.ts": `import { w } from "./warn.c"; console.log(w());`,
+        "javascript.ts": `import { nope } from "./other.ts"; console.log(nope);`,
+        "other.ts": "export const yes = 1;\n",
+        "build.ts": `
+        import { join } from "path";
+        const root = import.meta.dir;
+        const files = async (...entrypoints: string[]) => {
+          const result = await Bun.build({ entrypoints: entrypoints.map(entry => join(root, entry)), target: "bun", outdir: join(root, "out"), throw: false });
+          return result.logs.map(log => log.level + " " + log.position?.file).join();
+        };
+        for (const where of [root, join(root, "sub"), "/"]) {
+          process.chdir(where);
+          console.log(await files("header.ts"), await files("warning.ts"), await files("main.c", "helper.c"), await files("javascript.ts"));
+        }
+      `,
+      });
+      const root = String(dir);
+      const api = await run(root, ["build.ts"]);
+      expect(api.stderr).toBe("");
+      const line = `error ${join(root, "sub", "h", "bad.h")} warn ${join(root, "warn.c")} error ${join(root, "helper.c")} error ${join(root, "javascript.ts")}\n`;
+      expect(api.stdout).toBe(line.repeat(3));
+      // The command line says the same from any directory.
+      for (const [cwd, entry] of [
+        [root, "header.ts"],
+        [join(root, "sub"), "../header.ts"],
+      ]) {
+        const cli = await run(cwd, ["build", entry, "--target=bun", "--outdir", join(root, "cli")]);
+        expect(cli.stderr).toContain(`at ${join(root, "sub", "h", "bad.h")}:2:1`);
+        expect(cli.exitCode).not.toBe(0);
+      }
+    },
+  );
+
   test.concurrent.each(["browser", "node"])(
-    "--target=%s cannot run C: that is the error, whether or not the C compiles",
+    "--target=%s cannot run C: that is the error, whether or not the C compiles, and it names the file",
     async target => {
       using dir = tempDir("c-bundle-target", {
         "good.c": "int f(void) { return 1; }\n",
         "bad.c": "int f( { return 1; }\n",
         "good.ts": `import { f } from "./good.c"; console.log(f());`,
         "bad.ts": `import { f } from "./bad.c"; console.log(f());`,
+        "both.ts": `import { f } from "./good.c"; import { f as g } from "./bad.c"; console.log(f(), g());`,
+        "build.ts": `
+          const result = await Bun.build({ entrypoints: ["./both.ts"], target: ${JSON.stringify(target)}, outdir: "api", throw: false });
+          console.log(result.success, JSON.stringify(result.logs.map(log => [log.message, log.position?.file]).sort()));
+        `,
       });
       for (const entry of ["good.ts", "bad.ts"]) {
         const build = await run(String(dir), ["build", entry, `--target=${target}`, "--outdir", "out"]);
         expect(build.stderr).toContain('To import a ".c" file, set target to "bun"');
+        expect(build.stderr).toContain(join(String(dir), entry.replace(".ts", ".c")));
         expect(build.stderr).not.toContain("expected");
         expect(build.exitCode).not.toBe(0);
       }
+      // One message for each file, each with its file.
+      const api = await run(String(dir), ["build.ts"]);
+      expect(api.stderr).toBe("");
+      const message = 'To import a ".c" file, set target to "bun"';
+      expect(api.stdout).toBe(
+        `false ${JSON.stringify([
+          [message, join(String(dir), "bad.c")],
+          [message, join(String(dir), "good.c")],
+        ])}\n`,
+      );
     },
   );
 
@@ -1367,6 +1658,192 @@ describe.skipIf(!supported)("bundling a .c file", () => {
         expect(imported.stdout).toBe("42\n");
         expect(imported.exitCode).toBe(0);
       }
+    },
+  );
+
+  test.concurrent("export * from a C file hands on its functions, bundled as it does unbundled", async () => {
+    using dir = tempDir("c-bundle-export-star", {
+      ...library,
+      "star.ts": `export * from "./add.c";`,
+      "through.ts": `export * from "./star.ts";`,
+      "named.ts": `export { add as plus } from "./add.c"; export * as all from "./add.c";`,
+      "use.ts": `
+        const names = ns => Object.keys(ns).sort().join();
+        const [star, through, named] = await Promise.all([import(process.argv[2] + "/star.js"), import(process.argv[2] + "/through.js"), import(process.argv[2] + "/named.js")]);
+        console.log(names(star), names(through), names(named), star.add(1, 2), through.mul(2, 3), named.plus(3, 4), names(named.all));
+      `,
+      "unbundled.ts": `
+        import * as star from "./star.ts"; import * as through from "./through.ts"; import * as named from "./named.ts";
+        const names = ns => Object.keys(ns).sort().join();
+        console.log(names(star), names(through), names(named), star.add(1, 2), through.mul(2, 3), named.plus(3, 4), names(named.all));
+      `,
+    });
+    const expected = "add,mul add,mul all,plus 3 6 7 add,default,mul\n";
+    expect((await run(String(dir), ["unbundled.ts"])).stdout).toBe(expected);
+    const build = await run(String(dir), [
+      "build",
+      "star.ts",
+      "through.ts",
+      "named.ts",
+      "--target=bun",
+      "--outdir",
+      "out",
+    ]);
+    expect(build.stderr).toBe("");
+    expect(build.exitCode).toBe(0);
+    const bundled = await run(String(dir), ["use.ts", join(String(dir), "out")]);
+    expect(bundled.stderr).toBe("");
+    expect(bundled.stdout).toBe(expected);
+  });
+
+  // With --splitting what several entry points share is a chunk of its own: a C file's statements may be in it while
+  // the entry point that runs its main is another output, and import() of a C file gets an output of its own.
+  const split = {
+    ...library,
+    "import-program.ts": `import { twice } from "./program.c"; console.log(twice(21));`,
+    "import-again.ts": `import { twice } from "./program.c"; console.log(twice(4));`,
+    "require-program.cjs": `const { twice } = require("./program.c"); console.log(twice(21));`,
+    "dynamic-program.ts": `const program = await import("./program.c"); console.log(program.twice(21), typeof program.main);`,
+    "dynamic-add.ts": `const library = await import("./add.c"); console.log(library.add(40, 2));`,
+    // (Names the output the other entry point becomes.)
+    "worker-main.ts": `const worker = new Worker(new URL("./worker.js", import.meta.url).href); worker.onmessage = event => { console.log(event.data); worker.terminate(); };`,
+    "worker.ts": `import { twice } from "./program.c"; postMessage(twice(21));`,
+  };
+  const outputsOf = (dir: string) =>
+    [...new Bun.Glob("*.js").scanSync(dir)].map(name => Bun.file(join(dir, name)).text());
+
+  test.concurrent.each([
+    [["program.c", "import-program.ts"], []],
+    [["import-program.ts", "program.c"], []],
+    [["program.c", "import-program.ts"], ["--minify"]],
+    [["import-program.ts", "import-again.ts", "program.c"], []],
+    [["program.c", "require-program.cjs"], []],
+    [["program.c", "dynamic-program.ts"], []],
+    [["program.c"], []],
+  ] as [string[], string[]][])(
+    "bun build --splitting %j %j: the entry point that is a C program runs its main, the others have its exports",
+    async (entries, flags) => {
+      using dir = tempDir("c-bundle-splitting", split);
+      const build = await run(String(dir), [
+        "build",
+        ...entries,
+        ...flags,
+        "--splitting",
+        "--target=bun",
+        "--outdir",
+        "out",
+      ]);
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+      const out = join(String(dir), "out");
+      const program = await run(out, ["program.js", "one", "two"]);
+      expect(program.stderr).toBe("");
+      expect(program.stdout).toBe("main 6\n");
+      expect(program.exitCode).toBe(5);
+      for (const [entry, printed] of [
+        ["import-program", "42\n"],
+        ["import-again", "8\n"],
+        ["require-program", "42\n"],
+        ["dynamic-program", "42 function\n"],
+      ]) {
+        if (!entries.some(name => name.startsWith(entry + "."))) continue;
+        const other = await run(out, [entry + ".js"]);
+        expect(other.stderr).toBe("");
+        expect(other.stdout).toBe(printed);
+        expect(other.exitCode).toBe(0);
+      }
+    },
+  );
+
+  test.concurrent.each([[[]], [["--minify"]], [["--splitting"]], [["--splitting", "--minify"]]])(
+    "bun build %j: import() of a C file with a main is its exports, as it is unbundled",
+    async flags => {
+      using dir = tempDir("c-bundle-dynamic", split);
+      const unbundled = await run(String(dir), ["dynamic-program.ts"]);
+      expect(unbundled.stdout).toBe("42 function\n");
+      const build = await run(String(dir), [
+        "build",
+        "dynamic-program.ts",
+        "dynamic-add.ts",
+        "require-program.cjs",
+        "worker-main.ts",
+        "worker.ts",
+        ...flags,
+        "--target=bun",
+        "--outdir",
+        "out",
+      ]);
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+      const out = join(String(dir), "out");
+      // Nothing here is a C program: no output runs a main.
+      for (const output of await Promise.all(outputsOf(out))) expect(output).not.toContain("__bun_run_c_main__");
+      for (const [entry, printed] of [
+        ["dynamic-program.js", "42 function\n"],
+        ["dynamic-add.js", "42\n"],
+        ["require-program.js", "42\n"],
+        ["worker-main.js", "42\n"],
+      ]) {
+        const { stdout, stderr, exitCode } = await run(out, [entry]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(printed);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+
+  test.concurrent("a C file without a main that is an entry point has nothing to run", async () => {
+    using dir = tempDir("c-bundle-no-main", split);
+    for (const flags of [[], ["--splitting"]]) {
+      const build = await run(String(dir), ["build", "add.c", "index.ts", ...flags, "--target=bun", "--outdir", "out"]);
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+      for (const output of await Promise.all(outputsOf(join(String(dir), "out"))))
+        expect(output).not.toContain("__bun_run_c_main__");
+      const use = await run(String(dir), ["use.ts"]);
+      expect(use.stdout).toBe("add,default,mul 5 6\n");
+      expect(use.exitCode).toBe(0);
+    }
+  });
+
+  test.concurrent("Bun.build({ splitting: true }) makes what bun build --splitting makes", async () => {
+    using dir = tempDir("c-bundle-splitting-api", {
+      ...split,
+      "build.ts": `
+        const result = await Bun.build({ entrypoints: ["./import-program.ts", "./program.c", "./dynamic-program.ts"], splitting: true, target: "bun", outdir: "out" });
+        console.log(result.success, result.outputs.map(output => output.kind).sort().join());
+        for (const log of result.logs) console.log(String(log));
+      `,
+    });
+    const build = await run(String(dir), ["build.ts"]);
+    expect(build.stderr).toBe("");
+    expect(build.stdout).toBe("true asset,chunk,entry-point,entry-point,entry-point\n");
+    const out = join(String(dir), "out");
+    const program = await run(out, ["program.js"]);
+    expect(program.stdout).toBe("main 2\n");
+    expect(program.exitCode).toBe(5);
+    expect((await run(out, ["import-program.js"])).stdout).toBe("42\n");
+    expect((await run(out, ["dynamic-program.js"])).stdout).toBe("42 function\n");
+  });
+
+  test.each([
+    [["program.c", "import-program.ts"], "main 6\n", 5],
+    [["import-program.ts", "program.c"], "42\n", 0],
+    [["dynamic-program.ts"], "42 function\n", 0],
+  ] as [string[], string, number][])(
+    "bun build --compile --splitting %j is its first entry point",
+    async (entries, printed, status) => {
+      using dir = tempDir("c-compile-splitting", split);
+      const build = await run(String(dir), ["build", "--compile", "--splitting", ...entries, "--outfile", "prog"]);
+      expect(build.stderr).not.toContain("error");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned(
+        [join(String(dir), executable("prog")), "one", "two"],
+        String(dir),
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe(printed);
+      expect(exitCode).toBe(status);
     },
   );
 
@@ -1545,6 +2022,42 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The ordinary pass-through plugin: what it hands over is compiled like the file it read.
+  test("Bun.build({ compile }) embeds the compiled form of C a plugin's onLoad supplied", async () => {
+    using dir = tempDir("c-compile-plugin", {
+      "add.c": `#include "inc.h"\nint add(int a, int b) { return a + b + INC; }\n`,
+      "inc.h": "#define INC 7\n",
+      "use.ts": `
+        import { add } from "./add.c";
+        const embedded = await Promise.all(Bun.embeddedFiles.map(async file => new TextDecoder().decode((await file.bytes()).subarray(0, 4))));
+        console.log(add(2, 3), embedded.join());
+      `,
+      "build.ts": `
+        const result = await Bun.build({
+          entrypoints: ["./use.ts"],
+          compile: { outfile: "./app" },
+          plugins: [{ name: "c", setup(builder) {
+            builder.onLoad({ filter: /add\\.c$/ }, async args => ({ contents: await Bun.file(args.path).text(), loader: "c" }));
+          } }],
+        });
+        console.log(result.success);
+        for (const log of result.logs) console.log(String(log));
+      `,
+    });
+    const build = await run(String(dir), ["build.ts"]);
+    expect(build.stderr).toBe("");
+    expect(build.stdout).toBe("true\n");
+
+    using elsewhere = tempDir("c-compile-plugin-run", {});
+    const exe = join(String(elsewhere), executable("app"));
+    await Bun.write(exe, Bun.file(join(String(dir), executable("app"))));
+    chmodSync(exe, 0o755);
+    const { stdout, stderr, exitCode } = await spawned([exe], String(elsewhere));
+    expect(stderr).toBe("");
+    expect(stdout).toBe("12 BIR0\n");
+    expect(exitCode).toBe(0);
+  });
+
   // The C in an executable is compiled for the platform the executable is for. No build gets as far as fetching
   // that platform's runtime: the address it would come from is one nothing listens on.
   const elsewhere = { BUN_COMPILE_TARGET_TARBALL_URL: "http://127.0.0.1:1/bun.tgz" };
@@ -1568,6 +2081,8 @@ describe.skipIf(!supported)("bundling a .c file", () => {
       expect(build.stderr).toContain(
         `Compiling C for ${target} is not supported yet (it is for Linux x64 (glibc), macOS arm64 and Windows x64)`,
       );
+      // Which file it is that is C.
+      expect(build.stderr).toContain(join(String(dir), "math.c"));
       expect(build.exitCode).not.toBe(0);
     },
   );

@@ -904,6 +904,7 @@ __std_find_trivial_1                                                            
 __std_find_trivial_2                                                                                       [AVX, AVX2]
 __std_find_trivial_4                                                                                       [AVX, AVX2]
 __std_find_trivial_8                                                                                       [AVX, AVX2, LZCNT]
+__std_max_8i                                                                                               [AVX, AVX2, AVX512F, AVX512VL]
 __std_min_8u                                                                                               [AVX, AVX2, AVX512F, AVX512VL]
 __std_minmax_8i                                                                                            [AVX, AVX2]
 __std_search_1                                                                                             [AVX, AVX2]

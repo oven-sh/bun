@@ -55,8 +55,8 @@ public:
 
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
     void dispose(Zig::GlobalObject*);
-    // The loader's promise for a graph.import() of `key` settled: `result` follows.
-    void importSettled(Zig::GlobalObject*, JSC::JSPromise* result, JSC::JSValue key, JSC::JSValue settlement, bool rejected);
+    // The loader's promise for a graph.import() settled: `result` follows.
+    void importSettled(Zig::GlobalObject*, JSC::JSPromise* result, JSC::JSValue settlement, bool rejected, bool madeMain);
 
 protected:
     JSModuleGraph(JSC::VM&, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSObject* onError);

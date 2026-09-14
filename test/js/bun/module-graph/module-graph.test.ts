@@ -1198,27 +1198,170 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       exitCode: 0,
     });
   });
-  test("a first import() that fails leaves the graph without a main module; the next successful import becomes it", async () => {
+  test("the first import() is main from the moment it is requested: a second one in the same tick, and evicting main from require.cache, do not change it", async () => {
+    using d = tempDir("module-graph-main-first", {
+      "a.mjs": `export const main = import.meta.main;`,
+      "b.mjs": `export const main = import.meta.main;`,
+      "entry.cjs": `const wasMain = require.main === module; delete require.cache[__filename]; module.exports = wasMain;`,
+      "later.mjs": `export const main = import.meta.main;`,
+    });
+    const g = new ModuleGraphClass();
+    const first = g.import(join(String(d), "a.mjs"));
+    const second = g.import(join(String(d), "b.mjs"));
+    const whileLoading = g.mainModule;
+    const [a, b] = await Promise.all([first, second]);
+
+    const evicting = new ModuleGraphClass();
+    const entry = await evicting.import(join(String(d), "entry.cjs"));
+    const later = await evicting.import(join(String(d), "later.mjs"));
+    expect({
+      whileLoading,
+      main: g.mainModule,
+      aMain: a.main,
+      bMain: b.main,
+      entryWasMain: entry.default,
+      afterEviction: evicting.mainModule,
+      laterMain: later.main,
+    }).toEqual({
+      whileLoading: join(String(d), "a.mjs"),
+      main: join(String(d), "a.mjs"),
+      aMain: true,
+      bMain: false,
+      entryWasMain: true,
+      afterEviction: join(String(d), "entry.cjs"),
+      laterMain: false,
+    });
+  });
+  test("import() of a long-lived graph leaves nothing behind per call", async () => {
+    using d = tempDir("module-graph-import-growth", {
+      "a.mjs": `export const n = 1;`,
+      "bad.mjs": `await 1; throw new Error("no");`,
+    });
+    const g = new ModuleGraphClass();
+    await g.import(join(String(d), "a.mjs"));
+    const count = () => {
+      Bun.gc(true);
+      const counts = heapStats().objectTypeCounts;
+      return { Promise: counts.Promise ?? 0, InternalFieldTuple: counts.InternalFieldTuple ?? 0 };
+    };
+    const before = count();
+    for (let i = 0; i < 2000; i++) {
+      await g.import(join(String(d), "a.mjs"));
+      if (i % 100 === 0) await g.import(join(String(d), "bad.mjs")).catch(() => {});
+    }
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const after = count();
+    expect({
+      Promise: after.Promise - before.Promise < 100,
+      InternalFieldTuple: after.InternalFieldTuple - before.InternalFieldTuple < 100,
+    }).toEqual({ Promise: true, InternalFieldTuple: true });
+  });
+  test("a failed import() nobody handles is the caller's, however the module failed: never the graph's onError", async () => {
+    using d = tempDir("module-graph-import-unhandled", {
+      "sync.mjs": `throw new Error("sync top-level");`,
+      "tla.mjs": `await 1; throw new Error("after await");`,
+      "dep.mjs": `import "./sync.mjs";`,
+      "never.mjs": `await new Promise(() => {});`,
+      "main.mjs": `
+        const seen = [];
+        process.on("unhandledRejection", e => seen.push("host: " + e.message.split(" imported from")[0]));
+        const make = () => new Bun.ModuleGraph({ onError: (e, kind) => seen.push("graph " + kind + ": " + e.message) });
+        for (const file of ["sync.mjs", "tla.mjs", "dep.mjs", "missing.mjs"]) make().import(import.meta.dir + "/" + file);
+        const disposed = make();
+        disposed.import(import.meta.dir + "/never.mjs");
+        disposed.dispose();
+        const deadline = Date.now() + 10000;
+        while (seen.length < 5 && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify(seen.map(line => line.replace(import.meta.dir, "")).sort()));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(d),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual([
+      "host: Cannot find module '/missing.mjs'",
+      "host: ModuleGraph has been disposed",
+      "host: after await",
+      "host: sync top-level",
+      "host: sync top-level",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+  test("a first import() that fails, however it fails, leaves the graph without a main module; the next successful import becomes it", async () => {
     using d = tempDir("module-graph-main-after-failure", {
-      "bad.mjs": `throw new Error("not today");`,
+      "throws.mjs": `throw new Error("not today");`,
+      "syntax.mjs": `export const x = ;`,
+      "after-await.mjs": `await 1; throw new Error("later");`,
+      "bad-dependency.mjs": `import "./throws.mjs";`,
+      "missing-dependency.mjs": `import "./nowhere.mjs";`,
+      "throws.cjs": `throw new Error("cjs");`,
       "ok.mjs": `export const main = import.meta.main;`,
       "other.mjs": `export const main = import.meta.main;`,
     });
-    const g = new ModuleGraphClass();
-    const failed = await g.import(join(String(d), "bad.mjs")).then(
-      () => "resolved",
-      (e: Error) => e.message,
-    );
-    const mainAfterFailure = g.mainModule;
-    const ok = await g.import(join(String(d), "ok.mjs"));
-    const other = await g.import(join(String(d), "other.mjs"));
-    expect({ failed, mainAfterFailure, main: g.mainModule, okMain: ok.main, otherMain: other.main }).toEqual({
-      failed: "not today",
-      mainAfterFailure: undefined,
-      main: join(String(d), "ok.mjs"),
-      okMain: true,
-      otherMain: false,
+    const outcomes: Record<string, unknown> = {};
+    for (const bad of [
+      "throws.mjs",
+      "syntax.mjs",
+      "after-await.mjs",
+      "bad-dependency.mjs",
+      "missing-dependency.mjs",
+      "throws.cjs",
+      "missing.mjs",
+    ]) {
+      const g = new ModuleGraphClass();
+      const failed = await g.import(join(String(d), bad)).then(
+        () => "resolved",
+        () => "rejected",
+      );
+      const mainAfterFailure = g.mainModule;
+      const ok = await g.import(join(String(d), "ok.mjs"));
+      const other = await g.import(join(String(d), "other.mjs"));
+      outcomes[bad] = {
+        failed,
+        mainAfterFailure,
+        main: g.mainModule === join(String(d), "ok.mjs"),
+        okMain: ok.main,
+        otherMain: other.main,
+      };
+    }
+    const expected = { failed: "rejected", mainAfterFailure: undefined, main: true, okMain: true, otherMain: false };
+    expect(outcomes).toEqual({
+      "throws.mjs": expected,
+      "syntax.mjs": expected,
+      "after-await.mjs": expected,
+      "bad-dependency.mjs": expected,
+      "missing-dependency.mjs": expected,
+      "throws.cjs": expected,
+      "missing.mjs": expected,
     });
+  });
+  test("a main module that ran stays main when it is evicted and a reload of it fails", async () => {
+    using d = tempDir("module-graph-main-reload-fails", {
+      "entry.cjs": `if (globalThis.entryRanOnce) throw new Error("second time"); globalThis.entryRanOnce = true; module.exports = require;`,
+      "ok.mjs": `export const main = import.meta.main;`,
+    });
+    try {
+      const g = new ModuleGraphClass();
+      const entryRequire = (await g.import(join(String(d), "entry.cjs"))).default;
+      delete entryRequire.cache[join(String(d), "entry.cjs")];
+      const reload = await g.import(join(String(d), "entry.cjs")).then(
+        () => "resolved",
+        (e: Error) => e.message,
+      );
+      const ok = await g.import(join(String(d), "ok.mjs"));
+      expect({ reload, main: g.mainModule, okMain: ok.main }).toEqual({
+        reload: "second time",
+        main: join(String(d), "entry.cjs"),
+        okMain: false,
+      });
+    } finally {
+      delete (globalThis as any).entryRanOnce;
+    }
   });
   test("a rejection by graph code whose reason is an Error constructed by host code (module, CommonJS or global code) → the rejecting graph's onError", async () => {
     const d = fixture({

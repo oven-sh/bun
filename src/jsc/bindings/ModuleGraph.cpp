@@ -583,16 +583,22 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
-// The loader's promise for a graph.import() settled. `context` is [graph, result, key].
+// The loader's promise for a graph.import() settled. `context` holds the graph and the promise
+// import() returned, and lets go of both here: whatever still points at it keeps neither.
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphImportFulfilled);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphImportRejected);
+// The rejection handler of the import that made its module the graph's main.
+static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphMainImportRejected);
 
-static void importSettled(JSGlobalObject* globalObject, CallFrame* callFrame, bool rejected)
+static void importSettled(JSGlobalObject* globalObject, CallFrame* callFrame, bool rejected, bool madeMain = false)
 {
-    auto* context = uncheckedDowncast<JSArray>(callFrame->argument(1));
-    auto* graph = uncheckedDowncast<JSModuleGraph>(context->getIndexQuickly(0));
-    auto* result = uncheckedDowncast<JSPromise>(context->getIndexQuickly(1));
-    graph->importSettled(defaultGlobalObject(globalObject), result, context->getIndexQuickly(2), callFrame->argument(0), rejected);
+    VM& vm = globalObject->vm();
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    auto* graph = uncheckedDowncast<JSModuleGraph>(context->getInternalField(0));
+    auto* result = uncheckedDowncast<JSPromise>(context->getInternalField(1));
+    context->putInternalField(vm, 0, jsUndefined());
+    context->putInternalField(vm, 1, jsUndefined());
+    graph->importSettled(defaultGlobalObject(globalObject), result, callFrame->argument(0), rejected, madeMain);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -607,7 +613,13 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportRejected, (JSGlobalObject * globalOb
     return JSValue::encode(jsUndefined());
 }
 
-void JSModuleGraph::importSettled(Zig::GlobalObject* globalObject, JSPromise* result, JSValue key, JSValue settlement, bool rejected)
+JSC_DEFINE_HOST_FUNCTION(jsModuleGraphMainImportRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    importSettled(globalObject, callFrame, true, true);
+    return JSValue::encode(jsUndefined());
+}
+
+void JSModuleGraph::importSettled(Zig::GlobalObject* globalObject, JSPromise* result, JSValue settlement, bool rejected, bool madeMain)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -622,9 +634,7 @@ void JSModuleGraph::importSettled(Zig::GlobalObject* globalObject, JSPromise* re
         result->resolve(globalObject, vm, settlement);
         return;
     }
-    // A first import that failed leaves the graph without a main module rather than with one
-    // that never loaded.
-    if (mainPath() == key)
+    if (madeMain)
         m_mainPath.clear();
     SetForScope rejectingImport(moduleGraphState(globalObject).rejectingImport, true);
     result->reject(vm, settlement);
@@ -650,10 +660,11 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSString* keyString = jsString(vm, key.string());
+    // The first import makes its module main; if it fails, the graph is left without one (the
+    // next import becomes it) rather than with one that never ran.
     bool becameMain = mainPath().isUndefined();
     if (becameMain)
-        m_mainPath.set(vm, this, keyString);
+        m_mainPath.set(vm, this, jsString(vm, key.string()));
     JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
     if (scope.exception()) [[unlikely]] {
         if (becameMain)
@@ -666,14 +677,9 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
         m_pendingImports.set(vm, this, JSSet::create(vm, globalObject->setStructure()));
     m_pendingImports->add(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    MarkedArgumentBuffer contextValues;
-    contextValues.append(this);
-    contextValues.append(result);
-    contextValues.append(keyString);
-    JSArray* context = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), contextValues);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), this, result);
     auto* fulfilled = JSFunction::create(vm, globalObject, 2, "importFulfilled"_s, jsModuleGraphImportFulfilled, ImplementationVisibility::Private);
-    auto* rejected = JSFunction::create(vm, globalObject, 2, "importRejected"_s, jsModuleGraphImportRejected, ImplementationVisibility::Private);
+    auto* rejected = JSFunction::create(vm, globalObject, 2, "importRejected"_s, becameMain ? jsModuleGraphMainImportRejected : jsModuleGraphImportRejected, ImplementationVisibility::Private);
     loaded->performPromiseThenWithContext(vm, globalObject, fulfilled, rejected, jsUndefined(), context);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;

@@ -60,26 +60,9 @@ const file = (name: string) => join(dir, name);
 /** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
  *  from the caller's own continuation: the native frame that runs microtasks still holds what the
  *  microtasks before it were given (an import()'s settle reaction is given its graph). */
-/** Overwrites the machine stack below the caller with numbers: what native frames that ran there
- *  left behind (a pointer to a cell of a graph, say) is what a collection started from here would
- *  otherwise find in the slots its own frames do not initialize. */
-function scrubStack(depth: number): number {
-  let a = depth,
-    b = depth + 1,
-    c = depth + 2,
-    d = depth + 3,
-    e = depth + 4,
-    f = depth + 5,
-    g = depth + 6,
-    h = depth + 7;
-  const below = depth ? scrubStack(depth - 1) : 0;
-  return below + a + b + c + d + e + f + g + h;
-}
-
 function collect(): Promise<void> {
   return new Promise(resolve =>
     setTimeout(() => {
-      scrubStack(256);
       Bun.gc(true);
       setTimeout(resolve, 0);
     }, 0),
@@ -131,6 +114,23 @@ function whatRetainsGraphs(): string[] {
       const ancestors = [...from.keys()];
       const entries = ancestors.filter(cell => !incoming.get(cell)?.length).map(cell => className.get(cell));
       const classes = [...new Set(ancestors.map(cell => className.get(cell)))];
+      const pointsAt = (cell: number) => {
+        const out: string[] = [];
+        for (let i = 0; i < edges.length; i += 4) {
+          if (edges[i] !== cell) continue;
+          const type = edgeTypes[edges[i + 2]];
+          out.push(
+            (type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : type + edges[i + 3]) +
+              "->" +
+              className.get(edges[i + 1]),
+          );
+        }
+        return out.join(", ");
+      };
+      for (const cell of ancestors.filter(cell => !incoming.get(cell)?.length))
+        report.push(
+          `${name}#${id}: ${className.get(cell)}#${cell}, which nothing in the heap points at, points at: ${pointsAt(cell)}`,
+        );
       report.push(
         `${name}#${id}: island of ${ancestors.length} cells (${classes.join(", ")}); nothing in the heap points at: ${entries.join(", ") || "(none: a cycle)"}`,
       );

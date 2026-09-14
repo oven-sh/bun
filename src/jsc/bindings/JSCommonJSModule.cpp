@@ -1278,8 +1278,8 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
-    visitor.appendHidden(thisObject->m_moduleGraph);
     visitor.appendHidden(thisObject->m_childrenValue);
+    visitor.append(thisObject->m_moduleGraph);
     {
         WTF::Locker locker { thisObject->cellLock() };
         visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());

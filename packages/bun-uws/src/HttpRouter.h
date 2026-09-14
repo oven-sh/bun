@@ -55,7 +55,8 @@ private:
     /* Storage for normalized request targets; segments handed to handlers point into it */
     std::string normalizedUrlBuffer = {};
 
-    /* Set once a pattern other than the catch-all is added. With only the catch-all every path runs the same handler. */
+    /* Set once a pattern other than the catch-all is added. With only the catch-all every path
+     * runs the same handler, so route() skips normalizeUrl(). */
     bool hasPathSensitiveRoute = false;
 
     /* The matching tree */

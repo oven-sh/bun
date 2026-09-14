@@ -1183,8 +1183,13 @@ describe("routes match the same normalized path that request.url reports", () =>
     { target: "/w/.hidden", route: "/w/*", pathname: "/w/.hidden" },
     // an encoded "/" is not a path separator and does not split the parameter
     { target: "/p/..%2fadmin", route: "/p/:v", pathname: "/p/..%2fadmin", param: "../admin" },
-    // matching stays percent-encoded: no decoding is applied to the path
+    // normalization adds no percent-decoding (https://github.com/oven-sh/bun/issues/37603 tracks that)
     { target: "/admin/%78", route: "fallback", pathname: "/admin/%78" },
+    // the same spellings with the special byte at offsets 7, 8, 15 and 16 of a longer target
+    { target: "/p/aaaa\\b", route: "fallback", pathname: "/p/aaaa/b" },
+    { target: "/aaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/p/aaaaaaaaaaaa\\b", route: "fallback", pathname: "/p/aaaaaaaaaaaa/b" },
+    { target: "/aaaaaaaaaaaaaa/../admin/x", route: "/admin/x", pathname: "/admin/x" },
   ];
 
   it.each([

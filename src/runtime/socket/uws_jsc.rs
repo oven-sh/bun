@@ -32,9 +32,7 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     }
     #[inline]
     fn write(&mut self, buffer: &[u8]) {
-        // Same rule as `bun_io::StreamBuffer::compact`: nothing ever resets
-        // this buffer, so drop the consumed prefix once it is at least as
-        // large as the unread tail.
+        // Same rule as `bun_io::StreamBuffer::compact`.
         if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
             self.list.drain(..self.cursor);
             self.cursor = 0;

@@ -1822,10 +1822,8 @@ impl StreamBuffer {
     }
 
     /// Drops the consumed prefix once it is at least as large as the unread
-    /// tail. `wrote` only moves the cursor and `reset` runs only on a full
-    /// drain, so a buffer that is refilled before it drains would otherwise
-    /// keep every consumed byte (#42722). The threshold keeps the memmove cost
-    /// linear when a large backlog is consumed a piece at a time.
+    /// tail, so a buffer that is refilled before it drains does not keep
+    /// every consumed byte. The threshold keeps the memmove cost linear.
     fn compact(&mut self) {
         if self.cursor == 0 || self.cursor < self.size() {
             return;

@@ -1372,6 +1372,7 @@ impl Event {
     fn wait(&self, worker: Option<&Thread>) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut word = self.state.load(Ordering::Relaxed);
+        let mut is_idle: bool = false;
         let mut has_swept: bool = false;
 
         loop {
@@ -1433,18 +1434,30 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
-            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
-            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
-            let timeout_ns: Option<u64> = if !has_swept {
+            // Idle only once a wait TIMED OUT: 100ms without work, not parking between tasks
+            // (sweeping on every park cost ~13% of vite preview rps). The locals are reset when
+            // notify() returns; a racing notify() stays NOTIFIED, never lost.
+            //
+            // An idle thread hands its heaps to mimalloc's scavenger for the wait that has no
+            // timeout: one sweep never takes the free blocks of a large page that was just
+            // allocated from, and the scavenger comes back for them while this thread sleeps.
+            // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+            let handed_off = is_idle && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
+            if is_idle && !handed_off && !has_swept {
+                // No scavenger to hand off to.
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
+            }
+            let timeout_ns: Option<u64> = if !is_idle {
                 Some(100_000_000) // 100ms
             } else {
                 None
             };
-            if Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err() {
-                has_swept = true;
-                bun_alloc::mimalloc::mi_on_thread_idle();
+            let timed_out = Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err();
+            if handed_off {
+                bun_alloc::mimalloc::mi_on_thread_idle_end();
             }
+            is_idle |= timed_out;
             word = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
         }

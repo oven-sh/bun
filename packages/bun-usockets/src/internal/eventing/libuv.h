@@ -35,6 +35,8 @@ struct us_loop_t {
 
   uv_prepare_t *uv_pre;
   uv_check_t *uv_check;
+  /* Created on first use by us_loop_run. */
+  struct us_timer_t *idle_sweep_timer;
 };
 
 // it is no longer valid to cast a pointer to us_poll_t to a pointer of

@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -173,6 +173,70 @@ describe("heapStats() mimalloc integration", () => {
       const { released, purged } = JSON.parse(stdout);
       expect(released, stdout).toBeGreaterThanOrEqual(336);
       expect(purged, stdout).toBeGreaterThanOrEqual(336);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Buffers of 96 to 512 KiB live in the allocator's 4 MiB pages, and the free blocks of such a page are only handed back
+  // by an idle sweep of the thread that owns it, two sweeps or more after the page was last allocated from. A work pool
+  // thread swept once, 100 ms after it ran out of work, and then slept for good: what `readFile` had allocated on it and
+  // the collector freed stayed resident for as long as one buffer of the page was alive. It now leaves its heaps to the
+  // allocator's scavenger thread while it sleeps, which comes back for them. Linux only: reads RssAnon. Not ASAN: malloc is
+  // not mimalloc there.
+  test.skipIf(!isLinux || isASAN)(
+    "an idle work pool thread hands back the free blocks of its large pages",
+    async () => {
+      using dir = tempDir("pool-large-pages", {
+        "index.js": `
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { readFile } from "node:fs/promises";
+          const rssAnon = () => Number(/RssAnon:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+          // one file for each block size of a 4 MiB page
+          const files = [96, 128, 160, 192, 224, 256, 320, 384, 448, 512].map((kib, i) => {
+            writeFileSync("file" + i, Buffer.alloc(kib * 1024 - 64, 1 + i));
+            return "file" + i;
+          });
+          const start = rssAnon();
+          const kept = [];
+          for (let round = 0; round < 6; round++) {
+            const reads = [];
+            for (const file of files) for (let i = 0; i < 8; i++) reads.push(readFile(file));
+            const buffers = await Promise.all(reads);
+            // one in twelve stays, so that the pages do not become free as a whole
+            for (let i = round; i < buffers.length; i += 12) kept.push(buffers[i]);
+            // the rest is garbage now: neither array keeps it for the collector to find
+            reads.length = buffers.length = 0;
+          }
+          const loaded = rssAnon();
+          Bun.gc(true);
+          const keptMB = kept.reduce((sum, buffer) => sum + buffer.byteLength, 0) / 1048576;
+          const aliveMB = process.memoryUsage().arrayBuffers / 1048576;
+          // Nothing here gives the pool anything to do: a thread that runs a task sweeps again after it.
+          const deadline = performance.now() + 2500;
+          let freeResident;
+          do {
+            await Bun.sleep(50);
+            freeResident = rssAnon() - start - keptMB;
+          } while (freeResident > 12 && performance.now() < deadline);
+          console.log(JSON.stringify({ start, loaded, keptMB, aliveMB, freeResident }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        // enough threads for the reads of a round to be spread over several heaps, whatever the machine
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { loaded, start, keptMB, aliveMB, freeResident } = JSON.parse(stdout);
+      // 480 buffers of 300 KB on average were read, 42 of them are alive, and the collector freed the others
+      expect(loaded - start, stdout).toBeGreaterThan(60);
+      expect(keptMB, stdout).toBeGreaterThan(8);
+      expect(aliveMB, stdout).toBeLessThan(keptMB + 2);
+      // 38 MB and more without the handoff
+      expect(freeResident, stdout).toBeLessThanOrEqual(12);
       expect(exitCode).toBe(0);
     },
   );

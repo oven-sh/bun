@@ -475,14 +475,12 @@ console.log("survived", require("./late.js"));`,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const resolved = path.join("lib", "node_modules", "limit-pkg", "index.js");
-    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      stdout: {
-        "require.resolve": { atLimit: resolved, onePast: "RangeError: Out of memory" },
-        "Module._resolveFilename": { atLimit: resolved, onePast: "RangeError: Out of memory" },
-      },
-      stderr: "",
-      exitCode: 0,
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      "require.resolve": { atLimit: resolved, onePast: "RangeError: Out of memory" },
+      "Module._resolveFilename": { atLimit: resolved, onePast: "RangeError: Out of memory" },
     });
+    expect(exitCode).toBe(0);
   });
 
   test("createRequire trailing slash", () => {

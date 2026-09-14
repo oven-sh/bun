@@ -58,11 +58,12 @@ describe("web worker", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-        stdout: { atLimit: 'TypeError: Invalid file URL: "file://:!:!:!!!!"', onePast: "RangeError: Out of memory" },
-        stderr: "",
-        exitCode: 0,
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "null")).toEqual({
+        atLimit: 'TypeError: Invalid file URL: "file://:!:!:!!!!"',
+        onePast: "RangeError: Out of memory",
       });
+      expect(exitCode).toBe(0);
     });
 
     test("string", async () => {

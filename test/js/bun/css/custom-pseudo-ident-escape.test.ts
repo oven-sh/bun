@@ -48,6 +48,18 @@ test("an unrecognized @font-face format() argument is printed as a quoted string
   );
 });
 
+test("@font-face format() keeps quoted keywords quoted", () => {
+  expect(minifyTest(`@font-face { src: url(a.woff2) format("woff2-variations") }`, "")).toBe(
+    '@font-face{src:url(a.woff2)format("woff2-variations")}',
+  );
+});
+
+test("@font-face font-family keeps quoted names quoted", () => {
+  expect(minifyTest(`@font-face { font-family: "Custom Test Font" }`, "")).toBe(
+    '@font-face{font-family:"Custom Test Font"}',
+  );
+});
+
 test("unknown property ids in transition-property values are printed as identifiers", () => {
   expect(minifyTest(".foo { transition-property: fake\\7d name }", "")).toBe(".foo{transition-property:fake\\}name}");
 });

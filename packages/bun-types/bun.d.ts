@@ -5404,9 +5404,14 @@ declare module "bun" {
      * rejected with it: the innermost such code on the stack at that moment
      * (functions passed in through `globals` are the host's code); a promise
      * the runtime rejects on that code's behalf (an async function, a
-     * reaction whose handler threw) counts as rejected by it. Anything else
-     * — including a promise derived through `.then()` without a rejection
-     * handler — takes the normal path. `kind` is
+     * reaction whose handler threw) counts as rejected by it. The error stays
+     * that graph's through the promises that carry it on: one derived through
+     * `.then()` without a rejection handler, and the promise
+     * {@link ModuleGraph.import} returned when a module of the graph threw
+     * while it was being evaluated (at its top level, after an `await`, or
+     * in a dependency). What the host caused takes the normal path: a
+     * specifier that does not resolve, an `import()` into a disposed graph,
+     * and what `onError` itself throws or rejects while it runs. `kind` is
      * `"uncaughtException"` or `"unhandledRejection"`.
      */
     onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
@@ -5493,8 +5498,11 @@ declare module "bun" {
      */
     run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
     /**
-     * Drops the graph's module registry and require cache: pending and later
-     * `graph.import()`s reject, `import()` from the graph's own code rejects
+     * Drops the graph's module registry and require cache: later
+     * `graph.import()`s reject, as does one that is still waiting for a file;
+     * one whose module is suspended in a top-level `await` is left alone and
+     * finishes if what the module awaits does.
+     * `import()` from the graph's own code rejects
      * and its `require()` of anything throws, and modules of the graph that
      * had not run yet never will. Code from the
      * graph that is still referenced keeps working, and its errors still go

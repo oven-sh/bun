@@ -30,6 +30,10 @@ With `isolateIO: true` the graph gets a context of its own for timers and I/O. E
 
 The context follows the code asynchronously, like `AsyncLocalStorage`: through `await`, timers, socket handlers and event listeners.
 
+## Disposing
+
+`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()`, `import()` from the graph's own code and its `require()` fail with `ERR_INVALID_STATE`, and modules of the graph that had not run yet never will. An import that was still waiting for a file rejects. One whose module is suspended in a top-level `await` is left alone: it finishes if what the module awaits does.
+
 ## Calling into a graph
 
 Code the host calls directly runs in the host's context, even when the function was defined by a graph. Use `run()` to enter the graph's:
@@ -44,6 +48,8 @@ graph.run(() => app.start()); // what this opens is the graph's
 ## Errors
 
 Uncaught exceptions and unhandled rejections raised by a graph's module code go to that graph's `onError` instead of the process-wide handlers.
+
+An error belongs to the graph whose code threw it, and stays that graph's through the promises that carry it on. If nobody handles the promise `graph.import()` returned and a module of the graph threw while it was being evaluated (at its top level, after an `await`, or in a dependency), that goes to `onError` too. What the host caused takes the normal process-wide path: a specifier that does not resolve, an `import()` into a disposed graph, and anything `onError` itself throws or rejects while it runs.
 
 ## What is shared
 

@@ -259,6 +259,10 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
 {
     if (!globalObject->hasModuleGraphs())
         return nullptr;
+    // What a graph's code rejects while it runs as an onError is the host's, like what onError
+    // throws: given to the graph, it would come straight back to the same onError.
+    if (moduleGraphState(globalObject).inOnError)
+        return nullptr;
     VM& vm = globalObject->vm();
     std::optional<JSModuleGraph*> owner = moduleGraphOwningCurrentStack(globalObject);
     if (!owner) {

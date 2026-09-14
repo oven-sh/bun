@@ -1198,6 +1198,61 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       exitCode: 0,
     });
   });
+  test("what a graph's code rejects or throws inside its onError is the host's; what it starts there and fails later is the graph's", async () => {
+    using d = tempDir("module-graph-onerror-reentry", {
+      "faults.mjs": `
+        export function rejectLater(message) { setTimeout(() => { Promise.reject(new Error(message)); }, 0); }
+        export function reject(message) { Promise.reject(new Error(message)); }
+        export function rejectInAsyncFunction(message) { (async () => { await null; throw new Error(message); })(); }
+        export function throwNow(message) { throw new Error(message); }
+      `,
+      "host.mjs": `const seen = [];
+        const done = () => { if (seen.length === 7) { console.log(JSON.stringify(seen)); process.exit(0); } };
+        process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
+        process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
+        let faults, how;
+        const graph = new Bun.ModuleGraph({ onError: (e, kind) => { seen.push("onError:" + e.message); done(); if (e.message.startsWith("first")) faults[how]("from onError by " + how); } });
+        faults = await graph.import(import.meta.dir + "/faults.mjs");
+        for (how of ["reject", "rejectInAsyncFunction", "throwNow"]) {
+          const before = seen.length;
+          faults.rejectLater("first, answered by " + how);
+          while (seen.length < before + 2) await new Promise(resolve => setImmediate(resolve));
+        }
+        // and the graph's errors still reach onError afterwards
+        faults.rejectLater("last");`,
+    });
+    const r = await runBun(["host.mjs"], { cwd: String(d) });
+    expect({ out: JSON.parse(r.stdout), err: r.stderr, exitCode: r.exitCode }).toEqual({
+      out: [
+        "onError:first, answered by reject",
+        "host:unhandledRejection:from onError by reject",
+        "onError:first, answered by rejectInAsyncFunction",
+        // It rejects after onError returned: a new error of the graph's.
+        "onError:from onError by rejectInAsyncFunction",
+        "onError:first, answered by throwNow",
+        "host:uncaughtException:from onError by throwNow",
+        "onError:last",
+      ],
+      err: "",
+      exitCode: 0,
+    });
+  });
+  test("a first import() with a query is main: import.meta.main compares registry keys, not paths", async () => {
+    using d = tempDir("module-graph-main-query", {
+      "m.mjs": `export const main = import.meta.main;`,
+    });
+    const file = join(String(d), "m.mjs");
+    const g = new ModuleGraphClass();
+    const withQuery = await g.import(file + "?tenant=1");
+    const otherQuery = await g.import(file + "?tenant=2");
+    const plain = await g.import(file);
+    expect({
+      mainModule: g.mainModule,
+      withQuery: withQuery.main,
+      otherQuery: otherQuery.main,
+      plain: plain.main,
+    }).toEqual({ mainModule: file + "?tenant=1", withQuery: true, otherQuery: false, plain: false });
+  });
   test("the first import() is main from the moment it is requested: a second one in the same tick, and evicting main from require.cache, do not change it", async () => {
     using d = tempDir("module-graph-main-first", {
       "a.mjs": `export const main = import.meta.main;`,
@@ -1256,7 +1311,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       InternalFieldTuple: after.InternalFieldTuple - before.InternalFieldTuple < 100,
     }).toEqual({ Promise: true, InternalFieldTuple: true });
   });
-  test("a failed import() nobody handles is the caller's, however the module failed: never the graph's onError", async () => {
+  test("a failed import() nobody handles is the graph's when its module threw, and the host's when the host caused it", async () => {
     using d = tempDir("module-graph-import-unhandled", {
       "sync.mjs": `throw new Error("sync top-level");`,
       "tla.mjs": `await 1; throw new Error("after await");`,
@@ -1284,11 +1339,11 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout.trim())).toEqual([
+      "graph unhandledRejection: after await",
+      "graph unhandledRejection: sync top-level",
+      "graph unhandledRejection: sync top-level",
       "host: Cannot find module '/missing.mjs'",
       "host: ModuleGraph has been disposed",
-      "host: after await",
-      "host: sync top-level",
-      "host: sync top-level",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -2942,7 +2997,7 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
     const m = await ModuleGraph({ env: { T: "outer" } }).import(join(dir, "spawner.mjs"));
     expect([m.outerWho, m.innerWho]).toEqual(["outer", "inner-of-outer"]);
   });
-  test("graph A disposing graph B from A's code; B's pending import rejects; A unaffected", async () => {
+  test("graph A disposing graph B from A's code; B's import suspended in a top-level await is left to finish; A unaffected", async () => {
     const gate = Promise.withResolvers<void>();
     const A = ModuleGraph({ env: { T: "A" } }),
       B = ModuleGraph({ env: { T: "B" }, globals: { gate: gate.promise } });
@@ -2950,10 +3005,11 @@ describe("Bun.ModuleGraph — re-entrancy: graphs created/disposed from inside o
     const a = await A.import(join(dir, "disposer.mjs"));
     expect(a.run(B)).toBe("A");
     gate.resolve();
-    expect([await rejection(bPending), (await A.import(join(dir, "who.mjs"))).who]).toEqual([
-      "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed",
-      "A",
-    ]);
+    expect([
+      (await bPending).who,
+      await rejection(B.import(join(dir, "who.mjs"))),
+      (await A.import(join(dir, "who.mjs"))).who,
+    ]).toEqual(["B", "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed", "A"]);
   });
   test("onError handler that disposes the graph and creates a new one, while more errors from the old graph are queued", async () => {
     const seen: string[] = [];

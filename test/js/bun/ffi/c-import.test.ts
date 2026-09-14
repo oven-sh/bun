@@ -1172,6 +1172,13 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("--outfile has nowhere to put the compiled form, and says so", async () => {
+    using dir = tempDir("c-bundle-outfile", files);
+    const build = await run(String(dir), ["build", "index.ts", "--target=bun", "--outfile", "out.js"]);
+    expect(build.stderr).toContain("cannot write multiple output files without an output directory");
+    expect(build.exitCode).toBe(1);
+  });
+
   // The bundle says what the asset is; nothing depends on what the asset is called.
   test.concurrent.each([
     ["[name]-[hash]", []],

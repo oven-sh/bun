@@ -121,6 +121,161 @@ describe("seq", async () => {
     .stdout("1\n")
     .stderr("")
     .runAsTest("terminates when the increment is too small to advance the accumulator");
+
+  TestBuilder.command`seq 1 0.5 3`
+    .exitCode(0)
+    .stdout("1\n1.5\n2\n2.5\n3\n")
+    .stderr("")
+    .runAsTest("without -w, values print in their shortest form");
+
+  TestBuilder.command`seq -f %g 1 3`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: unsupported option, please open a GitHub issue -- -f\n")
+    .runAsTest("-f is reported as unsupported");
+
+  TestBuilder.command`seq -f%03g 1 3`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: unsupported option, please open a GitHub issue -- -f\n")
+    .runAsTest("-f with the format attached is reported as unsupported");
+
+  TestBuilder.command`seq -f`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: unsupported option, please open a GitHub issue -- -f\n")
+    .runAsTest("-f without a format is reported as unsupported");
+
+  TestBuilder.command`seq --format %g 1 3`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: unsupported option, please open a GitHub issue -- --format\n")
+    .runAsTest("--format is reported as unsupported");
+
+  TestBuilder.command`seq -s , -f %g 1 3`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: unsupported option, please open a GitHub issue -- -f\n")
+    .runAsTest("-f after other flags is reported as unsupported");
+});
+
+describe("seq -w", async () => {
+  TestBuilder.command`seq -w 8 11`
+    .exitCode(0)
+    .stdout("08\n09\n10\n11\n")
+    .stderr("")
+    .runAsTest("pads to the width of the widest value");
+
+  TestBuilder.command`seq --fixed-width 8 11`
+    .exitCode(0)
+    .stdout("08\n09\n10\n11\n")
+    .stderr("")
+    .runAsTest("--fixed-width is the long form of -w");
+
+  TestBuilder.command`seq -w 11 8`
+    .exitCode(0)
+    .stdout("11\n10\n09\n08\n")
+    .stderr("")
+    .runAsTest("pads when counting down");
+
+  TestBuilder.command`seq -w 10`
+    .exitCode(0)
+    .stdout("01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n")
+    .stderr("")
+    .runAsTest("pads with a single operand");
+
+  TestBuilder.command`seq -w 1 3`
+    .exitCode(0)
+    .stdout("1\n2\n3\n")
+    .stderr("")
+    .runAsTest("adds nothing when the values already share a width");
+
+  TestBuilder.command`seq -w 99 1 101`
+    .exitCode(0)
+    .stdout("099\n100\n101\n")
+    .stderr("")
+    .runAsTest("width comes from the widest bound");
+
+  TestBuilder.command`seq -w 1 4 10`
+    .exitCode(0)
+    .stdout("01\n05\n09\n")
+    .stderr("")
+    .runAsTest("width comes from the end bound even when it is not reached");
+
+  TestBuilder.command`seq -w -1 1`
+    .exitCode(0)
+    .stdout("-1\n00\n01\n")
+    .stderr("")
+    .runAsTest("the sign counts towards the width");
+
+  TestBuilder.command`seq -w -10 5 10`
+    .exitCode(0)
+    .stdout("-10\n-05\n000\n005\n010\n")
+    .stderr("")
+    .runAsTest("zeros go between the sign and the digits");
+
+  TestBuilder.command`seq -w 1 0.5 3`
+    .exitCode(0)
+    .stdout("1.0\n1.5\n2.0\n2.5\n3.0\n")
+    .stderr("")
+    .runAsTest("every value gets the increment's decimals");
+
+  TestBuilder.command`seq -w 0 0.25 1`
+    .exitCode(0)
+    .stdout("0.00\n0.25\n0.50\n0.75\n1.00\n")
+    .stderr("")
+    .runAsTest("every value gets the most decimals any operand has");
+
+  TestBuilder.command`seq -w -0.5 0.25 0.5`
+    .exitCode(0)
+    .stdout("-0.50\n-0.25\n00.00\n00.25\n00.50\n")
+    .stderr("")
+    .runAsTest("fractional values pad after the sign");
+
+  TestBuilder.command`seq -w 1.50 2`.exitCode(0).stdout("1.50\n").stderr("").runAsTest("keeps decimals as written");
+
+  TestBuilder.command`seq -w 0 2.5e-1 1`
+    .exitCode(0)
+    .stdout("0.00\n0.25\n0.50\n0.75\n1.00\n")
+    .stderr("")
+    .runAsTest("a negative exponent adds decimals");
+
+  TestBuilder.command`seq -w 1.5e1 16`
+    .exitCode(0)
+    .stdout("15\n16\n")
+    .stderr("")
+    .runAsTest("a positive exponent removes decimals");
+
+  TestBuilder.command`seq -w -s , 8 11`.exitCode(0).stdout("08,09,10,11,").stderr("").runAsTest("works with -s");
+
+  TestBuilder.command`seq -s, -t. -w 8 11`
+    .exitCode(0)
+    .stdout("08,09,10,11,.")
+    .stderr("")
+    .runAsTest("works after -s and -t");
+
+  TestBuilder.command`echo $(seq -w 8 11)`
+    .exitCode(0)
+    .stdout("08 09 10 11\n")
+    .stderr("")
+    .runAsTest("pads when stdout is captured");
+
+  TestBuilder.command`seq -w 8 11 > out.txt`
+    .exitCode(0)
+    .stdout("")
+    .stderr("")
+    .fileEquals("out.txt", "08\n09\n10\n11\n")
+    .runAsTest("pads when stdout is a file");
+
+  // 1e-70000 parses as 0 but was written with 70000 implied decimals; more
+  // than core::fmt can print, so the precision is capped at 1074 (the most
+  // fractional digits any double has) instead of panicking.
+  const zeros = Buffer.alloc(1074, "0").toString();
+  TestBuilder.command`seq -w 1e-70000 1`
+    .exitCode(0)
+    .stdout(`0.${zeros}\n1.${zeros}\n`)
+    .stderr("")
+    .runAsTest("caps the number of decimals");
 });
 
 describe("seq without stdout", async () => {

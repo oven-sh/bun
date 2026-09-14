@@ -1,0 +1,376 @@
+{
+  "total_sites": 11044,
+  "distinct_pattern_clusters": 8531,
+  "semantic_categories": {
+    "ptr_arith": 302,
+    "mimalloc_ffi": 84,
+    "ptr_cast": 2231,
+    "c_alloc": 288,
+    "ptr_intrinsic": 956,
+    "other_unsafe_impl": 188,
+    "allocator": 169,
+    "fd_syscall": 1292,
+    "mmap": 6,
+    "libc_ffi": 345,
+    "other": 5811,
+    "sync_impl": 78,
+    "send_impl": 87,
+    "raw_ptr_lifecycle": 537,
+    "slice_from_raw": 298,
+    "mem_transmute": 30,
+    "atomic": 101,
+    "jsc_object_handle": 55,
+    "zig_legacy_str": 12,
+    "compiler_hint": 17,
+    "raw_cast": 187,
+    "maybe_uninit": 182,
+    "pin_unchecked": 62,
+    "smart_ptr_raw": 55,
+    "unsafe_cell": 28,
+    "unchecked_index": 13,
+    "libuv_ffi": 254,
+    "boringssl_ffi": 146,
+    "cares_ffi": 62,
+    "brotli_ffi": 4,
+    "mem_zeroed": 10,
+    "syscall": 104,
+    "uws_ffi": 184,
+    "zlib_ffi": 82,
+    "libarchive_ffi": 83,
+    "jsc_ffi": 8,
+    "lolhtml_ffi": 41,
+    "zstd_ffi": 4
+  },
+  "top_pattern_clusters": [
+    {
+      "site_count": 145,
+      "representative_pattern": "unsafe { &mut *this }",
+      "site_ids": [
+        "S-000137",
+        "S-000158",
+        "S-000826",
+        "S-001786",
+        "S-002151"
+      ]
+    },
+    {
+      "site_count": 82,
+      "representative_pattern": "unsafe { bun_core::heap::take(this) }",
+      "site_ids": [
+        "S-000369",
+        "S-001810",
+        "S-001816",
+        "S-001968",
+        "S-002152"
+      ]
+    },
+    {
+      "site_count": 49,
+      "representative_pattern": "unsafe { Self::finish(this) }",
+      "site_ids": [
+        "S-005062",
+        "S-005063",
+        "S-005064",
+        "S-005065",
+        "S-005066"
+      ]
+    },
+    {
+      "site_count": 42,
+      "representative_pattern": "unsafe { &*this }",
+      "site_ids": [
+        "S-000545",
+        "S-002153",
+        "S-002654",
+        "S-004898",
+        "S-004986"
+      ]
+    },
+    {
+      "site_count": 34,
+      "representative_pattern": "unsafe { bun_core::ffi::zeroed_unchecked() }",
+      "site_ids": [
+        "S-000482",
+        "S-000813",
+        "S-001805",
+        "S-001853",
+        "S-001854"
+      ]
+    },
+    {
+      "site_count": 26,
+      "representative_pattern": "unsafe { &*jsc_vm }",
+      "site_ids": [
+        "S-006936",
+        "S-006938",
+        "S-006946",
+        "S-006950",
+        "S-006965"
+      ]
+    },
+    {
+      "site_count": 23,
+      "representative_pattern": "unsafe { &mut *manager_ptr }",
+      "site_ids": [
+        "S-002430",
+        "S-002445",
+        "S-002620",
+        "S-002622",
+        "S-002624"
+      ]
+    },
+    {
+      "site_count": 23,
+      "representative_pattern": "unsafe { &*vm }",
+      "site_ids": [
+        "S-006795",
+        "S-006808",
+        "S-006809",
+        "S-006810",
+        "S-006811"
+      ]
+    },
+    {
+      "site_count": 22,
+      "representative_pattern": "unsafe { core::slice::from_raw_parts(ptr, len) }",
+      "site_ids": [
+        "S-000156",
+        "S-000161",
+        "S-001192",
+        "S-001383",
+        "S-001405"
+      ]
+    },
+    {
+      "site_count": 22,
+      "representative_pattern": "unsafe { &mut *p }",
+      "site_ids": [
+        "S-000852",
+        "S-001341",
+        "S-001961",
+        "S-001962",
+        "S-001976"
+      ]
+    },
+    {
+      "site_count": 20,
+      "representative_pattern": "unsafe { p.as_mut() }",
+      "site_ids": [
+        "S-000381",
+        "S-000382",
+        "S-001841",
+        "S-002028",
+        "S-002030"
+      ]
+    },
+    {
+      "site_count": 20,
+      "representative_pattern": "unsafe { bun_core::ffi::slice(ptr, len) }",
+      "site_ids": [
+        "S-002119",
+        "S-003330",
+        "S-003339",
+        "S-003381",
+        "S-003382"
+      ]
+    },
+    {
+      "site_count": 16,
+      "representative_pattern": "unsafe { &mut *this_ptr }",
+      "site_ids": [
+        "S-000535",
+        "S-000536",
+        "S-002104",
+        "S-002118",
+        "S-002121"
+      ]
+    },
+    {
+      "site_count": 14,
+      "representative_pattern": "unsafe { core::ptr::addr_of!((*item).next) }",
+      "site_ids": [
+        "S-001808",
+        "S-001820",
+        "S-001918",
+        "S-002442",
+        "S-002528"
+      ]
+    },
+    {
+      "site_count": 13,
+      "representative_pattern": "unsafe { &mut *p.as_ptr() }",
+      "site_ids": [
+        "S-000676",
+        "S-002018",
+        "S-003174",
+        "S-003678",
+        "S-005289"
+      ]
+    },
+    {
+      "site_count": 13,
+      "representative_pattern": "unsafe { &mut *ctx }",
+      "site_ids": [
+        "S-002039",
+        "S-002070",
+        "S-003508",
+        "S-003618",
+        "S-004176"
+      ]
+    },
+    {
+      "site_count": 13,
+      "representative_pattern": "unsafe { Self::deref(this) }",
+      "site_ids": [
+        "S-002149",
+        "S-002248",
+        "S-002253",
+        "S-002339",
+        "S-002349"
+      ]
+    },
+    {
+      "site_count": 13,
+      "representative_pattern": "unsafe { &mut *vm }",
+      "site_ids": [
+        "S-003806",
+        "S-003825",
+        "S-003826",
+        "S-003827",
+        "S-003901"
+      ]
+    },
+    {
+      "site_count": 12,
+      "representative_pattern": "unsafe { &*p }",
+      "site_ids": [
+        "S-000752",
+        "S-001689",
+        "S-003210",
+        "S-003603",
+        "S-004289"
+      ]
+    },
+    {
+      "site_count": 12,
+      "representative_pattern": "unsafe { core::hint::unreachable_unchecked() }",
+      "site_ids": [
+        "S-000850",
+        "S-002520",
+        "S-002778",
+        "S-002787",
+        "S-003472"
+      ]
+    },
+    {
+      "site_count": 12,
+      "representative_pattern": "unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> { // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract. unsafe { core::ptr::addr_of!((*item).next) } }",
+      "site_ids": [
+        "S-001819",
+        "S-001917",
+        "S-002441",
+        "S-002527",
+        "S-002769"
+      ]
+    },
+    {
+      "site_count": 12,
+      "representative_pattern": "unsafe { &mut *stream_ptr }",
+      "site_ids": [
+        "S-004864",
+        "S-004865",
+        "S-004867",
+        "S-004868",
+        "S-004869"
+      ]
+    },
+    {
+      "site_count": 12,
+      "representative_pattern": "unsafe { ctx.log_mut() }",
+      "site_ids": [
+        "S-005660",
+        "S-005674",
+        "S-005694",
+        "S-005696",
+        "S-005724"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { &mut *ptr }",
+      "site_ids": [
+        "S-000176",
+        "S-001166",
+        "S-001938",
+        "S-002061",
+        "S-002600"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { &mut *self.log }",
+      "site_ids": [
+        "S-000666",
+        "S-000678",
+        "S-000679",
+        "S-000754",
+        "S-000835"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { bun_core::callback_ctx::<T>(ctx) }",
+      "site_ids": [
+        "S-000885",
+        "S-000886",
+        "S-000888",
+        "S-000890",
+        "S-000894"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { &mut *jsc_vm_ptr }",
+      "site_ids": [
+        "S-003843",
+        "S-003844",
+        "S-004913",
+        "S-004914",
+        "S-004920"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { &mut *promise }",
+      "site_ids": [
+        "S-005295",
+        "S-005919",
+        "S-007336",
+        "S-007337",
+        "S-007339"
+      ]
+    },
+    {
+      "site_count": 10,
+      "representative_pattern": "unsafe { bun_core::ffi::slice(input, len) }",
+      "site_ids": [
+        "S-009361",
+        "S-009362",
+        "S-009363",
+        "S-009365",
+        "S-009368"
+      ]
+    },
+    {
+      "site_count": 9,
+      "representative_pattern": "unsafe { core::slice::from_raw_parts_mut(ptr, len) }",
+      "site_ids": [
+        "S-000102",
+        "S-000145",
+        "S-000148",
+        "S-004331",
+        "S-006547"
+      ]
+    }
+  ]
+}

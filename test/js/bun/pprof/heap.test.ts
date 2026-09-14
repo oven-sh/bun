@@ -215,6 +215,19 @@ describe.concurrent("Bun.pprof.heap", () => {
     if (!isWindows) for (const labels of afterWorkerExit.labels) expect(labels.thread).toBeString();
   });
 
+  test.skipIf(!quantitative)(
+    "a profile that starts when a Worker has been allocating has what it allocates from then on",
+    async () => {
+      const { stdout, stderr, exitCode } = await runFixture("heap-fixture-late-start.ts");
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const result = JSON.parse(stdout);
+      expect(result.threadId).toBeGreaterThan(0);
+      // The Worker's thread is there before the profile: it starts to sample when it is told to, not
+      // when it next looks by itself (every 1000 allocations that miss the free lists).
+      expect(Math.abs(result.workerAllocSpace - 16 * MiB)).toBeLessThan(2 * MiB);
+    },
+  );
+
   test.skipIf(!quantitative)("a free of what an earlier session sampled does not count in the next one", async () => {
     const { stdout, stderr, exitCode } = await runFixture("heap-fixture-sessions.ts");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });

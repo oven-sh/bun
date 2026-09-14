@@ -9,6 +9,7 @@ declare module "bun" {
 
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
+    type LibEmptyOrBunMessageEvent<T> = LibDomIsLoaded extends true ? {} : Bun.BunMessageEvent<T>;
 
     type LibEmptyOrNodeStreamWebCompressionStream = LibDomIsLoaded extends true
       ? {}
@@ -548,7 +549,7 @@ declare var CloseEvent: {
   new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
 };
 
-interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
+interface MessageEvent<T = any> extends Bun.__internal.LibEmptyOrBunMessageEvent<T> {}
 declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
   "MessageEvent",
   {

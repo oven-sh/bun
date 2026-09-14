@@ -510,6 +510,11 @@ impl Rm {
         if flag.len() > 2 && flag[1] == b'-' {
             return match flag {
                 b"--preserve-root" | b"--no-preserve-root" => RmParseFlag::ContinueParsing,
+                b"--force" => {
+                    opts.force = true;
+                    opts.prompt_behaviour = PromptBehaviour::Never;
+                    RmParseFlag::ContinueParsing
+                }
                 b"--recursive" => {
                     opts.recursive = true;
                     RmParseFlag::ContinueParsing

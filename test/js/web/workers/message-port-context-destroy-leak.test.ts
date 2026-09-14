@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
 // MessagePort::jsRef() takes a self-ref() on the C++ MessagePort (plus an
-// event-loop ref) when .onmessage is assigned or .ref() is called. The only
-// path that released it was an explicit .close()/.unref() from JS. When a
-// Worker (or any owning context) is torn down without that, contextDestroyed()
-// → close() ran but never dropped the self-ref, so every such MessagePort
-// leaked for the lifetime of the process.
+// event-loop ref) when .ref() is called. The only path that released it was
+// an explicit .close()/.unref() from JS. When a Worker (or any owning context)
+// is torn down without that, contextDestroyed() → close() ran but never
+// dropped the self-ref, so every such MessagePort leaked for the lifetime of
+// the process.
 //
 // Skipped on Windows: RSS there does not drop after worker threads exit (the
 // per-thread mimalloc arenas stay committed), so the allocator residue from
@@ -25,7 +25,9 @@ test.skipIf(isWindows)(
           const keep = [];
           for (let i = 0; i < 8000; i++) {
             const { port1, port2 } = new MessageChannel();
-            // Assigning onmessage calls MessagePort::jsRef() → self-ref().
+            // ref() calls MessagePort::jsRef() → self-ref(). (A listener alone takes
+            // only an event-loop ref, so it is not what this test measures.)
+            port1.ref();
             port1.onmessage = () => {};
             keep.push(port1, port2);
           }

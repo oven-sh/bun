@@ -108,9 +108,10 @@ describe.skipIf(!supported)("hostile input", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if ("error" in entry) return check(entry, String(dir), { stdout, stderr, exitCode });
-      // A program that compiles on a full stack may be too deep for this one; then it says so.
-      if (exitCode === entry.status) expect(lines(stdout), stderr).toBe(entry.output);
+      // What is too deep for this stack says so, before whatever else there is to say about it.
+      const tooDeep = lines(stderr).includes("is nested too deeply");
+      if ("error" in entry && !tooDeep) return check(entry, String(dir), { stdout, stderr, exitCode });
+      if (!("error" in entry) && exitCode === entry.status) expect(lines(stdout), stderr).toBe(entry.output);
       else {
         expect(lines(stderr)).toContain("is nested too deeply");
         expect(stderr).not.toContain("Bun has crashed");

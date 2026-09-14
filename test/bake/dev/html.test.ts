@@ -475,6 +475,8 @@ devTest("script that fails in the same rebuild as its html file comes back once 
         `,
       );
     }
+    // Not a page request: on a release build that bundles the whole route again.
+    await dev.output.waitForLine(/Could not resolve: "\.\/missing\.ts"/);
     await dev.write(
       "first.ts",
       `
@@ -514,6 +516,8 @@ devTest("stylesheet that fails in the same rebuild as its html file comes back o
         `,
       );
     }
+    // Not a page request: on a release build that bundles the whole route again.
+    await dev.output.waitForLine(/Unexpected end of input/);
     await dev.write(
       "styles.css",
       `

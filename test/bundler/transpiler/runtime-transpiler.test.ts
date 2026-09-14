@@ -256,45 +256,42 @@ describe("unterminated string literals in large files", () => {
 test("the call of a parenthesized optional chain is not part of the chain", async () => {
   // `(a?.b as F)()` and `(a?.b)!()` print as `(a?.b)()`. The parentheses end the optional chain, so a nullish `a`
   // makes the call throw after the arguments ran. A present `a` is the `this` of the call, also in a class field.
-  using dir = tempDir("transpiler-parenthesized-optional-chain-call", {
-    "index.ts": `
-      type Fn = (this: unknown, ...args: unknown[]) => unknown;
-      const present: { fn?: Fn } | undefined = {
-        fn() {
-          return this === present ? "called" : "wrong this";
-        },
-      };
-      const missing = undefined as { fn?: Fn } | undefined;
-      const outcome = (run: () => unknown) => {
-        try {
-          return String(run());
-        } catch (e) {
-          return (e as Error).constructor.name;
-        }
-      };
-      class Fields {
-        cast = (present?.fn as Fn)();
-        nonNull = (present?.fn)!();
-        static cast = (present?.fn as Fn)();
+  const source = `
+    type Fn = (this: unknown, ...args: unknown[]) => unknown;
+    const present: { fn?: Fn } | undefined = {
+      fn() {
+        return this === present ? "called" : "wrong this";
+      },
+    };
+    const missing = undefined as { fn?: Fn } | undefined;
+    const outcome = (run: () => unknown) => {
+      try {
+        return String(run());
+      } catch (e) {
+        return (e as Error).constructor.name;
       }
-      const fields = new Fields();
-      let argumentsEvaluated = 0;
-      console.log(
-        JSON.stringify({
-          fields: [fields.cast, fields.nonNull, Fields.cast],
-          present: [(present?.fn as Fn)(), (present?.fn)!()],
-          missing: [outcome(() => (missing?.fn as Fn)()), outcome(() => (missing?.fn)!(argumentsEvaluated++))],
-          argumentsEvaluated,
-          oneChain: [outcome(() => missing?.fn!()), outcome(() => (missing?.fn)?.())],
-        }),
-      );
-    `,
-  });
+    };
+    class Fields {
+      cast = (present?.fn as Fn)();
+      nonNull = (present?.fn)!();
+      static cast = (present?.fn as Fn)();
+    }
+    const fields = new Fields();
+    let argumentsEvaluated = 0;
+    console.log(
+      JSON.stringify({
+        fields: [fields.cast, fields.nonNull, Fields.cast],
+        present: [(present?.fn as Fn)(), (present?.fn)!()],
+        missing: [outcome(() => (missing?.fn as Fn)()), outcome(() => (missing?.fn)!(argumentsEvaluated++))],
+        argumentsEvaluated,
+        oneChain: [outcome(() => missing?.fn!()), outcome(() => (missing?.fn)?.())],
+      }),
+    );
+  `;
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "-e", source],
     env: bunEnv,
-    cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -50,6 +50,15 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
+const NETWORK_CONCURRENCY_PARAM: ParamType = clap::param!(
+    "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
+);
+const _: () = assert!(
+    super::DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL == 64
+        && super::DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES == 64,
+    "update the default in the --network-concurrency help text (and docs/snippets/cli/*.mdx)"
+);
+
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
     clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
@@ -109,9 +118,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"
     ),
-    clap::param!(
-        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"
-    ),
+    NETWORK_CONCURRENCY_PARAM,
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
     clap::param!(
         "--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"

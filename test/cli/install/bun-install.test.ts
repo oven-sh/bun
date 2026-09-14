@@ -67,6 +67,66 @@ async function withContext(
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
 
+// BUN_CONFIG_MAX_HTTP_REQUESTS is documented as another way to set the request
+// limit, so it must not leak in from the outer environment while measuring it.
+const networkConcurrencyEnv = { ...env, BUN_CONFIG_MAX_HTTP_REQUESTS: undefined };
+
+// Runs `bun install` with one dependency more than `limit`, against a registry
+// that holds every manifest request open, and asserts that bun has exactly
+// `limit` requests in flight: the extra dependency has to wait for a slot.
+async function expectInstallInFlightLimit(ctx: TestContext, limit: number) {
+  const dependencies: Record<string, string> = {};
+  for (let i = 0; i < limit + 1; i++) dependencies[`dep-${i}`] = "^1";
+  await writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies }),
+  );
+
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const limitReached = Promise.withResolvers<void>();
+  const limitExceeded = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  setContextHandler(ctx, async () => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    if (inFlight >= limit) limitReached.resolve();
+    if (inFlight > limit) limitExceeded.resolve();
+    await release.promise;
+    inFlight--;
+    return new Response("404", { status: 404 });
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: ctx.package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: networkConcurrencyEnv,
+  });
+  try {
+    // A real limit below `limit` parks bun (and this wait) with fewer requests
+    // in flight and no further signal, so the wait is bounded (generously: this
+    // is a debug build under CI load) and the assertions below report what was
+    // reached. proc.exited covers bun giving up early.
+    await Promise.race([limitReached.promise, proc.exited, Bun.sleep(30_000)]);
+    // bun sends everything its limit allows in one burst, so a request beyond
+    // the limit arrives right behind the others. That it never arrives can only
+    // be observed by giving it a moment to show up.
+    await Promise.race([limitExceeded.promise, Bun.sleep(500)]);
+  } finally {
+    release.resolve();
+  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(maxInFlight).toBe(limit);
+  expect(ctx.requested).toBe(limit + 1);
+  expect(stderr).toContain("failed to resolve");
+  expect(stdout).toContain("bun install v1.");
+  expect(exitCode).toBe(1);
+}
+
 const gitEnv = {
   ...bunEnv,
   GIT_AUTHOR_NAME: "bun-test",
@@ -121,6 +181,26 @@ function serveDirectory(root: string) {
 }
 
 describe.concurrent("bun-install", () => {
+  it("bun install --help states the --network-concurrency default that bun install actually uses", async () => {
+    await using help = spawn({
+      cmd: [bunExe(), "install", "--help"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [helpStdout, helpStderr, helpExitCode] = await Promise.all([
+      help.stdout.text(),
+      help.stderr.text(),
+      help.exited,
+    ]);
+    const helpLine = (helpStdout + helpStderr).split(/\r?\n/).find(line => line.includes("--network-concurrency"));
+    const documentedDefault = /Maximum number of concurrent network requests \(default (\d+)\)$/.exec(helpLine ?? "");
+    expect(documentedDefault).not.toBeNull();
+    expect(helpExitCode).toBe(0);
+
+    await withContext(defaultOpts, ctx => expectInstallInFlightLimit(ctx, Number(documentedDefault![1])));
+  });
+
   for (let input of ["abcdef", "65537", "-1"]) {
     it(`bun install --network-concurrency=${input} fails`, async () => {
       await withContext(defaultOpts, async ctx => {
@@ -138,7 +218,7 @@ describe.concurrent("bun-install", () => {
   }`,
         );
         const { stderr, exited } = spawn({
-          cmd: [bunExe(), "install", "--network-concurrency", "abcdef"],
+          cmd: [bunExe(), "install", "--network-concurrency", input],
           cwd: ctx.package_dir,
           stdout: "inherit",
           stdin: "inherit",
@@ -146,7 +226,7 @@ describe.concurrent("bun-install", () => {
           env,
         });
         const err = await stderr.text();
-        expect(err).toContain("Expected --network-concurrency to be a number between 0 and 65535");
+        expect(err).toContain(`Expected --network-concurrency to be a number between 0 and 65535: ${input}`);
         expect(await exited).toBe(1);
         expect(urls).toBeEmpty();
       });

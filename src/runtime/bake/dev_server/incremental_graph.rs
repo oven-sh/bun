@@ -790,9 +790,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// A CSS root inlines the stylesheets it imports, so they never reach
-    /// `receive_chunk`. `key` is one that the bundler parsed for a root of this
-    /// bundle: unless it failed in this bundle, the root's chunk holds it.
+    /// `receive_chunk` for a stylesheet that a CSS root of this bundle inlines.
     fn receive_inlined_css(&mut self, key: &[u8]) {
         debug_assert!(matches!(SIDE, Side::Client));
         let Some(index) = self.bundled_files.get_index(key) else {
@@ -1707,8 +1705,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                         self.append_client_entry_point(entry_points, index)?;
                     }
-                    // A file that failed to bundle keeps no content, so only
-                    // its edges say that a CSS root inlines it.
+                    // A failed file: queue the CSS roots that inline it.
                     Content::Unknown => {
                         let mut it = self.edge_lists[index].first_dep;
                         let mut only_css_roots_import_it = it.is_some();
@@ -1727,7 +1724,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             }
                             it = entry.next_dependency;
                         }
-                        // The roots parse the stylesheets that only they import.
+                        // A root parses what it inlines.
                         if !only_css_roots_import_it
                             && !self.bundled_files.values()[index].is_hmr_root
                         {

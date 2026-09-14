@@ -1186,9 +1186,9 @@ impl AsyncModule {
             );
         }
 
-        // No watcher registration here: `maybe_watch_file` already ran before
-        // the enqueue, and the fd the parse opened may have been closed (and
-        // the number recycled) by the transpile frame's fd guard.
+        // No watcher registration here: the transpile frame armed the watch
+        // before it read the file, and its fd guard has closed the fd the
+        // parse opened (the number may be recycled).
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {

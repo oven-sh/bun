@@ -783,6 +783,7 @@ impl TransformTask {
                 .unwrap_or(true),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_fd_ptr: None,
+            before_read: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
             remove_cjs_module_wrapper: false,
@@ -1246,6 +1247,7 @@ impl JSTranspiler {
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
             file_fd_ptr: None,
+            before_read: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
             remove_cjs_module_wrapper: false,

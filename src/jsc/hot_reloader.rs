@@ -39,7 +39,8 @@ impl ImportWatcher {
     /// and `flush_evictions` closes it concurrently, so a reader would hit
     /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
     /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
+    /// the file by path; the watchlist gets a duplicate of that descriptor
+    /// (`Watcher::add_file_before_read`).
     pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,
@@ -78,6 +79,23 @@ impl ImportWatcher {
                 watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
             }
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
+        }
+    }
+
+    /// See [`Watcher::add_file_before_read`]. `fd` stays the caller's.
+    #[inline]
+    pub fn add_file_before_read<const COPY_FILE_PATH: bool>(
+        &mut self,
+        fd: Fd,
+        file_path: &[u8],
+        hash: bun_watcher::HashType,
+        package_json: Option<&'static bun_watcher::PackageJSON>,
+    ) -> bun_sys::Result<()> {
+        match self {
+            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
+                watcher.add_file_before_read::<COPY_FILE_PATH>(fd, file_path, hash, package_json)
+            }
+            ImportWatcher::None => Ok(()),
         }
     }
 }

@@ -399,6 +399,7 @@ impl PackageJSON {
             false,
             None,
             None,
+            None,
         ) {
             Ok(e) => e,
             Err(err) => {

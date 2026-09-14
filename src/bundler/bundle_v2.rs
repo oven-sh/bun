@@ -214,16 +214,15 @@ impl<'a> BundleV2<'a> {
         self.plugins.map(|mut p| unsafe { p.as_mut() })
     }
 
-    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
-    /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
-    /// liveness/exclusivity argument lives in one place.
+    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`
+    /// on the bundle thread.
     #[inline]
     pub(crate) fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
-        // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and `add_file` is only
-        // ever driven from the single bundle thread (`thread_lock`-asserted).
+        // watcher storage is disjoint from `self`. The parse workers
+        // (`ParseTask`'s `watch_before_read`) and the watcher thread reach the
+        // same `Watcher`; `add_file` takes the watcher's mutex.
         self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -5455,7 +5454,7 @@ pub mod bv2_impl {
             namespace == b"file" && bun_paths::is_absolute(path) && self.should_add_watcher(path)
         }
 
-        fn should_add_watcher(&self, path: &[u8]) -> bool {
+        pub(crate) fn should_add_watcher(&self, path: &[u8]) -> bool {
             if self.dev_server.is_some() {
                 strings::index_of(path, b"/node_modules/").is_none()
                     && (if cfg!(windows) {
@@ -7224,38 +7223,6 @@ pub mod bv2_impl {
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
-                }
-            }
-
-            // To minimize contention, watchers are appended on the bundle thread.
-            if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = parse_result.value.source_index();
-                    // borrowck — read the source path before
-                    // `should_add_watcher(&self)` so the column borrow is released.
-                    let source_path = this.graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .text;
-                    if this.should_add_watcher(source_path) {
-                        let fd = parse_result.watcher_data.fd;
-                        let dir_fd = parse_result.watcher_data.dir_fd;
-                        let hash = bun_wyhash::hash(source_path) as u32;
-                        let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let _ = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
-                        };
-                    }
                 }
             }
 

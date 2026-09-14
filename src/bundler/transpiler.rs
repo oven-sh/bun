@@ -984,8 +984,15 @@ pub struct ParseOptions<'a, 'b> {
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
-    /// On exception, we might still want to watch the file.
+    /// Receives the descriptor the source was read through, also when the
+    /// parse fails, so that the caller can close it.
     pub file_fd_ptr: Option<&'b mut FD>,
+
+    /// Called with the source file's descriptor after the file is open and
+    /// before it is read. `--watch` and `--hot` arm the file watch here: a
+    /// watch armed after the parse never reports a save that lands while the
+    /// file is read and parsed, and nothing reads the file again.
+    pub before_read: Option<&'b mut dyn FnMut(FD)>,
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
@@ -1481,6 +1488,7 @@ impl<'a> Transpiler<'a> {
                 USE_SHARED_BUFFER,
                 file_descriptor,
                 if USE_SHARED_BUFFER { None } else { Some(arena) },
+                this_parse.before_read.take(),
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -2967,6 +2975,7 @@ impl<'a> Transpiler<'a> {
                     dirname_fd,
                     file_descriptor: None,
                     file_fd_ptr: None,
+                    before_read: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,
@@ -3137,6 +3146,7 @@ impl<'a> Transpiler<'a> {
             file_path_text,
             dirname_fd,
             false,
+            None,
             None,
             None,
         ) {

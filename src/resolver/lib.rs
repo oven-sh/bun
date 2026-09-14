@@ -2321,6 +2321,11 @@ pub mod cache {
         /// drops instead of landing in the worker thread's default mimalloc
         /// heap (which is never destroyed). `None` keeps the global-heap
         /// `Contents::Owned(Vec<u8>)` path.
+        ///
+        /// `before_read` receives the descriptor once the file is open and
+        /// before its first byte is read. A file watch armed there reports
+        /// every write the read does not contain. It is skipped, like the
+        /// returned `Entry::fd`, when descriptors are closed eagerly.
         pub fn read_file_with_allocator(
             &mut self,
             _fs: &mut fs_mod::FileSystem,
@@ -2329,6 +2334,7 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
+            before_read: Option<&mut dyn FnMut(Fd)>,
         ) -> crate::CrateResult<Entry> {
             let rfs = &_fs.fs;
 
@@ -2383,6 +2389,13 @@ pub mod cache {
                 fd
             );
 
+            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+            if publish_fd {
+                if let Some(before_read) = before_read {
+                    before_read(fd);
+                }
+            }
+
             // reshaped for borrowck — capture `stream` scalar before borrowing
             // the shared buffer.
             let stream = self.stream;
@@ -2427,7 +2440,6 @@ pub mod cache {
                 }
             };
 
-            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
             if publish_fd {
                 if let Some(f) = owned.take() {
                     let _ = f.into_raw();

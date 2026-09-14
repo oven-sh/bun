@@ -132,7 +132,6 @@ pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
-    pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
@@ -155,19 +154,6 @@ impl ResultValue {
             ResultValue::Success(val) => val.source.index.0,
         }
     }
-}
-
-pub(crate) struct WatcherData {
-    pub(crate) fd: Fd,
-    pub(crate) dir_fd: Fd,
-}
-
-impl WatcherData {
-    /// When no files to watch, this encoding is used.
-    pub(crate) const NONE: WatcherData = WatcherData {
-        fd: Fd::INVALID,
-        dir_fd: Fd::INVALID,
-    };
 }
 
 pub(crate) struct Success {
@@ -1513,6 +1499,35 @@ pub mod parse_worker {
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
+                // `bun build --watch` and the dev server arm the file watch
+                // on this worker, after the file is open and before it is
+                // read. A watch armed once the parse result is back on the
+                // bundle thread never reports a save that lands while this
+                // file is read and parsed, and nothing reads the file again.
+                let watch_path: &[u8] = file_path.text;
+                let mut watch_before_read = ctx
+                    .bun_watcher
+                    .filter(|_| ctx.should_add_watcher(watch_path))
+                    .map(|mut watcher| {
+                        move |fd: Fd| {
+                            // SAFETY: BACKREF — the watcher outlives the bundle
+                            // pass (see `BundleV2::bun_watcher_mut`), and
+                            // `add_file_before_read` serializes on its mutex.
+                            let watcher = unsafe { watcher.as_mut() };
+                            let hash = bun_wyhash::hash(watch_path) as u32;
+                            // The watcher keeps the path past this bundle; borrow
+                            // it only when it is interned for the process lifetime
+                            // (`dupe_alloc` leaves other paths in the bundle
+                            // arena). Failures to watch are intentionally ignored.
+                            let _ = if Fs::as_interned_path(watch_path).is_some() {
+                                watcher.add_file_before_read::<{ cfg!(windows) }>(
+                                    fd, watch_path, hash, None,
+                                )
+                            } else {
+                                watcher.add_file_before_read::<true>(fd, watch_path, hash, None)
+                            };
+                        }
+                    });
                 // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
                 // disjoint from `(*transpiler).fs` (a backref pointer field).
                 break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
@@ -1522,6 +1537,7 @@ pub mod parse_worker {
                     false,
                     contents_file.unwrap_valid(),
                     read_arena,
+                    watch_before_read.as_mut().map(|f| f as &mut dyn FnMut(Fd)),
                 ) {
                     Ok(e) => {
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
@@ -2357,12 +2373,11 @@ pub mod parse_worker {
         // Only close a descriptor this task opened. A valid `file` was borrowed
         // from the resolver's entry cache (symlink-resolved files cache their fd
         // there); closing it leaves a stale fd for the next in-process build.
+        // A watcher keeps its own duplicate (`watch_before_read`).
         let opened_own_fd =
             matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
-        let will_close_file_descriptor = opened_own_fd
-            && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
+        let will_close_file_descriptor =
+            opened_own_fd && entry.fd.is_valid() && entry.fd.stdio_tag().is_none();
         if will_close_file_descriptor {
             let _ = entry.close_fd();
             task.contents_or_fd = ContentsOrFd::Fd {
@@ -2861,13 +2876,6 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
-            watcher_data: match this.contents_or_fd {
-                ContentsOrFd::Fd { file, dir } => WatcherData {
-                    fd: file,
-                    dir_fd: dir,
-                },
-                ContentsOrFd::Contents(_) => WatcherData::NONE,
-            },
         });
         let result = bun_core::heap::into_raw(result);
 

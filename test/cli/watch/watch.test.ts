@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -465,3 +465,73 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// The watch on a file was armed only after the file had been read and parsed,
+// so a save that landed in between was never reported, and nothing read the
+// file again: the output stayed stale until the next save of that file. Here a
+// macro that dep.ts calls saves dep.ts ("v0" -> "v1") while dep.ts is being
+// parsed, then keeps that parse open while the watcher thread handles the write.
+describe("a save that lands while the file is read and parsed is not lost", () => {
+  const files = {
+    "macro.ts": `
+      import { readFileSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      export function saveDepWhileItIsParsed() {
+        const path = join(import.meta.dir, "dep.ts");
+        const source = readFileSync(path, "utf8");
+        if (source.includes('"v0"')) {
+          writeFileSync(path, source.replace('"v0"', '"v1"'));
+          Bun.sleepSync(500);
+        }
+        return "";
+      }
+    `,
+    "dep.ts": `
+      import { saveDepWhileItIsParsed } from "./macro.ts" with { type: "macro" };
+      export const version = "v0";
+      saveDepWhileItIsParsed();
+    `,
+    "import.ts": `import { version } from "./dep.ts"; console.log("version = " + JSON.stringify(version));`,
+    "require.cjs": `const { version } = require("./dep.ts"); console.log("version = " + JSON.stringify(version));`,
+    "dep.test.ts": `
+      import { test } from "bun:test";
+      import { version } from "./dep.ts";
+      test("version", () => console.log("version = " + JSON.stringify(version)));
+    `,
+  };
+
+  it.concurrent.each([
+    // The concurrent transpiler (RuntimeTranspilerStore) reads an imported module.
+    ["bun --watch, import", ["--watch", "--no-clear-screen", "import.ts"]],
+    // The module loader reads a required module on the JS thread.
+    ["bun --watch, require", ["--watch", "--no-clear-screen", "require.cjs"]],
+    ["bun --hot", ["--hot", "--no-clear-screen", "import.ts"]],
+    ["bun test --watch", ["test", "--watch", "--no-clear-screen", "./dep.test.ts"]],
+    // A bundler parse task reads the module. Without --outdir the bundle goes to stdout.
+    ["bun build --watch", ["build", "--watch", "--no-clear-screen", "--target=bun", "./import.ts"]],
+  ])(
+    "%s",
+    async (_name, args) => {
+      using dir = tempDir("watch-save-during-parse", files);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const { waitFor, release } = stdoutWaiter(proc);
+      // A lost save leaves the child idle forever. End it then, so that waitFor
+      // fails with the output so far and the child does not outlive the test.
+      const giveUp = setTimeout(() => proc.kill("SIGKILL"), 30_000);
+      try {
+        await waitFor(`version = "v1"`);
+      } finally {
+        clearTimeout(giveUp);
+      }
+      release();
+    },
+    45_000,
+  );
+});

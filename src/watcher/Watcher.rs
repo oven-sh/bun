@@ -902,6 +902,29 @@ impl Watcher {
         r
     }
 
+    /// [`Self::add_file`] for a caller that is about to read the file through
+    /// `fd`: a write to the file that lands after this call is reported, and
+    /// one that lands before it is in what the caller reads. Only a rename
+    /// over the path between the caller's open and this call escapes both.
+    /// The watchlist stores a duplicate of `fd`, because the watcher thread
+    /// closes the descriptor it stores when it evicts the entry, which can be
+    /// while the caller reads.
+    pub fn add_file_before_read<const CLONE_FILE_PATH: bool>(
+        &mut self,
+        fd: Fd,
+        file_path: &[u8],
+        hash: HashType,
+        package_json: Option<&'static PackageJSON>,
+    ) -> sys::Result<()> {
+        let watch_fd = bun_sys::dup(fd)?;
+        let added =
+            self.add_file::<CLONE_FILE_PATH>(watch_fd, file_path, hash, Fd::INVALID, package_json);
+        if !matches!(added, Ok(FdOwnership::Watcher)) {
+            let _ = bun_sys::close(watch_fd);
+        }
+        added.map(|_| ())
+    }
+
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {

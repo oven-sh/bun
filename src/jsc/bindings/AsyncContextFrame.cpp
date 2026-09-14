@@ -98,26 +98,26 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                               \
-    if (!functionObject.isCell())                                                      \
-        return jsUndefined();                                                          \
-    auto& vm = global->vm();                                                           \
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                 \
-        return jsUndefined();                                                          \
-    JSValue restoreAsyncContext;                                                       \
-    InternalFieldTuple* asyncContextData = nullptr;                                    \
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {          \
-        if (Bun::isStoppedModuleGraphContext(vm, wrapper->context.get())) [[unlikely]] \
-            return jsUndefined();                                                      \
-        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());    \
-        asyncContextData = global->m_asyncContextData.get();                           \
-        restoreAsyncContext = asyncContextData->getInternalField(0);                   \
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());             \
-    }                                                                                  \
-    auto result = JSC::profiledCall(__VA_ARGS__);                                      \
-    if (asyncContextData) {                                                            \
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);                \
-    }                                                                                  \
+#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \
+    if (!functionObject.isCell())                                                                                          \
+        return jsUndefined();                                                                                              \
+    auto& vm = global->vm();                                                                                               \
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                                                     \
+        return jsUndefined();                                                                                              \
+    JSValue restoreAsyncContext;                                                                                           \
+    InternalFieldTuple* asyncContextData = nullptr;                                                                        \
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {                                              \
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(global), wrapper->context.get())) [[unlikely]] \
+            return jsUndefined();                                                                                          \
+        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());                                        \
+        asyncContextData = global->m_asyncContextData.get();                                                               \
+        restoreAsyncContext = asyncContextData->getInternalField(0);                                                       \
+        asyncContextData->putInternalField(vm, 0, wrapper->context.get());                                                 \
+    }                                                                                                                      \
+    auto result = JSC::profiledCall(__VA_ARGS__);                                                                          \
+    if (asyncContextData) {                                                                                                \
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);                                                    \
+    }                                                                                                                      \
     return result;
 
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)

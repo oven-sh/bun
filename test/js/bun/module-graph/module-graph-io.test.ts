@@ -159,15 +159,20 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     }
   });
 
-  test("dispose() closes the graph's client sockets and aborts its in-flight fetch", async () => {
+  test("dispose() closes the graph's client sockets and aborts its in-flight fetch; the graph's own close handlers hear of it", async () => {
     const dir = fixture({
       "clients.mjs": `
+        import net from "node:net";
+        export const heard = [];
         export async function connect(tcpPort, httpPort) {
-          const socket = await Bun.connect({ hostname: "127.0.0.1", port: tcpPort, socket: { data() {} } });
+          const socket = await Bun.connect({ hostname: "127.0.0.1", port: tcpPort, socket: { data() {}, close() { heard.push("Bun.connect close"); } } });
           const ws = new WebSocket("ws://127.0.0.1:" + httpPort + "/ws");
           await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+          ws.onclose = () => heard.push("WebSocket close");
+          const nodeSocket = await new Promise((resolve, reject) => { const s = net.connect(tcpPort, "127.0.0.1", () => resolve(s)); s.on("error", reject); });
+          nodeSocket.on("close", () => heard.push("net.Socket close"));
           const response = fetch("http://127.0.0.1:" + httpPort + "/hang").then(() => "resolved", e => "rejected");
-          return { response };
+          return { response, nodeSocket };
         }
       `,
     });
@@ -195,13 +200,71 @@ describe.concurrent("ModuleGraph isolateIO", () => {
 
     const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
     const app = await graph.import(join(dir, "clients.mjs"));
-    const { response } = await graph.run(() => app.connect(listener.port, server.port));
+    const { response, nodeSocket } = await graph.run(() => app.connect(listener.port, server.port));
+    // What the host holds of the graph's is told too.
+    const hostHeard = new Promise<void>(resolve => nodeSocket.once("close", () => resolve()));
     await requestSeen.promise;
 
     graph.dispose();
 
-    await Promise.all([tcpClosed.promise, wsClosed.promise, requestAborted.promise]);
+    await Promise.all([tcpClosed.promise, wsClosed.promise, requestAborted.promise, hostHeard]);
     expect(await response).toBe("rejected");
+    await until(() => app.heard.length === 3);
+    expect([...app.heard].sort()).toEqual(["Bun.connect close", "WebSocket close", "net.Socket close"]);
+  });
+
+  test("after dispose() an immediate loop of the graph ends, and callbacks that are not close notifications are dropped", async () => {
+    const dir = fixture({
+      "child.mjs": `
+        process.on("SIGTERM", () => {});
+        setInterval(() => process.send("tick"), 1);
+      `,
+      "stubborn.mjs": `
+        export let spins = 0, messages = 0, exited = 0;
+        export const counts = () => ({ spins, messages, exited });
+        export async function start(port, childPath) {
+          await Bun.connect({ hostname: "127.0.0.1", port, socket: {
+            data() {},
+            // Told of the close, then tries to keep itself running.
+            close() { const spin = () => { spins++; setImmediate(spin); }; spin(); },
+          } });
+          const child = Bun.spawn({
+            cmd: [process.execPath, childPath],
+            stdio: ["ignore", "ignore", "ignore"],
+            ipc() { messages++; },
+            onExit() { exited++; },
+          });
+          await new Promise(resolve => { const poll = () => (messages > 0 ? resolve() : setTimeout(poll, 1)); poll(); });
+          return child;
+        }
+      `,
+    });
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const graph = new Bun.unsafe.ModuleGraph({ isolateIO: true });
+    const app = await graph.import(join(dir, "stubborn.mjs"));
+    // The child ignores the SIGTERM dispose() sends and keeps talking.
+    const child = await graph.run(() => app.start(listener.port, join(dir, "child.mjs")));
+    try {
+      graph.dispose();
+
+      await until(() => app.counts().spins > 0);
+      let settled = app.counts();
+      await until(async () => {
+        await hostTimerTurns();
+        const now = app.counts();
+        const same = now.spins === settled.spins && now.messages === settled.messages;
+        settled = now;
+        return same;
+      });
+      expect(settled.exited).toBe(0);
+      child.kill("SIGKILL");
+      await child.exited;
+      // Its exit is a close notification.
+      await until(() => app.counts().exited === 1);
+      expect(app.counts()).toEqual({ ...settled, exited: 1 });
+    } finally {
+      child.kill("SIGKILL");
+    }
   });
 
   test("dispose() kills the child processes the graph spawned", async () => {

@@ -240,6 +240,7 @@ pub(crate) trait CompressionStreamImpl:
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
     fn pending_close(&self) -> &Cell<bool>;
+    fn write_context(&self) -> &Cell<bun_jsc::ContextId>;
     fn closed(&self) -> &Cell<bool>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
@@ -432,6 +433,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
 
+        this.write_context()
+            .set(global_this.bun_vm().current_context().id());
         this.write_in_progress().set(true);
         this.ref_();
 
@@ -568,7 +571,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
-        if !Self::check_error(&this, global, this_value) {
+        // A write whose context stopped meanwhile (a disposed `Bun.unsafe.ModuleGraph`'s)
+        // reports neither its result nor its error.
+        let write_context_live = vm.is_context_live(this.write_context().get());
+        if !write_context_live && this.pending_close().get() {
+            Self::close_internal(&this);
+        }
+        if !write_context_live || !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
             unsafe { T::deref(this_ptr) };
@@ -1017,6 +1026,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
+            #[inline] fn write_context(&self) -> &::core::cell::Cell<::bun_jsc::ContextId> { &self.write_context }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]

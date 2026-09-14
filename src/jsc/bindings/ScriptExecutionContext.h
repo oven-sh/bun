@@ -94,6 +94,8 @@ public:
     void stopActiveDOMObjects();
     // Also read on the GC thread (isContextStopped() from isReachableFromOpaqueRoots).
     bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped.load(std::memory_order_relaxed); }
+    // A graph's context that was stopped (the graph was disposed or collected).
+    bool isStopped() const { return m_isStopped || activeDOMObjectsAreStopped(); }
 
     // Called from the constructor and destructors of ActiveDOMObject.
     void didCreateActiveDOMObject(ActiveDOMObject&);
@@ -196,6 +198,8 @@ private:
     HashSet<ContextDestructionObserver*> m_destructionObservers;
 
     std::atomic<bool> m_activeDOMObjectsAreStopped { false };
+    // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).
+    bool m_isStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };
 
 public:

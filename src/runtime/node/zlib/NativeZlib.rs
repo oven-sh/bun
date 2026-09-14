@@ -47,6 +47,8 @@ mod _impl {
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
+        /// The context whose script started the write in flight.
+        pub write_context: Cell<bun_jsc::ContextId>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -102,6 +104,7 @@ mod _impl {
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
+                write_context: Cell::new(bun_jsc::ContextId::default()),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),

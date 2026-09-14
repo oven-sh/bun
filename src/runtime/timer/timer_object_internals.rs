@@ -290,6 +290,16 @@ impl TimerObjectInternals {
         // SAFETY: `vm` is the live per-thread VM.
         let (graph_context, root_context) =
             unsafe { ((*vm).current_graph_context(), (*vm).root_context().id()) };
+        // An immediate a disposed graph sets while its context is closing (node:net emits
+        // 'close' from one) still runs: `ScriptExecutionContext::is_closing`. It is not in the
+        // context's timer set, and `interval`, which an immediate has no use for, says so.
+        let closing = kind == Kind::SetImmediate
+            && graph_context.is_some_and(|context| {
+                context.is_stopped()
+                    // SAFETY: `vm` is the live per-thread VM.
+                    && context.is_closing(unsafe { (*vm).loop_iteration() })
+            });
+        let interval = if closing { 1 } else { interval };
 
         *self = Self {
             id,
@@ -305,7 +315,7 @@ impl TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).
-        if let Some(context) = graph_context {
+        if let Some(context) = graph_context.filter(|_| !closing) {
             context.track_timer(
                 core::ptr::from_mut(self).cast(),
                 bun_jsc::ContextTimer::Object,
@@ -381,7 +391,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: as above.
-            || !unsafe { (*vm).is_context_live(s.context) }
+            || (s.interval.get() == 0 && !unsafe { (*vm).is_context_live(s.context) })
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -424,6 +434,10 @@ impl TimerObjectInternals {
             let async_id = s.async_id();
             // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
             // above pins the parent across re-entrancy.
+            // An immediate set while its context was closing tells the graph of what closed.
+            let _notification = (s.interval.get() != 0)
+                // SAFETY: `global_this` is the VM's live global.
+                .then(|| bun_jsc::TeardownNotification::enter(unsafe { &*global_this }));
             let result =
                 unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
             // `Self::run` has no early return so the deref ordering below is

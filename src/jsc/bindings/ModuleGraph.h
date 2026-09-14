@@ -57,9 +57,11 @@ void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 // The innermost graph with a context of its own (`isolateIO`) that the current async context
 // is inside of: what script opens now belongs to that graph's context. Null: the global's.
 JSIsolatedModuleGraph* currentModuleGraph(Zig::GlobalObject*);
-// Whether `asyncContext` (what a callback captured when it was handed to native code) is inside
-// the context of a graph that has since been disposed: nothing of such a graph is called back.
-bool isStoppedModuleGraphContext(JSC::VM&, JSC::JSValue asyncContext);
+// Whether a callback that captured `asyncContext` when it was handed to native code is not to
+// be called: it was handed over inside the context of a graph that has since been disposed,
+// and what is calling is not telling the graph that something of its own closed
+// (bun_jsc::TeardownNotification).
+bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
 // What runs while this is alive runs inside a graph's context: an async context frame naming
 // the graph is current, and every continuation captured meanwhile (promise reactions, timers,
@@ -179,6 +181,8 @@ public:
     // (JSCommonJSModule.cpp). Weak: alive while a module made from it is.
     using CommonJSWrapperKey = std::pair<UniquedStringImpl*, JSC::SymbolTable*>;
     JSC::WeakGCMap<CommonJSWrapperKey, JSC::FunctionExecutable> commonJSWrapperExecutables;
+    // Nonzero while native code tells a graph that something of its own closed.
+    unsigned teardownNotificationDepth { 0 };
     // Set while a graph's onError runs: what it throws synchronously is the host's.
     bool inOnError { false };
     // Set while graph.import() / dispose() reject an import() promise: the caller's, not

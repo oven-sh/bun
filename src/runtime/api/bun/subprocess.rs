@@ -1176,6 +1176,7 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
+                    let _notification = bun_jsc::TeardownNotification::enter(global_this);
                     // SAFETY: event_loop points into the live VM.
                     unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
                 }

@@ -59,10 +59,39 @@ pub struct ScriptExecutionContext {
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
     stop_again_queued: JsCell<bool>,
+    /// The last event-loop iteration in which an immediate this (disposed
+    /// graph's) stopped context sets still runs; 0: none does. Its close
+    /// handlers run as `dispose()` stops it, and node:net emits 'close' from an
+    /// immediate a few turns after that. Anything it sets later is cancelled.
+    closing_until: core::cell::Cell<u64>,
     /// The timers script of a graph's context set that have not been freed
     /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
     /// cancels exactly those. A VM's own contexts walk the timer heap.
     timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
+}
+
+/// While one is alive, native code is telling script that something of its own
+/// closed (a socket's `close` handler, a child process's `onExit`): the callback
+/// is called even if it was handed over inside the context of a
+/// `Bun.unsafe.ModuleGraph` that has since been disposed. Any other callback
+/// of such a graph is dropped where it would be called.
+pub struct TeardownNotification<'a>(&'a crate::JSGlobalObject);
+
+impl<'a> TeardownNotification<'a> {
+    pub fn enter(global: &'a crate::JSGlobalObject) -> Self {
+        Bun__ModuleGraph__teardownNotification(global, true);
+        Self(global)
+    }
+}
+
+impl Drop for TeardownNotification<'_> {
+    fn drop(&mut self) {
+        Bun__ModuleGraph__teardownNotification(self.0, false);
+    }
+}
+
+unsafe extern "C" {
+    safe fn Bun__ModuleGraph__teardownNotification(global: &crate::JSGlobalObject, enter: bool);
 }
 
 /// What a pointer in a graph context's timer set points at.
@@ -83,6 +112,7 @@ impl Default for ScriptExecutionContext {
             stopped: JsCell::new(None),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
+            closing_until: core::cell::Cell::new(0),
             timers: JsCell::new(Default::default()),
         }
     }
@@ -144,6 +174,19 @@ impl ScriptExecutionContext {
 
     pub(crate) fn stopped_for(&self) -> Option<StopReason> {
         *self.stopped.get()
+    }
+
+    /// node:net's longest close path: end, destroy on the next tick, two deferrals, the emit.
+    const CLOSING_ITERATIONS: u64 = 6;
+
+    /// `dispose()` is stopping the context in loop iteration `now`.
+    pub(crate) fn begin_closing(&self, now: u64) {
+        self.closing_until.set(now + Self::CLOSING_ITERATIONS);
+    }
+
+    /// Whether an immediate set by this stopped context in loop iteration `now` still runs.
+    pub fn is_closing(&self, now: u64) -> bool {
+        now <= self.closing_until.get()
     }
 
     /// A timer script of this (graph's) context set exists from here.

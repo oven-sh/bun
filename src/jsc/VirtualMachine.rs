@@ -1107,6 +1107,12 @@ impl VirtualMachine {
                 .is_some_and(|context| !context.is_stopped())
     }
 
+    /// The event loop's iteration counter.
+    pub fn loop_iteration(&self) -> u64 {
+        // SAFETY: the thread's uSockets loop outlives the VM.
+        unsafe { (*self.uws_loop()).iteration_number() }
+    }
+
     /// The groups a client socket the running script opens joins.
     pub fn client_socket_groups(&mut self) -> &mut crate::rare_data::SocketGroups {
         let id = self.current_context().id();
@@ -1213,6 +1219,9 @@ impl VirtualMachine {
     ) -> SweepResult {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
+        if reason == crate::StopReason::Disposed && !context.is_stopped() {
+            context.begin_closing(self.loop_iteration());
+        }
         let result = context.stop(reason);
         self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {

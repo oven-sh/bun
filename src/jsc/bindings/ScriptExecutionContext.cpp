@@ -87,8 +87,13 @@ void ScriptExecutionContext::stop()
 {
     ASSERT(m_bunContext);
     ASSERT(isContextThread());
-    stopActiveDOMObjects();
+    bool alreadyStopped = std::exchange(m_isStopped, true);
     Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+    if (alreadyStopped)
+        return;
+    // Closing its socket queued a WebSocket's close event: events stop reaching the context's
+    // objects (and its workers are terminated) after that has been dispatched.
+    Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
 }
 
 void ScriptExecutionContext::moduleGraphDestroyed()
@@ -96,7 +101,7 @@ void ScriptExecutionContext::moduleGraphDestroyed()
     m_moduleGraph.clear();
     // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
     // context until they are stopped. At VM teardown they already were (prepareForDestruction).
-    if (!activeDOMObjectsAreStopped())
+    if (!isStopped())
         Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stop(); }));
 }
 

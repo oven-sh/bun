@@ -157,10 +157,21 @@ ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject
     asyncContextData->putInternalField(globalObject->vm(), 0, createModuleGraphFrame(globalObject, graph, m_previous));
 }
 
-bool isStoppedModuleGraphContext(VM& vm, JSValue asyncContext)
+bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSValue asyncContext)
 {
-    JSIsolatedModuleGraph* graph = moduleGraphOfFrame(vm, asyncContext);
-    return graph && graph->context().activeDOMObjectsAreStopped();
+    if (!globalObject->m_hasModuleGraphContexts)
+        return false;
+    JSIsolatedModuleGraph* graph = moduleGraphOfFrame(globalObject->vm(), asyncContext);
+    return graph && graph->context().isStopped() && !moduleGraphState(globalObject).teardownNotificationDepth;
+}
+
+extern "C" void Bun__ModuleGraph__teardownNotification(JSGlobalObject* globalObject, bool enter)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (!zigGlobal->m_hasModuleGraphContexts)
+        return;
+    auto& depth = moduleGraphState(zigGlobal).teardownNotificationDepth;
+    depth += enter ? 1 : -1;
 }
 
 ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext& context)

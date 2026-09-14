@@ -1407,10 +1407,7 @@ pub mod js_bundler {
                 // Balanced by `Plugin::destroy` when the completion task drops.
                 JSValue::from_cell(plugin.as_ptr()).protect();
             }
-            // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
-            // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
-            // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
-            // cannot depend on those).
+            // `BundleV2.generateFromJavaScript`. The module doc of the completion task has the layering.
             let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
                 config,
                 self.plugin,

@@ -122,28 +122,28 @@ static ABI_TABLE: [AbiRow; 22] = {
         AbiRow { c_type, to_c_macro, to_js }
     }
     [
-    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
-    /* Int64T    */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Uint64T   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Double    */ r(b"double",     Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
-    /* Float     */ r(b"float",      Some("JSVALUE_TO_FLOAT("),               Some(("FLOAT_TO_JSVALUE(", ")"))),
-    /* Bool      */ r(b"bool",       Some("JSVALUE_TO_BOOL("),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
-    /* Ptr       */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* Void      */ r(b"void",       None,                                    None),
-    /* CString   */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* I64Fast   */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
-    /* U64Fast   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* NapiEnv   */ r(b"napi_env",   None,                                    None),
-    /* NapiValue */ r(b"napi_value", None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
-    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
-    /* BufferLen */ r(b"uint64_t",   None,                                    None),
+    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32("),                                            Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32("),                                            Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Int64T    */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),                                            Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Uint64T   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),                                           Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Double    */ r(b"double",     Some("JSVALUE_TO_DOUBLE("),                                           Some(("DOUBLE_TO_JSVALUE(", ")"))),
+    /* Float     */ r(b"float",      Some("JSVALUE_TO_FLOAT("),                                            Some(("FLOAT_TO_JSVALUE(", ")"))),
+    /* Bool      */ r(b"bool",       Some("JSVALUE_TO_BOOL("),                                             Some(("BOOLEAN_TO_JSVALUE(", ")"))),
+    /* Ptr       */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_PTR, &threw, "),      Some(("PTR_TO_JSVALUE(", ")"))),
+    /* Void      */ r(b"void",       None,                                                                 None),
+    /* CString   */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_CSTRING, &threw, "),  Some(("PTR_TO_JSVALUE(", ")"))),
+    /* I64Fast   */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),                                            Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
+    /* U64Fast   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),                                           Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_FUNCTION, &threw, "), Some(("PTR_TO_JSVALUE(", ")"))),
+    /* NapiEnv   */ r(b"napi_env",   None,                                                                 None),
+    /* NapiValue */ r(b"napi_value", None,                                                                 Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
+    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_PTR(JS_GLOBAL_OBJECT, ABI_TYPE_BUFFER, &threw, "),   None),
+    /* BufferLen */ r(b"uint64_t",   None,                                                                 None),
     ]
 };
 
@@ -159,6 +159,14 @@ impl ABIType {
 
     /// See [`ABI_TYPE_LABEL`].
     pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
+
+    /// `#define`d into every generated wrapper; `FFI.h` passes them to `JSVALUE_TO_PTR_SLOW`.
+    pub(crate) const POINTER_TAG_DEFINES: &'static [(&'static str, i64)] = &[
+        ("ABI_TYPE_PTR", ABIType::Ptr as i64),
+        ("ABI_TYPE_CSTRING", ABIType::CString as i64),
+        ("ABI_TYPE_FUNCTION", ABIType::Function as i64),
+        ("ABI_TYPE_BUFFER", ABIType::Buffer as i64),
+    ];
 
     /// Returns `None` for out-of-range discriminants.
     #[inline]
@@ -206,6 +214,14 @@ impl ABIType {
 
     pub(crate) fn is_floating_point(self) -> bool {
         matches!(self, ABIType::Double | ABIType::Float)
+    }
+
+    /// Argument conversions that go through `JSVALUE_TO_PTR_SLOW` (`FFI.h`) and so can throw.
+    pub(crate) fn arg_conversion_can_throw(self) -> bool {
+        matches!(
+            self,
+            ABIType::Ptr | ABIType::CString | ABIType::Function | ABIType::Buffer
+        )
     }
 
     pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {

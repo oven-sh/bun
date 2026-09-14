@@ -2,19 +2,15 @@ use bun_ast::{E, Expr};
 use bun_collections::VecExt as _;
 use bun_collections::index_sort;
 use bun_core::strings;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_semver::{PinnedVersion, Version};
 
-use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
-use crate::lockfile::package::PackageColumns as _;
 use crate::package_manager_real::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry_root, root_package_json_path, store_entry,
+    WorkspaceTarget, fetch_entry_root, store_entry,
 };
 use crate::package_manager_real::package_json_editor::for_each_catalog_object;
 use crate::package_manager_real::package_json_write_back;
-use crate::{PackageID, PackageManager, ResolutionTag};
+use crate::{PackageID, PackageManager};
 
 const DEPENDENCY_GROUPS: [&[u8]; 4] = [
     b"dependencies",
@@ -88,51 +84,14 @@ pub(super) fn apply(manager: &mut PackageManager, plan: &super::FixPlan) -> crat
         let owned = &edits[start..end];
         start = end;
 
-        let Some(target) = target_for(manager, owner) else {
+        let Some(target) = WorkspaceTarget::of_lockfile_package(&manager.lockfile, owner) else {
+            debug_assert!(false, "audit fix edit owned by a non-importer package");
             continue;
         };
         apply_to_target(manager, &target, owned)?;
         package_json_write_back::record(manager, target, false);
     }
     Ok(())
-}
-
-fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTarget> {
-    if owner == 0 {
-        return Some(WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        });
-    }
-    let lockfile = &manager.lockfile;
-    let res = lockfile.packages.items_resolution()[owner as usize];
-    match res.tag {
-        ResolutionTag::Root => Some(WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        }),
-        ResolutionTag::Workspace => {
-            let buf = lockfile.buffers.string_bytes.as_slice();
-            let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-            let mut path_buf = path_buffer_pool::get();
-            Some(WorkspaceTarget {
-                name: Box::from(lockfile.packages.items_name()[owner as usize].slice(buf)),
-                name_hash: Some(lockfile.packages.items_name_hash()[owner as usize]),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
-                    top_level,
-                    &mut path_buf.0,
-                    &[res.workspace().slice(buf), b"package.json"],
-                )
-                .into(),
-            })
-        }
-        _ => {
-            debug_assert!(false, "audit fix edit owned by a non-importer package");
-            None
-        }
-    }
 }
 
 fn apply_to_target(

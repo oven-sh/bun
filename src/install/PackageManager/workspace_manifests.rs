@@ -1,14 +1,21 @@
+use core::fmt;
+
 use bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
 use bun_semver as Semver;
 
-use crate::dependency::{Behavior, Tag as DependencyTag};
-use crate::lockfile::{self, Lockfile, Package};
-use crate::{Features, PackageNameHash};
+use crate::dependency::{Behavior, Tag as DependencyTag, Version as DependencyVersion};
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{self, DependencySlice, Lockfile, Package};
+use crate::npm::{FindVersionResult, PackageManifest};
+use crate::{
+    Dependency, DependencyID, Features, PackageID, PackageNameHash, ResolutionTag,
+    invalid_package_id,
+};
 
 use super::PackageManager;
-use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_json_path};
+use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry};
 use super::workspace_selection::WorkspaceGraph;
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
@@ -29,14 +36,9 @@ impl ScratchManifests {
 
     /// Must run first: it fills `lockfile.workspace_paths`, which `workspace:` rows in every file resolve through.
     pub(crate) fn parse_root(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
-        let root_target = WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        };
         // Cloned because the `workspaces` walk below may grow the cache holding this entry.
         let (root_source, root_json) = {
-            let entry = fetch_entry(manager, &root_target);
+            let entry = fetch_entry(manager, &WorkspaceTarget::root());
             (entry.source.clone(), entry.root)
         };
         let mut resolver: () = ();
@@ -74,6 +76,165 @@ impl ScratchManifests {
         )?;
         Ok(pkg)
     }
+
+    /// Root: what `parse_root` parsed. Workspace: parsed from the path its `workspace:` resolution stores.
+    pub(crate) fn parse_lockfile_package(
+        &mut self,
+        manager: &mut PackageManager,
+        pkg_id: PackageID,
+    ) -> crate::Result<Package> {
+        let Some(target) = WorkspaceTarget::of_lockfile_package(&manager.lockfile, pkg_id) else {
+            return Err(crate::Error::InvalidPackageID);
+        };
+        if target.name_hash.is_none() {
+            return Ok(self.root);
+        }
+        self.parse_member(manager, &target)
+    }
+}
+
+/// A name listed in two groups (`dependencies` and `peerDependencies`) has one row per group, so the group counts.
+pub(crate) fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
+    row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
+}
+
+/// One npm dependency that a package.json declares now, with the package bun.lock has installed for it.
+#[derive(Clone, Copy)]
+pub struct DeclaredDependency {
+    /// The root or workspace package whose package.json declares it.
+    pub workspace_pkg_id: PackageID,
+    /// Its row in the package.json parse, for [`DeclaredDependencies::dependency`].
+    pub dep_id: DependencyID,
+    /// The npm package that the last install resolved it to, in `manager.lockfile`.
+    pub package_id: PackageID,
+}
+
+/// The npm dependencies the package.json files declare now; bun.lock only supplies what is installed for each.
+pub struct DeclaredDependencies {
+    /// The package.json parse: dependency rows, their strings and the root catalogs. No packages.
+    lockfile: Lockfile,
+    rows: Vec<DeclaredDependency>,
+}
+
+impl DeclaredDependencies {
+    /// Exits with `bun install`'s errors when a package.json does not parse. Declared but not installed: no row.
+    pub fn load(manager: &mut PackageManager, workspace_pkg_ids: &[PackageID]) -> Self {
+        let mut scratch = ScratchManifests::new();
+        if let Err(err) = scratch.parse_root(manager) {
+            crash(
+                &mut scratch.log,
+                err,
+                format_args!("failed to read package.json"),
+            );
+        }
+        let mut rows = Vec::new();
+        for &workspace_pkg_id in workspace_pkg_ids {
+            let pkg = match scratch.parse_lockfile_package(manager, workspace_pkg_id) {
+                Ok(pkg) => pkg,
+                Err(err) => crash(
+                    &mut scratch.log,
+                    err,
+                    format_args!("failed to read a workspace package.json"),
+                ),
+            };
+            let installed =
+                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
+            for dep_id in pkg.dependencies.begin()..pkg.dependencies.end() {
+                let dep = &scratch.lockfile.buffers.dependencies[dep_id as usize];
+                let range = scratch
+                    .lockfile
+                    .catalogs
+                    .resolve_range(scratch.lockfile.buffers.string_bytes.as_slice(), dep);
+                if !matches!(range.tag, DependencyTag::Npm | DependencyTag::DistTag) {
+                    continue;
+                }
+                let Some(installed_dep_id) = installed_row(&manager.lockfile, installed, dep)
+                else {
+                    continue;
+                };
+                let package_id = manager.lockfile.buffers.resolutions[installed_dep_id as usize];
+                if package_id == invalid_package_id
+                    || manager.lockfile.packages.items_resolution()[package_id as usize].tag
+                        != ResolutionTag::Npm
+                {
+                    continue;
+                }
+                rows.push(DeclaredDependency {
+                    workspace_pkg_id,
+                    dep_id,
+                    package_id,
+                });
+            }
+        }
+        DeclaredDependencies {
+            lockfile: scratch.lockfile,
+            rows,
+        }
+    }
+
+    pub fn rows(&self) -> &[DeclaredDependency] {
+        &self.rows
+    }
+
+    /// The buffer that [`Self::dependency`] names, catalog names and [`Self::range`] slice into.
+    pub fn string_bytes(&self) -> &[u8] {
+        self.lockfile.buffers.string_bytes.as_slice()
+    }
+
+    pub fn dependency(&self, row: &DeclaredDependency) -> &Dependency {
+        &self.lockfile.buffers.dependencies[row.dep_id as usize]
+    }
+
+    /// An npm range or a dist tag, `catalog:` references resolved through the root package.json.
+    pub fn range(&self, row: &DeclaredDependency) -> &DependencyVersion {
+        self.lockfile
+            .catalogs
+            .resolve_range(self.string_bytes(), self.dependency(row))
+    }
+
+    /// The newest version of `manifest` that [`Self::range`] allows, under the minimum release age.
+    pub fn find_update<'m>(
+        &self,
+        row: &DeclaredDependency,
+        manifest: &'m PackageManifest,
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&[&[u8]]>,
+    ) -> FindVersionResult<'m> {
+        let range = self.range(row);
+        if range.tag == DependencyTag::Npm {
+            manifest.find_best_version_with_filter(
+                &range.npm().version,
+                self.string_bytes(),
+                minimum_release_age_ms,
+                exclusions,
+            )
+        } else {
+            manifest.find_by_dist_tag_with_filter(
+                range.dist_tag().tag.slice(self.string_bytes()),
+                minimum_release_age_ms,
+                exclusions,
+            )
+        }
+    }
+}
+
+/// Falls back to a row of the same name when `dep` moved to another group since the last install.
+fn installed_row(
+    lockfile: &Lockfile,
+    rows: DependencySlice,
+    dep: &Dependency,
+) -> Option<DependencyID> {
+    let mut same_name = None;
+    for id in rows.begin()..rows.end() {
+        let row = &lockfile.buffers.dependencies[id as usize];
+        if same_row(dep, row) {
+            return Some(id);
+        }
+        if row.name_hash == dep.name_hash {
+            same_name.get_or_insert(id);
+        }
+    }
+    same_name
 }
 
 /// Graph index i == `targets[i]`; the target whose `name_hash` is `None` is the root.
@@ -84,7 +245,7 @@ pub(crate) fn relation_graph(
 ) -> WorkspaceGraph {
     let mut scratch = ScratchManifests::new();
     if let Err(err) = scratch.parse_root(manager) {
-        crash(&mut scratch.log, pattern, err);
+        crash_for_filter(&mut scratch.log, pattern, err);
     }
 
     let mut parsed: Vec<(u32, Package)> = Vec::with_capacity(targets.len());
@@ -95,7 +256,7 @@ pub(crate) fn relation_graph(
         }
         match scratch.parse_member(manager, target) {
             Ok(pkg) => parsed.push((i as u32, pkg)),
-            Err(err) => crash(&mut scratch.log, pattern, err),
+            Err(err) => crash_for_filter(&mut scratch.log, pattern, err),
         }
     }
 
@@ -152,14 +313,23 @@ pub(crate) fn relation_graph(
     WorkspaceGraph::from_edges(targets.len(), edges)
 }
 
-fn crash(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
+fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
+    crash(
+        log,
+        err,
+        format_args!(
+            "failed to read the workspace dependencies for --filter \"{}\"",
+            BStr::new(pattern)
+        ),
+    )
+}
+
+/// The parse errors explain the failure when there are any; `what` and `err` are the fallback.
+fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     } else {
-        Output::err_generic(
-            "failed to read the workspace dependencies for --filter \"{}\": {}",
-            (BStr::new(pattern), err.name()),
-        );
+        Output::err_generic("{}: {}", (what, err.name()));
     }
     Global::crash();
 }

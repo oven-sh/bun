@@ -6520,7 +6520,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   });
 
   const out = await stdout.text();
-  expect(out.replaceAll(`${port}`, "4873")).toMatchSnapshot();
+  expect(out.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
   expect(await exited).toBe(0);
 });
 

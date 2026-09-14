@@ -1143,7 +1143,7 @@ impl VirtualMachine {
     /// [`current_context`](Self::current_context) is that context, for native code and for the
     /// script it calls.
     ///
-    /// A stopped context can still be entered ([`ContextScope::is_stopped`]), and one that is
+    /// A stopped context can still be entered, and one that is
     /// gone (freed, its graph collected, a realm `bun test --isolate` retired) is entered as a
     /// context that is always stopped: what is armed inside is closed at once, as for
     /// anything a disposed graph opens.
@@ -1153,7 +1153,6 @@ impl VirtualMachine {
         let mut scope = ContextScope {
             vm: self,
             previous: JSValue::ZERO,
-            stopped: false,
             gone: false,
         };
         if context == self.root_context.id() || context == self.vm_context.id() {
@@ -1172,15 +1171,11 @@ impl VirtualMachine {
             let mut gone = false;
             // SAFETY: non-null ⇒ the `WebCore::ScriptExecutionContext` is alive.
             let previous = unsafe { Bun__ModuleGraph__enterContext(dom_context, &mut gone) };
-            (!gone).then_some((previous, context.is_stopped()))
+            (!gone).then_some(previous)
         });
         match entered {
-            Some((previous, stopped)) => {
-                scope.previous = previous;
-                scope.stopped = stopped;
-            }
+            Some(previous) => scope.previous = previous,
             None => {
-                scope.stopped = true;
                 scope.gone = true;
                 self.gone_scopes.set(self.gone_scopes.get() + 1);
                 if self.graph_contexts.count() != 0 && self.script_allowed() {
@@ -7558,15 +7553,7 @@ pub struct ContextScope<'a> {
     /// The async context to restore; empty when entering changed nothing. (On the stack: kept
     /// alive by the conservative scan.)
     previous: JSValue,
-    stopped: bool,
     gone: bool,
-}
-
-impl ContextScope<'_> {
-    /// The context entered has stopped (its graph was disposed, or its realm is going).
-    pub fn is_stopped(&self) -> bool {
-        self.stopped
-    }
 }
 
 impl Drop for ContextScope<'_> {

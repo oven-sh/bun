@@ -6,6 +6,8 @@ use core::fmt;
 pub enum StatusFlag {
     /// Indicates there are more result sets from this query
     SERVER_MORE_RESULTS_EXISTS = 8,
+    /// The session's sql_mode has NO_BACKSLASH_ESCAPES: `\` is literal in strings
+    SERVER_STATUS_NO_BACKSLASH_ESCAPES = 0x200,
 }
 
 #[derive(Copy, Clone, Default)]

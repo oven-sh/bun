@@ -1,13 +1,23 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
-pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
+pub fn create_binding(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
     binding.put(
         global_object,
         b"MySQLConnection",
         crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
     );
-    crate::put_host_functions!(
+    // `result.command` strings, see `MySQLQuery::command_to_js`.
+    binding.put(
+        global_object,
+        b"commands",
+        JSValue::create_array_from_iter(
+            global_object,
+            my_sql_query::COMMON_KEYWORDS.iter(),
+            |keyword| bun_string_jsc::create_utf8_for_js(global_object, keyword),
+        )?,
+    );
+    Ok(crate::put_host_functions!(
         binding,
         global_object,
         [
@@ -23,7 +33,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
                 2
             ),
         ]
-    )
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

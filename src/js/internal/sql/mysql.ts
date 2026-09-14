@@ -18,6 +18,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
+  commands,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | MySQLErrorOptions) {
@@ -26,11 +27,14 @@ function wrapError(error: Error | MySQLErrorOptions) {
   }
   return new MySQLError(error.message, error);
 }
+
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
+  function onResolveMySQLQuery(query, result, command, count, queries, is_last, last_insert_rowid, affected_rows) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
+    // The statement's leading keyword; an index into `commands` when common.
+    result.command = typeof command === "number" ? commands[command] : command;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
 
@@ -80,14 +84,18 @@ initMySQL(
 );
 
 export interface MySQLDotZig {
+  /** `result.command` strings that `onResolveQuery` receives as an index. */
+  commands: string[];
   init: (
     onResolveQuery: (
       query: Query<any, any>,
       result: SQLResultArray,
-      commandTag: string,
+      command: number | string | null,
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number,
+      affected_rows: number,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

@@ -128,8 +128,6 @@ impl ServerEntryPoint {
 // functions from C++. When that is resolved, we should remove this.
 #[derive(Default)]
 pub struct MacroEntryPoint {
-    /// The macro label followed by the generated module. `generate` fills it
-    /// once. `source` borrows it, so it is never resized after that.
     pub(crate) code_buffer: Vec<u8>,
     pub source: bun_ast::Source,
 }
@@ -190,8 +188,7 @@ impl MacroEntryPoint {
         buf.clear();
         buf.extend_from_slice(macro_label_);
 
-        // A JSON string literal is a valid JS string literal with every quote,
-        // backslash, and line terminator escaped.
+        // A JSON string literal is a valid JS string literal.
         let quoted = bun_fmt::JSONFormatterUTF8Options { quote: true };
         let unquoted = bun_fmt::JSONFormatterUTF8Options { quote: false };
         let name = bun_fmt::format_json_string_utf8(function_name, quoted);
@@ -239,8 +236,8 @@ impl MacroEntryPoint {
 
         // INVARIANT: self-referential — `macro_label`/`code` borrow
         // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
-        // via `IntoStr`), so `entry` must not move or drop while `entry.source`
-        // is in use.
+        // via `IntoStr`), so `entry.code_buffer` must not be resized or dropped
+        // while `entry.source` is in use.
         let (macro_label, code) = entry.code_buffer.split_at(label_len);
         entry.source = bun_ast::Source::init_path_string(macro_label, code);
         // `Path::init` already set `text = macro_label`; only override namespace.

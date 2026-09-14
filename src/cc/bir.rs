@@ -7,7 +7,7 @@
 //! str = varuint length + bytes, type = u8):
 //!
 //! ```text
-//! magic "BIR" and a zero byte
+//! magic "BIR0"
 //! u8 arch, u8 os, u8 pointerBytes (8), u8 reserved (0)
 //! varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
 //!                   param:   u8 kind, then Value: type | ByValStack: varuint size, varuint align, u8 exhausts
@@ -35,8 +35,8 @@
 
 use std::fmt::Write as _;
 
-/// What a module starts with. No C source does: it has a zero byte.
-pub const MAGIC: [u8; 4] = *b"BIR\0";
+/// What a module starts with.
+pub const MAGIC: [u8; 4] = *b"BIR0";
 /// Where the writable part of the data starts when there are constants before it: a multiple of
 /// the largest page size of any target (Apple arm64's), so that no page holds both.
 pub(crate) const DATA_PAGE: u64 = 16384;

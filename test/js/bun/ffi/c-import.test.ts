@@ -313,7 +313,7 @@ describe.skipIf(!supported)("bundling a .c file", () => {
     const assets = [...new Bun.Glob("math-*.c").scanSync(out)];
     expect(assets.length).toBe(1);
     // Not C any more: what the runtime turns into machine code without a parser or headers.
-    expect((await Bun.file(join(out, assets[0])).bytes()).subarray(0, 4)).toEqual(new Uint8Array([0x42, 0x49, 0x52, 0]));
+    expect((await Bun.file(join(out, assets[0])).bytes()).subarray(0, 4)).toEqual(new TextEncoder().encode("BIR0"));
 
     const { stdout, exitCode } = await run(out, ["index.js"]);
     expect(stdout.trim()).toBe("42 2435775735");

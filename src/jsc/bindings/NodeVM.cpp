@@ -108,23 +108,30 @@ static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObj
     return obj;
 }
 
-bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData)
+CachedDataExtraction extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData)
 {
     if (!cachedDataValue.isCell()) {
-        return false;
+        return CachedDataExtraction::NotABuffer;
     }
 
+    std::span<const uint8_t> bytes;
     if (auto* arrayBufferView = dynamicDowncast<JSC::JSArrayBufferView>(cachedDataValue)) {
-        if (!arrayBufferView->isDetached()) {
-            outCachedData = arrayBufferView->span();
-            return true;
+        if (arrayBufferView->isDetached()) {
+            return CachedDataExtraction::NotABuffer;
         }
+        bytes = arrayBufferView->span();
     } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(cachedDataValue); arrayBuffer && arrayBuffer->impl()) {
-        outCachedData = arrayBuffer->impl()->toVector();
-        return true;
+        bytes = arrayBuffer->impl()->span();
+    } else {
+        return CachedDataExtraction::NotABuffer;
     }
 
-    return false;
+    if (!WTF::isValidCapacityForVector<uint8_t>(bytes.size())) {
+        return CachedDataExtraction::TooLong;
+    }
+
+    outCachedData = bytes;
+    return CachedDataExtraction::Copied;
 }
 
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
@@ -218,7 +225,9 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     TriState bytecodeAccepted = TriState::Indeterminate;
 
-    if (!options.cachedData.isEmpty()) {
+    if (options.cachedDataTooLong) {
+        bytecodeAccepted = TriState::False;
+    } else if (!options.cachedData.isEmpty()) {
         cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
@@ -1898,15 +1907,21 @@ bool BaseVMOptions::validateProduceCachedData(JSC::JSGlobalObject* globalObject,
     return false;
 }
 
-bool BaseVMOptions::validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData)
+bool BaseVMOptions::validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData, bool& outCachedDataTooLong)
 {
     JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (cachedDataOpt && !cachedDataOpt.isUndefined()) {
         // Verify it's a Buffer, TypedArray or DataView and extract the data if it is.
-        if (extractCachedData(cachedDataOpt, outCachedData)) {
+        switch (extractCachedData(cachedDataOpt, outCachedData)) {
+        case CachedDataExtraction::Copied:
             return true;
+        case CachedDataExtraction::TooLong:
+            outCachedDataTooLong = true;
+            return true;
+        case CachedDataExtraction::NotABuffer:
+            break;
         }
 
         ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
@@ -1960,7 +1975,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         // The validators return false both for "absent" and for "threw".
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData, this->cachedDataTooLong))
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 

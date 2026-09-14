@@ -66,7 +66,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData, this->cachedDataTooLong))
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -169,7 +169,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
-    if (!cachedData.isEmpty()) {
+    if (script->options().cachedDataTooLong) {
+        script->cachedDataRejected(TriState::True);
+    } else if (!cachedData.isEmpty()) {
         JSC::ProgramExecutable* executable = script->cachedExecutable();
         if (!executable) {
             executable = script->createExecutable();

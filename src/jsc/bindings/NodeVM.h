@@ -25,7 +25,16 @@ class CompileFunctionOptions;
 namespace NodeVM {
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType, const JSC::SourceCode& source);
-bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
+enum class CachedDataExtraction : uint8_t {
+    // Not a Buffer, TypedArray, DataView or ArrayBuffer, or a detached view.
+    NotABuffer,
+    Copied,
+    // Longer than a WTF::Vector holds (INT_MAX), so not copied. The caller reports the data as rejected, which is
+    // also Node's result unless the buffer starts with a valid cache (its length narrows to V8's `int` there):
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_contextify.cc#L1027-L1028
+    TooLong,
+};
+CachedDataExtraction extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
@@ -59,7 +68,7 @@ public:
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
     bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData);
-    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData);
+    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData, bool& outCachedDataTooLong);
     bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>& outTimeout);
 };
 
@@ -69,6 +78,8 @@ public:
     JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions {};
     bool produceCachedData = false;
+    // See NodeVM::CachedDataExtraction::TooLong.
+    bool cachedDataTooLong = false;
 
     using BaseVMOptions::BaseVMOptions;
 

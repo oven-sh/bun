@@ -6,7 +6,7 @@
 
 struct nothing {};
 struct only_padding { int : 8; };
-struct more_padding { long : 40; int : 0; };
+struct more_padding { long long : 40; int : 0; };
 struct of_nothing { struct nothing inside; } __attribute__((aligned(8)));
 struct nearly { struct only_padding padding; char one; };
 

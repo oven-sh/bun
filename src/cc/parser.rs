@@ -952,7 +952,7 @@ impl<S: TokenSource> Parser<S> {
         }
         // The definition proper after a `gnu_inline` one, which was only ever a copy to inline
         // (how a library compiles its own `atof` next to its header's): this one is the function.
-        let microsoft_inline = self.dialect.microsoft && spec.is_inline;
+        let microsoft_inline = self.dialect.microsoft && spec.is_inline && !gnu_inline;
         if is_definition
             && !inline_only
             && !microsoft_inline
@@ -965,7 +965,8 @@ impl<S: TokenSource> Parser<S> {
         }
         // Microsoft's `inline` is C++'s: every unit that uses the function has a definition of
         // its own, whatever other declarations say, and none is the program's one.
-        if self.dialect.microsoft && spec.is_inline && is_definition {
+        // (With `gnu_inline` it is GNU's `inline` that was asked for, there as anywhere.)
+        if self.dialect.microsoft && spec.is_inline && is_definition && !gnu_inline {
             f.inlining |= INLINE_ONLY_DEFINITION;
             f.linkonce = !is_static;
         }

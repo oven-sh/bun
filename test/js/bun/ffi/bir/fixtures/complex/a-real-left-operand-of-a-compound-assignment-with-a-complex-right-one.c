@@ -1,19 +1,19 @@
 // 6.5.16.2: `real op= complex` is `real = real op complex`: computed in the common complex type, and the real part
 // stored. For every arithmetic kind of left operand.
-#include <complex.h>
 #include <stdio.h>
 
 struct fields { int narrow : 5; unsigned wide : 20; };
 
 int main(void) {
-  volatile double complex z = 1.0 + 2.0 * I;
-  volatile float complex w = 3.0f - 1.0f * I;
+  // (Written without <complex.h>, which Microsoft's library has another one of.)
+  volatile double _Complex z = __builtin_complex(1.0, 2.0);
+  volatile float _Complex w = __builtin_complex(3.0f, -1.0f);
   double d = 5;
   d += z;
   printf("%g\n", d);
   d *= w;
   printf("%g\n", d);
-  d /= (2 + 0 * I);
+  d /= __builtin_complex(2.0, 0.0);
   printf("%g\n", d);
   d -= z * z;
   printf("%g\n", d);

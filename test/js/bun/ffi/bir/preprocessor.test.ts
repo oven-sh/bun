@@ -51,7 +51,7 @@ int total(void) { return a_value + LOCAL + CHAIN2 + (INT_MAX == 2147483647) + (i
 int main(void) {
   printf("%d\\n", total());
   const char *tail = where;
-  for (const char *p = where; *p; p++) if (*p == '/') tail = p + 1;
+  for (const char *p = where; *p; p++) if (*p == '/' || *p == '\\\\') tail = p + 1;
   printf("%s %d\\n", tail, level);
   return 0;
 }

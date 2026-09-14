@@ -876,6 +876,61 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
+  // Reading an `import.meta.hot` method without calling it must not cause the
+  // next unrelated call expression to be dropped from the output.
+  itBundled("minify/ImportMetaHotReadWithoutCall", {
+    files: {
+      "/entry.ts": `
+        globalThis.sink = import.meta.hot.accept;
+        console.log("after-accept");
+        globalThis.sink = import.meta.hot.dispose;
+        console.log("after-dispose");
+        globalThis.sink = [
+          import.meta.hot.decline,
+          import.meta.hot.prune,
+          import.meta.hot.invalidate,
+          import.meta.hot.on,
+          import.meta.hot.off,
+          import.meta.hot.send,
+        ];
+        console.log("after-array");
+        // Direct calls are still stripped.
+        import.meta.hot.accept(() => console.log("FAIL-accept-call"));
+        import.meta.hot.dispose(() => console.log("FAIL-dispose-call"));
+        console.log("after-calls");
+      `,
+    },
+    outfile: "/out.js",
+    run: {
+      stdout: "after-accept\nafter-dispose\nafter-array\nafter-calls",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("after-accept");
+      expect(out).toContain("after-dispose");
+      expect(out).toContain("after-array");
+      expect(out).toContain("after-calls");
+      expect(out).not.toContain("FAIL");
+      expect(out).not.toContain("import.meta.hot");
+    },
+  });
+  itBundled("minify/ImportMetaHotReadWithoutCallNoBundle", {
+    files: {
+      "/entry.ts": `
+        globalThis.sink = import.meta.hot.accept;
+        console.log("after-accept");
+        globalThis.sink = import.meta.hot.dispose;
+        console.log("after-dispose");
+      `,
+    },
+    bundling: false,
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("after-accept");
+      expect(out).toContain("after-dispose");
+    },
+  });
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `

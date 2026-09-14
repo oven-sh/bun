@@ -755,6 +755,19 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto entry = WTF::move(it->value);
     m_pending.remove(it);
 
+    if (entry.method == Method::TargetCreateTargetOrphaned) {
+        // The view is gone; all that's left is closing the tab Chrome just
+        // made. An error reply has no result and so no targetId: nothing
+        // was made. Fire-and-forget like Ops::close. This entry may have
+        // been the last thing holding the keep-alive ref (and, in WebSocket
+        // mode, the user's Chrome session), so re-evaluate now it's gone.
+        auto tid = jsonString(jsonField(result, { "targetId", 8 }));
+        if (!tid.empty())
+            send(0, Command(nextId(), "Target.closeTarget"_s).str("targetId"_s, WTF::String::fromUTF8(tid)));
+        updateKeepAlive();
+        return;
+    }
+
     auto* g = m_global;
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
@@ -827,10 +840,13 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
     case Method::RuntimeEnable:
     case Method::TargetCloseTarget:
+    case Method::TargetCreateTargetOrphaned:
         // Untracked fire-and-forget — close() sends TargetCloseTarget
         // without adding to m_pending (the view is going away). Chrome's
         // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
+        // TargetCreateTargetOrphaned is handled before the view lookup
+        // above. These arms are unreachable; present for switch
+        // completeness.
         return;
 
     case Method::PageNavigate: {
@@ -1764,8 +1780,21 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    t.m_pending.removeIf([vid = view->m_viewId](auto& pair) {
-        return pair.value.viewId == vid;
+    //
+    // Exception: a Target.createTarget Chrome has already received. The
+    // tab is being created whether or not we listen, and m_targetId is
+    // only learned from its reply, so dropping the entry would leak the
+    // tab for the life of the browser. Retag it and let handleResponse
+    // close the tab; until then the entry also keeps the keep-alive ref.
+    // One still parked behind the WebSocket handshake is dropped like the
+    // rest: the drain skips it and no tab is made.
+    t.m_pending.removeIf([&t, vid = view->m_viewId](auto& pair) {
+        if (pair.value.viewId != vid) return false;
+        if (pair.value.method == Method::TargetCreateTarget && !t.isQueuedUnsent(pair.key)) {
+            pair.value.method = Method::TargetCreateTargetOrphaned;
+            return false;
+        }
+        return true;
     });
     // Target.closeTarget — fire-and-forget. targetId is stashed at
     // TargetCreateTarget's reply (before sessionId) so it's populated

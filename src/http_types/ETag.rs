@@ -245,8 +245,7 @@ impl Headers {
         self.get_pointer(name).map(|value| self.as_str(value))
     }
 
-    /// [`get`](Self::get), as the value's position in `buf`: a `Copy` handle for
-    /// a reader that holds the same `buf` but cannot borrow from `self`.
+    /// [`get`](Self::get), as the value's position in `buf`.
     pub fn get_pointer(&self, name: &[u8]) -> Option<StringPointer> {
         let entries = self.entries.slice();
         let names: &[StringPointer] = entries.items_name();

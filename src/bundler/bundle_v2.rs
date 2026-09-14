@@ -6797,9 +6797,14 @@ pub mod bv2_impl {
                     && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                    if self.dev_server.is_some() {
+                        // The dev server finds a file by `path.text` and prints `path.pretty` as
+                        // the module id. An html record still holds the specifier as written.
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
+                        if loader == Loader::Html {
+                            import_record.source_index = Index::init(id);
+                        }
                     } else {
                         import_record.source_index = Index::init(id);
                     }

@@ -1936,6 +1936,19 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
+
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+#[bun_jsc::host_fn]
+pub(crate) fn js_worker_live_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use core::sync::atomic::Ordering;
+    Ok(JSValue::js_number(
+        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
+    ))
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

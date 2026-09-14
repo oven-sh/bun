@@ -4058,6 +4058,18 @@ where
 
                 let _exit = vm.enter_event_loop_scope();
 
+                // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
+                if let Some(body) = this.request_body_mut() {
+                    if matches!(body, Body::Value::Locked(_)) {
+                        let _ = body.to_error_instance(
+                            Body::ValueError::Message(BunString::static_(
+                                "Request body exceeded maxRequestBodySize",
+                            )),
+                            global_this,
+                        );
+                    }
+                }
+
                 // Release the strong stream ref like the `last` arm does, then
                 // error the stream so a pending or future read rejects instead
                 // of hanging forever.
@@ -4069,13 +4081,16 @@ where
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
                     source.producer.set(WebCore::streams::SourceHandle::None);
-                    let mut err = Body::ValueError::Message(BunString::static_(
-                        "Request body exceeded maxRequestBodySize",
-                    ));
-                    bytes.on_data(WebCore::streams::Result::Err(
-                        err.to_stream_error(global_this),
-                    ));
-                    err.reset();
+                    // False unless `to_error_instance` above reached this same stream through the body.
+                    if !bytes.has_received_last_chunk.get() {
+                        let mut err = Body::ValueError::Message(BunString::static_(
+                            "Request body exceeded maxRequestBodySize",
+                        ));
+                        bytes.on_data(WebCore::streams::Result::Err(
+                            err.to_stream_error(global_this),
+                        ));
+                        err.reset();
+                    }
                 }
 
                 // Route through the normal end path so this.resp is detached

@@ -3941,6 +3941,44 @@ describe("direct stream edge cases", () => {
         fileSink: { write: "throws", flush: "throws", end: undefined },
       });
     });
+
+    // close() inside the synchronous part of pull() completes when pull() returns. The calls
+    // that follow it in the same pull() must already see a closed controller.
+    test.each(["close", "end"])(
+      "after %s() in the same pull() call: write() reports 0 bytes, flush()/end()/close(error)/error() are no-ops",
+      async how => {
+        const after = {};
+        const t = tally();
+        const rs = direct(t, c => {
+          c.write("a");
+          c[how]();
+          const late = {
+            write: () => c.write("late"),
+            flush: () => c.flush(),
+            end: () => c.end(),
+            "close(error)": () => c.close(new Error("late")),
+            error: () => c.error(new Error("late")),
+          };
+          for (const [name, call] of Object.entries(late)) {
+            try {
+              const v = call();
+              after[name] = v instanceof Promise ? "promise" : v;
+            } catch (e) {
+              after[name] = "throws: " + e?.message;
+            }
+          }
+        });
+        const reader = rs.getReader();
+        const reads = [];
+        for (let r; !(r = await reader.read()).done; ) reads.push(txt(r.value));
+        expect({ reads, after, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+          reads: ["a"],
+          after: { write: 0, flush: undefined, end: undefined, "close(error)": undefined, error: undefined },
+          pulls: 1,
+          cancels: 0,
+        });
+      },
+    );
   });
 
   describe("ordering", () => {

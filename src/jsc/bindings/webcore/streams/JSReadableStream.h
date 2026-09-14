@@ -57,6 +57,8 @@ public:
     // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
     // isReadableStreamLocked() check.
     bool m_lockedWithoutReader : 1 { false };
+    // Bun: a Body consumer drained this stream. Its spec reader is never released: never cleared.
+    bool m_consumedAsBody : 1 { false };
     // Set by jsFunctionTransferToNativeReadableStream.
     bool m_transferred : 1 { false };
     // `typeof rawHighWaterMark === "number"` at construction time.
@@ -103,7 +105,7 @@ public:
     // The value the old `$bunNativePtr` DOMAttribute getter returned.
     JSC::JSValue nativePtrForJS() const
     {
-        if (m_transferred)
+        if (nativeHandleDetached())
             return JSC::jsNumber(-1);
         // A text-mode native stream's handle wraps a raw byte source; hide it
         // from JS-side native-transfer fast paths (Readable.fromWeb) so they
@@ -113,9 +115,10 @@ public:
             return {};
         return m_nativePtr.get(); // may be empty
     }
+    // Transferred to a node:stream Readable, drained as a Body, or detached: the handle is off limits.
     bool nativeHandleDetached() const
     {
-        return m_transferred || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
+        return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
 
 private:

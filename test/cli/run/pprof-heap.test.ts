@@ -184,6 +184,22 @@ describe.concurrent("--pprof-heap", () => {
     expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
   });
 
+  test.skipIf(isWindows)(
+    "a Worker's SIGINT that the main thread listens for leaves a --watch run's profile running",
+    async () => {
+      using dir = tempDir("pprof-heap-watch-listener", {
+        "script.js":
+          workerScript +
+          `process.on("SIGINT", () => { console.log(Bun.pprof.heap.isRunning); process.exit(0); });
+         new Worker('process.kill(process.pid, "SIGINT")', { eval: true });
+         setInterval(() => {}, 1000);`,
+      });
+      const result = await run(String(dir), ["--watch", "--pprof-heap=heap.pb.gz", "script.js"]);
+      expect(result).toEqual({ stdout: "true\ntrue\n", stderr: "", exitCode: 0 });
+      expectHeapProfile(join(String(dir), "heap.pb.gz"), 512 * 1024);
+    },
+  );
+
   test("process.exit() in a Worker leaves the profile running", async () => {
     using dir = tempDir("pprof-heap-worker-exit", {
       "script.js":

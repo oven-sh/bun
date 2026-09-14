@@ -1541,6 +1541,7 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
+extern "C" bool Bun__watchModeSigintHasListeners();
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -4778,10 +4779,13 @@ static bool signalHasJSListener(int signalNumber)
     if (Bun__isMainThreadVM())
         return signalToContextIdsMap && signalToContextIdsMap->contains(signalNumber);
     // Only the main thread may read `signalToContextIdsMap`: it mutates it. The installed handler
-    // says the same, except for the signal that --watch keeps it installed for.
+    // says the same, except for the signal that --watch keeps it installed for and counts the
+    // listeners of.
 #if !OS(WINDOWS)
+    if (signalNumber == watchModeStickySignal)
+        return Bun__watchModeSigintHasListeners();
     struct sigaction current;
-    return signalNumber != watchModeStickySignal && sigaction(signalNumber, nullptr, &current) == 0 && current.sa_handler == forwardSignal;
+    return sigaction(signalNumber, nullptr, &current) == 0 && current.sa_handler == forwardSignal;
 #else
     // uv_kill() terminates the process whatever listens.
     return false;

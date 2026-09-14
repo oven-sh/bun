@@ -113,15 +113,18 @@ int main(void) { puts("ran"); return 0; }
     expect(exitCode).not.toBe(0);
   });
 
+  // `text`, `count` times over.
+  const repeated = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
   // Input nested far deeper than any program is: an error, not a stack overflow.
   const deep: [string, string, string][] = [
-    ["parentheses", `int f(void) { return ${"(".repeat(5000)}1${")".repeat(5000)}; }`, "nesting is too deep"],
-    ["blocks", `void f(void) { ${"{".repeat(5000)} ${"}".repeat(5000)} }`, "nesting is too deep"],
-    ["unary operators", `int f(int x) { return ${"-".repeat(5000)}x; }`, "nesting is too deep"],
-    ["declarators", `int ${"(*".repeat(5000)}x${")".repeat(5000)};`, "nesting is too deep"],
-    ["initializers", `int x = ${"{".repeat(5000)}1${"}".repeat(5000)};`, "nesting is too deep"],
-    ["a chain of additions", `int f(int x) { return x${" + x".repeat(5000)}; }`, "expression is nested too deeply"],
-    ["else if", `int f(int x) { ${"if (x) return 1; else ".repeat(5000)} return 0; }`, "nesting is too deep"],
+    ["parentheses", `int f(void) { return ${repeated("(", 5000)}1${repeated(")", 5000)}; }`, "nesting is too deep"],
+    ["blocks", `void f(void) { ${repeated("{", 5000)} ${repeated("}", 5000)} }`, "nesting is too deep"],
+    ["unary operators", `int f(int x) { return ${repeated("-", 5000)}x; }`, "nesting is too deep"],
+    ["declarators", `int ${repeated("(*", 5000)}x${repeated(")", 5000)};`, "nesting is too deep"],
+    ["initializers", `int x = ${repeated("{", 5000)}1${repeated("}", 5000)};`, "nesting is too deep"],
+    ["a chain of additions", `int f(int x) { return x${repeated(" + x", 5000)}; }`, "expression is nested too deeply"],
+    ["else if", `int f(int x) { ${repeated("if (x) return 1; else ", 5000)} return 0; }`, "nesting is too deep"],
   ];
   // A preprocessor asked for more than there is memory or patience for. (The parser takes tokens as they are made,
   // so each of these is in a place where it would go on accepting them.)
@@ -133,7 +136,7 @@ int main(void) { puts("ran"); return 0; }
     ],
     [
       "five thousand nested invocations",
-      `#define F(x) x\n${"F(".repeat(5000)}1${")".repeat(5000)}`,
+      `#define F(x) x\n${repeated("F(", 5000)}1${repeated(")", 5000)}`,
       "macro expansion is nested too deeply",
     ],
     [
@@ -141,7 +144,7 @@ int main(void) { puts("ran"); return 0; }
       `${Array.from({ length: 30000 }, (_, i) => `#define C${i} C${i + 1}\n`).join("")}C0`,
       "nested too deeply",
     ],
-    ["a hundred thousand #if without #endif", "#if 1\n".repeat(100_000), "unterminated conditional directive"],
+    ["a hundred thousand #if without #endif", repeated("#if 1\n", 100_000), "unterminated conditional directive"],
   ];
   for (const [what, source, message] of runaway) {
     test.concurrent(what, async () => {
@@ -156,9 +159,9 @@ int main(void) { puts("ran"); return 0; }
   // compiles has left, and a debug build uses several times a release build's.)
   test.concurrent("five hundred additions and a hundred parentheses compile and run", async () => {
     const source = `int printf(const char *, ...);
-int chain(int x) { return x${" + x".repeat(500)}; }
-int nested(void) { return ${"(".repeat(100)}7${")".repeat(100)}; }
-int blocks(int v) { ${"{".repeat(100)} v++; ${"}".repeat(100)} return v; }
+int chain(int x) { return x${repeated(" + x", 500)}; }
+int nested(void) { return ${repeated("(", 100)}7${repeated(")", 100)}; }
+int blocks(int v) { ${repeated("{", 100)} v++; ${repeated("}", 100)} return v; }
 int main(void) { printf("%d %d %d\\n", chain(2), nested(), blocks(1)); return 0; }`;
     const { stdout, stderr, exitCode } = await firstError(source);
     expect(lines(stdout), stderr).toBe("1002 7 2\n");

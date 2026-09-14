@@ -73,7 +73,7 @@ describe.skipIf(!supported)("multi-file: what cannot be linked", () => {
         "program",
       ]);
       expect(lines(stderr).replaceAll(String(dir) + sep, "")).toContain(message);
-      expect(stdout).not.toContain("compile");
+      expect(stdout).toBe("");
       expect(exitCode).not.toBe(0);
     });
   }

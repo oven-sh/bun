@@ -1,16 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isGlibc, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibc, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 // Where Bun's own C compiler (bun_cc + JavaScriptCore's B3) has run these tests.
 export const supported = (isGlibc && !isArm64) || (isMacOS && isArm64) || (isWindows && !isArm64 && microsoftHeaders());
 
-// Visual Studio's and the Windows SDK's headers: named by a developer prompt, or where the compiler looks for them.
+// Visual Studio's and the Windows SDK's headers: named by a developer prompt, or where the compiler looks for them
+// (the SDK has <stdio.h>, Visual Studio has <vcruntime.h>, which <stdio.h> includes).
 function microsoftHeaders() {
+  if (process.env.INCLUDE) return true;
+  const roots = [
+    process.env.ProgramFiles ?? "C:\\Program Files",
+    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+  ];
   return (
-    Boolean(process.env.INCLUDE) ||
-    existsSync(join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include"))
+    roots.some(root => existsSync(join(root, "Windows Kits", "10", "Include"))) &&
+    roots.some(root => existsSync(join(root, "Microsoft Visual Studio")))
   );
 }
 
@@ -39,7 +45,7 @@ export function meets(requirement: string | undefined): boolean {
     case "x64-sysv":
       return !isArm64 && !isWindows;
     case "glibc":
-      return isLinux;
+      return isGlibc;
     case "posix":
     case "lp64":
     case "sysv":
@@ -54,12 +60,17 @@ export function meets(requirement: string | undefined): boolean {
   }
 }
 
-/**
- * A C_INCLUDE_PATH of `directories`, then whatever the variable already names: where there are no system headers
- * of the machine's own to find (Windows), that is how the tests are told where a C library's are.
- */
+// C_INCLUDE_PATH is searched before the system's directories, so a developer's own setting would put other headers
+// in front of the ones these tests were written against. Only on Windows, where there may be no system headers of the
+// machine's own to find, is it how the tests are told where a C library's are.
+const ambientIncludePath = isWindows ? (process.env.C_INCLUDE_PATH ?? "") : "";
+
+/** What the tests run `bun` with: `bunEnv`, and a C_INCLUDE_PATH that is the tests' own. */
+export const cEnv: Record<string, string | undefined> = { ...bunEnv, C_INCLUDE_PATH: ambientIncludePath || undefined };
+
+/** A C_INCLUDE_PATH of `directories` (then, on Windows, whatever the variable already names). */
 export function includePath(...directories: string[]) {
-  return [...directories, process.env.C_INCLUDE_PATH ?? ""].filter(Boolean).join(delimiter);
+  return [...directories, ambientIncludePath].filter(Boolean).join(delimiter);
 }
 
 /**
@@ -81,7 +92,7 @@ function requirementIn(path: string) {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
-export async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
+export async function run(cwd: string, args: string[], env: Record<string, string | undefined> = cEnv) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
@@ -89,9 +100,32 @@ export async function run(cwd: string, args: string[], env: Record<string, strin
 
 /** Runs the program at `exe` in `cwd`; what it printed and how it ended. */
 async function runProgram(exe: string, cwd: string) {
-  await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd: [exe], env: cEnv, cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+/**
+ * `bun build <entries> --target=bun --outdir <out>`, run in `dir` (where the entries are) as a user would: the C is
+ * compiled now, and what the bundle carries is its compiled form. The path of the bundle's entry point.
+ */
+async function bundle(dir: string, out: string, entries: string[]) {
+  const build = await run(dir, ["build", ...entries, "--target=bun", "--outdir", out]);
+  expect(build.stderr).not.toContain("error:");
+  expect(build.exitCode, build.stderr).toBe(0);
+  return join(out, entries[0].replace(/\.\w+$/, ".js"));
+}
+
+/**
+ * `bun build --compile <entries> --outfile <out>/program`, run in `out` so that the copy of the runtime it makes on
+ * the way is made next to where it ends up (and goes away with `out`); the path of the executable.
+ */
+async function compile(dir: string, out: string, entries: string[]) {
+  const exe = join(out, isWindows ? "program.exe" : "program");
+  const build = await run(out, ["build", "--compile", ...entries.map(entry => join(dir, entry)), "--outfile", exe]);
+  expect(build.stderr).not.toContain("error:");
+  expect(build.exitCode, build.stderr).toBe(0);
+  return exe;
 }
 
 type Result = { stdout: string; stderr: string; exitCode: number | null };
@@ -135,10 +169,17 @@ function expectOutput(expectedPath: string, statusPath: string, result: Result) 
   else expect(result.exitCode, result.stderr).toEqual(Number(status));
 }
 
+// How many of an area's fixtures are also built into a standalone executable. `bun build --compile` copies the whole
+// runtime for each; what it adds to a bundle (embedding the compiled form in the executable and loading it from
+// there) does not depend on what the C does.
+const compiledPerArea = 1;
+
 /**
- * Two tests per `fixtures/<area>/<name>.c`: the file is run as a program on the fly (`bun name.c`), and built
- * into a standalone executable (`bun build --compile name.c`) that is then run. Either way it must print what
- * `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file); or, when
+ * Two tests per `fixtures/<area>/<name>.c`: the file is run as a program on the fly (`bun name.c`), and bundled
+ * (`bun build name.c --target=bun --outdir …`: the C is compiled at build time and the bundle loads its compiled
+ * form, without a C parser or headers) and the bundle is then run. The first `compiledPerArea` of an area get a
+ * third: built into a standalone executable (`bun build --compile name.c`) that is then run. Every way it must print
+ * what `<name>.expected` holds and exit with the status in `<name>.status` (0 when there is no such file); or, when
  * there is a `<name>.values.json` instead, report exactly the values that file lists (see `expectValues`).
  * A `<name>.ts` next to it is run (and built) instead when the C file is easier to check by calling into it.
  * A fixture whose `<name>.requires` names something this machine is not is reported as skipped.
@@ -149,6 +190,7 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
   const dir = join(import.meta.dir, "fixtures", area);
   const names = [...new Bun.Glob("*.c").scanSync(dir)].map(file => file.slice(0, -2)).sort();
   describe.skipIf(!supported)(area, () => {
+    let compiled = 0;
     for (const name of names) {
       const expectedPath = join(dir, `${name}.expected`);
       const valuesPath = join(dir, `${name}.values.json`);
@@ -170,25 +212,29 @@ export function runFixtures(area: string, failing: Record<string, string> = {}) 
         .filter(Boolean) ?? []) {
         const at = setting.indexOf("=");
         declare.skipIf(!applies)(`${title} (${setting})`, async () =>
-          check(await run(dir, [entry], { ...bunEnv, [setting.slice(0, at)]: setting.slice(at + 1) })),
+          check(await run(dir, [entry], { ...cEnv, [setting.slice(0, at)]: setting.slice(at + 1) })),
         );
       }
-      declare.skipIf(!applies)(`${title} (compiled)`, async () => {
+      declare.skipIf(!applies)(`${title} (bundled)`, async () => {
         using out = tempDir(`bir-${name}`, {});
-        const exe = join(String(out), isWindows ? "program.exe" : "program");
-        const build = await run(dir, ["build", "--compile", entry, "--outfile", exe]);
-        expect(build.stderr).not.toContain("error:");
-        expect(build.exitCode, build.stderr).toBe(0);
-        check(await runProgram(exe, dir));
+        check(await run(dir, [await bundle(dir, String(out), [entry])]));
       });
+      if (applies && !(name in failing) && compiled++ < compiledPerArea) {
+        declare(`${title} (compiled)`, async () => {
+          using out = tempDir(`bir-${name}`, {});
+          check(await runProgram(await compile(dir, String(out), [entry]), dir));
+        });
+      }
     }
   });
 }
 
 /**
- * One test per directory `fixtures/<area>/<name>/`: its C files are linked into one program with
- * `bun build --compile main.c <the others> --outfile …`, and the program must print what `expected` holds and exit
- * with the status in `status` (0 when there is no such file); or report the values `values.json` lists.
+ * A test per directory `fixtures/<area>/<name>/`: its C files are linked into one program and bundled with
+ * `bun build main.c <the others> --target=bun --outdir …`, and the bundle, run, must print what `expected` holds and
+ * exit with the status in `status` (0 when there is no such file); or report the values `values.json` lists. The first
+ * `compiledPerArea` of an area get a second: the same files built into a standalone executable
+ * (`bun build --compile main.c <the others> --outfile …`), which must do the same.
  */
 export function runProjects(area: string, failing: Record<string, string> = {}) {
   const root = join(import.meta.dir, "fixtures", area);
@@ -197,21 +243,30 @@ export function runProjects(area: string, failing: Record<string, string> = {}) 
     .map(entry => entry.name)
     .sort();
   describe.skipIf(!supported)(`${area}: several files linked into one program`, () => {
+    let compiled = 0;
     for (const name of names) {
       const dir = join(root, name);
       const applies = meets(requirementIn(join(dir, "requires")));
       const declare = name in failing ? test.failing : test.concurrent;
-      declare.skipIf(!applies)(name in failing ? `${name} (${failing[name]})` : name, async () => {
-        const units = [...new Bun.Glob("*.c").scanSync(dir)].filter(file => file !== "main.c").sort();
+      const title = name in failing ? `${name} (${failing[name]})` : name;
+      const units = () => [
+        "main.c",
+        ...[...new Bun.Glob("*.c").scanSync(dir)].filter(file => file !== "main.c").sort(),
+      ];
+      const check = (result: Result) =>
+        existsSync(join(dir, "values.json"))
+          ? expectValues(join(dir, "values.json"), result)
+          : expectOutput(join(dir, "expected"), join(dir, "status"), result);
+      declare.skipIf(!applies)(title, async () => {
         using out = tempDir(`bir-${name}`, {});
-        const exe = join(String(out), isWindows ? "program.exe" : "program");
-        const build = await run(dir, ["build", "--compile", "main.c", ...units, "--outfile", exe]);
-        expect(build.stderr).not.toContain("error:");
-        expect(build.exitCode, build.stderr).toBe(0);
-        const result = await runProgram(exe, dir);
-        if (existsSync(join(dir, "values.json"))) expectValues(join(dir, "values.json"), result);
-        else expectOutput(join(dir, "expected"), join(dir, "status"), result);
+        check(await run(dir, [await bundle(dir, String(out), units())]));
       });
+      if (applies && !(name in failing) && compiled++ < compiledPerArea) {
+        declare(`${title} (compiled)`, async () => {
+          using out = tempDir(`bir-${name}`, {});
+          check(await runProgram(await compile(dir, String(out), units()), dir));
+        });
+      }
     }
   });
 }

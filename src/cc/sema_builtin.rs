@@ -991,6 +991,101 @@ impl Sema {
     /// `__builtin_constant_p(e)`: numbers and string literals. The address of an object is
     /// not one for GCC, and neither is it here. (GCC also says yes to `x && 0` and `x * 0`;
     /// like Clang, this says no: only "no" is always a safe answer.)
+    /// `__builtin_object_size(pointer, type)`: how many bytes there are from where `pointer` points
+    /// to the end of the object it points into (of the closest member that holds it, with
+    /// `closest`), when `pointer` is written as the address of a declared object or a part of one.
+    pub(crate) fn object_size(&self, pointer: &Expr, closest: bool) -> Option<u64> {
+        // (An array that has not been converted to a pointer yet: nothing converts the operand.)
+        if pointer.ty.is_array() {
+            return self.extent_of(pointer, closest);
+        }
+        let mut pointer = pointer;
+        let mut before: u64 = 0;
+        loop {
+            match &pointer.kind {
+                // Conversions between pointer types.
+                ExprKind::Cast(inner) if inner.ty.is_ptr() && pointer.ty.is_ptr() => {
+                    pointer = inner;
+                }
+                // `array + constant`: that much less.
+                ExprKind::PtrAdd {
+                    ptr,
+                    index,
+                    scale,
+                    sub: false,
+                } => {
+                    let index = u64::try_from(self.const_int(index).ok()?).ok()?;
+                    before = before.checked_add(index.checked_mul(*scale)?)?;
+                    pointer = ptr;
+                }
+                _ => break,
+            }
+        }
+        let whole = match &pointer.kind {
+            ExprKind::Decay(array) => self.extent_of(array, closest)?,
+            // The address of an element is a place in its array.
+            ExprKind::AddrOf(object) => match self.element_of(object) {
+                Some((array, offset)) => self.extent_of(array, closest)?.checked_sub(offset)?,
+                None => self.extent_of(object, closest)?,
+            },
+            _ => return None,
+        };
+        Some(whole.saturating_sub(before))
+    }
+
+    /// `array[constant]` as the array and the offset in bytes.
+    fn element_of<'e>(&self, object: &'e Expr) -> Option<(&'e Expr, u64)> {
+        let ExprKind::Deref(address) = &object.kind else {
+            return None;
+        };
+        let (pointer, offset) = match &address.kind {
+            ExprKind::PtrAdd {
+                ptr,
+                index,
+                scale,
+                sub: false,
+            } => {
+                let index = u64::try_from(self.const_int(index).ok()?).ok()?;
+                (ptr, index.checked_mul(*scale)?)
+            }
+            _ => (address, 0),
+        };
+        match &pointer.kind {
+            ExprKind::Decay(array) => Some((array, offset)),
+            _ => None,
+        }
+    }
+
+    /// The bytes from the start of lvalue `object` to the end of the declared object it is (a part
+    /// of); with `closest`, to the end of `object` itself when it is a member or a row of one.
+    fn extent_of(&self, object: &Expr, closest: bool) -> Option<u64> {
+        let size = self.tcx.size_of(&object.ty).filter(|size| *size > 0);
+        match &object.kind {
+            ExprKind::Local(_)
+            | ExprKind::Global(_)
+            | ExprKind::StrLit(_)
+            | ExprKind::CompoundLiteral { .. } => size,
+            ExprKind::Member(base, offset) => {
+                // The last member stands for whatever was allocated after it (an array of one
+                // element at the end of a structure is how that was written for decades).
+                let last =
+                    size.and_then(|size| offset.checked_add(size)) == self.tcx.size_of(&base.ty);
+                if closest && !last {
+                    return size;
+                }
+                self.extent_of(base, false)?.checked_sub(*offset)
+            }
+            ExprKind::Deref(_) => {
+                let (array, offset) = self.element_of(object)?;
+                if closest && object.ty.is_array() {
+                    return size;
+                }
+                self.extent_of(array, false)?.checked_sub(offset)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn constant_p(&self, e: &Expr) -> bool {
         if matches!(e.kind, ExprKind::StrLit(_)) {
             return true;

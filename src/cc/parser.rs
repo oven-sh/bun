@@ -5199,6 +5199,9 @@ impl<S: TokenSource> Parser<S> {
         if let Some(e) = self.parse_vector_builtin(name, short, loc)? {
             return Ok(Some(e));
         }
+        if let Some(checked) = checked_function(short) {
+            return Ok(Some(self.parse_checked_builtin(name, &checked, loc)?));
+        }
         let uint = Type::UInt;
         let (ulong, ullong) = (Type::ULong, Type::ULLong);
         match short {
@@ -5391,21 +5394,28 @@ impl<S: TokenSource> Parser<S> {
                 let pointer = self.sema.cast(pointer, &Type::Void.ptr_to(), loc)?;
                 Ok(Some(self.after_evaluating(args, pointer, loc)?))
             }
-            // The size of the object a pointer points into is never known here.
+            // How much there is of the object a pointer points into, from there on: known when
+            // the pointer is written as the address of (a part of) a declared object. (Neither
+            // operand is evaluated.)
             "object_size" | "dynamic_object_size" => {
                 let args = self.parse_builtin_args()?;
                 if args.len() != 2 {
                     return err(loc, format!("{name} takes two arguments"));
                 }
-                let Ok(kind) = self.sema.const_int(&args[1]) else {
+                let Ok(kind @ 0..=3) = self.sema.const_int(&args[1]) else {
                     return err(
                         loc,
-                        format!("the second operand of {name} must be a constant"),
+                        format!("the second operand of {name} must be a constant from 0 to 3"),
                     );
                 };
                 let size_type = self.sema.size_type();
-                let unknown = if kind & 2 != 0 { 0 } else { -1 };
-                Ok(Some(self.sema.int_lit(unknown, size_type, loc)?))
+                let size = match self.sema.object_size(&args[0], kind & 1 != 0) {
+                    Some(size) => i64::try_from(size).unwrap_or(i64::MAX),
+                    // The largest it could be, or the smallest.
+                    None if kind & 2 != 0 => 0,
+                    None => -1,
+                };
+                Ok(Some(self.sema.int_lit(size, size_type, loc)?))
             }
             // For the compiler's own headers: what this compiler cannot do, said when it is
             // compiled into code that is used.
@@ -6022,6 +6032,61 @@ impl<S: TokenSource> Parser<S> {
         }))
     }
 
+    /// `__builtin___memcpy_chk(d, s, n, size)` and the rest of that family, which `_FORTIFY_SOURCE`
+    /// turns the C library's functions into: the function itself when the object is known to be
+    /// large enough or its size is not known at all, and the library's `__memcpy_chk`, which ends
+    /// the program rather than write past the end, otherwise.
+    fn parse_checked_builtin(&mut self, name: &str, checked: &Checked, loc: Loc) -> Res<Expr> {
+        let target = self.sema.tcx.target;
+        let args = self.parse_builtin_args()?;
+        if args.len() < checked.fixed || (args.len() > checked.fixed && !checked.variadic) {
+            return err(loc, format!("{name} takes {} arguments", checked.fixed));
+        }
+        let constant = |parser: &Self, at: Option<usize>| -> Option<u64> {
+            let value = parser.sema.const_int(args.get(at?)?).ok()?;
+            Some(value as u64)
+        };
+        let enough = match constant(self, checked.object_size) {
+            // (No such argument: the checks of `__printf_chk` are about the format.)
+            None => checked.object_size.is_none(),
+            Some(u64::MAX) => true,
+            Some(size) => constant(self, checked.length).is_some_and(|length| length <= size),
+        };
+        // Only glibc has the format-checking `__printf_chk` family; nothing has any of them on
+        // Windows, whose headers never ask.
+        let library_has_it = match target.os {
+            crate::types::Os::Windows => false,
+            crate::types::Os::Linux => true,
+            crate::types::Os::MacOs => checked.object_size.is_some(),
+        };
+        if library_has_it && !(enough && checked.object_size.is_some()) {
+            let Some(fty) = library_prototype(checked.name, target) else {
+                return err(loc, format!("internal error: {name} has no prototype"));
+            };
+            let id = self.sema.declare_library_function(checked.name, fty, loc)?;
+            let callee = self.sema.function_ref(id, loc)?;
+            return self.sema.call(callee, args, loc);
+        }
+        // The plain function, without the arguments it does not take (evaluated all the same).
+        let (mut kept, mut dropped) = (Vec::new(), Vec::new());
+        for (at, arg) in args.into_iter().enumerate() {
+            if Some(at) == checked.object_size || Some(at) == checked.flag {
+                dropped.push(arg);
+            } else {
+                kept.push(arg);
+            }
+        }
+        let Some(fty) = library_prototype(checked.plain, target) else {
+            return err(loc, format!("internal error: {name} has no prototype"));
+        };
+        let id = self
+            .sema
+            .declare_library_function(checked.plain, fty, loc)?;
+        let callee = self.sema.function_ref(id, loc)?;
+        let call = self.sema.call(callee, kept, loc)?;
+        self.after_evaluating(dropped, call, loc)
+    }
+
     fn parse_builtin_args(&mut self) -> Res<Vec<Expr>> {
         self.expect(Punct::LParen)?;
         let mut args = Vec::new();
@@ -6102,6 +6167,8 @@ const IGNORED_ATTRIBUTES: &[&str] = &[
     "no_init_all",
     "hybrid_patchable",
     "access",
+    "pass_object_size",
+    "pass_dynamic_object_size",
     "alloc_align",
     "alloc_size",
     "always_inline",
@@ -6251,6 +6318,82 @@ pub(crate) fn is_library_builtin(name: &str, target: Target) -> bool {
     library_prototype(name, target).is_some()
 }
 
+/// One of the functions that check the size of the object they write to.
+struct Checked {
+    /// The library's name for it, and for the function it checks.
+    name: &'static str,
+    plain: &'static str,
+    /// How many arguments it takes, and whether more may follow.
+    fixed: usize,
+    variadic: bool,
+    /// Which argument is the size of the object, which the `flag` the `printf` family has, and
+    /// which is never more than the number of bytes written, if one is.
+    object_size: Option<usize>,
+    flag: Option<usize>,
+    length: Option<usize>,
+}
+
+/// What `__builtin_<name>` is, if it is `__builtin___memcpy_chk` or one of its family.
+fn checked_function(name: &str) -> Option<Checked> {
+    let checked = |name, plain, fixed, variadic, object_size, flag, length| Checked {
+        name,
+        plain,
+        fixed,
+        variadic,
+        object_size,
+        flag,
+        length,
+    };
+    Some(match name {
+        "__memcpy_chk" => checked("__memcpy_chk", "memcpy", 4, false, Some(3), None, Some(2)),
+        "__memmove_chk" => checked("__memmove_chk", "memmove", 4, false, Some(3), None, Some(2)),
+        "__mempcpy_chk" => checked("__mempcpy_chk", "mempcpy", 4, false, Some(3), None, Some(2)),
+        "__memset_chk" => checked("__memset_chk", "memset", 4, false, Some(3), None, Some(2)),
+        "__memccpy_chk" => checked("__memccpy_chk", "memccpy", 5, false, Some(4), None, Some(3)),
+        "__strcpy_chk" => checked("__strcpy_chk", "strcpy", 3, false, Some(2), None, None),
+        "__stpcpy_chk" => checked("__stpcpy_chk", "stpcpy", 3, false, Some(2), None, None),
+        "__strcat_chk" => checked("__strcat_chk", "strcat", 3, false, Some(2), None, None),
+        "__strncpy_chk" => checked("__strncpy_chk", "strncpy", 4, false, Some(3), None, Some(2)),
+        "__stpncpy_chk" => checked("__stpncpy_chk", "stpncpy", 4, false, Some(3), None, Some(2)),
+        "__strncat_chk" => checked("__strncat_chk", "strncat", 4, false, Some(3), None, None),
+        "__strlcpy_chk" => checked("__strlcpy_chk", "strlcpy", 4, false, Some(3), None, Some(2)),
+        "__strlcat_chk" => checked("__strlcat_chk", "strlcat", 4, false, Some(3), None, Some(2)),
+        "__sprintf_chk" => checked("__sprintf_chk", "sprintf", 4, true, Some(2), Some(1), None),
+        "__snprintf_chk" => checked(
+            "__snprintf_chk",
+            "snprintf",
+            5,
+            true,
+            Some(3),
+            Some(2),
+            Some(1),
+        ),
+        "__vsprintf_chk" => checked(
+            "__vsprintf_chk",
+            "vsprintf",
+            5,
+            false,
+            Some(2),
+            Some(1),
+            None,
+        ),
+        "__vsnprintf_chk" => checked(
+            "__vsnprintf_chk",
+            "vsnprintf",
+            6,
+            false,
+            Some(3),
+            Some(2),
+            Some(1),
+        ),
+        "__printf_chk" => checked("__printf_chk", "printf", 2, true, None, Some(0), None),
+        "__fprintf_chk" => checked("__fprintf_chk", "fprintf", 3, true, None, Some(1), None),
+        "__vprintf_chk" => checked("__vprintf_chk", "vprintf", 3, false, None, Some(0), None),
+        "__vfprintf_chk" => checked("__vfprintf_chk", "vfprintf", 4, false, None, Some(1), None),
+        _ => return None,
+    })
+}
+
 fn library_prototype(name: &str, target: Target) -> Option<Rc<FuncType>> {
     let size = if target.long_size() == 8 {
         Type::ULong
@@ -6259,17 +6402,69 @@ fn library_prototype(name: &str, target: Target) -> Option<Rc<FuncType>> {
     };
     let void_ptr = Type::Void.ptr_to();
     let char_ptr = Type::Char.ptr_to();
+    // (What is only read is pointed to as `const`.)
+    let text = Type::Char.qualified(Quals::CONST).ptr_to();
+    let bytes = Type::Void.qualified(Quals::CONST).ptr_to();
+    // What `<stdio.h>` and the functions that check object sizes (`checked_function`) take. A
+    // `FILE *` and a `va_list` are pointers as far as a call goes; a declaration of the header's,
+    // if there is one, is what is used instead.
+    let int = Type::Int;
+    let (to, stream, list) = (char_ptr.clone(), void_ptr.clone(), void_ptr.clone());
+    let formatted: Option<Vec<Type>> = match name {
+        "sprintf" => Some(vec![to, text.clone()]),
+        "snprintf" => Some(vec![to, size.clone(), text.clone()]),
+        "printf" => Some(vec![text.clone()]),
+        "fprintf" => Some(vec![stream, text.clone()]),
+        "__sprintf_chk" => Some(vec![to, int, size.clone(), text.clone()]),
+        "__snprintf_chk" => Some(vec![to, size.clone(), int, size.clone(), text.clone()]),
+        "__printf_chk" => Some(vec![int, text.clone()]),
+        "__fprintf_chk" => Some(vec![stream, int, text.clone()]),
+        _ => None,
+    };
+    if let Some(params) = formatted {
+        return Some(Rc::new(FuncType {
+            ret: Type::Int,
+            params,
+            variadic: true,
+            unprototyped: false,
+        }));
+    }
+    let (to, stream, int) = (char_ptr.clone(), void_ptr.clone(), Type::Int);
     let (ret, params): (Type, Vec<Type>) = match name {
-        "memcpy" | "memmove" => (void_ptr.clone(), vec![void_ptr.clone(), void_ptr, size]),
+        "vsprintf" => (Type::Int, vec![to, text, list]),
+        "vsnprintf" => (Type::Int, vec![to, size, text, list]),
+        "vprintf" => (Type::Int, vec![text, list]),
+        "vfprintf" => (Type::Int, vec![stream, text, list]),
+        "__vsprintf_chk" => (Type::Int, vec![to, int, size, text, list]),
+        "__vsnprintf_chk" => (Type::Int, vec![to, size.clone(), int, size, text, list]),
+        "__vprintf_chk" => (Type::Int, vec![int, text, list]),
+        "__vfprintf_chk" => (Type::Int, vec![stream, int, text, list]),
+        "__memcpy_chk" | "__memmove_chk" | "__mempcpy_chk" => {
+            (void_ptr.clone(), vec![void_ptr, bytes, size.clone(), size])
+        }
+        "__memset_chk" => (void_ptr.clone(), vec![void_ptr, int, size.clone(), size]),
+        "memccpy" => (void_ptr.clone(), vec![void_ptr, bytes, int, size]),
+        "__memccpy_chk" => (
+            void_ptr.clone(),
+            vec![void_ptr, bytes, int, size.clone(), size],
+        ),
+        "__strcpy_chk" | "__stpcpy_chk" | "__strcat_chk" => (to.clone(), vec![to, text, size]),
+        "stpncpy" => (to.clone(), vec![to, text, size]),
+        "__strncpy_chk" | "__stpncpy_chk" | "__strncat_chk" => {
+            (to.clone(), vec![to, text, size.clone(), size])
+        }
+        "strlcpy" | "strlcat" => (size.clone(), vec![to, text, size]),
+        "__strlcpy_chk" | "__strlcat_chk" => (size.clone(), vec![to, text, size.clone(), size]),
+        "memcpy" | "memmove" => (void_ptr.clone(), vec![void_ptr, bytes, size]),
         "memset" => (void_ptr.clone(), vec![void_ptr, Type::Int, size]),
-        "memcmp" => (Type::Int, vec![void_ptr.clone(), void_ptr, size]),
-        "memchr" => (void_ptr.clone(), vec![void_ptr, Type::Int, size]),
-        "strlen" => (size, vec![char_ptr]),
-        "strcmp" => (Type::Int, vec![char_ptr.clone(), char_ptr]),
-        "strncmp" => (Type::Int, vec![char_ptr.clone(), char_ptr, size]),
-        "strcpy" | "strcat" => (char_ptr.clone(), vec![char_ptr.clone(), char_ptr]),
-        "strncpy" | "strncat" => (char_ptr.clone(), vec![char_ptr.clone(), char_ptr, size]),
-        "strchr" | "strrchr" => (char_ptr.clone(), vec![char_ptr, Type::Int]),
+        "memcmp" => (Type::Int, vec![bytes.clone(), bytes, size]),
+        "memchr" => (void_ptr, vec![bytes, Type::Int, size]),
+        "strlen" => (size, vec![text]),
+        "strcmp" => (Type::Int, vec![text.clone(), text]),
+        "strncmp" => (Type::Int, vec![text.clone(), text, size]),
+        "strcpy" | "strcat" => (char_ptr.clone(), vec![char_ptr, text]),
+        "strncpy" | "strncat" => (char_ptr.clone(), vec![char_ptr, text, size]),
+        "strchr" | "strrchr" => (char_ptr, vec![text, Type::Int]),
         "abs" => (Type::Int, vec![Type::Int]),
         "labs" => (Type::Long, vec![Type::Long]),
         "llabs" => (Type::LLong, vec![Type::LLong]),
@@ -6314,15 +6509,15 @@ fn library_prototype(name: &str, target: Target) -> Option<Rc<FuncType>> {
         "calloc" => (void_ptr, vec![size.clone(), size]),
         "realloc" => (void_ptr.clone(), vec![void_ptr, size]),
         "free" => (Type::Void, vec![void_ptr]),
-        "bcmp" => (Type::Int, vec![void_ptr.clone(), void_ptr, size]),
+        "bcmp" => (Type::Int, vec![bytes.clone(), bytes, size]),
         "bzero" => (Type::Void, vec![void_ptr, size]),
-        "mempcpy" => (void_ptr.clone(), vec![void_ptr.clone(), void_ptr, size]),
-        "stpcpy" => (char_ptr.clone(), vec![char_ptr.clone(), char_ptr]),
-        "strstr" | "strpbrk" => (char_ptr.clone(), vec![char_ptr.clone(), char_ptr]),
-        "strspn" | "strcspn" => (size, vec![char_ptr.clone(), char_ptr]),
-        "strnlen" => (size.clone(), vec![char_ptr, size]),
-        "strdup" => (char_ptr.clone(), vec![char_ptr]),
-        "puts" => (Type::Int, vec![char_ptr]),
+        "mempcpy" => (void_ptr.clone(), vec![void_ptr, bytes, size]),
+        "stpcpy" => (char_ptr.clone(), vec![char_ptr, text]),
+        "strstr" | "strpbrk" => (char_ptr, vec![text.clone(), text]),
+        "strspn" | "strcspn" => (size, vec![text.clone(), text]),
+        "strnlen" => (size.clone(), vec![text, size]),
+        "strdup" => (char_ptr, vec![text]),
+        "puts" => (Type::Int, vec![text]),
         "putchar" => (Type::Int, vec![Type::Int]),
         _ => return None,
     };

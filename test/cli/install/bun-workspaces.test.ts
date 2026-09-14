@@ -280,6 +280,109 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
+describe("dist-tag on a workspace name the registry does not have", () => {
+  // `pkg-not-on-registry` is not published to the test registry, so its manifest
+  // request 404s. The workspace member of that name is linked instead (#4830).
+  // A name the registry does have keeps resolving from the registry, see
+  // "dependency on same name as workspace and dist-tag" above.
+  async function setup(packageDir: string, root: Record<string, unknown>, consumerDeps: Record<string, string>) {
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", ...root })),
+      write(
+        join(packageDir, "packages", "lib", "package.json"),
+        JSON.stringify({ name: "pkg-not-on-registry", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "consumer", "package.json"),
+        JSON.stringify({ name: "consumer", version: "1.0.0", dependencies: consumerDeps }),
+      ),
+    ]);
+  }
+
+  test.concurrent.each(["latest", ""])('"%s" links the workspace', async version => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setup(packageDir, { workspaces: ["packages/*"] }, { "pkg-not-on-registry": version });
+
+    const { out } = await runBunInstall(env, packageDir);
+    expect(out).toContain("2 packages installed");
+    expect(await file(join(packageDir, "node_modules", "pkg-not-on-registry", "package.json")).json()).toEqual({
+      name: "pkg-not-on-registry",
+      version: "1.0.0",
+    });
+    expect(await exists(join(packageDir, "packages", "consumer", "node_modules"))).toBeFalse();
+    expect(parseLockfile(packageDir)).toMatchNodeModulesAt(packageDir);
+
+    // the resolution round-trips through the saved lockfile
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("aliased dist-tag links the workspace named by the alias target", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setup(packageDir, { workspaces: ["packages/*"] }, { "lib-alias": "npm:pkg-not-on-registry@latest" });
+
+    const { out } = await runBunInstall(env, packageDir);
+    expect(out).toContain("2 packages installed");
+    expect(await file(join(packageDir, "node_modules", "lib-alias", "package.json")).json()).toEqual({
+      name: "pkg-not-on-registry",
+      version: "1.0.0",
+    });
+  });
+
+  test.concurrent("catalog entry links the workspace", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setup(
+      packageDir,
+      { workspaces: { packages: ["packages/*"], catalog: { "pkg-not-on-registry": "latest" } } },
+      { "pkg-not-on-registry": "catalog:" },
+    );
+
+    const { out } = await runBunInstall(env, packageDir);
+    expect(out).toContain("2 packages installed");
+    expect(await file(join(packageDir, "node_modules", "pkg-not-on-registry", "package.json")).json()).toEqual({
+      name: "pkg-not-on-registry",
+      version: "1.0.0",
+    });
+  });
+
+  test.concurrent("a range the workspace does not satisfy still reports the 404", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setup(packageDir, { workspaces: ["packages/*"] }, { "pkg-not-on-registry": "latest" });
+    await write(
+      join(packageDir, "packages", "other", "package.json"),
+      JSON.stringify({ name: "other", version: "1.0.0", dependencies: { "pkg-not-on-registry": "^2.0.0" } }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, {
+      allowErrors: true,
+      expectedExitCode: 1,
+      savesLockfile: false,
+    });
+    expect(err).toMatch(/GET .*\/pkg-not-on-registry - 404/);
+  });
+
+  test.concurrent("linkWorkspacePackages = false reports the 404", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setup(packageDir, { workspaces: ["packages/*"] }, { "pkg-not-on-registry": "latest" });
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { linkWorkspacePackages: false, registry: verdaccio.registryUrl() } }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, {
+      allowErrors: true,
+      expectedExitCode: 1,
+      savesLockfile: false,
+    });
+    expect(err).toMatch(/GET .*\/pkg-not-on-registry - 404/);
+    expect(await exists(join(packageDir, "node_modules", "pkg-not-on-registry"))).toBeFalse();
+  });
+});
+
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
@@ -2605,6 +2708,51 @@ describe("LinkWorkspacePackages", () => {
     // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
+
+  test.concurrent(
+    "linkWorkspacePackages = false does not fall back to the workspace for an unknown dist-tag",
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const bunfigPath = await setupWorkspace(packageDir);
+      await Promise.all([
+        write(
+          bunfigPath,
+          Bun.TOML.stringify({
+            install: {
+              linkWorkspacePackages: false,
+              registry: verdaccio.registryUrl(),
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "bar", "package.json"),
+          JSON.stringify({
+            name: "bar",
+            version: "1.0.0",
+            dependencies: {
+              // `no-deps` is on the registry but has no such tag. With linking
+              // enabled this would resolve to the workspace (see the
+              // "kjwoehcojrgjoj" case in "dependency on workspace without version").
+              "no-deps": "kjwoehcojrgjoj",
+            },
+          }),
+        ),
+      ]);
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await stderr.text();
+      expect(err).toContain('Package "no-deps" with tag "kjwoehcojrgjoj" not found');
+      expect(await exited).toBe(1);
+    },
+  );
 });
 
 test("matching workspace devDependency and npm peerDependency", async () => {

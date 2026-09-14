@@ -2266,6 +2266,30 @@ fn root_workspace_package_id(
     None
 }
 
+pub(crate) fn has_linkable_workspace(this: &PackageManager, name_hash: PackageNameHash) -> bool {
+    this.options.link_workspace_packages && this.lockfile.workspace_paths.contains_key(&name_hash)
+}
+
+/// Fallback for a dist-tag the registry cannot satisfy.
+fn resolve_dist_tag_from_workspace(
+    this: &mut PackageManager,
+    name_hash: PackageNameHash,
+    dependency_id: DependencyID,
+    success_fn: SuccessFn,
+) -> Option<ResolvedPackageResult> {
+    if !has_linkable_workspace(this, name_hash) {
+        return None;
+    }
+    let workspace_package_id = root_workspace_package_id(&this.lockfile, name_hash)?;
+    // make sure verifyResolutions sees this resolution as a valid package id
+    success_fn(this, dependency_id, workspace_package_id);
+    Some(ResolvedPackageResult {
+        package: *this.lockfile.packages.get(workspace_package_id as usize),
+        is_first_time: false,
+        task: None,
+    })
+}
+
 pub(crate) enum ResolvedPackageTask {
     /// Pending network task to schedule
     NetworkTask(*mut NetworkTask),
@@ -2695,6 +2719,15 @@ fn get_or_put_resolved_package(
                 name_hash,
                 needs_ext,
             ) else {
+                if version.tag == dependency::version::Tag::DistTag
+                    && this.network_task_has_failed(Task::Id::for_manifest(name_str))
+                {
+                    if let Some(result) =
+                        resolve_dist_tag_from_workspace(this, name_hash, dependency_id, success_fn)
+                    {
+                        return Ok(Some(result));
+                    }
+                }
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
             let manifest: &Npm::PackageManifest = manifest;
@@ -2793,31 +2826,14 @@ fn get_or_put_resolved_package(
             let find_result = match find_result_opt {
                 Some(r) => r,
                 None => {
-                    'resolve_workspace_from_dist_tag: {
-                        // choose a workspace for a dist_tag only if a version was not found
-                        if version.tag == dependency::version::Tag::DistTag {
-                            let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                                this.lockfile.workspace_paths.get(&name_hash)
-                            } else {
-                                None
-                            };
-                            if workspace_path.is_some() {
-                                let Some(workspace_package_id) =
-                                    root_workspace_package_id(&this.lockfile, name_hash)
-                                else {
-                                    break 'resolve_workspace_from_dist_tag;
-                                };
-                                // make sure verifyResolutions sees this resolution as a valid package id
-                                success_fn(this, dependency_id, workspace_package_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this
-                                        .lockfile
-                                        .packages
-                                        .get(workspace_package_id as usize),
-                                    is_first_time: false,
-                                    task: None,
-                                }));
-                            }
+                    if version.tag == dependency::version::Tag::DistTag {
+                        if let Some(result) = resolve_dist_tag_from_workspace(
+                            this,
+                            name_hash,
+                            dependency_id,
+                            success_fn,
+                        ) {
+                            return Ok(Some(result));
                         }
                     }
 

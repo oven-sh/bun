@@ -589,6 +589,35 @@ fn run_tasks_erased(
                         continue;
                     }
 
+                    if response.status_code == 404
+                        && !C::MANIFESTS_ONLY
+                        && enqueue::has_linkable_workspace(
+                            manager,
+                            bun_semver::string::Builder::string_hash(name),
+                        )
+                    {
+                        manager.mark_network_task_failed(task.task_id);
+                        let dependency_list = manager
+                            .task_queue
+                            .get_mut(&task.task_id)
+                            .map(core::mem::take)
+                            .unwrap_or_default();
+                        process_dependency_list_for_ctx::<C>(
+                            manager,
+                            dependency_list,
+                            extract_ctx,
+                            install_peer,
+                        )?;
+                        // A dependent the workspace cannot satisfy re-queues itself here.
+                        if manager
+                            .task_queue
+                            .get(&task.task_id)
+                            .is_none_or(|list| list.is_empty())
+                        {
+                            continue;
+                        }
+                    }
+
                     if manager.is_network_task_required(task.task_id) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),

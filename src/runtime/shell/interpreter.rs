@@ -2398,7 +2398,7 @@ pub(crate) enum ParseError {
 
 impl ParseError {
     /// Borrow the option-name payload. The pointer borrows either a `'static`
-    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
+    /// literal (see [`unsupported_flag`]) or the owning `Builtin`'s argv storage
     /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
     /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
     /// Builtins format the error before any argv mutation.
@@ -2458,11 +2458,9 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
 }
 
 fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
-    if flag.is_empty() || flag[0] != b'-' {
+    // A lone `-` is an operand, as in getopt(3).
+    if flag.len() < 2 || flag[0] != b'-' {
         return ParseFlagResult::Done;
-    }
-    if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {

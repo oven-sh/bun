@@ -2842,8 +2842,7 @@ impl Sema {
             var.addr_taken = true;
             var.addr_count = var.addr_count.saturating_add(1);
         }
-        let whole_copy = matches!(items.as_slice(), [InitItem::Copy { offset: 0, .. }]);
-        let zero_first = (ty.is_array() || ty.is_struct()) && !whole_copy;
+        let zero_first = self.clears_before(&ty, &items);
         self.mk(
             ExprKind::CompoundLiteral {
                 local,

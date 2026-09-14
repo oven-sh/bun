@@ -2438,12 +2438,18 @@ impl<'a> FnGen<'a, '_> {
                     let dst = self.local_addr(local, *offset, loc)?;
                     self.store_wide(dst, wide);
                 }
-                InitItem::Copy { offset, expr, size } => {
-                    let src = self.gen_value(expr)?;
-                    let dst = self.local_addr(local, *offset, loc)?;
-                    let n = self.b.const_i64(*size as i64);
-                    self.b.effect(Inst::MemCopy(dst, src, n));
-                }
+                InitItem::Copy { offset, expr, size } => match self.leaves_of_object(expr) {
+                    Some(from) => {
+                        let dst = self.local_addr(local, *offset, loc)?;
+                        self.store_leaves(&from, dst);
+                    }
+                    None => {
+                        let src = self.gen_value(expr)?;
+                        let dst = self.local_addr(local, *offset, loc)?;
+                        let n = self.b.const_i64(*size as i64);
+                        self.b.effect(Inst::MemCopy(dst, src, n));
+                    }
+                },
                 InitItem::Bits {
                     offset,
                     field,

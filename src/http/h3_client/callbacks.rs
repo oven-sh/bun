@@ -61,7 +61,7 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
 
 /// Recover the h3 `Stream` from a `quic::Stream`'s ext slot.
 ///
-/// INVARIANT: the slot is set in `on_stream_open` (and cleared in `detach`);
+/// INVARIANT: the slot is set in `on_stream_open` (cleared in `on_stream_close`/`abort`/`detach`);
 /// the `Stream` is heap-owned by its `ClientSession` (`pending` list) and lives
 /// until `detach()`. HTTP-thread only, and a distinct allocation from the
 /// `quic::Stream`, so the returned `&mut` neither aliases the caller's

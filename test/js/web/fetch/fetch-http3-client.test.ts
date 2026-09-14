@@ -634,6 +634,86 @@ describe("fetch protocol: http3", () => {
   });
 });
 
+// An aborted upload must end with RESET_STREAM. A FIN tells the server that the
+// truncated body is the whole body. If the request declared a content-length,
+// the server's lsquic answers that FIN by closing the whole connection.
+describe("aborted upload", () => {
+  let server: Server;
+  let origin: string;
+  let firstChunkRead: PromiseWithResolvers<void>;
+  let serverSaw: PromiseWithResolvers<{ body: string; received: number; contentLength: string | null }>;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      routes: {
+        "/echo": async req => new Response(await req.bytes()),
+        // Reports how the request body ended: "complete" after FIN, "aborted" after a reset.
+        "/upload": async req => {
+          let body = "complete";
+          let received = 0;
+          try {
+            for await (const chunk of req.body!) {
+              received += chunk.length;
+              firstChunkRead.resolve();
+            }
+          } catch {
+            body = "aborted";
+          }
+          serverSaw.resolve({ body, received, contentLength: req.headers.get("content-length") });
+          return new Response("ok");
+        },
+      },
+    });
+    origin = `https://127.0.0.1:${server.port}`;
+  });
+  afterAll(() => void server?.stop(true));
+
+  // Streams "hello " and aborts after the server has read it.
+  async function abortUpload(headers: Record<string, string> = {}) {
+    firstChunkRead = Promise.withResolvers();
+    serverSaw = Promise.withResolvers();
+    const controller = new AbortController();
+    let pulls = 0;
+    const upload = fetch(`${origin}/upload`, {
+      ...h3,
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: new ReadableStream({
+        async pull(ctrl) {
+          if (pulls++ === 0) return ctrl.enqueue("hello ");
+          await firstChunkRead.promise;
+          controller.abort();
+        },
+      }),
+    });
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+  }
+
+  test("the server sees an abort, not the end of the body", async () => {
+    await abortUpload();
+    expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: null });
+  });
+
+  test("with a declared content-length, the pooled session stays usable", async () => {
+    await abortUpload({ "content-length": "50" });
+    // The next request has a stream body on purpose. The client re-sends any
+    // other body on a fresh session, and that would hide a dead pooled session.
+    const piece = Buffer.alloc(32 * 1024, "S");
+    const res = await fetch(`${origin}/echo`, {
+      ...h3,
+      method: "POST",
+      body: pullBody(Array.from({ length: 8 }, () => piece)),
+    });
+    expect((await res.bytes()).length).toBe(8 * piece.length);
+    expect(await serverSaw.promise).toEqual({ body: "aborted", received: 6, contentLength: "50" });
+  });
+});
+
 // Stale-session retry: a request bound on session A when A's conn closes
 // (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
 // instead of surfacing HTTP3StreamReset. reusePort lets B bind the same

@@ -440,7 +440,7 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
 ///
 /// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
 /// borrow's duration (callback argument, or `Stream.qstream` set in
-/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
+/// `on_stream_open` and nulled in `on_stream_close` / `abort` / `detach`), FFI
 /// allocation distinct from any Rust holder, HTTP-thread-only.
 #[inline(always)]
 pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {

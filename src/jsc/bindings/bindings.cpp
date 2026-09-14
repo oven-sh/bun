@@ -2201,6 +2201,19 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
+    // The property walk below cannot see the entries of Headers/URLSearchParams/URL; compare those first.
+    uint8_t subsetType = subsetObj->type();
+    if ((subsetType == JSDOMWrapperType || subsetType == JSAsJSONType) && obj->type() == subsetType) {
+        Vector<std::pair<JSValue, JSValue>, 16> stack;
+        MarkedArgumentBuffer contentsGCBuffer;
+        std::optional<bool> contentsEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, contentsGCBuffer, stack, throwScope, subsetObj, obj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (contentsEqual.has_value()) return *contentsEqual;
+        contentsEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, contentsGCBuffer, stack, throwScope, obj, subsetObj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (contentsEqual.has_value()) return *contentsEqual;
+    }
+
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);

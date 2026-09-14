@@ -1742,9 +1742,22 @@ impl Sema {
         Ok((self.convert(a, &common, la)?, self.convert(b, &common, lb)?))
     }
 
-    /// Folds an integer operation on two literals. (Floating operations are left for run time:
-    /// what `0.0 / 0.0` is depends on the processor, and GCC does not fold it either.)
+    /// Folds an integer operation on two literals. Floating operations are left for run time,
+    /// but for one: `0.0 / 0.0` with both zeros written out is how a C library spells `NAN` for
+    /// a compiler it does not know, and means the quiet NaN `__builtin_nan("")` is (positive),
+    /// not what the processor's division makes (negative, on x86).
     fn fold(&self, e: Expr) -> Expr {
+        if let ExprKind::Binary(BinOp::Div, a, b) = &e.kind {
+            if let (ExprKind::FloatLit(x), ExprKind::FloatLit(y)) = (&a.kind, &b.kind) {
+                if *x == 0.0 && *y == 0.0 {
+                    return Expr {
+                        kind: ExprKind::FloatLit(f64::NAN),
+                        depth: 1,
+                        ..e
+                    };
+                }
+            }
+        }
         let mut wide = e.ty.is_int128();
         e.for_each_child(|c| wide |= c.ty.is_int128());
         let foldable = !wide && e.ty.is_integer() && {

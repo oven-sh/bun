@@ -22,6 +22,7 @@ const BUILTIN_HEADERS: &[(&str, &str)] = &[
     ("stdint.h", include_str!("include/stdint.h")),
     ("stdnoreturn.h", include_str!("include/stdnoreturn.h")),
     ("stdatomic.h", include_str!("include/stdatomic.h")),
+    ("tgmath.h", include_str!("include/tgmath.h")),
 ];
 
 /// The ones Visual Studio and the Universal C Runtime have too.

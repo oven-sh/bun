@@ -121,6 +121,133 @@ describe("vm", () => {
       expect(result).toBe(2);
     });
 
+    describe("parsingContext", () => {
+      // Node compiles the source inside parsingContext, so whatever the compile
+      // produces (the function, or the error it throws) belongs to that
+      // context's realm rather than to the caller's.
+      const thrownBy = (fn: () => unknown): any => {
+        try {
+          fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("expected a throw");
+      };
+      const realmOf = (context: object) => ({
+        Error: runInContext("Error", context),
+        SyntaxError: runInContext("SyntaxError", context),
+        Function: runInContext("Function", context),
+      });
+
+      test("a body that does not parse throws the context's SyntaxError", () => {
+        const parsingContext = createContext({});
+        const context = realmOf(parsingContext);
+        for (const body of ["%%", "}); (function () {"]) {
+          const err = thrownBy(() => compileFunction(body, [], { parsingContext }));
+          expect(err).toBeInstanceOf(context.SyntaxError);
+          expect(err).not.toBeInstanceOf(Error);
+          expect(err.message).toMatch(/^Unexpected token '[%}]'$/);
+        }
+      });
+
+      test("errors reported by the other compile paths come from the context too", () => {
+        const parsingContext = createContext({});
+        const context = realmOf(parsingContext);
+        const cases: [body: string, params: string[]][] = [
+          // Only rejected once the body is wrapped in its function.
+          ["%%", ["a"]],
+          ["return 1;\n%%", []],
+          ["return 1;\n%%", ["a"]],
+          // Too deeply nested for the parser: a RangeError rather than a SyntaxError.
+          ["return " + Buffer.alloc(100_000, "(").toString(), []],
+        ];
+        // Which Error subclass each path reports is covered elsewhere; what
+        // every path has in common is the realm the error is created in.
+        for (const [body, params] of cases) {
+          const err = thrownBy(() => compileFunction(body, params, { parsingContext }));
+          expect(err).toBeInstanceOf(context.Error);
+          expect(err).not.toBeInstanceOf(Error);
+        }
+      });
+
+      test("the compiled function is a function of the context", () => {
+        const parsingContext = createContext({ fromContext: "context" });
+        const context = realmOf(parsingContext);
+        const fn = compileFunction("return fromContext + ':' + a", ["a"], { parsingContext });
+        expect(Object.getPrototypeOf(fn)).toBe(context.Function.prototype);
+        expect(fn).not.toBeInstanceOf(Function);
+        expect(fn(1)).toBe("context:1");
+      });
+
+      test("the body cannot reach the caller's realm through its own function object", () => {
+        // With a caller-realm prototype, arguments.callee.constructor was the
+        // caller's Function, whose functions see the caller's globals.
+        const parsingContext = createContext({});
+        const fn = compileFunction("return new (arguments.callee.constructor)('return globalThis')()", [], {
+          parsingContext,
+        });
+        expect(fn()).toBe(runInContext("globalThis", parsingContext));
+      });
+
+      test("without parsingContext the caller's realm is used", () => {
+        expect(Object.getPrototypeOf(compileFunction("return 1"))).toBe(Function.prototype);
+        expect(thrownBy(() => compileFunction("%%"))).toBeInstanceOf(SyntaxError);
+        expect(thrownBy(() => compileFunction("%%", ["a"]))).toBeInstanceOf(Error);
+      });
+
+      test("cachedData is a Buffer of the caller's realm, accepted by a compile in another context", () => {
+        const fn = compileFunction("return 1", [], { parsingContext: createContext({}), produceCachedData: true });
+        expect(fn.cachedDataProduced).toBe(true);
+        expect(fn.cachedData).toBeInstanceOf(Buffer);
+        const reused = compileFunction("return 1", [], {
+          parsingContext: createContext({}),
+          cachedData: fn.cachedData,
+        });
+        expect(reused.cachedDataRejected).toBe(false);
+        expect(reused()).toBe(1);
+      });
+
+      test("the context's Error.prepareStackTrace formats the compile error, under the arrow header", () => {
+        const calls: string[] = [];
+        const parsingContext = createContext({ calls });
+        runInContext(
+          `Error.prepareStackTrace = err => {
+            calls.push("context:" + err.constructor.name);
+            return "formatted by the context";
+          };`,
+          parsingContext,
+        );
+        const prev = Error.prepareStackTrace;
+        Error.prepareStackTrace = err => {
+          calls.push("caller:" + err.constructor.name);
+          return "formatted by the caller";
+        };
+        let err: any;
+        try {
+          err = thrownBy(() => compileFunction("%%", [], { parsingContext, filename: "f.js" }));
+        } finally {
+          Error.prepareStackTrace = prev;
+        }
+        expect(calls).toEqual(["context:SyntaxError"]);
+        expect(err.stack).toBe("f.js:1\n%%\n^\n\nformatted by the context");
+      });
+
+      test("a throwing Error.prepareStackTrace in the context does not escape the compile error", () => {
+        const parsingContext = createContext({});
+        const context = realmOf(parsingContext);
+        runInContext(
+          `Error.prepareStackTrace = () => {
+            throw new Error("boom-from-prepareStackTrace");
+          };`,
+          parsingContext,
+        );
+        const err = thrownBy(() => compileFunction("%%", [], { parsingContext }));
+        expect(err).toBeInstanceOf(context.SyntaxError);
+        expect(err.message).toBe("Unexpected token '%'");
+        expect(err.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
+      });
+    });
+
     // Security tests
     test("Template literal attack should not break out of sandbox", () => {
       const before = globalThis.hacked;

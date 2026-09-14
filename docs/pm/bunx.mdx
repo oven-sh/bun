@@ -80,6 +80,18 @@ bunx -p renovate renovate-config-validator
 bunx --package @angular/cli ng
 ```
 
+Repeat `--package`/`-p` to install several packages into the same temporary execution environment. This is useful for a toolchain that depends on a pinned set of plugins without adding them to the project's dependencies:
+
+```bash terminal icon="terminal"
+bunx \
+  --package semantic-release@25 \
+  --package @semantic-release/exec@6.0.3 \
+  --package conventional-changelog-conventionalcommits@9 \
+  semantic-release
+```
+
+As with a single `--package`, the binary to run must always be given explicitly. None of the temporary packages become part of the project's `package.json`, lockfile, or `node_modules`.
+
 To force a script to always run with Bun, give it a `bun` shebang.
 
 ```js dist/index.js icon="/icons/javascript.svg"

@@ -392,11 +392,21 @@ export const globalFlags: Flag[] = [
   {
     // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
     // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
-    // has always shipped, and a canary load+check in most JSC frames is not
-    // free.
+    // has always shipped on Linux, FreeBSD and Android, and a canary
+    // load+check in most JSC frames is not free.
     flag: "-fno-stack-protector",
-    when: c => c.unix,
+    when: c => c.unix && !c.darwin,
     desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    // Every clang turns the protector on for a Darwin target (level 1, what
+    // -fstack-protector asks for), the cross-compiling CI one included, so
+    // that is what bun has always shipped on macOS: about 1,250 functions of
+    // bun's own C/C++ and the vendored deps carry a canary there, as the
+    // WebKit prebuilt's do.
+    flag: "-fstack-protector",
+    when: c => c.darwin,
+    desc: "Stack protector on macOS (clang's default for Darwin targets, stated)",
   },
   {
     // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64

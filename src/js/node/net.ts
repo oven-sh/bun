@@ -816,8 +816,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // falls through to the static ALPNProtocols list), the selected protocol
     // string, or undefined to refuse the connection - Node's contract.
     const self = socket.data;
-    const server = self?.server ?? self;
-    const cb = server?._ALPNCallback;
+    // The socket's own callback wins, like node's per-socket kALPNCallback: `server` can be an
+    // http.Server that adopted a standalone wrap through emit("connection") and has no callback.
+    const cb = self?._ALPNCallback ?? self?.server?._ALPNCallback;
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols = [];

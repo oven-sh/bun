@@ -89,10 +89,6 @@ export default [
         fn: "setStreamContext",
         length: 2,
       },
-      getEndAfterHeaders: {
-        fn: "getEndAfterHeaders",
-        length: 1,
-      },
       isStreamAborted: {
         fn: "isStreamAborted",
         length: 1,

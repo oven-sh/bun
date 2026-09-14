@@ -101,8 +101,7 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-/// Puts `inserted` after the last instance field: at the top of a base
-/// constructor, after the `super();` statement of a derived one, if it has one.
+/// Inserts after the last instance field, or returns false: derived with no `super();` statement.
 fn insert_after_fields<'a>(
     constructor: &mut Property,
     is_derived: bool,

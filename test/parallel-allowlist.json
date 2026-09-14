@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 366
+      "excluded": 369
     }
   },
   "dirs": [
@@ -384,6 +384,7 @@
     "js/bun/md/md-edge-cases.test.ts",
     "js/bun/net/socket-retention.test.ts",
     "js/bun/net/socket.test.ts",
+    "js/bun/net/tcp-server.test.ts",
     "js/bun/plugin/plugins.test.ts",
     "js/bun/resolve/bun-main-entry-point.test.ts",
     "js/bun/resolve/import-custom-condition.test.ts",
@@ -433,6 +434,7 @@
     "js/bun/util/password.test.ts",
     "js/bun/util/text-loader.test.ts",
     "js/bun/websocket/websocket-server-rsv-frames.test.ts",
+    "js/bun/websocket/websocket-server.test.ts",
     "js/bun/webview/webview-chrome.test.ts",
     "js/bun/xml/xml-test-suite.test.ts",
     "js/bun/yaml/yaml.test.ts",
@@ -575,6 +577,7 @@
     "js/web/websocket/websocket-proxy.test.ts",
     "js/web/workers/performance-observer-leak.test.ts",
     "js/web/workers/structured-clone.test.ts",
+    "js/web/workers/structuredClone-classes.test.ts",
     "js/web/workers/worker-late-completion.test.ts",
     "js/web/workers/worker-terminate-funnels.test.ts",
     "js/web/workers/worker.test.ts",

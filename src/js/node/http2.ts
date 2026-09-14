@@ -2044,8 +2044,7 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // session.destroy() is destroying the stream: node's _destroy ends the writable without
-  // _final, so no END_STREAM reaches the wire behind the GOAWAY and no 'finish' is emitted.
+  // Destroyed by session.destroy(): like node's _destroy, the writable ends without _final.
   SessionDestroyed = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
@@ -2286,9 +2285,7 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
   stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
 }
-// Client counterpart: the same synchronous teardown, through emitStreamErrorNT so the stream gets
-// the error and rstCode the deferred streamError dispatch delivers. A stream still live when the
-// native sweep settles its flow-control-queued write would emit 'drain' from the teardown.
+// Client counterpart, through emitStreamErrorNT for the deferred path's error and rstCode.
 function cancelStreamForSessionDestroy(session: ClientHttp2Session, rstCode: number, stream: Http2Stream) {
   if (stream.destroyed || stream.closed) return;
   stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
@@ -4333,8 +4330,7 @@ class ServerHttp2Session extends Http2Session {
   #onClose() {
     const parser = this.#parser;
     if (parser) {
-      // Node's socketOnClose: close(NGHTTP2_CANCEL) every stream, then destroy it. A native abort
-      // sweep first would settle queued writes on streams that are still live ('drain').
+      // Node's socketOnClose: close(NGHTTP2_CANCEL) every stream, then destroy it.
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
       parser.detach();
@@ -5889,8 +5885,7 @@ class ClientHttp2Session extends Http2Session {
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
-        // Destroy the open streams before the native sweep (see the server session). The sweep
-        // rejects a non-numeric code, and that throw must leave the streams for the retry.
+        // The native sweep throws on a non-numeric code: the retry must still find the streams.
         if (typeof streamRstCode === "number") {
           parser.forEachStream(
             FunctionPrototypeBind.$call(cancelStreamForSessionDestroy, undefined, this, streamRstCode),

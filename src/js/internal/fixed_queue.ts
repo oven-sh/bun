@@ -61,10 +61,8 @@ class FixedCircularBuffer<T> {
   constructor() {
     this.bottom = 0;
     this.top = 0;
-    // Every slot is an own data property. `fill()` and an indexed assignment
-    // into a hole go through [[Set]], which consults Array.prototype: an
-    // index setter defined there swallows the value and leaves a hole, and
-    // the queue then spins forever on a slot it can never read back.
+    // A [[Set]] into a hole would call a user-defined Array.prototype index
+    // setter and leave the slot empty, so every slot is an own data property.
     const list = $newArrayWithSize<T | undefined>(kSize);
     for (let i = 0; i < kSize; i++) $putByValDirect(list, i, undefined);
     this.list = list;
